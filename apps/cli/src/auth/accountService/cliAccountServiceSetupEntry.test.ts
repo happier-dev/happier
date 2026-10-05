@@ -77,9 +77,15 @@ vi.mock('@/features/serverFeaturesClient', () => ({
 vi.mock('./cliAuthEntryClient', () => ({
   fetchCliHomeAuthEntry: (input: Parameters<typeof fetchCliHomeAuthEntry>[0]) => fetchCliHomeAuthEntryMock(input),
 }));
-vi.mock('@/auth/terminalAuthEnrollmentRuntime', () => ({
-  acquireTerminalAuthEnrollmentRuntime: (...args: unknown[]) => acquireTerminalAuthEnrollmentRuntimeMock(...args),
-}));
+vi.mock('@/auth/terminalAuthEnrollmentRuntime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/auth/terminalAuthEnrollmentRuntime')>();
+  return {
+    acquireTerminalAuthEnrollmentRuntime: (...args: Parameters<typeof actual.acquireTerminalAuthEnrollmentRuntime>) =>
+      'descriptor' in args[0] && !args[0].descriptor
+        ? actual.acquireTerminalAuthEnrollmentRuntime(...args)
+        : acquireTerminalAuthEnrollmentRuntimeMock(...args),
+  };
+});
 vi.mock('@/ui/auth', () => ({
   authAndSetupMachineIfNeeded: (opts?: unknown) => authAndSetupMachineIfNeededMock(opts),
   registerMachineWithAuthenticatedHomeRuntime: (opts?: unknown) =>

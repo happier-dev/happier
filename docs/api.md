@@ -1097,6 +1097,43 @@ Runtime source-read admission still requires the verified runtime-principal inte
 current access checks at the runtime boundary. The authoring endpoints are not proof that this
 development integration is complete.
 
+#### Widget storage and Action boundaries (0.3 development)
+
+Widgets add no dashboard REST service. The generated
+[host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx)
+owns current catalog, definition, instance, input, area-layout, Refresh and
+snapshot operation schemas; [Actions](actions.md#widget-operations-03-development-source)
+owns their invocation and approval boundary.
+
+Public `session.presentation.apply` and SDK current-Session presentation DTOs
+use the canonical author subset, which arranges readable built-in, Board-item
+and pane references. Raw Companion widget-instance records and their mutation
+or conditional-removal envelopes remain host-internal. Authors use qualified
+`widgets.*` Actions for those operations and public plugin-ui `WidgetSurface`
+for declared native page embedding, or declarative `widgetArea` nodes. Hosted
+HTML pages do not embed host widget areas and use ordinary widget Actions;
+this adds no parallel presentation endpoint or hosted widget-area API.
+
+Account definitions (`widget-definition.v1`), Home layouts and personal
+Project/plugin-area layouts (`widget-area-layout.v1`) reuse the existing
+mode-aware Account Artifact transport and CAS admission. WorkBoard widget
+placements reuse `work-board.v1` rather than a parallel Artifact. Shared Session
+instances and inert snapshots use the Session Board writer below; direct
+Companion instances remain device-local presentation preferences. Layout
+identity is separate from a definition reference and the instance's input
+bindings. Persisted Account mode, not key presence, governs every Account
+Artifact read/write.
+
+Viewer credentialed reads consume the viewing Account's existing qualified
+Resource-consumer/purpose selection. Private selections and credentials are not
+shared Board payloads. There is no per-instance viewer override or widget-local
+selection setting; missing purpose selection leads to Connect. Pinned Connected
+Account references are personal-only instance bindings. Changing the existing
+purpose selection retains its normal preference lifetime and can affect other
+viewer bindings using the same qualified purpose. Positive Project area operations
+await the external portable Project Source producer. These development-source
+contracts do not claim released or loaded-platform availability.
+
 #### Session Board (development)
 
 The shared Session Board stores its content as host Session System Records
@@ -1328,10 +1365,16 @@ activation consume this placement. The feature remains development-only, and its
 integrated package and loaded-Provider validation is still open.
 
 ### Artifacts
-- `GET /v1/artifacts?limit=...&cursor=...` lists encrypted Artifact headers in
+- `GET /v1/artifacts?limit=...&cursor=...` lists Artifact headers in
   stable `updatedAt`, `id` order. The optional opaque cursor resumes after the
   last observed row, allowing typed clients to continue through sparse pages
   without loading Artifact bodies or assuming the first page is complete.
+  In 0.3 development source, `includeBody=true` adds each row's `body` and
+  `bodyVersion` to that same authorized batch. The Artifact access and Account-mode
+  owner applies the same content checks as an exact read; E2EE bodies remain
+  opaque until the client opens them. Workflow library counts use these opened
+  bodies, not persisted count metadata or per-row requests. Omitting the option
+  retains the header-only response. This is not a released availability claim.
 - `GET /v1/artifacts/:id`
 - `POST /v1/artifacts`
 - `POST /v1/artifacts/:id` (versioned update)
@@ -1344,13 +1387,35 @@ Private bytes are not public uploaded-file URLs. Its transport contract is
 `POST /v1/artifacts/:id/content/binary` for versioned updates, using the same
 Artifact write owner with `blob:{blobId,content}`. Uploaded content is explicitly
 `{t:'plain',v:<base64>}` or `{t:'encrypted',c:<base64>}`; same-document retained
-bytes may be reused with `blob:{blobId}`. A distinct mutation path prevents a
+bytes may be reused with `blob:{blobId}`. Binary updates accept
+`blob:null` with a body and expected body version for intentional file-to-text
+replacement, paired with refusal of legacy text body writes to a binary head.
+An unaware body write to a binary head returns HTTP 409
+`artifact_binary_content_requires_explicit_update` before mutation; the writer
+must explicitly retain a blob or send `blob:null` on the binary update route.
+Header-only edits remain compatible. A distinct mutation path prevents a
 text-only server from ignoring the upload field and accepting a dangling
 reference. The authenticated read is
 `GET /v1/artifacts/:id/blobs/:blobId`, returning `{blobId,content}` only for
 current/retained bytes admitted by the Artifact access and Account-mode owner.
+Finite uploads use one `POST /v1/artifacts/content/upload` request with
+`Content-Type: application/vnd.happier.artifact-upload-v1`: a strict JSON
+metadata line followed by a newline and raw binary bytes. The shared transfer
+framing codec validates `ArtifactBlobUploadInitV1` metadata; no inline base64
+or cross-request upload-session affinity is required. Cancellation of a
+finalized conversion stage uses `DELETE /v1/artifacts/content/uploads/:uploadId`.
+The existing request-bound transfer lifecycle
+owns chunk order, declared length, integrity and temporary-file cleanup; normal
+uploads finalize through the same Artifact mutation owner, not another writer.
+An `encryption-conversion` destination instead finalizes to private staging
+custody `{t,uploadId,contentSha256}`. The existing signed Account conversion
+directive includes that stage with `blobId` and `expectedContentSha256` for each
+distinct head/history blob. Only its atomic Account transaction activates the
+staged bytes and replaces keys, document/history envelopes and private locators;
+the upload alone never changes Account mode or read authority. The signed
+request keeps its 8 MiB budget because binary bytes travel separately.
 This transport is not yet a deployed or fully validated availability claim;
-implementation and lifecycle validation are tracked in ART-B1-BINARY.
+implementation and lifecycle validation are tracked in ART-B1-BINARY and ART-B2-FINISH.
 
 ### Stored-content public links (0.3 development)
 
@@ -1362,13 +1427,21 @@ Session and ordinary Artifact publications share one owner and the existing
 - `DELETE /v1/public-shares/:shareId` revokes the publication.
 - `GET /v1/public-shares/:shareId/access-log` returns owner-authorized visit records.
 - `GET /v1/public-shares/:lookupId/content` reads admitted stored content without Account credentials on the publication's isolated origin. Consent and Session pagination use the existing publication-use/access-grant policy.
-- `GET /s/:lookupId` serves the isolated text viewer; its browser-only secret is carried in `#k=...`, not in an HTTP field.
+- `GET /s/:lookupId` serves the isolated text viewer; its wrapping secret is carried in `#k=...`, not in an HTTP field.
+- `GET /v2/sessions/metadata-upgrades` returns authenticated owner-only Session ids needing the existing privacy-layout upgrade, including archived shared Sessions; it returns no metadata or key material.
 
 The lookup and wrapping secret are independent. E2EE content and its wrapped DEK
 remain opaque to the server; plaintext Accounts send no wrapped key. Publication
-responses and Action results cannot recover a link's secret. The released
+responses and later get/list Action results cannot recover a link's secret.
+An approved create Action returns the complete URL assembled by the trusted UI
+or CLI host, including its fragment, without a mounted share sheet or callback.
+Diagnostic observations redact that capability URL. The released
 `/v1/sessions/:sessionId/public-share` and `/v1/public-share/:token` Session paths
 remain compatibility adapters for legacy links, not a second publication owner.
+An unupgraded layout-0 legacy Session returns typed
+`metadata_privacy_upgrade_required`; the viewer asks its owner to open Happier.
+The owner's initial 0.3 sync performs the privacy upgrade through the existing
+metadata tuple owner, after which the same retained token can be read safely.
 See the [encryption custody contract](encryption.md#session-storage-modes).
 These routes describe current development source, not released availability or
 completed composed live validation.

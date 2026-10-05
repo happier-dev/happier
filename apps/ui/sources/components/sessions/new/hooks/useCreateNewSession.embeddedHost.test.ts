@@ -106,7 +106,7 @@ async function createHarness() {
   const { apiSocket } = await import('@/sync/api/session/apiSocket');
   vi.spyOn(apiSocket, 'machineRPC').mockImplementation(async (_machineId, _method, input) =>
     await sessionSpawnNewActionBoundarySpy(SessionSpawnNewInputV2Schema.parse(input)));
-  const { sync } = await import('@/sync/sync');
+  const { sync } = await import('@/sync/syncEngine');
   syncSingletonBridge.current = sync;
   vi.spyOn(sync, 'sendMessage');
   await import('@/sync/ops/actions/defaultActionExecutor');
@@ -385,7 +385,7 @@ describe('useCreateNewSession (embedded new chat)', () => {
       await creationCompleted.promise;
     });
     await flushHookEffects({ cycles: 8, turns: 4 });
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     // Read the server's acknowledged queue through the real owner, rather than
     // requiring a transient optimistic projection to remain in the store.
     await act(async () => { await sync.fetchPendingMessages('embed-created'); });

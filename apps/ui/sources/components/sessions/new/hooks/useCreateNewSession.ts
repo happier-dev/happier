@@ -739,6 +739,7 @@ export function useCreateNewSession(params: Readonly<{
             const resolvedInitialMessage = shouldPrepareInitialMessage
                 ? resolveSessionComposerSend({
                     input: sessionPrompt,
+                    sessionId: null,
                     executionRunsEnabled: current.executionRunsEnabled === true,
                     // A new session has no live runtime registry yet. Preserve the user's text and
                     // let the Agent handle `/goal` until the attached runner can advertise the
@@ -1482,6 +1483,7 @@ export function useCreateNewSession(params: Readonly<{
                             openSession: (sessionId, options) => {
                                 postSpawnReplacementHref = buildScopedSessionRouteHref({
                                     sessionId,
+                                    query: options?.query,
                                     serverId: options?.serverId
                                         ?? (sessionId === createdSessionId
                                             ? resolvedTargetServerId

@@ -29,6 +29,8 @@ const SCOPED_ENV_KEYS = [
   'OPENAI_API_KEY',
   'CODEX_API_KEY',
   'HAPPIER_ANTIGRAVITY_PATH',
+  'HAPPIER_PI_PATH',
+  'PI_CODING_AGENT_DIR',
 ] as const;
 
 type ScopedEnvKey = (typeof SCOPED_ENV_KEYS)[number];
@@ -79,6 +81,22 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', undefined);
     setEnv('CODEX_API_KEY', undefined);
     setEnv('HAPPIER_ANTIGRAVITY_PATH', undefined);
+    setEnv('HAPPIER_PI_PATH', undefined);
+    setEnv('PI_CODING_AGENT_DIR', undefined);
+  });
+
+  it('re-probes Pi when its configured vendor install root changes', async () => {
+    if (process.platform === 'win32') return;
+    const firstRoot = join(workDir, 'pi-first');
+    const secondRoot = join(workDir, 'pi-second');
+    const firstPath = makeExecutableShim({ dir: join(firstRoot, 'bin'), name: 'pi', stdout: 'echo "pi 1.0.2"' });
+    const secondPath = makeExecutableShim({ dir: join(secondRoot, 'bin'), name: 'pi', stdout: 'echo "pi 1.0.3"' });
+    setEnv('PI_CODING_AGENT_DIR', firstRoot);
+    const first = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['pi'] });
+    expect(first.clis.pi).toMatchObject({ installed: true, resolvedPath: firstPath, version: '1.0.2' });
+    setEnv('PI_CODING_AGENT_DIR', secondRoot);
+    const second = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['pi'] });
+    expect(second.clis.pi).toMatchObject({ installed: true, resolvedPath: secondPath, version: '1.0.3' });
   });
 
   afterEach(() => {

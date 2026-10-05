@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { SettingsShell } from './SettingsShell';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,8 +35,10 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
     return createStorageModuleStub({
+        storage: createStorageStoreMock({ settings: settingsParse({}) }),
         useLocalSetting: (key: string) => localSettingsState.values.get(key) ?? null,
         useLocalSettingMutable: () => [320, vi.fn()],
     });
@@ -91,6 +95,23 @@ describe('SettingsShell', () => {
 
         expect(screen.findByTestId('settings-sidebar')).toBeNull();
         expect(screen.findByTestId('child')).toBeTruthy();
+    });
+
+    it.each([
+        ['agents/custom', '/settings/agents'],
+        ['agents', '/settings'],
+    ])('keeps parent Back reachable for hosted narrow %s without a native header', async (pageId, parent) => {
+        windowDimsState.width = 390;
+        windowDimsState.height = 844;
+        const replace = vi.fn();
+        const screen = await renderScreen(<DestinationInstanceHost tabId="settings-tab"
+            ref={{ kind: 'settings', params: { pageId } }}
+            pathname={`/settings/${pageId}`} focused visible navigation={{ push: () => {}, replace, back: () => {} }}>
+            <SettingsShell><PageHeader title="Add an ACP agent" /></SettingsShell>
+        </DestinationInstanceHost>);
+        expect(screen.findByTestId('settings-modal-back')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-modal-back');
+        expect(replace).toHaveBeenCalledWith(parent);
     });
 
     it('renders the settings sidebar on tablet/desktop layouts', async () => {

@@ -277,7 +277,7 @@ export const TranscriptNavigationPanel = React.memo((props: TranscriptNavigation
                         activeTabId={filter}
                         onSelectTab={setFilter}
                         testIDPrefix={`${testIDPrefix}-filter`}
-                        compact
+                        presentation="pills"
                         segmentSizing="content"
                         accessibilityLabel={t('session.transcriptNavigation.filtersA11y')}
                     />

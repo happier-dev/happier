@@ -9,8 +9,11 @@ import {
     AccessibilityInfo,
     findNodeHandle,
     Platform,
+    StyleSheet,
     View,
     useWindowDimensions,
+    type StyleProp,
+    type ViewStyle,
 } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -19,6 +22,8 @@ import {
     resolveHappierDiffViewerRequest,
     type HappierDiffViewerRequest,
     type HappierImageSize,
+    type HappierMaterialRole,
+    type HappierSurfaceProps,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -31,6 +36,12 @@ import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
+import { VoiceStatusCell } from '@/components/voice/presence/VoiceStatusCell';
+import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
+import { SetupBlockGrid } from '@/components/ui/setupBlocks/SetupBlockGrid';
+import { PluginDictationButton } from './PluginDictationButton';
+import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps, SetupBlockTileProps, SetupBlockGridProps } from '@happier-dev/plugin-ui';
 import { SESSION_STORED_IMAGE_HOST } from '@/components/sessions/media/SessionMediaInlineImages';
 import type {
     HappierAgentCursorMotionDriver,
@@ -42,6 +53,7 @@ import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
 import { reanimatedDisclosureMotion } from '@/components/ui/lists/ExpandableItem';
 import { reanimatedCollectionMotion } from '@/components/ui/motion/reanimatedCollectionMotion';
 import { Popover } from '@/components/ui/popover/Popover';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS } from '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions';
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -50,9 +62,9 @@ import {
 } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
 import type { HappierUiPalette } from '@happier-dev/plugin-ui/environment';
-import type { PluginUiSessionPartPresentation } from '@happier-dev/plugin-ui/advanced';
-import type { ItemProps, NavigationListDestination } from '@happier-dev/plugin-ui';
-import type { HappierPageChrome, HappierStateSize } from '@happier-dev/plugin-ui/presentation';
+import type { PluginUiSessionPartPresentation, PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
+import type { DragSourceProps, DropTargetProps, ItemProps, NavigationListDestination } from '@happier-dev/plugin-ui';
+import type { HappierPageChrome, HappierStateSize, HappierLiveStreamProps } from '@happier-dev/plugin-ui/presentation';
 import type { DetailsPaneSlotBinding } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import type { usePaneHeaderSlotBinding } from '@/components/appShell/panes/paneHeaderSlot';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -129,6 +141,8 @@ export type PluginDestinationRowInput = NavigationListDestination & Readonly<{
 }>;
 
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
+    renderDragSource?: (input: DragSourceProps) => React.ReactNode;
+    renderDropTarget?: (input: DropTargetProps) => React.ReactNode;
     renderLiveStream?: NonNullable<PluginUiPrivatePresentationHost['renderLiveStream']>;
     renderDestinationRow?: (input: PluginDestinationRowInput) => React.ReactNode;
     /** Exact mounted direction for logical icon tokens. */
@@ -148,6 +162,11 @@ export type PluginUiPrivatePresentationHostOptions = Readonly<{
      * for same-realm RN/RNW mounts; hosted-web and declarative adapters never receive it.
      */
     renderSessionPart?: (input: PluginUiSessionPartPresentation) => React.ReactNode;
+    /**
+     * Renders a page's declared widget area through the app's one area owner. Installed only for
+     * same-realm RN/RNW mounts; declarative documents reach the same owner through their node.
+     */
+    renderWidgetArea?: (input: PluginUiWidgetAreaPresentation) => React.ReactNode;
     /**
      * The containing layout/route's current presentation fact. The physical
      * mount and availability are necessary but insufficient for focus.
@@ -292,7 +311,36 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
 
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
+    renderVoiceMarkArt(input: Omit<VoiceMarkArtProps, 'fallback'>) {
+        // Only explicit art props: no live energy acquisition or attempt data.
+        return <VoiceMarkArt {...input} still={input.still ?? true} presentationOnly />;
+    },
+    renderStatusCell(input: Omit<StatusCellProps, 'label' | 'fallback'> & Readonly<{ presented: boolean }>) {
+        return <VoiceStatusCell {...input} />;
+    },
+    renderSetupBlockTile(input: Omit<SetupBlockTileProps, 'fallback'>) {
+        const { icon, ...props } = input;
+        return <SetupBlockTile {...props} icon={icon ? resolvePluginUiIconName(icon, direction) : undefined} />;
+    },
+    renderSetupBlockGrid(input: Omit<SetupBlockGridProps, 'fallback'>) {
+        return <SetupBlockGrid {...input} />;
+    },
+    renderDictationButton(input: Omit<DictationButtonProps, 'fallback'> & Readonly<{ presented: boolean }>) {
+        return <PluginDictationButton {...input} />;
+    },
     storedImageHost: SESSION_STORED_IMAGE_HOST,
+    renderMaterialSurface(input: Readonly<{ role: HappierMaterialRole; nested?: boolean; children?: React.ReactNode; style?: HappierSurfaceProps['style']; testID?: string }>) {
+        // The portable style reaches RN at this presentation boundary. Its
+        // base token is a tint input, never an opaque paint over the material.
+        const { backgroundColor, ...style } = StyleSheet.flatten(input.style as StyleProp<ViewStyle>) ?? {};
+        return <GlassSurface
+            surfaceGroup={input.role}
+            nested={input.role === 'floating' ? input.nested : true}
+            solidColor={typeof backgroundColor === 'string' ? backgroundColor : undefined}
+            style={style}
+            testID={input.testID}
+        >{input.children}</GlassSurface>;
+    },
     renderMarkdown(input: Readonly<{ value: string; selectable: boolean; testID?: string }>) {
         return <MarkdownView markdown={input.value} selectable={input.selectable} testID={input.testID} />;
     },
@@ -385,6 +433,9 @@ export type PluginUiPrivatePresentationHost = Readonly<
         detailsPane?: DetailsPaneSlotBinding;
         paneHeader?: NonNullable<ReturnType<typeof usePaneHeaderSlotBinding>>;
         renderDestinationRow?: (input: PluginDestinationRowInput) => React.ReactNode;
+        renderDragSource?: (input: DragSourceProps) => React.ReactNode;
+        renderDropTarget?: (input: DropTargetProps) => React.ReactNode;
+        renderLiveStream?: (input: HappierLiveStreamProps) => React.ReactNode;
         /** The Collection transition and peek motion, from the app's motion tokens. */
         collectionMotion: typeof reanimatedCollectionMotion;
         disclosureMotion: HappierDisclosureMotionDriver;
@@ -408,6 +459,8 @@ export type PluginUiPrivatePresentationHost = Readonly<
         targetedSurfaceUnavailableReason?: 'unsupported_nested_targeted_surface';
         /** Private Session part renderer; the app's one Session implementation draws every part. */
         renderSessionPart?(input: PluginUiSessionPartPresentation): React.ReactNode;
+        /** Private widget area renderer; the app's one widget area owner draws everything inside. */
+        renderWidgetArea?(input: PluginUiWidgetAreaPresentation): React.ReactNode;
         /** Private physical focus transfer; never part of RenderContext or Host API. */
         focusTarget?(target: unknown): boolean;
     }
@@ -531,6 +584,8 @@ export function createPluginUiPrivatePresentationHost(
         : undefined;
     return Object.freeze({
         ...presentationRenderers,
+        ...(options?.renderDragSource === undefined ? {} : { renderDragSource: options.renderDragSource }),
+        ...(options?.renderDropTarget === undefined ? {} : { renderDropTarget: options.renderDropTarget }),
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),
         typography: readPluginUiHostTypography(),
         ...(options?.palette === undefined ? {} : { palette: options.palette }),
@@ -560,5 +615,8 @@ export function createPluginUiPrivatePresentationHost(
         ...(options?.renderSessionPart === undefined
             ? {}
             : { renderSessionPart: options.renderSessionPart }),
+        ...(options?.renderWidgetArea === undefined
+            ? {}
+            : { renderWidgetArea: options.renderWidgetArea }),
     });
 }

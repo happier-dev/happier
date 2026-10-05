@@ -1,5 +1,10 @@
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import {
+    buildMarkdownInlineReferenceHref,
+    type MarkdownInlineReference,
+    type MarkdownInlineReferences,
+} from '../markdownInlineReferences';
+import {
     isStreamingIncompleteLinkHref,
     STREAMING_INCOMPLETE_LINK_HREF,
 } from '../streaming/streamingMarkdownRepairConfig';
@@ -115,7 +120,27 @@ function extractMarkdownLinkDestination(raw: string): Readonly<{
         : null;
 }
 
-function normalizeExplicitMarkdownLinks(markdown: string): string {
+/** `[text](scheme:target)` cited by an author, resolved by the owner of that scheme. */
+function resolveInlineReferenceLink(
+    destination: string,
+    references: MarkdownInlineReferences | undefined,
+    resolved: Map<string, MarkdownInlineReference>,
+): string | null {
+    if (!references || !destination.startsWith(`${references.scheme}:`)) return null;
+    const target = destination.slice(references.scheme.length + 1);
+    const reference = target ? references.resolve(target) : null;
+    if (!reference) return null;
+    const href = buildMarkdownInlineReferenceHref(references.scheme, target);
+    resolved.set(href, reference);
+    const label = `● ${reference.label}`.replace(/[[\]\\]/g, (char) => `\\${char}`);
+    return `[${label}](${href})`;
+}
+
+function normalizeExplicitMarkdownLinks(
+    markdown: string,
+    references?: MarkdownInlineReferences,
+    resolved: Map<string, MarkdownInlineReference> = new Map(),
+): string {
     let out = '';
     const closingDelimiters = indexClosingMarkdownDelimiters(markdown);
     for (let index = 0; index < markdown.length; index += 1) {
@@ -141,6 +166,12 @@ function normalizeExplicitMarkdownLinks(markdown: string): string {
         const extracted = extractMarkdownLinkDestination(markdown.slice(destinationStart + 1, destinationEnd));
         if (!extracted) {
             out += markdown.slice(index, destinationEnd + 1);
+            index = destinationEnd;
+            continue;
+        }
+        const reference = resolveInlineReferenceLink(extracted.destination, references, resolved);
+        if (reference) {
+            out += reference;
             index = destinationEnd;
             continue;
         }
@@ -238,8 +269,17 @@ function normalizeMarkdownAutolinks(markdown: string): string {
 }
 
 export function sanitizeEnrichedMarkdownLinkTargets(markdown: string): string {
+    return sanitizeEnrichedMarkdownWithInlineReferences(markdown).markdown;
+}
+
+/** Sanitized Markdown plus the inline references the caller's resolver placed in it, by rendered href. */
+export function sanitizeEnrichedMarkdownWithInlineReferences(markdown: string, references?: MarkdownInlineReferences): Readonly<{
+    markdown: string;
+    references: ReadonlyMap<string, MarkdownInlineReference>;
+}> {
+    const resolved = new Map<string, MarkdownInlineReference>();
     const withoutImages = applyEnrichedMarkdownImagePolicy(String(markdown ?? ''));
-    return normalizeMarkdownAutolinks(normalizeExplicitMarkdownLinks(withoutImages));
+    return { markdown: normalizeMarkdownAutolinks(normalizeExplicitMarkdownLinks(withoutImages, references, resolved)), references: resolved };
 }
 
 export async function openMarkdownLinkUrl(raw: string): Promise<void> {

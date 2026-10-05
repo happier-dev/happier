@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -7,6 +8,7 @@ import {
   collectWorkspacePackageFingerprintDependencyNames,
   ensureWorkspacePackagesBuiltByName,
   isWorkspacePackageOutputCurrent,
+  isWorkspacePackageOutputValid,
   readWorkspaceBuildFileDigest,
   readWorkspacePackageInputFingerprint,
 } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
@@ -55,9 +57,12 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_BUNDLED_HOST_APPS = ['cli'];
 const PLUGINS_WORKSPACE_PREFIX = 'plugins-';
-// v7 binds source-dev readiness to package input and output contents. Older
-// timestamp-based stamps cannot admit a current package after an input deletion.
-const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 7;
+// v8 keeps content identities, not copies of output bodies, across scope stamps.
+// Older readiness caches are reconstructible from the canonical package trees.
+const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 8;
+const SOURCE_DEV_SHARED_DEPS_STAMP_HEADER = new RegExp(
+  `^\\s*\\{\\s*"version"\\s*:\\s*${SOURCE_DEV_SHARED_DEPS_STAMP_VERSION}\\s*[,}]`, 'u',
+);
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_PROGRESS';
 const SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_MS';
 const SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_MS';
@@ -219,6 +224,7 @@ export async function runCanonicalBundledPluginArtifactPublisher({
   workspaceNames = [],
   env = process.env,
   quiet = false,
+  progress = false,
   mode = String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1' ? 'check' : 'write',
   aggregateOnly = false,
   compilerInputsOnly = false,
@@ -267,6 +273,7 @@ export async function runCanonicalBundledPluginArtifactPublisher({
     });
     if (pluginFailures.length > 0) child.stdin.end(JSON.stringify(pluginFailures));
     child.stderr?.on('data', (chunk) => {
+      if (progress) process.stderr.write(chunk);
       stderrTruncated ||= Buffer.byteLength(`${stderr}${String(chunk)}`, 'utf8') > captureMaxBytes;
       stderr = appendChildFailureDiagnostic(stderr, chunk, captureMaxBytes);
     });
@@ -397,6 +404,7 @@ async function ensureWorkspacePackagesBuiltWithPluginIsolation({
       );
       builtWorkspaceNames.push(
         ...normalizeSourceDevSharedDepsWorkspaceNames(result?.built),
+        ...normalizeSourceDevSharedDepsWorkspaceNames(result?.refreshed),
       );
       failedPluginBuilds.push(...(result?.pluginFailures ?? []));
       return null;
@@ -481,6 +489,7 @@ export async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}
     publicationMode: opts.publicationMode ?? 'live',
     env: opts.env ?? process.env,
     quiet: opts.quiet === true,
+    progress: opts.progress === true,
     mode: opts.bundledPluginArtifactPublication?.mode
       ?? (String(opts.env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
         ? 'check'
@@ -529,7 +538,7 @@ export async function rebuildWorkspacesInvalidatedByBundledPluginPublication(opt
       timeoutMs: opts.timeoutMs,
     },
   );
-  return normalizeSourceDevSharedDepsWorkspaceNames(buildResult?.built);
+  return normalizeSourceDevSharedDepsWorkspaceNames([...(buildResult?.built ?? []), ...(buildResult?.refreshed ?? [])]);
 }
 
 export function resolveBundledWorkspacePackageDir({ repoRoot, workspaceName }) {
@@ -870,7 +879,7 @@ function resolveSourceDevWorkspaceNames({
 function readSmallFileSignature(path, { exists = existsSync, readFile = readFileSync } = {}) {
   if (!exists(path)) return { exists: false };
   try {
-    return { exists: true, contents: String(readFile(path, 'utf8')) };
+    return { exists: true, digest: createHash('sha256').update(readFile(path)).digest('hex') };
   } catch {
     return { exists: false };
   }
@@ -899,7 +908,7 @@ function readPublishedPackageRootTargetSignature(
     return {
       exists: true,
       type: 'file',
-      contents: String(readFile(path, 'utf8')),
+      digest: createHash('sha256').update(readFile(path)).digest('hex'),
     };
   } catch {
     return { exists: false };
@@ -1109,6 +1118,9 @@ function resolveSourceDevWorkspaceDependencyDirs({ repoRoot, workspaceNames, wor
     packageJson,
     currentPackageName,
     packageNames,
+    { packageDirsByName: new Map([...packageNames].map((name) => [name, resolveBundledWorkspacePackageDir({
+      repoRoot, workspaceName: name.replace(/^@happier-dev\//, ''),
+    })])) },
   );
   return [...dependencyNames].map((name) => resolveBundledWorkspacePackageDir({
     repoRoot,
@@ -1167,7 +1179,7 @@ export function computeSourceDevSharedDepsSignature(opts = {}) {
       const packageDir = resolveBundledWorkspacePackageDir({ repoRoot, workspaceName });
       return {
         workspaceName,
-        buildInputs: readWorkspacePackageInputFingerprint({ packageDir }),
+        ...(opts.includeBuildInputs === false ? {} : { buildInputs: readWorkspacePackageInputFingerprint({ packageDir }) }),
         buildRecord: readSmallFileSignature(
           resolve(packageDir, 'dist', BUILD_INPUT_RECORD),
           { exists, readFile },
@@ -1221,7 +1233,11 @@ function collectSourceDevWorkspaceNamesWithChangedBuildInputs(left, right, works
 
 function readSourceDevSharedDepsStamp(stampPath, readFile = readFileSync) {
   try {
-    return JSON.parse(readFile(stampPath, 'utf8'));
+    const raw = String(readFile(stampPath, 'utf8'));
+    // The canonical writer puts the version first. Check that header before
+    // parsing: v7 histories can contain hundreds of MB of repeated output bodies.
+    if (!SOURCE_DEV_SHARED_DEPS_STAMP_HEADER.test(raw)) return null;
+    return JSON.parse(raw);
   } catch {
     return null;
   }
@@ -1247,13 +1263,6 @@ function readSourceDevSharedDepsStampEntry({ stamp, signature }) {
     if (supersetEntry) {
       return supersetEntry;
     }
-  }
-
-  if (stamp?.version === 1 && JSON.stringify(stamp.signature) === JSON.stringify(signature)) {
-    return {
-      signature: stamp.signature,
-      syncedAtMs: stamp.syncedAtMs,
-    };
   }
 
   return null;
@@ -1331,11 +1340,6 @@ function createSourceDevSharedDepsStampPayload({ previousStamp, signature, synce
     !Array.isArray(previousStamp.entries)
   ) {
     Object.assign(entries, previousStamp.entries);
-  } else if (previousStamp?.version === 1 && previousStamp.signature) {
-    entries[createSourceDevSharedDepsStampKey(previousStamp.signature)] = {
-      signature: previousStamp.signature,
-      syncedAtMs: previousStamp.syncedAtMs,
-    };
   }
 
   entries[createSourceDevSharedDepsStampKey(signature)] = {
@@ -1388,11 +1392,24 @@ function sourceDevWorkspacePackageOutputExists({
   readFile = readFileSync,
   readDir = readdirSync,
   stat = statSync,
+  requireExactOutputs = false,
+  workspaceNames,
 }) {
   const workspaceName = String(pkg?.workspaceName ?? '').trim();
   if (!workspaceName) return false;
   const packageDir = resolveBundledWorkspacePackageDir({ repoRoot, workspaceName });
   if (!packageDir || !exists(resolve(packageDir, 'package.json'))) return false;
+  if (requireExactOutputs) {
+    if (JSON.stringify(readSmallFileSignature(resolve(packageDir, 'dist', BUILD_INPUT_RECORD), { exists, readFile }))
+      !== JSON.stringify(pkg.buildRecord)) return false;
+    if ((exists(resolve(packageDir, 'src')) || exists(resolve(packageDir, 'sources')))
+      && !isWorkspacePackageOutputValid(packageDir, {
+        dependencyDirs: resolveSourceDevWorkspaceDependencyDirs({ repoRoot, workspaceNames, workspaceName, readFile }),
+        monorepoRoot: repoRoot,
+      })) return false;
+    if (JSON.stringify(readSmallFileSignature(resolve(packageDir, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH), { exists, readFile }))
+      !== JSON.stringify(pkg.pluginManifest)) return false;
+  }
 
   const declaredOutputPaths = resolveWorkspaceExpectedOutputPaths({ packageDir, readFile });
   if (!declaredOutputPaths.every((candidatePath) => exists(candidatePath))) return false;
@@ -1409,6 +1426,9 @@ function sourceDevWorkspacePackageOutputExists({
   }
   if (pkg.dist?.exists !== true) return true;
 
+  if (requireExactOutputs) return JSON.stringify(pkg.dist)
+    === JSON.stringify(readRuntimeDistTreeSignature(resolve(packageDir, 'dist'), { exists, readDir, stat }));
+
   return treeContainsRecordedShape(
     pkg.dist,
     readRuntimeDistTreeSignature(resolve(packageDir, 'dist'), { exists, readDir, stat }),
@@ -1422,6 +1442,7 @@ function sourceDevWorkspaceOutputsContainRecordedPublication({
   readFile = readFileSync,
   readDir = readdirSync,
   stat = statSync,
+  requireExactOutputs = false,
 }) {
   return (signature?.packages ?? []).every((pkg) => sourceDevWorkspacePackageOutputExists({
     repoRoot,
@@ -1430,6 +1451,8 @@ function sourceDevWorkspaceOutputsContainRecordedPublication({
     readFile,
     readDir,
     stat,
+    requireExactOutputs,
+    workspaceNames: signature.workspaceNames,
   }));
 }
 
@@ -1440,6 +1463,7 @@ function sourceDevSharedDepsPackageOutputExists({
   readFile = readFileSync,
   readDir = readdirSync,
   stat = statSync,
+  requireExactOutputs = false,
 }) {
   const workspaceName = String(pkg?.workspaceName ?? '').trim();
   if (!workspaceName) return false;
@@ -1456,11 +1480,8 @@ function sourceDevSharedDepsPackageOutputExists({
       BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH,
     );
     if (!exists(destPluginManifestPath)) return false;
-    try {
-      if (String(readFile(destPluginManifestPath, 'utf8')) !== pkg.pluginManifest.contents) return false;
-    } catch {
-      return false;
-    }
+    if (JSON.stringify(readSmallFileSignature(destPluginManifestPath, { exists, readFile }))
+      !== JSON.stringify(pkg.pluginManifest)) return false;
   }
   for (const target of pkg.rootRuntimeTargets ?? []) {
     const targetPath = resolve(destPackageDir, String(target?.relativePath ?? ''));
@@ -1476,8 +1497,10 @@ function sourceDevSharedDepsPackageOutputExists({
   if (pkg.dist?.exists === true) {
     const destDist = resolve(destPackageDir, 'dist');
     if (!exists(destDist)) return false;
-    const destDistSignature = readTreeSignature(destDist, { exists, readDir, stat });
-    if (!treeEntryShapesEqual(pkg.dist, destDistSignature)) return false;
+    const destDistSignature = readRuntimeDistTreeSignature(destDist, { exists, readDir, stat });
+    if (requireExactOutputs
+      ? JSON.stringify(pkg.dist) !== JSON.stringify(destDistSignature)
+      : !treeEntryShapesEqual(pkg.dist, destDistSignature)) return false;
   }
   return true;
 }
@@ -1490,9 +1513,10 @@ function sourceDevSharedDepsOutputsExist({
   readFile = readFileSync,
   readDir = readdirSync,
   stat = statSync,
+  requireExactOutputs = false,
 }) {
   for (const pkg of signature.packages ?? []) {
-    if (!sourceDevSharedDepsPackageOutputExists({ repoRoot, pkg, exists, readFile, readDir, stat })) return false;
+    if (!sourceDevSharedDepsPackageOutputExists({ repoRoot, pkg, exists, readFile, readDir, stat, requireExactOutputs })) return false;
   }
 
   return includeRuntimeDependencies
@@ -1738,11 +1762,18 @@ export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
       readFile,
       readDir,
       stat,
+      requireExactOutputs: opts.requireExactOutputs === true,
+    })) continue;
+    if (opts.verifyMaterializedOutputs === true && !sourceDevSharedDepsOutputsExist({
+      repoRoot, signature: entry.signature, exists, readFile, readDir, stat,
+      requireExactOutputs: opts.requireExactOutputs === true,
+      includeRuntimeDependencies: opts.includeRuntimeDependencies !== false,
     })) continue;
     return {
       usable: true,
       reason: 'recorded-outputs-complete',
       syncedAtMs: Number(entry.syncedAtMs ?? 0),
+      ...(opts.requireExactOutputs === true ? { signature: entry.signature } : {}),
     };
   }
 
@@ -2042,6 +2073,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       // hide an already-held outer lease behind the later shared-copy lease.
       env: childBuildEnv,
       quiet: opts.quiet === true,
+      progress: opts.progress === true,
       bundledPluginArtifactPublication: opts.bundledPluginArtifactPublication
         ?? (String(childBuildEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
           ? {
@@ -2517,6 +2549,7 @@ async function publishPreparedBundledWorkspaceDependenciesForCli(prepared, opts 
       syncBundledWorkspaceDistImpl: opts.syncBundledWorkspaceDistImpl,
       env: publicationEnv,
       quiet: opts.quiet === true,
+      progress: opts.progress === true,
       bundledPluginArtifactPublication: opts.bundledPluginArtifactPublication
         ?? (String(publicationEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
           ? {

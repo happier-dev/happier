@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +9,12 @@ import { voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settin
 import { t } from '@/text';
 import { createVoiceProviderRegistry, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+
+// This third-party SDK export is unavailable on some workers and is never used by these settings rows.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected streaming Markdown in Voice settings test'); },
+}));
+
 
 const storageBoundary = vi.hoisted(() => ({
   settings: null as Settings | null,
@@ -80,6 +87,23 @@ function localVoice(providerId: 'local_direct' | 'local_conversation'): VoiceSet
 async function loadSection() {
   return (await import('@/voice/settings/panels/VoiceExecutionMachineSection')).VoiceExecutionMachineSection;
 }
+
+// Resolve the real registry/settings graph during collection rather than inside a timed interaction.
+const VoiceExecutionMachineSection = await loadSection();
+
+it('keeps the Advanced Voice computer available for model management when conversations are off', async () => {
+  const voice: VoiceSettings = { ...voiceSettingsDefaults, providerId: null, dictation: {
+    ...voiceSettingsDefaults.dictation, sttBinding: 'explicit', stt: { ...voiceSettingsDefaults.dictation.stt, provider: 'device' },
+  } };
+  const setVoice = vi.fn();
+  const view = await renderSettingsView(<VoiceExecutionMachineSection voice={voice} setVoice={setVoice} intent="advanced" />);
+  const picker = view.tree.root.findAll((node) => String(node.type) === 'DropdownMenu')[0];
+  expect(picker).toBeDefined();
+  await act(async () => { picker!.props.onSelect('machine-1'); });
+  expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
+    providerId: null, executionMachine: { mode: 'fixed', machineId: 'machine-1', autoMachineId: null },
+  }));
+});
 
 function modeRegistry(): VoiceProviderRegistry {
   return createVoiceProviderRegistry({
@@ -178,7 +202,7 @@ describe('VoiceExecutionMachineSection', () => {
 
       const dropdown = screen.findAll(
         (node) => String(node.type) === 'DropdownMenu'
-          && node.props?.itemTrigger?.title === t('settingsVoice.local.executionMachine.title'),
+          && node.props?.itemTrigger?.title === t('settingsVoice.pages.conversations.runsOn'),
       )[0];
 
       expect(dropdown).toBeTruthy();

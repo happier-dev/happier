@@ -7,6 +7,7 @@ import {
     type TriageWorkspaceModeV1,
 } from '../../sessions/entrySessionWorkspace.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
 import type {
     TriageActionCheckoutResolutionV1,
@@ -217,7 +218,16 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
 }>): TriageNewSessionDestinationV1 {
     const kind = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[input.workspaceMode];
 
-    const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse(input.settlement);
+    // Consume the host's current draft before projecting its selected path into
+    // the incumbent Triage materialization grammar. Managed placement has no
+    // explicit path for this flow and must not be guessed by the plugin.
+    const selected = SessionServerStartSpawnDraftV1Schema.safeParse(input.settlement);
+    if (!selected.success || selected.data.directory.kind !== 'path') {
+        return { status: 'refused', reason: 'draftUnusable' };
+    }
+    const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse({
+        ...selected.data, directory: selected.data.directory.path,
+    });
     if (!draft.success) return { status: 'refused', reason: 'draftUnusable' };
     const directory = draft.data.directory.path;
 

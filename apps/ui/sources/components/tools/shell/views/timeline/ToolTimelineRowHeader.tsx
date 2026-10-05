@@ -13,6 +13,8 @@ import {
 } from '@/components/sessions/transcript/transcriptRowActionVisibility';
 import { ToolTimelineIconFrame } from './ToolTimelineIconFrame';
 import { ICON_SIZE, Icon, type IconName } from '@/components/ui/icons/Icon';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import type { TranscriptFindRowSnapshot } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 export const TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID = 'tool-timeline-row-reveal-slot';
 export const TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID = 'tool-timeline-row-pin-slot';
@@ -34,6 +36,8 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
     density: ToolTimelineRowDensity;
     icon: React.ReactNode;
     title: string;
+    findBlocks?: TranscriptFindRowSnapshot['blocks'];
+    findRevealBlockId?: string;
     subtitle?: string | null;
     statusText?: string | null;
     onPress?: (() => void) | null;
@@ -51,6 +55,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
     disclosure?: ToolTimelineRowHeaderDisclosure | null;
 }) {
     const { theme } = useUnistyles();
+    const findRanges = (blockId: string) => props.findBlocks?.find((block) => block.id === blockId)?.sourceRanges;
 
     const showSubtitleInline = Boolean(props.subtitle && String(props.subtitle).trim().length > 0);
     const showStatusInline = Boolean(props.statusText && String(props.statusText).trim().length > 0);
@@ -135,18 +140,18 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                 <View style={styles.text}>
                     <Text
                         style={[styles.title, props.density === 'compact' ? styles.titleCompact : null]}
-                        numberOfLines={1}
+                        numberOfLines={props.findRevealBlockId === 'tool-title' ? undefined : 1}
                     >
-                        {props.title}
+                        {findRanges('tool-title')?.length ? <FindHighlightedText text={props.title} ranges={findRanges('tool-title')} /> : props.title}
                     </Text>
                     {showSubtitleInline ? (
-                        <Text style={styles.subtitleInline} numberOfLines={1}>
-                            {`${props.subtitle}`}
+                        <Text style={styles.subtitleInline} numberOfLines={props.findRevealBlockId === 'tool-subtitle' ? undefined : 1}>
+                            {findRanges('tool-subtitle')?.length ? <FindHighlightedText text={props.subtitle!} ranges={findRanges('tool-subtitle')} /> : props.subtitle}
                         </Text>
                     ) : null}
                     {showStatusInline ? (
-                        <Text style={styles.statusInline} numberOfLines={1}>
-                            {` · ${props.statusText}`}
+                        <Text style={styles.statusInline} numberOfLines={props.findRevealBlockId === 'tool-status' ? undefined : 1}>
+                            {' · '}{findRanges('tool-status')?.length ? <FindHighlightedText text={props.statusText!} ranges={findRanges('tool-status')} /> : props.statusText}
                         </Text>
                     ) : null}
                 </View>

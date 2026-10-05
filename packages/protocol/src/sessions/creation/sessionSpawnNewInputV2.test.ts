@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionAuthoringValueV1Schema, SyncedSessionAuthoringValueV2Schema } from '../authoring/index.js';
 
 import {
   SessionAuthoringCheckoutCreationDraftV1Schema as canonicalCheckoutCreationDraftSchema,
@@ -17,6 +18,18 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it('admits creation-scoped triggers without caller-selected Session identities', () => {
+    const initialTriggers = [{ target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
+      trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }];
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, initialTriggers }).initialTriggers).toEqual(initialTriggers);
+    expect(SessionAuthoringValueV1Schema.shape.initialTriggers.parse(initialTriggers)).toEqual(initialTriggers);
+    expect(SyncedSessionAuthoringValueV2Schema.shape.initialTriggers.parse(initialTriggers)).toEqual(initialTriggers);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, initialTriggers: [{ ...initialTriggers[0], sessionId: 'other' }] }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, initialTriggers: [{ ...initialTriggers[0],
+      trigger: { ...initialTriggers[0]!.trigger, sourceSessionId: 'other' } }] }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, initialTriggers: [{ ...initialTriggers[0],
+      trigger: { ...initialTriggers[0]!.trigger, policy: { kind: 'currentTurn', sourceTurnId: 'turn' } } }] }).success).toBe(false);
+  });
   it('requires an explicit directory intent and excludes checkout creation from managed sessions', () => {
     expect(SessionSpawnNewInputV2Schema.parse(input).directory).toEqual(input.directory);
     expect(SessionSpawnNewInputV2Schema.parse({ ...input, directory: { kind: 'managed' } }).directory)

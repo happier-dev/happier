@@ -7,11 +7,13 @@ import type {
 } from './backendCapabilities.js';
 
 export function admitScmCommitPolicy(
-  request: Pick<ScmCommitCreateRequest, 'mode' | 'signOff'>,
-  capabilities?: Partial<Pick<ScmCapabilities, 'writeCommitAmend' | 'writeCommitSignOff'>>,
+  request: Pick<ScmCommitCreateRequest, 'mode' | 'signOff' | 'expectedHeadOid' | 'expectedRef' | 'expectedCandidateTreeOid' | 'preparedTreeOid' | 'acceptedHookTreeOid' | 'expectedIndexTreeOid'>,
+  capabilities?: Partial<Pick<ScmCapabilities, 'writeCommitAmend' | 'writeCommitSignOff' | 'writeCommitExpectedBase' | 'writeCommitSafePlan'>>,
 ): Readonly<{ success: true }> | Readonly<{ success: false; errorCode: 'FEATURE_UNSUPPORTED'; error: string; outcome: ScmOperationOutcome }> {
   if ((request.mode === 'amend' && capabilities?.writeCommitAmend !== true)
-    || (request.signOff === true && capabilities?.writeCommitSignOff !== true)) {
+    || (request.signOff === true && capabilities?.writeCommitSignOff !== true)
+    || ((request.expectedHeadOid !== undefined || request.expectedRef !== undefined) && capabilities?.writeCommitExpectedBase !== true)
+    || ((request.expectedCandidateTreeOid !== undefined || request.preparedTreeOid !== undefined || request.acceptedHookTreeOid !== undefined || request.expectedIndexTreeOid !== undefined) && capabilities?.writeCommitSafePlan !== true)) {
     const error = 'The selected SCM backend does not support the requested commit option';
     return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error,
       outcome: { v: 1, kind: 'failed', errorCode: 'FEATURE_UNSUPPORTED', nextActions: [], message: error } };
@@ -50,6 +52,9 @@ export function createScmCapabilities(input?: Partial<ScmCapabilities>): ScmCapa
     writeCommitUndoLast: input?.writeCommitUndoLast ?? false,
     writeCommitAmend: input?.writeCommitAmend ?? false,
     writeCommitSignOff: input?.writeCommitSignOff ?? false,
+    writeCommitExpectedBase: input?.writeCommitExpectedBase ?? false,
+    writeCommitSafePlan: input?.writeCommitSafePlan ?? false,
+    readCommitResolveOutcome: input?.readCommitResolveOutcome ?? false,
     writeCommitPathSelection: input?.writeCommitPathSelection ?? false,
     writeCommitLineSelection: input?.writeCommitLineSelection ?? false,
     writeBackout: input?.writeBackout ?? false,
@@ -151,6 +156,9 @@ export function createScmCapabilitiesFromBackendCapabilities(
     writeCommitUndoLast: isCapabilityEnabled(input.commit.undoLast),
     writeCommitAmend: isCapabilityEnabled(input.commit.amend),
     writeCommitSignOff: isCapabilityEnabled(input.commit.signOff),
+    writeCommitExpectedBase: isCapabilityEnabled(input.commit.expectedBase),
+    writeCommitSafePlan: isCapabilityEnabled(input.commit.safePlan),
+    readCommitResolveOutcome: isCapabilityEnabled(input.commit.resolveOutcome),
     writeCommitPathSelection: isCapabilityEnabled(input.commit.pathSelection),
     writeCommitLineSelection: isCapabilityEnabled(input.commit.lineSelection),
     writeBackout: isCapabilityEnabled(input.commit.backout),

@@ -10,11 +10,8 @@ import {
     type EffectiveActionInputField,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import {
-    HappierField,
     HappierForm,
-    HappierSelect,
-    HappierTextField,
-    HappierToggle,
+    HappierInputField,
     patchHappierActionInputPath,
     readHappierActionInputPath,
     resolveHappierActionFieldPresentation,
@@ -23,6 +20,10 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { SurfaceStateCard } from '@/components/ui/surfaces';
+import { t } from '@/text';
+import type { ResolveSessionActionFieldOptions } from './sessionActionFieldOptions';
+import { InputTypePickerHostProvider } from './InputTypePickerHostProvider';
 
 export type ActionFieldOption = Readonly<{
     value: ActionInputOptionValue;
@@ -31,6 +32,8 @@ export type ActionFieldOption = Readonly<{
     description?: string;
     disabled?: boolean;
 }>;
+
+const FIELD_STYLE = { marginTop: 10 } as const;
 
 /** Compatibility names for existing core callers; algorithms live in plugin-ui presentation. */
 export const getValueAtPath = readHappierActionInputPath;
@@ -82,7 +85,7 @@ export function ActionInputFields(props: Readonly<{
     editable: boolean;
     /** Submission state projected by the form lifecycle owner. */
     busy?: boolean;
-    resolveFieldOptions: (field: EffectiveActionInputField) => readonly ActionFieldOption[];
+    resolveFieldOptions: ResolveSessionActionFieldOptions;
     onPatch: (patch: Record<string, unknown>) => void;
     resolveFieldTestID?: (field: EffectiveActionInputField) => string | undefined;
     getChipAccessibilityLabel?: (args: Readonly<{
@@ -95,118 +98,59 @@ export function ActionInputFields(props: Readonly<{
     const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
 
     return (
+        <InputTypePickerHostProvider enabled={props.fields.some((field) => field.inputType !== undefined)}
+            {...props.resolveFieldOptions.pickerContext}>
         <HappierForm busy={props.busy}>
             {props.fields.map((field) => {
                 const path = typeof field?.path === 'string' ? field.path : '';
                 const widget = typeof field?.widget === 'string' ? field.widget : '';
                 if (!path || !widget) return null;
-
                 const label = typeof field?.title === 'string' ? field.title : path;
-                const presentation = resolveActionFieldPresentationForInput(field, props.input);
-                if (!presentation) return null;
-                const disabled = field.disabled === true;
-                const fieldTestID = props.resolveFieldTestID?.(field);
-
-                if (presentation.kind === 'select') {
-                    const selected = presentation.value;
-                    const selectedValues = Array.isArray(selected)
-                        ? selected
-                        : (selected === undefined ? [] : [selected]);
-                    const options: readonly HappierSelectOption<ActionInputOptionValue>[] = props.resolveFieldOptions(field).map((option) => ({
+                const value = readHappierActionInputPath(props.input, path);
+                const selection = readActionInputSelectionForPresentation(field, value);
+                const choices = widget === 'select' || widget === 'multiselect';
+                const optionState = choices ? props.resolveFieldOptions.state?.(field) : undefined;
+                const selectedValues = Array.isArray(selection) ? selection : (selection === undefined ? [] : [selection]);
+                const options: readonly HappierSelectOption<ActionInputOptionValue>[] = choices
+                    ? props.resolveFieldOptions(field).map((option) => ({
                         ...option,
                         accessibilityLabel: props.getChipAccessibilityLabel?.({
                             field,
                             option,
-                            selected: selectedValues.some((value) => isSameActionInputOptionValue(value, option.value)),
+                            selected: selectedValues.some((selected) => isSameActionInputOptionValue(selected, option.value)),
                         }),
-                    }));
-                    return (
-                        <HappierField
-                            key={path}
-                            label={label}
-                            description={field.description}
-                            required={field.required}
-                            disabled={!props.editable || disabled}
-                            theme={presentationTheme}
-                            style={{ marginTop: 10 }}
-                        >
-                            <HappierSelect
-                                label={label}
-                                options={options}
-                                value={selected}
-                                multiple={presentation.multiple}
-                                maxSelections={field.maxSelections}
-                                minimumSelections={presentation.multiple && field.required ? 1 : undefined}
-                                disabled={!props.editable || disabled}
-                                theme={presentationTheme}
-                                isEqual={isSameActionInputOptionValue}
-                                keyForOption={(option) => actionInputOptionValueKey(option.value)}
-                                onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
-                            />
-                        </HappierField>
-                    );
-                }
-
-                if (presentation.kind === 'toggle') {
-                    const selected = presentation.value;
-                    const accessibilityLabel = props.getChipAccessibilityLabel?.({
+                    }))
+                    : [];
+                const toggleLabel = widget === 'boolean'
+                    ? props.getChipAccessibilityLabel?.({
                         field,
-                        option: { value: String(selected), label },
-                        selected,
-                    }) ?? label;
-                    return (
-                        <HappierField
-                            key={path}
-                            label={label}
-                            description={field.description}
-                            required={field.required}
-                            disabled={!props.editable || disabled}
-                            theme={presentationTheme}
-                            style={{ marginTop: 10 }}
-                        >
-                            <HappierToggle
-                                label={accessibilityLabel}
-                                value={selected}
-                                disabled={!props.editable || disabled}
-                                theme={presentationTheme}
-                                onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
-                            />
-                        </HappierField>
-                    );
-                }
-
-                if (presentation.kind === 'text') {
-                    return (
-                        <HappierField
-                            key={path}
-                            label={label}
-                            description={field.description}
-                            required={field.required}
-                            disabled={!props.editable || disabled}
-                            theme={presentationTheme}
-                            style={{ marginTop: 10 }}
-                        >
-                            <HappierTextField
-                                label={label}
-                                testID={fieldTestID}
-                                placeholder={field.placeholder}
-                                required={field.required}
-                                disabled={!props.editable || disabled}
-                                value={presentation.value}
-                                secure={presentation.secure}
-                                keyboardType={presentation.keyboardType}
-                                onChangeText={(text) => props.onPatch(
-                                    patchHappierActionInputPath(props.input, path, presentation.parseText(text)),
-                                )}
-                                multiline={presentation.multiline}
-                                theme={presentationTheme}
-                            />
-                        </HappierField>
-                    );
-                }
-
-                return null;
+                        option: { value: String(value === true), label },
+                        selected: value === true,
+                    })
+                    : undefined;
+                return (
+                    <HappierInputField<ActionInputOptionValue>
+                        key={path}
+                        field={{ ...field, title: label }}
+                        value={value}
+                        selection={selection}
+                        options={options}
+                        {...(optionState === undefined ? {} : { optionsStatus: optionState.status })}
+                        optionsNotice={optionState?.status === 'failed' ? <SurfaceStateCard kind="error" size="line" title={t('common.error')}
+                            diagnosticCode={optionState.errorCode}
+                            action={props.resolveFieldOptions.retry ? { label: t('common.retry'), onPress: props.resolveFieldOptions.retry } : undefined} /> : null}
+                        disabled={!props.editable}
+                        isEqual={isSameActionInputOptionValue}
+                        keyForOption={(option) => actionInputOptionValueKey(option.value)}
+                        {...(toggleLabel === undefined ? {} : { toggleLabel })}
+                        {...(widget === 'boolean' ? {} : { controlTestID: props.resolveFieldTestID?.(field) })}
+                        style={FIELD_STYLE}
+                        theme={presentationTheme}
+                        onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
+                    />
+                );
             })}
         </HappierForm>
+        </InputTypePickerHostProvider>
     );
 }

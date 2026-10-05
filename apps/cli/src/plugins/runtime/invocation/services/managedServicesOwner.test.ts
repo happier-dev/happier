@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type {
     ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -3734,6 +3735,69 @@ describe('managed-services SVC09 owner', () => {
         expect(stop).toHaveBeenCalledOnce();
         expect(dispose).toHaveBeenCalledTimes(2);
         expect(replacementDispose).toHaveBeenCalledOnce();
+    });
+
+    it('retires every daemon-owned service without affecting borrowed or live runner-owned services and retains incomplete cleanup', async () => {
+        const firstProcess = createLifecycleProcess(4_101);
+        let terminationIncomplete = true;
+        const secondProcess = createLifecycleProcess(4_102, () => {
+            if (terminationIncomplete) {
+                throw new PluginError({
+                    code: 'plugin_exec_termination_incomplete',
+                    message: 'Exact process tree remained live',
+                });
+            }
+        });
+        const otherDaemonProcess = createLifecycleProcess(4_103);
+        const runnerProcess = createLifecycleProcess(4_104);
+        const daemon = createLifecycleHarness([firstProcess, secondProcess], 'daemon');
+        const otherDaemon = createLifecycleHarness([otherDaemonProcess], 'daemon');
+        const runner = createLifecycleHarness([runnerProcess], 'sessionRunner');
+        const bindDaemon = (operationId: string) => daemon.owner.bindScope(
+            lifecycleScope({ occurrenceId: 'daemon-occurrence', operationId }),
+            daemon.exec,
+        );
+        const first = await bindDaemon('connected-one').supervise(lifecycleSpec({
+            id: 'opencode-server', port: 4_311,
+        }));
+        const second = await bindDaemon('connected-two').supervise(lifecycleSpec({
+            id: 'opencode-server', port: 4_312,
+        }));
+        const other = await otherDaemon.owner.bindScope(
+            lifecycleScope({ occurrenceId: 'other-daemon-occurrence', operationId: 'connected-one' }),
+            otherDaemon.exec,
+        ).supervise(lifecycleSpec({ id: 'opencode-server', port: 4_313 }));
+        const active = await runner.owner.bindScope(
+            lifecycleScope({ occurrenceId: 'runner-occurrence', sessionId: 'live-session' }),
+            runner.exec,
+        ).supervise(lifecycleSpec({ id: 'opencode-server', port: 4_314 }));
+        const borrowed = await bindDaemon('borrowed-endpoint').supervise({
+            id: 'opencode-server',
+            mode: { kind: 'attach', baseUrl: other.snapshot().baseUrl! },
+            healthCheck: { kind: 'none' },
+        });
+
+        try {
+            await expect(daemon.owner.dispose()).rejects.toBeInstanceOf(AggregateError);
+            expect(first.snapshot().state).toBe('stopped');
+            expect(second.snapshot().state).not.toBe('stopped');
+            expect(borrowed.snapshot().state).toBe('stopped');
+            expect(other.snapshot().state).toBe('healthy');
+            expect(active.snapshot().state).toBe('healthy');
+            expect(otherDaemonProcess.dispose).not.toHaveBeenCalled();
+            expect(runnerProcess.dispose).not.toHaveBeenCalled();
+
+            terminationIncomplete = false;
+            await expect(daemon.owner.dispose()).resolves.toBeUndefined();
+            expect(second.snapshot().state).toBe('stopped');
+            expect(firstProcess.dispose).toHaveBeenCalledOnce();
+            expect(secondProcess.dispose).toHaveBeenCalledTimes(2);
+            expect(other.snapshot().state).toBe('healthy');
+            expect(active.snapshot().state).toBe('healthy');
+        } finally {
+            terminationIncomplete = false;
+            await Promise.all([daemon.owner.dispose(), otherDaemon.owner.dispose(), runner.owner.dispose()]);
+        }
     });
 
     it('retains real supervisor cleanup custody when post-spawn establishment cleanup fails', async () => {

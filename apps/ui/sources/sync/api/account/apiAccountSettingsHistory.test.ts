@@ -5,7 +5,7 @@ import type { StorageState } from '@/sync/store/types';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchAccountSettingsHistory } from './apiAccountSettingsHistory';
 
 const credentials: AuthCredentials = { token: 'token-a' };
@@ -14,7 +14,7 @@ const snapshots = [
     { version: 2, createdAt: '2026-08-28T10:00:00.000Z', contentKind: 'encrypted', byteLength: 256 },
 ];
 let scope: { serverId: string; accountId: string };
-const http = vi.fn<typeof fetch>();
+const http = vi.fn<RuntimeFetch>();
 
 async function activateHome(name: string) {
     const profile = await upsertAndActivateServer({ serverUrl: `https://home-${name}.example.test`, name });

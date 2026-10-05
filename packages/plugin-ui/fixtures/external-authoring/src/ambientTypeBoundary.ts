@@ -35,13 +35,13 @@ const authorSelect: SelectProps = {
   onChange: () => undefined,
 };
 
-const hostOwnedSelectMetadata: SelectProps = {
+const authorStructuredSelectValue: SelectProps = {
   label: 'Connected account',
   options: [],
   value: {
     service: { pluginId: 'acme.hosting', localId: 'github' },
     accountId: 'primary',
-    // @ts-expect-error Account inventory metadata is normalized before author props.
+    // Structured JSON is authored data, not trusted host inventory metadata.
     hostMetadata: { providerId: 'github' },
   },
   onChange: () => undefined,
@@ -102,7 +102,7 @@ const privateItemGroupIndex: ItemProps = {
 
 void authorHints;
 void authorSelect;
-void hostOwnedSelectMetadata;
+void authorStructuredSelectValue;
 void authorListSection;
 void authorItemGroup;
 void authorItem;

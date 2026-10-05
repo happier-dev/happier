@@ -58,7 +58,7 @@ async function declarationSources(directory: string): Promise<readonly string[]>
 async function installPublicSdkPublicBoundaryStub(consumerRoot: string): Promise<void> {
     const sdkRoot = join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
     await mkdir(sdkRoot, { recursive: true });
-    const subpaths = ['protocol', 'contributions', 'manifest', 'connected-accounts', 'sessions'];
+    const subpaths = ['protocol', 'contributions', 'manifest', 'connected-accounts', 'sessions', 'scm'];
     await Promise.all([
         writeFile(join(sdkRoot, 'package.json'), `${JSON.stringify({
             name: '@happier-dev/plugin-sdk',
@@ -138,6 +138,24 @@ export type QualifiedConnectedAccountRef = Readonly<{
 `, 'utf8'),
         writeFile(join(sdkRoot, 'sessions.d.ts'), `
 export type SessionId = string;
+`, 'utf8'),
+        writeFile(join(sdkRoot, 'scm.d.ts'), `
+import type { ProtocolComposableSchema, ProtocolJsonValue } from './protocol.js';
+export type ScmComparisonSource =
+    | Readonly<{ kind: 'workingTree' }>
+    | Readonly<{ kind: 'session'; sessionId: string }>
+    | Readonly<{ kind: 'branch'; head: string; base: string }>
+    | Readonly<{ kind: 'commit'; commit: string; parent?: string }>
+    | Readonly<{ kind: 'turnCheckpoint'; sessionId?: string; turnId?: string; checkpointReceiptId?: string; evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' }>
+    | Readonly<{ kind: 'pullRequest'; locator: Readonly<{
+        providerId: string;
+        repository: string;
+        number: number;
+        baseOid?: string;
+        headOid?: string;
+        sourceAction?: Readonly<{ action: Readonly<{ pluginId: string; localId: string }>; input?: ProtocolJsonValue }>;
+    }> }>;
+export declare const ScmComparisonSourceSchema: ProtocolComposableSchema<ScmComparisonSource>;
 `, 'utf8'),
     ]);
 }

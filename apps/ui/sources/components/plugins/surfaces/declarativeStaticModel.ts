@@ -8,6 +8,7 @@ import {
     type NormalizedPluginCollectionUiQueryDescriptorV1,
     type PluginContributionIdentityV1,
     type PluginDeclarativeSettingsInventoryEntryV1,
+    type PluginJsonSchemaV2,
 } from '@happier-dev/protocol';
 
 export type DeclarativeStaticRecord = Readonly<Record<string, unknown>>;
@@ -31,6 +32,8 @@ export type AdmittedDeclarativeSetting = Readonly<{
 }>;
 
 export type AdmittedDeclarativeStaticModel = Readonly<{
+    dragSources: ReadonlyMap<string, AdmittedDeclarativeDestination & Readonly<{ referenceSchema: PluginJsonSchemaV2 }>>;
+    dropTargets: ReadonlyMap<string, AdmittedDeclarativeDestination>;
     model: DeclarativeStaticRecord;
     root: DeclarativeStaticRecord;
     occurrenceId: string;
@@ -114,6 +117,18 @@ export function admitDeclarativeStaticModel(input: Readonly<{
 
     const inventory = record(model.declarativeInventory);
     if (!inventory) return null;
+    const dragSources = new Map<string, AdmittedDeclarativeDestination & Readonly<{ referenceSchema: PluginJsonSchemaV2 }>>();
+    const dropTargets = new Map<string, AdmittedDeclarativeDestination>();
+    for (const entry of structural.data.declarativeInventory.dragSources ?? []) {
+        const reference = readQualifiedReference({ value: entry, pluginId: input.expectedPluginId, occurrenceId });
+        if (!reference || dragSources.has(reference.qualifiedId)) return null;
+        dragSources.set(reference.qualifiedId, Object.freeze({ ...reference, referenceSchema: entry.referenceSchema }));
+    }
+    for (const entry of structural.data.declarativeInventory.dropTargets ?? []) {
+        const reference = readQualifiedReference({ value: entry, pluginId: input.expectedPluginId, occurrenceId });
+        if (!reference || dropTargets.has(reference.qualifiedId)) return null;
+        dropTargets.set(reference.qualifiedId, reference);
+    }
     const actionEntries = inventory.actions;
     const destinationEntries = inventory.destinations;
     const settingEntries = inventory.settings;
@@ -196,6 +211,11 @@ export function admitDeclarativeStaticModel(input: Readonly<{
     while (pendingNodes.length > 0) {
         const node = record(pendingNodes.pop());
         if (!node) return null;
+        if (node.kind === 'dragSource' || node.kind === 'dropTarget') {
+            const reference = readQualifiedReference({ value: node.kind === 'dragSource' ? node.source : node.target,
+                pluginId: input.expectedPluginId, occurrenceId });
+            if (!reference || !(node.kind === 'dragSource' ? dragSources : dropTargets).has(reference.qualifiedId)) return null;
+        }
         if (node.kind === 'field') {
             const nodeSetting = record(node.setting);
             const nodeSettingId = nonemptyString(nodeSetting?.id);
@@ -230,5 +250,7 @@ export function admitDeclarativeStaticModel(input: Readonly<{
         settingsByQualifiedId,
         settings: Object.freeze(settings),
         uiQueries,
+        dragSources,
+        dropTargets,
     });
 }

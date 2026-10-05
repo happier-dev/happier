@@ -18,6 +18,7 @@ import { resolveMarkdownRichDisabledReasonCopy } from '@/components/ui/markdown/
 import { Icon } from '@/components/ui/icons/Icon';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
+import { FileIcon } from '@/components/ui/media/FileIcon';
 
 export type FileDisplayMode = 'file' | 'diff' | 'markdown';
 export type FileDiffMode = 'included' | 'pending' | 'both';
@@ -358,21 +359,6 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 />
             ) : null}
             {showWrapLinesToggle === true ? <WrapLinesToggleButton /> : null}
-            {showFileEditorActions && !isEditingFile && onStartEditingFile ? (
-                <IconButton
-                    testID="file-details-edit"
-                    variant="plain"
-                    size={30}
-                    iconSize={iconSize}
-                    iconName="pencil-simple"
-                    accessibilityLabel={t('common.edit')}
-                    tooltip={t('common.edit')}
-                    onPress={() => {
-                        onDisplayMode('file');
-                        onStartEditingFile();
-                    }}
-                />
-            ) : null}
             {rightElement ? (
                 <View testID="file-details-right" style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                     {rightElement}
@@ -419,12 +405,13 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
 
     const controlsElement = (
         <View testID="file-details-view-controls" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {areaItems.length > 1 ? (
+            {isDiffDisplay && areaItems.length > 0 ? (
                 <ToolbarSelect
                     testID="file-details-diff-area-menu"
                     label={t('detailsSurface.file.areaLabel')}
                     items={areaItems}
                     selectedId={diffMode}
+                    disabled={areaItems.length === 1}
                     onSelect={(itemId) => {
                         if (itemId === 'pending' || itemId === 'included' || itemId === 'both') onDiffMode(itemId);
                     }}
@@ -568,10 +555,15 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             <DetailsTabHeader
                 testID="file-details-header"
                 title={pathName || pathDir || ''}
+                leading={<FileIcon fileName={pathName} size={18} appearance="line" />}
                 meta={meta}
                 actions={viewActionsElement}
                 buttons={buttons}
                 controls={controlsElement}
+                menuActions={showFileEditorActions && !isEditingFile && onStartEditingFile ? [{
+                    id: 'edit', title: t('common.edit'), testID: 'file-details-edit',
+                    onSelect: () => { onDisplayMode('file'); onStartEditingFile(); },
+                }] : undefined}
                 notice={(
                     <>
                         {lineSelectionBar}

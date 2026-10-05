@@ -9,9 +9,10 @@ import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollectio
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import {
     administerConfiguredSourceInstance,
+    findConfiguredSourceInstanceRow,
     type CorpusSourceInstanceAdministrationV1,
 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
-import { resolveTriageCallerSource } from './callerSource.js';
+import { isTriageHostActionCaller, resolveTriageCallerSource } from './callerSource.js';
 
 /**
  * The one public, target-owned source-administration Action.
@@ -20,12 +21,10 @@ import { resolveTriageCallerSource } from './callerSource.js';
  * reads active `source-instances` rows, and until a source Settings surface
  * invokes this Action there are none, so the product cannot be used at all.
  *
- * The request carries no source, plugin or contribution identity. The host
- * stamps the immediate caller, and this handler resolves that caller's *own*
- * currently admitted V1 source contribution at this target's own point — the
- * point admits at most one contribution per contributor, so the caller's plugin
- * id resolves it exactly. A caller with none, or one whose contribution is
- * retired, is rejected before the writer runs.
+ * The host stamps the immediate caller. Plugins resolve their own admitted
+ * source; host automated callers select an admitted source for create or resolve
+ * it from the canonical configured row for lifecycle operations. A requested
+ * address is not provenance. Retired contributions are rejected before writing.
  *
  * It reads no provider. Configuration is a durable choice, and the one producer
  * of provider observations is the aggregate list read itself: opening the list
@@ -64,7 +63,13 @@ export function createTriageAdministerSourceInstanceActionHandler(
             : undefined;
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
 
-        const resolution = await resolveTriageCallerSource(context, cancellation);
+        const configuredRow = isTriageHostActionCaller(context) && input.kind !== 'create'
+            ? await findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, cancellation)
+            : null;
+        const selectedSource = configuredRow?.value.configured.instance.source ?? input.source;
+        if (configuredRow && input.source && (input.source.pluginId !== selectedSource?.pluginId
+            || input.source.localId !== selectedSource?.localId)) return { kind: 'invalidCaller' };
+        const resolution = await resolveTriageCallerSource(context, cancellation, selectedSource);
         if (resolution.kind === 'invalidCaller') return { kind: 'invalidCaller' };
         // The admitted view moved under this invocation, so the caller just
         // resolved is no longer the one the write would belong to.

@@ -4,6 +4,10 @@ import { View } from 'react-native';
 import {
     HappierActionPanel,
     HappierActionPanelSection,
+    HappierDataChart,
+    HappierDataMetric,
+    HappierDataRows,
+    HappierDataTable,
     HappierHeading,
     HappierInfoState,
     HappierInfoTile,
@@ -29,6 +33,8 @@ import type {
     PluginDeclarativeStateV2,
     PluginDeclarativeToneV2,
 } from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema, PluginDeclarativeNodeV2Schema, readPluginDeclarativeDataFieldV1, readPluginDeclarativeDataRowsV1,
+    buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { Theme } from '@/theme';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -79,6 +85,57 @@ export function readDeclarativeText(value: unknown): string {
     if (typeof value === 'string') return value;
     const candidate = readDeclarativeRecord(value);
     return typeof candidate?.fallback === 'string' ? candidate.fallback : '';
+}
+
+/**
+ * Frozen action identity admission is shared by replay rendering and its visible-text projection.
+ * The structured identity is authoritative; a captured qualified key must agree before replay.
+ */
+export function readDeclarativeActionSelection(nodeAction: unknown): Readonly<{
+    identity: PluginContributionIdentityV1;
+    qualifiedId: string;
+}> | null {
+    const action = readDeclarativeRecord(nodeAction);
+    const identity = PluginContributionIdentityV1Schema.safeParse(action?.identity ?? action);
+    if (!identity.success) return null;
+    const qualifiedId = buildQualifiedPluginContributionKey(identity.data);
+    return action?.qualifiedId === undefined || action.qualifiedId === qualifiedId
+        ? { identity: identity.data, qualifiedId }
+        : null;
+}
+
+export type DeclarativeFindTextBlock = Readonly<{
+    id: string;
+    text: string;
+    format?: 'plain' | 'markdown';
+}>;
+type DeclarativeTextField = Readonly<{
+    field: string;
+    text: string;
+    format?: 'markdown';
+    afterChildren?: boolean;
+}>;
+
+function declarativeTextFields(node: RecordValue, localize: DeclarativeTextResolver, fields: readonly string[]): DeclarativeTextField[] {
+    return fields.map((field) => ({ field, text: localize(node[field]) })).filter((entry) => entry.text.length > 0);
+}
+
+function readDisplayText(context: DeclarativeNodeRenderContext, field: string): string {
+    return context.textFields?.get(field)?.text ?? '';
+}
+
+function readDisplayTextBlock(context: DeclarativeNodeRenderContext, field: string): DeclarativeFindTextBlock {
+    const entry = context.textFields?.get(field);
+    return {
+        id: `structured-declarative:${context.nodePath}:${field}`,
+        text: entry?.text ?? '',
+        ...(entry?.format ? { format: entry.format } : {}),
+    };
+}
+
+function renderDisplayText(context: DeclarativeNodeRenderContext, field: string): React.ReactNode {
+    const block = readDisplayTextBlock(context, field);
+    return context.renderText?.(block) ?? block.text;
 }
 
 /**
@@ -248,13 +305,31 @@ export type DeclarativeNodeRenderContext = Readonly<{
      */
     renderCollectionList: (node: RecordValue) => React.ReactNode;
     /**
+     * A live data read is supplied only by its exact host Resource adapter. `path` is the node's
+     * place in the document (`root.children[1]`), stable across reads, so two nodes reading the same
+     * source stay two nodes.
+     */
+    renderDataNode?: (node: RecordValue, path: string) => React.ReactNode;
+    /**
      * Only a live mounted surface can supply the target-local bridge. Immutable
      * transcript rendering deliberately leaves it absent, so a persisted node
      * never resolves a current contributor, renderer, or Host API.
      */
     renderTargetedSurface?: (node: RecordValue) => React.ReactNode;
+    /**
+     * A page's declared widget area, drawn by the host's one area owner. Only a live mounted page
+     * supplies it; persisted transcript and Session content exclude the node.
+     */
+    renderWidgetArea?: (node: RecordValue) => React.ReactNode;
+    /** Live mounts bind these through the shared host runtime; replay retains only children. */
+    renderDragNode?: (node: RecordValue, children: React.ReactNode) => React.ReactNode;
     /** Internal deterministic fallback for persisted nodes, which intentionally have no live projection path. */
     nodePath?: string;
+    /** Owner-resolved visible fields; descendants receive their own model from the same descriptor. */
+    textFields?: ReadonlyMap<string, DeclarativeTextField>;
+    /** A consumer decorates glyphs without replacing the canonical node anatomy. */
+    renderText?: (block: DeclarativeFindTextBlock) => React.ReactNode;
+    renderMarkdown?: (block: DeclarativeFindTextBlock, selectable: boolean | undefined, testID: string | undefined) => React.ReactElement;
 }>;
 
 function renderActionAffordance(
@@ -289,7 +364,7 @@ function renderActionAffordance(
                 testID={`plugin-declarative-action-label:${affordance.key}`}
                 style={{ color: variantColors.label }}
             >
-                {context.localize(node.label)}
+                {renderDisplayText(context, 'label')}
             </Text>
         </HappierPressable>
     );
@@ -331,13 +406,83 @@ const renderDeclarativeContainer: DeclarativeNodeRenderer = (node, context) => (
         direction={node.kind === 'stack' && node.direction === 'horizontal' ? 'horizontal' : 'vertical'}
         wrap
     >
-        {node.kind === 'group' && context.localize(node.title) ? (
-            <HappierHeading level={3} theme={context.presentationTheme}>{context.localize(node.title)}</HappierHeading>
+        {readDisplayText(context, 'title') ? (
+            <HappierHeading level={3} theme={context.presentationTheme}>{renderDisplayText(context, 'title')}</HappierHeading>
         ) : null}
-        {context.localize(node.description) ? <Text>{context.localize(node.description)}</Text> : null}
+        {readDisplayText(context, 'description') ? <Text>{renderDisplayText(context, 'description')}</Text> : null}
         {renderDeclarativeChildren(node, context)}
     </HappierStack>
 );
+
+type DeclarativeNodeDescriptor = Readonly<{
+    render: DeclarativeNodeRenderer;
+    text: (node: RecordValue, localize: DeclarativeTextResolver) => readonly DeclarativeTextField[];
+    children?: boolean;
+    /** Persisted snapshots retain valid historical actions; malformed identities render nothing. */
+    snapshotVisible?: (node: RecordValue) => boolean;
+}>;
+
+function declarativeNode(
+    text: DeclarativeNodeDescriptor['text'],
+    render: DeclarativeNodeRenderer,
+    children = false,
+): DeclarativeNodeDescriptor {
+    return { text, render, children };
+}
+
+const noDisplayText = (): readonly DeclarativeTextField[] => [];
+const containerDisplayText: DeclarativeNodeDescriptor['text'] = (node, localize) => (
+    declarativeTextFields(node, localize, node.kind === 'group' ? ['title', 'description'] : ['description'])
+);
+
+/**
+ * Inert semantic data stays readable in every declarative host: a widget body, a frozen Board
+ * snapshot and a transcript block draw the same public data nodes plugin authors use
+ * (`Metric`, `DataRows`, `DataTable`, `Chart`). A live Resource read is supplied by the mounted
+ * host's `renderDataNode`; a node whose frozen bytes no longer match its fields draws nothing rather
+ * than a guessed value.
+ */
+const renderDeclarativeData: DeclarativeNodeRenderer = (value, context) => {
+    const key = readDeclarativePath(value, context.nodePath);
+    if (context.renderDataNode) return context.renderDataNode(value, key);
+    const { path: _path, order: _order, ...authored } = value;
+    const parsed = PluginDeclarativeNodeV2Schema.safeParse(authored);
+    if (!parsed.success || !('data' in parsed.data) || parsed.data.data.kind !== 'value') return null;
+    const data = parsed.data.data.value;
+    const node = parsed.data;
+    const testID = `plugin-declarative-${node.kind}`;
+    const theme = context.presentationTheme;
+    try {
+        if (node.kind === 'metric') {
+            return <HappierDataMetric key={key} testID={testID} theme={theme} label={context.localize(node.label)}
+                value={readPluginDeclarativeDataFieldV1(data, node.value)} {...(node.unit ? { unit: context.localize(node.unit) } : {})}
+                {...(node.comparison ? { comparison: { value: String(readPluginDeclarativeDataFieldV1(data, node.comparison.value)),
+                    label: context.localize(node.comparison.label), meaning: node.comparison.meaning } } : {})} />;
+        }
+        const rows = readPluginDeclarativeDataRowsV1(data, node.rows);
+        if (node.kind === 'chart') {
+            return <HappierDataChart key={key} testID={testID} theme={theme} label={context.localize(node.label)} style={node.style}
+                points={rows.map((row) => {
+                    const x = readPluginDeclarativeDataFieldV1(row, node.x);
+                    return { x: typeof x === 'boolean' ? String(x) : x, y: Number(readPluginDeclarativeDataFieldV1(row, node.y)) };
+                })} />;
+        }
+        const columns = node.columns.map((column) => ({ label: context.localize(column.label),
+            ...(column.priority ? { priority: column.priority } : {}), ...(column.proportion ? { proportion: true } : {}) }));
+        const cells = rows.map((row) => node.columns.map((column) => readPluginDeclarativeDataFieldV1(row, column.field)));
+        const shared = { testID, theme, columns, rows: cells,
+            ...(node.mark ? { marks: rows.map(row => {
+                const passed = readPluginDeclarativeDataFieldV1(row, node.mark!.field) === true;
+                const state = passed ? node.mark!.whenTrue : node.mark!.whenFalse;
+                return { passed, label: context.localize(state.label), meaning: state.meaning };
+            }) } : {}),
+            ...(node.label ? { label: context.localize(node.label) } : {}),
+            ...(node.incomplete ? { incomplete: t('widgetDefinition.moreInSource') } : {}) };
+        return node.kind === 'table' ? <HappierDataTable key={key} {...shared} /> : <HappierDataRows key={key} {...shared} />;
+    } catch {
+        return null;
+    }
+};
 
 /**
  * One renderer per declarative node kind, keyed by the protocol vocabulary.
@@ -350,9 +495,21 @@ const renderDeclarativeContainer: DeclarativeNodeRenderer = (node, context) => (
  * decide what it renders before it can compile.
  */
 const DECLARATIVE_NODE_RENDERERS = Object.freeze({
-    stack: renderDeclarativeContainer,
-    group: renderDeclarativeContainer,
-    list: (node, context) => {
+    metric: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['label', 'unit']), renderDeclarativeData),
+    table: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['label']), renderDeclarativeData),
+    rows: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['label']), renderDeclarativeData),
+    chart: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['label']), renderDeclarativeData),
+    dragSource: declarativeNode(noDisplayText, (node, context) => {
+        const children = renderDeclarativeChildren(node, context);
+        return context.renderDragNode?.(node, children) ?? children;
+    }, true),
+    dropTarget: declarativeNode(noDisplayText, (node, context) => {
+        const children = renderDeclarativeChildren(node, context);
+        return context.renderDragNode?.(node, children) ?? children;
+    }, true),
+    stack: declarativeNode(containerDisplayText, renderDeclarativeContainer, true),
+    group: declarativeNode(containerDisplayText, renderDeclarativeContainer, true),
+    list: declarativeNode(noDisplayText, (node, context) => {
         const label = context.localize(node.label);
         const path = readDeclarativePath(node, context.nodePath);
         return (
@@ -365,20 +522,24 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 {renderDeclarativeChildren(node, context)}
             </HappierList>
         );
-    },
-    section: (node, context) => {
-        const footer = context.localize(node.footer);
+    }, true),
+    section: declarativeNode((node, localize) => [
+        ...declarativeTextFields(node, localize, ['title']),
+        ...declarativeTextFields(node, localize, ['footer']).map((field) => ({ ...field, afterChildren: true })),
+    ], (node, context) => {
+        const footer = readDisplayText(context, 'footer');
         return (
             <HappierListSection
                 key={readDeclarativePath(node, context.nodePath)}
-                title={context.localize(node.title)}
+                title={readDisplayText(context, 'title')}
+                titleContent={context.renderText ? renderDisplayText(context, 'title') : undefined}
             >
                 {renderDeclarativeChildren(node, context)}
-                {footer ? <Text>{footer}</Text> : null}
+                {footer ? <Text>{renderDisplayText(context, 'footer')}</Text> : null}
             </HappierListSection>
         );
-    },
-    actionPanel: (node, context) => {
+    }, true),
+    actionPanel: declarativeNode(noDisplayText, (node, context) => {
         const title = context.localize(node.title);
         const path = readDeclarativePath(node, context.nodePath);
         return (
@@ -392,14 +553,14 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 </HappierActionPanelSection>
             </HappierActionPanel>
         );
-    },
-    item: (node, context) => {
+    }, true),
+    item: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['title', 'subtitle', 'detail']), (node, context) => {
         const affordance = node.action === undefined ? null : context.resolveAction(node);
         const toneLabel = resolveToneAccessibilityLabel(node.tone);
         const iconToken = typeof node.icon === 'string' ? node.icon : null;
-        const title = context.localize(node.title);
-        const subtitle = context.localize(node.subtitle);
-        const detail = context.localize(node.detail);
+        const title = readDisplayText(context, 'title');
+        const subtitle = readDisplayText(context, 'subtitle');
+        const detail = readDisplayText(context, 'detail');
         const path = readDeclarativePath(node, context.nodePath);
         return (
             <HappierListItem
@@ -408,6 +569,9 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 title={title}
                 subtitle={subtitle || undefined}
                 detail={detail || undefined}
+                titleContent={context.renderText ? renderDisplayText(context, 'title') : undefined}
+                subtitleContent={context.renderText ? renderDisplayText(context, 'subtitle') : undefined}
+                detailContent={context.renderText ? renderDisplayText(context, 'detail') : undefined}
                 icon={iconToken ? <Icon name={resolvePluginUiIconName(iconToken, context.direction)} size={ICON_SIZE.sm} /> : undefined}
                 accessibilityLabel={buildActionRowAccessibilityLabel([toneLabel, title, subtitle, detail])}
                 tone={resolveDeclarativePresentationTone(node.tone)}
@@ -432,10 +596,10 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                         })}
             />
         );
-    },
-    state: (node, context) => {
+    }),
+    state: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['title', 'description']), (node, context) => {
         const presentation = resolveStatePresentation(node.state);
-        const description = context.localize(node.description);
+        const description = readDisplayText(context, 'description');
         const iconToken = typeof node.icon === 'string' ? node.icon : null;
         const color = resolveDeclarativeToneColor(context.presentationTheme, presentation.tone);
         const path = readDeclarativePath(node, context.nodePath);
@@ -455,29 +619,39 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                         : (iconToken
                             ? <Icon name={resolvePluginUiIconName(iconToken, context.direction)} size={ICON_SIZE.lg} color={color} />
                             : undefined)}
-                    title={<Text style={{ color }}>{context.localize(node.title)}</Text>}
-                    description={description ? <Text>{description}</Text> : undefined}
+                    title={<Text style={{ color }}>{renderDisplayText(context, 'title')}</Text>}
+                    description={description ? <Text>{renderDisplayText(context, 'description')}</Text> : undefined}
                 />
             </HappierInfoState>
         );
-    },
-    metadata: (node, context) => {
+    }),
+    metadata: declarativeNode((node, localize) => [
+        ...declarativeTextFields(node, localize, ['title']),
+        ...(Array.isArray(node.entries) ? node.entries : []).flatMap((entryValue, index) => {
+            const entry = readDeclarativeRecord(entryValue);
+            return entry ? declarativeTextFields(entry, localize, ['label', 'value'])
+                .map((field) => ({ ...field, field: `entries[${index}].${field.field}` })) : [];
+        }),
+    ], (node, context) => {
         const entries = Array.isArray(node.entries) ? node.entries : [];
-        const title = context.localize(node.title);
+        const title = readDisplayText(context, 'title');
         const path = readDeclarativePath(node, context.nodePath);
         return <HappierMetadata
             key={path}
             testID={`plugin-declarative-metadata:${path}`}
             title={title || undefined}
+            titleContent={context.renderText ? renderDisplayText(context, 'title') : undefined}
             theme={context.presentationTheme}
             entries={entries.flatMap((entryValue, index) => {
                 const entry = readDeclarativeRecord(entryValue);
                 if (!entry) return [];
-                const label = context.localize(entry.label);
-                const value = context.localize(entry.value);
+                const label = readDisplayText(context, `entries[${index}].label`);
+                const value = readDisplayText(context, `entries[${index}].value`);
                 return [{
                     label,
                     value,
+                    labelContent: context.renderText ? renderDisplayText(context, `entries[${index}].label`) : undefined,
+                    valueContent: context.renderText ? renderDisplayText(context, `entries[${index}].value`) : undefined,
                     tone: resolveDeclarativePresentationTone(entry.tone),
                     testID: `plugin-declarative-metadata-entry:${path}:${index}`,
                     accessibilityLabel: [resolveToneAccessibilityLabel(entry.tone), label, value]
@@ -486,10 +660,10 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 }];
             })}
         />;
-    },
-    text: (node, context) => {
+    }),
+    text: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['text']), (node, context) => {
         const toneLabel = resolveToneAccessibilityLabel(node.tone);
-        const text = context.localize(node.text);
+        const text = readDisplayText(context, 'text');
         return (
             <Text
                 key={readDeclarativePath(node, context.nodePath)}
@@ -498,24 +672,25 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 {...(toneLabel ? { accessibilityLabel: `${toneLabel}: ${text}` } : {})}
                 style={{ color: resolveDeclarativeToneColor(context.presentationTheme, node.tone) }}
             >
-                {text}
+                {renderDisplayText(context, 'text')}
             </Text>
         );
-    },
-    markdown: (node, context) => (
+    }),
+    markdown: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['text'])
+        .map((field) => ({ ...field, format: 'markdown' as const })), (node, context) => (
         <HappierMarkdown
             key={readDeclarativePath(node, context.nodePath)}
             testID={`plugin-declarative-markdown:${readDeclarativePath(node, context.nodePath)}`}
-            value={context.localize(node.text)}
+            value={readDisplayText(context, 'text')}
             selectable
-            renderContent={(input) => (
-                <MarkdownView markdown={input.value} selectable={input.selectable} testID={input.testID} profile={context.markdownProfile} />
-            )}
+            renderContent={(input) => context.renderMarkdown
+                ? context.renderMarkdown(readDisplayTextBlock(context, 'text'), input.selectable, input.testID)
+                : <MarkdownView markdown={input.value} selectable={input.selectable} testID={input.testID} profile={context.markdownProfile} />}
         />
-    ),
-    status: (node, context) => {
-        const label = context.localize(node.label);
-        const value = context.localize(node.value);
+    )),
+    status: declarativeNode((node, localize) => declarativeTextFields(node, localize, ['label', 'value']), (node, context) => {
+        const label = readDisplayText(context, 'label');
+        const value = readDisplayText(context, 'value');
         // Declarative status may carry its whole meaning in `tone` while the
         // label and value stay neutral. Sighted users read that as colour, so
         // the shared owner is given the same meaning in words, exactly once.
@@ -527,14 +702,14 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
             <HappierStatus
                 key={readDeclarativePath(node, context.nodePath)}
                 testID="plugin-declarative-status"
-                label={<Text>{label}</Text>}
+                label={<Text>{renderDisplayText(context, 'label')}</Text>}
                 value={(
                     <Text
                         testID={`plugin-declarative-status-value:${readDeclarativePath(node, context.nodePath)}`}
                         selectable
                         style={{ color: resolveDeclarativeToneColor(context.presentationTheme, node.tone) }}
                     >
-                        {value}
+                        {renderDisplayText(context, 'value')}
                     </Text>
                 )}
                 tone={resolveDeclarativePresentationTone(node.tone)}
@@ -544,15 +719,25 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 accessibilityLiveRegion="polite"
             />
         );
+    }),
+    action: {
+        ...declarativeNode((node, localize) => declarativeTextFields(node, localize, ['label']), (node, context) => {
+            const affordance = context.resolveAction(node);
+            return affordance ? renderActionAffordance(node, affordance, context) : null;
+        }),
+        snapshotVisible: (node: RecordValue) => readDeclarativeActionSelection(node.action) !== null,
     },
-    action: (node, context) => {
-        const affordance = context.resolveAction(node);
-        return affordance ? renderActionAffordance(node, affordance, context) : null;
-    },
-    field: (node, context) => context.renderField(node),
-    collectionList: (node, context) => context.renderCollectionList(node),
-    targetedSurface: (node, context) => context.renderTargetedSurface?.(node) ?? null,
-} satisfies Readonly<Record<PluginDeclarativeNodeV2['kind'], DeclarativeNodeRenderer>>);
+    field: declarativeNode(noDisplayText, (node, context) => context.renderField(node)),
+    collectionList: declarativeNode(noDisplayText, (node, context) => context.renderCollectionList(node)),
+    targetedSurface: declarativeNode(noDisplayText, (node, context) => context.renderTargetedSurface?.(node) ?? null),
+    widgetArea: declarativeNode(noDisplayText, (node, context) => context.renderWidgetArea?.(node) ?? null),
+} satisfies Readonly<Record<PluginDeclarativeNodeV2['kind'], DeclarativeNodeDescriptor>>);
+
+function readDeclarativeNodeDescriptor(node: RecordValue): DeclarativeNodeDescriptor | undefined {
+    return typeof node.kind === 'string' && Object.hasOwn(DECLARATIVE_NODE_RENDERERS, node.kind)
+        ? DECLARATIVE_NODE_RENDERERS[node.kind as PluginDeclarativeNodeV2['kind']]
+        : undefined;
+}
 
 export function renderDeclarativeNode(
     nodeValue: unknown,
@@ -560,7 +745,36 @@ export function renderDeclarativeNode(
     fallbackPath = 'root',
 ): React.ReactNode {
     const node = readDeclarativeRecord(nodeValue);
-    if (!node || typeof node.kind !== 'string') return null;
-    const renderer = DECLARATIVE_NODE_RENDERERS[node.kind as PluginDeclarativeNodeV2['kind']];
-    return renderer ? renderer(node, { ...context, nodePath: fallbackPath }) : null;
+    if (!node) return null;
+    const descriptor = readDeclarativeNodeDescriptor(node);
+    return descriptor ? descriptor.render(node, {
+        ...context,
+        nodePath: readDeclarativePath(node, fallbackPath),
+        textFields: new Map(descriptor.text(node, context.localize).map((field) => [field.field, field])),
+    }) : null;
+}
+
+/** Frozen glyph sources, projected through the same vocabulary, field model and paths as rendering. */
+export function projectDeclarativeStructuredFindText(root: unknown): readonly DeclarativeFindTextBlock[] {
+    const blocks: DeclarativeFindTextBlock[] = [];
+    const visit = (nodeValue: unknown, fallbackPath: string): void => {
+        const node = readDeclarativeRecord(nodeValue);
+        if (!node) return;
+        const descriptor = readDeclarativeNodeDescriptor(node);
+        if (!descriptor || descriptor.snapshotVisible?.(node) === false) return;
+        const path = readDeclarativePath(node, fallbackPath);
+        const fields = descriptor.text(node, readDeclarativeText);
+        const append = (field: DeclarativeTextField) => blocks.push({
+            id: `structured-declarative:${path}:${field.field}`,
+            text: field.text,
+            ...(field.format ? { format: field.format } : {}),
+        });
+        fields.filter((field) => !field.afterChildren).forEach(append);
+        if (descriptor.children && Array.isArray(node.children)) {
+            node.children.forEach((child, index) => visit(child, `${path}.children[${index}]`));
+        }
+        fields.filter((field) => field.afterChildren).forEach(append);
+    };
+    visit(root, 'root');
+    return blocks;
 }

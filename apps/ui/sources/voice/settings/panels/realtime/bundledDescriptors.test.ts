@@ -182,6 +182,10 @@ function validateRealtimeDescriptorAgainstDeclaration(
     }
 
     if (field.kind === 'voice_catalog') {
+      if (field.valueShape === 'string') {
+        if (!accepts('voice')) add(field.path, 'string_voice_rejected');
+        continue;
+      }
       for (const option of [{ kind: 'catalog', id: 'voice' }, { kind: 'custom', id: 'voice' }]) {
         if (!accepts(option)) add(field.path, `${option.kind}_voice_rejected`);
       }
@@ -268,10 +272,6 @@ describe('bundled realtime provider settings projection', () => {
           && isRecord(providerSettings.defaultConfig)
           ? providerSettings.parseConfig(providerSettings.defaultConfig)
           : null).not.toBeNull();
-      }
-      if (legacyProviderId === 'happier.voice.openai/realtime-openai') {
-        expect(providerSettings?.presentation).toBeNull();
-        return;
       }
       expect(providerSettings?.presentation).toBeTruthy();
       if (!providerSettings?.presentation) throw new Error('invalid bundled provider settings descriptor');

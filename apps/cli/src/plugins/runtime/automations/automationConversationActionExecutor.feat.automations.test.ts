@@ -4,6 +4,7 @@ import {
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
   AutomationConversationAdmitEncryptedHttpRequestV1Schema,
   AutomationConversationScopedTriggerEvidenceV1Schema,
+  AutomationTriggerIdSchema,
   buildAutomationConversationOccurrenceEvidenceV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
@@ -138,7 +139,7 @@ describe('createAutomationConversationActionExecutor', () => {
         hostEvidence: {
           bindingId: 'another-binding',
           sessionId: 'session-1',
-          triggerId: 'trigger-1',
+          triggerId: AutomationTriggerIdSchema.parse('trigger-1'),
           triggerRevision: 0,
           triggerKind: 'prComment',
           pullRequest: { repository: 'acme/widgets', number: 1 },
@@ -161,7 +162,7 @@ describe('createAutomationConversationActionExecutor', () => {
     for (const sender of [{ principalId: '456' }, input.sender]) {
       await expect(executor({ actionId: 'automation.conversation.admit',
         input: { ...input, sender, resultDelivery: { kind: 'none' }, hostEvidence: {
-          bindingId: input.bindingId, sessionId: 'session-1', triggerId: 'trigger-1', triggerRevision: 0,
+          bindingId: input.bindingId, sessionId: 'session-1', triggerId: AutomationTriggerIdSchema.parse('trigger-1'), triggerRevision: 0,
           triggerKind: 'prComment', pullRequest: { repository: 'acme/widgets', number: 1 },
           observationActorPrincipalId: '123', actor: { principalId: '123', repositoryWriteAccess: true },
         } },
@@ -174,7 +175,7 @@ describe('createAutomationConversationActionExecutor', () => {
 
   it.each(['prComment', 'ciFailed'] as const)('binds encrypted scoped %s permission evidence to the admitted occurrence', async (triggerKind) => {
     const account = e2eeAccountFixture();
-    const scopedTrigger = AutomationConversationScopedTriggerEvidenceV1Schema.parse({ bindingId: input.bindingId, sessionId: 'session-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind,
+    const scopedTrigger = AutomationConversationScopedTriggerEvidenceV1Schema.parse({ bindingId: input.bindingId, sessionId: 'session-1', triggerId: AutomationTriggerIdSchema.parse('trigger-1'), triggerRevision: 0, triggerKind,
       pullRequest: { repository: 'acme/widgets', number: 1 }, observationActorPrincipalId: '123',
       actor: { principalId: '123', repositoryWriteAccess: true } });
     const execute = vi.fn(async (_actionId: string, _request: unknown) => ({ kind: 'admitted' as const,
@@ -205,7 +206,7 @@ describe('createAutomationConversationActionExecutor', () => {
 
   it('keeps the private PR selector out of target verification wire', async () => {
     const account = e2eeAccountFixture();
-    const correspondence = { sessionId: 'session-1', triggerId: 'trigger-1', triggerRevision: 0,
+    const correspondence = { sessionId: 'session-1', triggerId: AutomationTriggerIdSchema.parse('trigger-1'), triggerRevision: 0,
       triggerKind: 'prComment' as const };
     const execute = vi.fn(async (_actionId: string, _request: unknown) => ({ kind: 'verified' as const }));
     const executor = createAutomationConversationActionExecutor({ credentials, transport: { execute },

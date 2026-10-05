@@ -8,7 +8,6 @@ import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/proc
 
 import { configuration } from '@/configuration';
 
-import { findHappyProcessByPid } from './doctor';
 import {
   processGenerationMatches,
   processGenerationProvesReuse,
@@ -173,12 +172,6 @@ function killWedgedPidDefault(pid: number): void {
   process.kill(pid, 'SIGKILL');
 }
 
-async function getCurrentProcessCommandHashDefault(pid: number): Promise<string | null> {
-  const proc = await findHappyProcessByPid(pid).catch(() => null);
-  if (!proc?.command) return null;
-  return hashProcessCommand(proc.command);
-}
-
 function safeParseLockPayload(raw: string): LockPayload | null {
   try {
     const parsed = JSON.parse(raw);
@@ -310,11 +303,19 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     return { ok: false, reason: 'io_error', errorMessage: e instanceof Error ? e.message : String(e) };
   }
 
-  const getCurrentProcessCommandHash = params.getCurrentProcessCommandHash ?? getCurrentProcessCommandHashDefault;
-  const processCommandHashRaw = await getCurrentProcessCommandHash(pid).catch(() => null);
-  const processCommandHash = typeof processCommandHashRaw === 'string' && /^[a-f0-9]{64}$/.test(processCommandHashRaw) ? processCommandHashRaw : null;
   const readProcessIdentity = params.readProcessIdentityByPid ?? readProcessIdentityByPid;
   const processIdentity = await readProcessIdentity(pid).catch(() => null);
+  const getCurrentProcessCommandHash = params.getCurrentProcessCommandHash ?? (async (pidToRead: number) => {
+    const identity = await readProcessIdentity(pidToRead);
+    return identity?.pid === pidToRead && identity.command ? hashProcessCommand(identity.command) : null;
+  });
+  // A newly persisted command hash and birth witness come from one OS sample.
+  const processCommandHashRaw = params.getCurrentProcessCommandHash
+    ? await params.getCurrentProcessCommandHash(pid).catch(() => null)
+    : processIdentity?.pid === pid && processIdentity.command
+      ? hashProcessCommand(processIdentity.command)
+      : null;
+  const processCommandHash = isValidProcessCommandHash(processCommandHashRaw) ? processCommandHashRaw : null;
   const processStartTimeMs = Number.isInteger(processIdentity?.processStartTimeMs)
     && (processIdentity?.processStartTimeMs ?? -1) >= 0
     ? processIdentity!.processStartTimeMs

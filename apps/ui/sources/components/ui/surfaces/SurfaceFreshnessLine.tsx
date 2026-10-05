@@ -29,7 +29,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
     reason: string;
     /** A reconnect or refresh is in flight: a small ring replaces the glyph. */
     busy?: boolean;
-    /** `warning` tints the glyph when the refresh failed rather than is merely pending. */
+    /** `warning` tints the strip when retained work needs attention. */
     tone?: 'neutral' | 'warning';
     /** The one recovery (Retry). */
     action?: SurfaceStateAction;
@@ -45,7 +45,9 @@ export function SurfaceFreshnessLine(props: Readonly<{
         <HappierFreshnessLine
             testID={props.testID}
             busy={props.busy}
-            colors={{ background: theme.colors.surface.inset, border: theme.colors.border.default }}
+            colors={props.tone === 'warning'
+                ? { background: theme.colors.state.warning.background, border: theme.colors.state.warning.border }
+                : { background: theme.colors.surface.inset, border: theme.colors.border.default }}
             icon={props.busy ? (
                 <ActivitySpinner
                     testID={props.testID ? `${props.testID}-spinner` : undefined}

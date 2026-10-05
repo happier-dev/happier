@@ -8,6 +8,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
+import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { workStatusGlyphColor, workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { getStorage, useWorkflowRun } from '@/sync/domains/state/storage';
@@ -71,11 +72,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     } });
     const word = summary.attentionRequired === true && status.tone === 'attention'
         ? t('workStatus.buckets.needs_you') : status.word;
-    const progress = summary.stepProgress;
-    const context = progress ? [
-        t('workflows.list.stepsProgress', progress),
-        progress.currentLoop ? t('workflows.list.loopProgress', progress.currentLoop) : null,
-    ].filter(Boolean).join(' · ') : null;
+    const context = describeWorkflowRunProgress(summary.stepProgress);
     const starterLabel = summary.startedBy === 'trigger' ? t('workflows.list.startedByTrigger')
         : summary.startedBy === 'agent' ? t('workflows.list.startedByAgent') : null;
     const depth = (props.folderDepth ?? 0) + (props.reportsDepth ?? 0);

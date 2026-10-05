@@ -1,8 +1,16 @@
 import { z } from 'zod';
+import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from './widgetAreas.js';
+export { PluginUiWidgetAreaDeclarationV1Schema, PluginUiWidgetAreaDeclarationsV1Schema } from './widgetAreas.js';
+export type { PluginUiWidgetAreaDeclarationV1 } from './widgetAreas.js';
+import { PluginDeclarativeMetricNodeV1Schema, PluginDeclarativeTableNodeV1Schema, PluginDeclarativeRowsNodeV1Schema, PluginDeclarativeChartNodeV1Schema, type PluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
+export * from './declarativeDataV1.js';
+import { InputHintsSchema, InputPathSchema, type InputHints } from '../../../inputs/inputFields.js';
 import { PluginInvocableActionIdSchema } from '../../../actions/pluginActionSurface.js';
+import { hasValidPluginConnectedAccountPurposeBindingsV2 } from '../../actions/v2.js';
+import { WidgetConnectedAccountPurposeBindingV1Schema, type WidgetConnectedAccountPurposeBindingV1 } from '../../../widgets/widgetConnectedAccountPurposeBindingV1.js';
 import { asProtocolZod } from "../../actions/internalProtocolZodAdapter.js";
 
-import { PluginContributionLocalIdSchema } from '../../contributionIdentity.js';
+import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../../contributionIdentity.js';
 import { PluginIdSchema } from '../../pluginId.js';
 import {
   PluginCollectionMemberNameV1Schema,
@@ -21,6 +29,10 @@ import { PluginUiTargetedContributionPointRefV1Schema } from '../../ui/targetedC
 import {
   PluginContributionReferenceV2Schema,
   PluginJsonValueV2Schema,
+  PluginJsonSchemaV2Schema,
+  type PluginJsonSchemaV2,
+  type PluginJsonValueV2,
+  type PluginContributionReferenceV2,
   PluginLocalizedStringV2Schema,
   PluginLocalizedMarkdownV2Schema,
   type PluginLocalizedStringV2,
@@ -266,6 +278,11 @@ export type PluginDeclarativeCollectionListNodeV2 = z.infer<typeof DeclarativeCo
  * host renderer — now binds to this type and fails to compile on a new member.
  */
 export type PluginDeclarativeNodeV2 =
+  | PluginDeclarativeDataNodeV1
+  | Readonly<{ kind: 'dragSource'; sourceId: PluginContributionReferenceV2; reference: PluginJsonValueV2; organizing?: boolean; children: readonly PluginDeclarativeNodeV2[] }>
+  | Readonly<{ kind: 'dropTarget'; targetId: PluginContributionReferenceV2; input?: PluginJsonValueV2; children: readonly PluginDeclarativeNodeV2[] }>
+  /** One of the page's declared widget areas; the host draws everything inside it. */
+  | Readonly<{ kind: 'widgetArea'; area: string; context?: Readonly<Record<string, PluginJsonValueV2>> }>
   | Readonly<{ kind: 'text'; text: PluginLocalizedStringV2; tone?: PluginDeclarativeToneV2 }>
   | Readonly<{ kind: 'markdown'; text: PluginLocalizedStringV2 }>
   | Readonly<{ kind: 'stack'; direction?: 'vertical' | 'horizontal'; gap?: 'small' | 'medium' | 'large'; children: readonly PluginDeclarativeNodeV2[] }>
@@ -283,6 +300,10 @@ export type PluginDeclarativeNodeV2 =
   | PluginDeclarativeCollectionListNodeV2;
 
 export const PluginDeclarativeNodeV2Schema: z.ZodType<PluginDeclarativeNodeV2> = z.lazy(() => z.discriminatedUnion('kind', [
+  PluginDeclarativeMetricNodeV1Schema, PluginDeclarativeTableNodeV1Schema, PluginDeclarativeRowsNodeV1Schema, PluginDeclarativeChartNodeV1Schema,
+  z.object({ kind: z.literal('dragSource'), sourceId: asProtocolZod(PluginContributionReferenceV2Schema), reference: PluginJsonValueV2Schema, organizing: z.boolean().optional(), children: z.array(PluginDeclarativeNodeV2Schema) }).strict(),
+  z.object({ kind: z.literal('dropTarget'), targetId: asProtocolZod(PluginContributionReferenceV2Schema), input: PluginJsonValueV2Schema.optional(), children: z.array(PluginDeclarativeNodeV2Schema) }).strict(),
+  z.object({ kind: z.literal('widgetArea'), area: asProtocolZod(PluginContributionLocalIdSchema), context: z.record(z.string(), PluginJsonValueV2Schema).optional() }).strict(),
   z.object({ kind: z.literal('text'), text: PluginLocalizedStringV2Schema, tone: PluginDeclarativeToneV2Schema.optional() }).strict(),
   z.object({ kind: z.literal('markdown'), text: PluginLocalizedMarkdownV2Schema }).strict(),
   z.object({ kind: z.literal('stack'), direction: z.enum(['vertical', 'horizontal']).optional(), gap: z.enum(['small', 'medium', 'large']).optional(), children: z.array(PluginDeclarativeNodeV2Schema) }).strict(),
@@ -435,29 +456,6 @@ export const PluginUiWidgetHomeV1Schema = z.object({
 }).strict();
 export type PluginUiWidgetHomeV1 = z.infer<typeof PluginUiWidgetHomeV1Schema>;
 
-/** Physical widget hosts; target-specific declarations stay closed. */
-export const PluginUiWidgetPlacementV1Schema = z.enum(['board', 'companion', 'home']);
-export type PluginUiWidgetPlacementV1 = z.infer<typeof PluginUiWidgetPlacementV1Schema>;
-export const PluginUiWidgetSessionPlacementsV1Schema = z.array(PluginUiWidgetPlacementV1Schema.extract(['board', 'companion']));
-export const PluginUiWidgetAppPlacementsV1Schema = z.array(PluginUiWidgetPlacementV1Schema.extract(['home']));
-
-const DEFAULT_SESSION_WIDGET_PLACEMENTS_V1 = Object.freeze(['board'] as const);
-const DEFAULT_APP_WIDGET_PLACEMENTS_V1 = Object.freeze(['home'] as const);
-
-/** Omission retains the incumbent host; malformed explicit declarations fail closed. */
-export function readPluginUiWidgetPlacementsV1(
-  targetKind: 'session' | 'app',
-  placements: unknown,
-): readonly PluginUiWidgetPlacementV1[] | null {
-  if (placements === undefined) {
-    return targetKind === 'session' ? DEFAULT_SESSION_WIDGET_PLACEMENTS_V1 : DEFAULT_APP_WIDGET_PLACEMENTS_V1;
-  }
-  const parsed = (targetKind === 'session'
-    ? PluginUiWidgetSessionPlacementsV1Schema
-    : PluginUiWidgetAppPlacementsV1Schema).safeParse(placements);
-  return parsed.success ? parsed.data : null;
-}
-
 /**
  * Page header actions are an `appPage` container capability, not a property of
  * every destination. Every other container declares the empty tuple so the one
@@ -496,26 +494,39 @@ function createPluginUiViewBindingSchemaV2() {
         ? { placement: PluginUiDestinationPlacementV1Schema.optional() }
         : {}),
       ...(slot.container === 'appPage'
-        ? { column: PluginUiAppPageColumnV1Schema.optional() }
+        ? { column: PluginUiAppPageColumnV1Schema.optional(), widgetAreas: PluginUiWidgetAreaDeclarationsV1Schema.optional() }
         : {}),
       container: z.literal(slot.container),
       target: PluginUiViewTargetSchemaByKindV1[slot.targetKind],
     }).strict());
   const inlineVariants = Object.values(PLUGIN_UI_INLINE_SURFACE_SLOTS_V1)
     .filter((slot) => isPluginUiAuthoredViewInlineSurfaceRoleV1(slot.role))
-    .flatMap((slot) => Object.keys(slot.targets).map((targetKind) => z.object({
+    .flatMap((slot) => Object.keys(slot.targets).map((targetKind) => {
+      const common = {
       ...PluginUiViewInlineCommonShapeV2,
       container: z.literal(slot.role),
       target: PluginUiViewTargetSchemaByKindV1[targetKind as keyof typeof PluginUiViewTargetSchemaByKindV1],
-      ...(slot.role === 'widget' && targetKind === 'app'
+      ...(slot.role === 'widget'
         ? { home: PluginUiWidgetHomeV1Schema.optional() }
         : {}),
       ...(slot.role === 'widget'
-        ? { placements: (targetKind === 'session'
-          ? PluginUiWidgetSessionPlacementsV1Schema
-          : PluginUiWidgetAppPlacementsV1Schema).optional() }
+        ? { connectedAccountPurposeBindings: z.array(WidgetConnectedAccountPurposeBindingV1Schema).optional(),
+            resources: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).optional() }
         : {}),
-    }).strict()));
+      ...(slot.role === 'widget' && targetKind === 'session'
+        ? { inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema, sessionInputPath: InputPathSchema }
+        : {}),
+      };
+      // Preserve the value-schema requirement in authoring JSON Schema too:
+      // an App widget either has no inputs or declares inputs plus their schema.
+      if (slot.role === 'widget' && targetKind === 'app') {
+        return z.union([
+          z.object({ ...common, inputs: z.never().optional(), inputSchema: PluginJsonSchemaV2Schema.optional() }).strict(),
+          z.object({ ...common, inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema }).strict(),
+        ]);
+      }
+      return z.object(common).strict();
+    }));
   const variants = [...destinationVariants, ...inlineVariants];
   const [first, second, ...remaining] = variants;
   if (!first || !second) {
@@ -525,6 +536,25 @@ function createPluginUiViewBindingSchemaV2() {
 }
 
 const PluginUiViewV2SchemaRaw = createPluginUiViewBindingSchemaV2().superRefine((view, ctx) => {
+  if (view.container === 'widget') {
+    const inputs = 'inputs' in view ? InputHintsSchema.safeParse(view.inputs) : null;
+    const inputSchema = 'inputSchema' in view ? PluginJsonSchemaV2Schema.safeParse(view.inputSchema) : null;
+    const purposeBindings = 'connectedAccountPurposeBindings' in view
+      ? z.array(WidgetConnectedAccountPurposeBindingV1Schema).safeParse(view.connectedAccountPurposeBindings ?? []) : null;
+    if (purposeBindings?.success && (!hasValidPluginConnectedAccountPurposeBindingsV2(inputSchema?.success ? inputSchema.data : undefined, purposeBindings.data)
+      || purposeBindings.data.some((binding) => !inputs?.success || !inputs.data.fields.some((field) => field.path === binding.path)))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connectedAccountPurposeBindings'], message: 'Widget viewer purposes must bind exact declared Connected Account input fields.' });
+    }
+    const resources = 'resources' in view ? z.array(asProtocolZod(PluginContributionIdentityV1Schema)).safeParse(view.resources) : null;
+    if (purposeBindings?.success && purposeBindings.data.some(binding => !resources?.success || !resources.data.some(resource =>
+      resource.pluginId === binding.consumer.pluginId && resource.localId === binding.consumer.localId))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['connectedAccountPurposeBindings'], message: 'Widget purposes must name a declared read Resource consumer.' });
+    }
+    if ('sessionInputPath' in view && view.sessionInputPath !== undefined
+      && (!inputs?.success || !inputs.data.fields.some((field) => field.path === view.sessionInputPath))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionInputPath'], message: 'The exact Session path must name a declared widget input.' });
+    }
+  }
   const rendererChain = validatePluginUiRendererChainFieldsV1({
     renderer: view.renderer,
     fallbackRenderers: view.fallbackRenderers,
@@ -568,6 +598,7 @@ export type PluginUiViewDestinationBindingInputV2 = {
     column?: TSlot['container'] extends 'appPage'
       ? PluginUiAppPageColumnV1
       : never;
+    widgetAreas?: TSlot['container'] extends 'appPage' ? PluginUiWidgetAreaDeclarationV1[] : never;
   }>;
 }[keyof {
   [TSlot in Exclude<
@@ -582,15 +613,14 @@ export type PluginUiViewInlineBindingInputV2 = {
     [TTarget in keyof TSlot['targets'] & keyof typeof PluginUiViewTargetSchemaByKindV1]: Readonly<{
       container: TSlot['role'];
       target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
-      home?: TSlot['role'] extends 'widget'
-        ? TTarget extends 'app' ? PluginUiWidgetHomeV1 : never
-        : never;
-      placements?: TSlot['role'] extends 'widget'
-        ? TTarget extends 'session'
-          ? z.infer<typeof PluginUiWidgetSessionPlacementsV1Schema>
-          : z.infer<typeof PluginUiWidgetAppPlacementsV1Schema>
-        : never;
-    }>;
+      home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
+      resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
+    }> & (TSlot['role'] extends 'widget'
+      ? TTarget extends 'session'
+        ? Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2; sessionInputPath: string; connectedAccountPurposeBindings?: WidgetConnectedAccountPurposeBindingV1[] }>
+        : (Readonly<{ inputs?: never; inputSchema?: PluginJsonSchemaV2 }> | Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2 }>)
+          & Readonly<{ sessionInputPath?: never; connectedAccountPurposeBindings?: WidgetConnectedAccountPurposeBindingV1[] }>
+      : Readonly<{ inputs?: never; inputSchema?: never; sessionInputPath?: never; connectedAccountPurposeBindings?: never }>);
   }[keyof TSlot['targets'] & keyof typeof PluginUiViewTargetSchemaByKindV1];
 }[PluginUiViewInlineSlotV1['role']];
 export type PluginUiViewV2Input = z.input<typeof PluginUiViewV2SchemaRaw>
@@ -614,6 +644,7 @@ export type PluginUiViewDestinationBindingV2 = z.output<typeof PluginUiViewV2Sch
     column?: TSlot['container'] extends 'appPage'
       ? PluginUiAppPageColumnV1
       : never;
+    widgetAreas?: TSlot['container'] extends 'appPage' ? PluginUiWidgetAreaDeclarationV1[] : never;
   }>;
 }[keyof {
   [TSlot in Exclude<
@@ -626,15 +657,14 @@ export type PluginUiViewInlineBindingV2 = {
     [TTarget in keyof TSlot['targets'] & keyof typeof PluginUiViewTargetSchemaByKindV1]: Readonly<{
       container: TSlot['role'];
       target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TTarget]>;
-      home?: TSlot['role'] extends 'widget'
-        ? TTarget extends 'app' ? PluginUiWidgetHomeV1 : never
-        : never;
-      placements?: TSlot['role'] extends 'widget'
-        ? TTarget extends 'session'
-          ? z.infer<typeof PluginUiWidgetSessionPlacementsV1Schema>
-          : z.infer<typeof PluginUiWidgetAppPlacementsV1Schema>
-        : never;
-    }>;
+      home?: TSlot['role'] extends 'widget' ? PluginUiWidgetHomeV1 : never;
+      resources?: TSlot['role'] extends 'widget' ? PluginContributionIdentityV1[] : never;
+    }> & (TSlot['role'] extends 'widget'
+      ? TTarget extends 'session'
+        ? Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2; sessionInputPath: string; connectedAccountPurposeBindings?: WidgetConnectedAccountPurposeBindingV1[] }>
+        : (Readonly<{ inputs?: never; inputSchema?: PluginJsonSchemaV2 }> | Readonly<{ inputs: InputHints; inputSchema: PluginJsonSchemaV2 }>)
+          & Readonly<{ sessionInputPath?: never; connectedAccountPurposeBindings?: WidgetConnectedAccountPurposeBindingV1[] }>
+      : Readonly<{ inputs?: never; inputSchema?: never; sessionInputPath?: never; connectedAccountPurposeBindings?: never }>);
   }[keyof TSlot['targets'] & keyof typeof PluginUiViewTargetSchemaByKindV1];
 }[PluginUiViewInlineSlotV1['role']];
 export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & (

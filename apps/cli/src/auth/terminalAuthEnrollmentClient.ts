@@ -24,22 +24,57 @@ export type VerifiedTerminalAuthEnrollmentRuntime = Readonly<{
   credentialDestination: HomeCredentialDestinationSelectionV1;
 }>;
 
-export class HomeFeaturesUnreadableError extends Error {
-  readonly code = 'HOME_FEATURES_UNREADABLE' as const;
+export type TerminalAuthEnrollmentVerificationErrorCode =
+  | 'HOME_FEATURES_UNREADABLE'
+  | 'HOME_FEATURES_NETWORK'
+  | 'HOME_FEATURES_TIMEOUT'
+  | 'HOME_FEATURES_HTTP_ERROR'
+  | 'HOME_FEATURES_ENDPOINT_MISSING'
+  | 'HOME_IDENTITY_MISSING'
+  | 'HOME_CREDENTIAL_DESTINATION_UNVERIFIED'
+  | 'HOME_AUTHORITY_MISMATCH'
+  | 'HOME_LEGACY_ORIGIN_MISMATCH'
+  | 'HOME_RUNTIME_ORIGIN_INVALID';
 
+export class TerminalAuthEnrollmentVerificationError extends Error {
+  constructor(readonly code: TerminalAuthEnrollmentVerificationErrorCode, message: string) {
+    super(message);
+    this.name = 'TerminalAuthEnrollmentVerificationError';
+  }
+}
+
+export class HomeFeaturesUnreadableError extends TerminalAuthEnrollmentVerificationError {
   constructor() {
-    super('The selected Home reports features this CLI cannot read. Update the CLI/daemon and retry.');
+    super('HOME_FEATURES_UNREADABLE', 'The selected Home reports features this CLI cannot read. Update the CLI/daemon and retry.');
     this.name = 'HomeFeaturesUnreadableError';
   }
 }
 
 export function readTerminalAuthHomeIdentity(snapshot: CliServerFeaturesSnapshot): string | null {
-  if (snapshot.status === 'unsupported' && snapshot.reason === 'invalid_payload') {
-    throw new HomeFeaturesUnreadableError();
+  if (snapshot.status === 'unsupported') {
+    if (snapshot.reason === 'invalid_payload') throw new HomeFeaturesUnreadableError();
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_FEATURES_ENDPOINT_MISSING',
+      'The selected Home does not provide the features endpoint needed to verify its identity. Update the server and retry.',
+    );
   }
-  return snapshot.status === 'ready'
-    ? normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId) ?? null
-    : null;
+  if (snapshot.status === 'error') {
+    if (snapshot.reason === 'network') {
+      throw new TerminalAuthEnrollmentVerificationError(
+        'HOME_FEATURES_NETWORK', 'The selected Home features could not be reached. Check connectivity and retry.',
+      );
+    }
+    if (snapshot.reason === 'timeout') {
+      throw new TerminalAuthEnrollmentVerificationError(
+        'HOME_FEATURES_TIMEOUT', 'The selected Home features request timed out. Check server availability and retry.',
+      );
+    }
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_FEATURES_HTTP_ERROR',
+      `The selected Home features request failed${snapshot.httpStatus === undefined ? '' : ` (HTTP ${snapshot.httpStatus})`}. Check the server response and retry.`,
+    );
+  }
+  return normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId) ?? null;
 }
 
 export type AuthenticatedExactHomeConnectionDescriptorObservation =
@@ -51,12 +86,23 @@ type Post = (url: string, data?: unknown, config?: AxiosRequestConfig<unknown>) 
 type Get = (url: string, config?: AxiosRequestConfig<unknown>) => Promise<HttpResponse>;
 
 function normalizedOrigin(raw: string): string {
-  const parsed = new URL(String(raw ?? '').trim());
+  let parsed: URL;
+  try {
+    parsed = new URL(String(raw ?? '').trim());
+  } catch {
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_RUNTIME_ORIGIN_INVALID', 'Terminal authentication runtime origin is invalid',
+    );
+  }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error('Terminal authentication runtime origin must use HTTP or HTTPS');
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_RUNTIME_ORIGIN_INVALID', 'Terminal authentication runtime origin must use HTTP or HTTPS',
+    );
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('Terminal authentication runtime origin is invalid');
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_RUNTIME_ORIGIN_INVALID', 'Terminal authentication runtime origin is invalid',
+    );
   }
   return parsed.toString().replace(/\/+$/u, '');
 }
@@ -116,11 +162,15 @@ export function verifyTerminalAuthEnrollmentRuntime(params: Readonly<{
   normalizedOrigin(params.runtime.runtimeOrigin);
   const observedIdentity = readTerminalAuthHomeIdentity(params.snapshot);
   if (!observedIdentity) {
-    throw new Error('Unable to verify the selected Home identity');
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_IDENTITY_MISSING', 'Unable to verify the selected Home identity: the features response has no Home identity',
+    );
   }
   const selectedDestination = params.runtime.authenticatedCredentialDestination;
   if (!selectedDestination) {
-    throw new Error('The enrollment carrier did not authenticate a credential destination');
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_CREDENTIAL_DESTINATION_UNVERIFIED', 'The enrollment carrier did not authenticate a credential destination',
+    );
   }
 
   if (!params.target.descriptor) {
@@ -130,7 +180,9 @@ export function verifyTerminalAuthEnrollmentRuntime(params: Readonly<{
       || normalizedOrigin(selectedDestination.applicationUrl) !== normalizedOrigin(params.target.applicationUrl)
       || normalizedOrigin(params.runtime.runtimeOrigin) !== normalizedOrigin(params.target.applicationUrl)
     ) {
-      throw new Error('Legacy URL-only authentication requires its exact HTTPS Home origin');
+      throw new TerminalAuthEnrollmentVerificationError(
+        'HOME_LEGACY_ORIGIN_MISMATCH', 'Legacy URL-only authentication requires its exact HTTPS Home origin',
+      );
     }
     return { homeServerIdentityId: observedIdentity, credentialDestination: selectedDestination };
   }
@@ -149,7 +201,9 @@ export function verifyTerminalAuthEnrollmentRuntime(params: Readonly<{
       !== JSON.stringify(params.target.credentialDestination)
     || !isHomeCredentialDestinationAllowedV1(params.target.credentialDestination, selectedDestination)
   ) {
-    throw new Error('The acquired enrollment runtime does not match the resolved Home authority');
+    throw new TerminalAuthEnrollmentVerificationError(
+      'HOME_AUTHORITY_MISMATCH', 'The acquired enrollment runtime does not match the resolved Home authority',
+    );
   }
 
   return { homeServerIdentityId: observedIdentity, credentialDestination: selectedDestination };

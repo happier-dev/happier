@@ -8,6 +8,7 @@ import {
     SessionOrganizationPlacementV1Schema,
     SessionOwnerMetadataEnvelopeV1Schema,
     SessionInitialAccessMaterializedV1Schema,
+    SessionInitialTriggerAdmissionV1Schema,
     SESSION_METADATA_LAYOUT_VERSION_V1,
     SessionCreateOriginFieldsV1Schema,
     refineSessionCreateOriginFieldsV1,
@@ -78,6 +79,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 currentStorageState: z.literal("machine_only").optional(),
                 organizationPlacement: SessionOrganizationPlacementV1Schema.optional(),
                 initialAccess: SessionInitialAccessMaterializedV1Schema.optional(),
+                initialTriggers: z.array(SessionInitialTriggerAdmissionV1Schema).optional(),
                 primaryTeamId: z.string().min(1).nullable().optional(),
                 teamCredentialBindings: SessionTeamCredentialBindingIntentsV1Schema.optional(),
                 reportsTo: SessionReportsToV1Schema.optional(),
@@ -148,6 +150,10 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         : rejection.result.error === "reports_to_cas_conflict" ? 409 : 403).send(rejection.result);
                 case "session-origin-forbidden":
                     return reply.code(403).send({ error: "session-origin-forbidden" });
+                case "session-initial-trigger-invalid":
+                    return reply.code(rejection.code === "invalid_input" ? 400 : 409).send({
+                        error: "initial_trigger_admission_failed", code: rejection.code,
+                    });
                 case "account-disabled":
                     return reply.code(403).send({ error: "account-disabled" });
                 case "encryption-mode-not-allowed":
@@ -256,6 +262,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 requestedStorageState,
             organizationPlacement: layoutOneRequest.organizationPlacement,
             initialAccess: layoutOneRequest.initialAccess,
+            initialTriggers: layoutOneRequest.initialTriggers,
             primaryTeamId: layoutOneRequest.primaryTeamId,
             teamCredentialBindings: layoutOneRequest.teamCredentialBindings,
                 reportsTo: layoutOneRequest.reportsTo,

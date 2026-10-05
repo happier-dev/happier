@@ -13,6 +13,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resumeSession } from '@/sync/ops/sessions';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type EnsureExecutionRunHostSessionActiveResult =
     | Readonly<{ ok: true }>
@@ -32,6 +33,8 @@ export async function ensureExecutionRunHostSessionActive(input: Readonly<{
     agentId: string | null;
     settings: Settings;
     serverId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime;
+    machineTarget?: Readonly<{ machineId: string; basePath: string }>;
     /** Stable identity of the user operation that will start/admit this Run. */
     readinessOperationId?: string;
     /** Exact Machine proven by Run capability admission before an inactive resume. */
@@ -61,6 +64,7 @@ export async function ensureExecutionRunHostSessionActive(input: Readonly<{
         sessionId: input.sessionId,
         session: input.session,
         resumeCapabilityOptions: input.resumeCapabilityOptions,
+        ...(input.machineTarget ? { resumeTargetOverride: { machineId: input.machineTarget.machineId, directory: input.machineTarget.basePath } } : {}),
         permissionOverride,
         modelOverride,
     });
@@ -68,6 +72,7 @@ export async function ensureExecutionRunHostSessionActive(input: Readonly<{
 
     const result = await resumeSession({
         ...base,
+        ...(input.accountLifetime ? { accountLifetime: input.accountLifetime } : {}),
         ...(input.serverId ? { serverId: input.serverId } : {}),
         ...buildResumeSessionExtrasFromUiState({
             agentId: input.agentId,

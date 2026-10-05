@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPluginDeclarativeDataNodeV1, validatePluginDeclarativeDataNodeV1, type PluginDeclarativeDataSourceV1 } from './declarativeDataV1.js';
 
 import {
   PluginDeclarativeNodeV2Schema,
@@ -26,7 +27,29 @@ export const PluginDeclarativeDocumentV1Schema: z.ZodType<PluginDeclarativeDocum
   // UI contribution schemas consume this document while their Action grammar
   // is still initializing. Defer the reverse edge until a document is parsed.
   root: z.lazy(() => PluginDeclarativeNodeV2Schema),
-}).strict();
+}).strict().superRefine((document, context) => {
+  const pending = [document.root];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (isPluginDeclarativeDataNodeV1(node)) {
+      try { validatePluginDeclarativeDataNodeV1(node); }
+      catch { context.addIssue({ code: 'custom', message: 'Declarative data input, output schema or field projection is invalid' }); }
+    }
+    if ('children' in node) pending.push(...node.children);
+  }
+});
+
+/** Presentation tree traversal only; actual read admission remains Resource-owned. */
+export function readPluginDeclarativeDataSourcesV1(document: PluginDeclarativeDocumentV1): readonly PluginDeclarativeDataSourceV1[] {
+  const sources: PluginDeclarativeDataSourceV1[] = [];
+  const pending = [document.root];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (isPluginDeclarativeDataNodeV1(node)) sources.push(node.data);
+    if ('children' in node) pending.push(...node.children);
+  }
+  return sources;
+}
 
 /** The exact Resource media type and validator for the author-facing envelope. */
 export {

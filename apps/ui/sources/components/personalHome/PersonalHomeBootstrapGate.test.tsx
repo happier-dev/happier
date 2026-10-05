@@ -109,7 +109,11 @@ describe('PersonalHomeBootstrapGate', () => {
         await flushHookEffects({ cycles: 4, turns: 2 });
         expect(screen.findByTestId('personal-home-setup-surface')).not.toBeNull();
         expect(screen.findByTestId('usable-sidebar')).not.toBeNull();
-        expect(screen.findByTestId('ready-home-content')).toBeNull();
+        expect(screen.findByTestId('ready-home-content')).not.toBeNull();
+        const backdrop = screen.findAllHostsByTestId('personal-home-bootstrap-backdrop')[0];
+        expect(backdrop?.props.pointerEvents).toBe('none');
+        expect(backdrop?.props.accessibilityElementsHidden).toBe(true);
+        expect(backdrop?.props.importantForAccessibility).toBe('no-hide-descendants');
         expect(screen.findByTestId('personal-home-bootstrap-pending-strip')).toBeNull();
         expect(screen.findByTestId('home-content')?.findAll((node) => node.props.testID === 'personal-home-setup-surface').length).toBeGreaterThan(0);
     });

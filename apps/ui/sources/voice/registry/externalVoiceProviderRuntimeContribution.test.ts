@@ -12,6 +12,8 @@ import type {
   VoiceRealtimeConnection,
 } from '@happier-dev/plugin-sdk/voice/client';
 import {
+  DaemonPluginActionSchemasReadRequestSchema,
+  DaemonPluginActionSchemasReadResponseSchema,
   createVoiceProviderRecipientContractFromCredentialsV1,
   PluginContributesV2Schema,
   PluginProjectedActionV2Schema,
@@ -68,7 +70,7 @@ import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { activate as activateOpenAiVoice } from '../../../../../packages/plugins/openai/src/ui/voice/runtime';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { createVoiceClientRawCredentialAccess } from '@/voice/credentials/rawCredentialClient';
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createBundledConversationRuntimeHostLease } from './bundledConversationRuntimeHost';
 
 import {
@@ -89,6 +91,32 @@ const mediatedCredentialMachineRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
   machineRpcWithServerScope: mediatedCredentialMachineRpc,
 }));
+
+function provideClientActionSchemas(action: PluginProjectedActionV2): void {
+  const previousImplementation = mediatedCredentialMachineRpc.getMockImplementation();
+  // These fixtures register raw handlers without an input contract; the daemon
+  // answers their canonical empty JSON schema at the real per-Action RPC seam.
+  const response = DaemonPluginActionSchemasReadResponseSchema.parse({ ok: true, inputSchema: {} });
+  mediatedCredentialMachineRpc.mockImplementation(async (request: Readonly<{
+    method?: string;
+    payload?: unknown;
+  }>) => {
+    if (request.method !== RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+      return previousImplementation?.(request);
+    }
+    const payload = DaemonPluginActionSchemasReadRequestSchema.parse(request.payload);
+    return payload.qualifiedActionId === `${action.pluginId}/${action.id}`
+      && payload.expectedOccurrenceId === action.occurrenceId
+      ? response
+      : DaemonPluginActionSchemasReadResponseSchema.parse({
+          ok: false, code: 'plugin_action_schemas_unavailable',
+        });
+  });
+  onTestFinished(() => {
+    mediatedCredentialMachineRpc.mockImplementation(previousImplementation ?? (() => undefined));
+  });
+}
+
 vi.mock('@/voice/settings/executionMachine', () => ({
   resolveVoiceExecutionMachineId: () => 'machine-1',
   isCapturedVoiceExecutionMachineCurrent: (machineId: string) => machineId === 'machine-1',
@@ -1615,6 +1643,7 @@ describe('external Voice provider host composition', () => {
       return { navigated: true };
     };
     const fixture = createClientActionFixture(clientHandler);
+    provideClientActionSchemas(fixture.action);
     const createInvocationUi = vi.fn((signal: AbortSignal) => createAppShellPluginUiInvocationHost({
       pluginId: 'acme.synthetic-voice',
       contributionId: 'conversation',
@@ -1751,7 +1780,9 @@ describe('external Voice provider host composition', () => {
 
   it('keeps the unavailable Voice invocation UI conformant without adding a content reader', async () => {
     const lifecycleEvents: string[] = [];
+    const invocationUis: Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0]['ui'][] = [];
     const createConnection = vi.fn(async (input: Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0]) => {
+      invocationUis.push(input.ui);
       await expect(input.ui.statOpenableContent({ kind: 'workspaceFile', handle: 'viewer-file-1' }))
         .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
       await expect(input.ui.readOpenableContent({
@@ -1785,9 +1816,23 @@ describe('external Voice provider host composition', () => {
       },
     });
 
+    onTestFinished(() => runtime.dispose());
     await startAdapterAtKnownSession(runtime.adapter, 'operation-context');
     expect(createConnection).toHaveBeenCalledTimes(1);
-    await runtime.dispose();
+    const invocationUi = invocationUis[0];
+    if (!invocationUi) throw new Error('expected_voice_invocation_ui');
+    const mountedMethods = ['readEntityDragItem', 'updateEntityDragDrop', 'watchEntityDragDrop', 'widgetArea'];
+    expect(invocationUi.version().methods.filter((method) => mountedMethods.includes(method))).toEqual([]);
+    await expect(invocationUi.readEntityDragItem({ kind: 'session' }))
+      .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
+    await expect(invocationUi.updateEntityDragDrop({ kind: 'mountSource', mountId: 'voice-row', sourceId: 'item', reference: { id: 'item' } }))
+      .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
+    const onDragState = vi.fn();
+    await expect(invocationUi.watchEntityDragDrop({ mountId: 'voice-row' }, onDragState))
+      .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
+    expect(onDragState).not.toHaveBeenCalled();
+    await expect(invocationUi.widgetArea({ area: 'voice', operation: { actionId: 'widgets.instance.list' } }))
+      .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
   });
 
   it('lets an external public runtime compose canonical raw-PCM capture and connection ownership', async () => {
@@ -1996,6 +2041,7 @@ describe('external Voice provider host composition', () => {
         operatingSystemAuthorization: [],
       },
     });
+    provideClientActionSchemas(packedAction);
     const packedProjection: PluginUiProjectionModel = Object.freeze({
       ...EMPTY_PLUGIN_UI_PROJECTION,
       generation: 12,

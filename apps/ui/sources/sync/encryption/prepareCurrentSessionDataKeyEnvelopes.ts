@@ -1,5 +1,8 @@
 import {
     ENCRYPTED_DATA_KEY_V1_BYTES,
+    prepareSessionDataKeyEnvelopeItemV1,
+    runSessionDataKeyPreparationPass,
+    type SessionDataKeyPreparationProgress,
     type PatchSessionDataKeyEnvelopesResultV1,
     type PatchSessionDataKeyEnvelopesV1,
     type SessionDataKeyEnvelopeItemV1,
@@ -9,21 +12,14 @@ import {
 } from '@happier-dev/protocol';
 import { isCapturedEncryptionGenerationScopeCurrent } from './encryption';
 
-import {
-    encryptDataKeyForRecipientV0,
-    verifyRecipientContentPublicKeyBinding,
-    SESSION_DATA_KEY_SEAL_CHUNK_SIZE,
-} from './directShareEncryption';
+import { SESSION_DATA_KEY_SEAL_CHUNK_SIZE } from './directShareEncryption';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import { mapCryptoBatchWithYield } from './cryptoBatchYield';
 import type {
     EncryptionGenerationScope,
     EncryptionGenerationScopeAuthority,
     EncryptionScopeInput,
 } from './encryption';
-import {
-    runSessionDataKeyPreparationPass,
-    type SessionDataKeyPreparationProgress,
-} from './sessionDataKeyPreparationPass';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 /**
@@ -147,37 +143,6 @@ export type PrepareCurrentSessionParams = Readonly<{
     yieldBetweenChunks?: () => Promise<void>;
 }>;
 
-type SealableRecipient = Readonly<{ recipientAccountId: string; contentPublicKeyB64: string }>;
-
-/**
- * Classifies one page item into sealable work or a truthful exception.
- *
- * Unlike the historical page, which carries one target binding for the whole page, each item here
- * carries its own. One substituted binding therefore withholds the key from that recipient only —
- * it must not deny every other authorized member of the Session.
- */
-function classifyItem(item: SessionDataKeyEnvelopeItemV1):
-    | Readonly<{ kind: 'sealable'; recipient: SealableRecipient }>
-    | Readonly<{ kind: 'setup_required'; reason: SessionDataKeyRecipientUnavailableReasonV1 }>
-    | Readonly<{ kind: 'invalid_binding' }> {
-    if (item.contentKey.status === 'unavailable') {
-        return { kind: 'setup_required', reason: item.contentKey.reason };
-    }
-    const verified = verifyRecipientContentPublicKeyBinding({
-        signingPublicKeyHex: item.contentKey.accountSigningPublicKey,
-        contentPublicKeyB64: item.contentKey.contentPublicKey,
-        contentPublicKeySigB64: item.contentKey.contentPublicKeySignature,
-    });
-    if (!verified) return { kind: 'invalid_binding' };
-    return {
-        kind: 'sealable',
-        recipient: {
-            recipientAccountId: item.recipientAccountId,
-            contentPublicKeyB64: item.contentKey.contentPublicKey,
-        },
-    };
-}
-
 export async function prepareCurrentSessionDataKeyEnvelopes(
     params: PrepareCurrentSessionParams,
 ): Promise<CurrentSessionPreparationOutcome> {
@@ -267,7 +232,7 @@ export async function prepareCurrentSessionDataKeyEnvelopes(
             const prepared = await mapCryptoBatchWithYield(
                 items,
                 (item) => {
-                    const classified = classifyItem(item);
+                    const classified = prepareSessionDataKeyEnvelopeItemV1({ item, sessionDataKey, randomBytes: getRandomBytes });
                     if (classified.kind === 'setup_required') {
                         failedItemKeys.push(item.recipientAccountId);
                         recipientsNeedingSetup.push({ recipientAccountId: item.recipientAccountId, reason: classified.reason });
@@ -278,13 +243,7 @@ export async function prepareCurrentSessionDataKeyEnvelopes(
                         invalidBindingRecipients.push(item.recipientAccountId);
                         return null;
                     }
-                    return {
-                        recipientAccountId: classified.recipient.recipientAccountId,
-                        encryptedDataKey: encryptDataKeyForRecipientV0(
-                            sessionDataKey,
-                            classified.recipient.contentPublicKeyB64,
-                        ),
-                    };
+                    return classified.entry;
                 },
                 {
                     chunkSize: params.sealChunkSize ?? SESSION_DATA_KEY_SEAL_CHUNK_SIZE,

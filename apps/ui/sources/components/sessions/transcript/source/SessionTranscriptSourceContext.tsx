@@ -19,3 +19,8 @@ export function useSessionTranscriptSource(): SessionTranscriptSource {
     if (!source) throw new SessionTranscriptSourceMissingError();
     return source;
 }
+
+/** The transcript source when this presentation sits in a transcript; a Run page renders without one. */
+export function useOptionalSessionTranscriptSource(): SessionTranscriptSource | null {
+    return React.useContext(SessionTranscriptSourceContext);
+}

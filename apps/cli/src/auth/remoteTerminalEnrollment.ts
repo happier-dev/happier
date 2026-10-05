@@ -97,24 +97,11 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
   const pollIntervalMs = Math.max(1, Math.floor(params.pollIntervalMs ?? 500));
   throwIfStopped(params.signal, deadlineMs);
 
-  const acquired = params.target.descriptor
-    ? await acquireTerminalAuthEnrollmentRuntime(
-        params.target.descriptor,
-        params.target.preferredTransport,
-        params.signal,
-      )
-    : {
-        ok: true as const,
-        runtime: {
-          runtimeOrigin: params.target.applicationUrl,
-          carrier: 'https' as const,
-          authenticatedCredentialDestination: {
-            kind: 'https' as const,
-            applicationUrl: params.target.applicationUrl,
-          },
-        },
-        close: async () => {},
-      };
+  const acquired = await acquireTerminalAuthEnrollmentRuntime(
+    params.target.descriptor ?? params.target,
+    params.target.preferredTransport,
+    params.signal,
+  );
   if (!acquired.ok) {
     throw new Error('Unable to acquire the selected Home enrollment carrier.');
   }

@@ -1,6 +1,6 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol';
-import { listActionSpecs } from '@happier-dev/protocol';
+import { listActionSpecs, VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol';
 
 import type { Command } from './types';
 import type { KeyboardCommandId } from '@/keyboard';
@@ -27,6 +27,14 @@ import {
 } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import type { PluginContributedActionController } from '@/components/plugins/actions/pluginContributedActionController';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { resolveSessionScmReviewComparisonLabel } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { getSettingsPageDeclarations } from '@/components/settings/catalog/settingsPageDeclarations';
+import { buildSettingHref, settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
+import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
+import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -80,12 +88,17 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
     executionRunsEnabled: boolean;
     voiceEnabled: boolean;
     petsCompanionEnabled?: boolean;
+    workflowsEnabled?: boolean;
   }>;
   shortcutLabels?: Partial<Record<KeyboardCommandId, string>>;
   petControls?: PetCommandControls;
   nav: Readonly<{
     push: (path: string) => void;
     openNewSession: () => void;
+    openNewWorkflow?: () => void;
+    openWorkflowAgentAuthoring?: () => void;
+    /** Reopens the canonical Search surface in its content source, retaining exact invocation scope. */
+    openTextInFiles?: () => void;
     /** Opens the shared device-pairing panel while retaining the current page. */
     openHomePairingModal?: () => void | Promise<void>;
     /** Matches `useNavigateToSession`: the Home is passed when the producer holds it. */
@@ -185,6 +198,17 @@ export function buildCommandPaletteCommands(
     },
   ];
 
+  if (nav.openTextInFiles) {
+    cmds.push({
+      id: 'search.textInFiles',
+      title: t('universalSearch.content.textInFiles'),
+      icon: 'file',
+      category: t('commandPalette.commands.actionsCategory'),
+      shortcut: params.shortcutLabels?.['search.textInFiles'],
+      action: nav.openTextInFiles,
+    });
+  }
+
   if (nav.openHomePairingModal) {
     cmds.push({
       id: 'add-phone',
@@ -212,6 +236,13 @@ export function buildCommandPaletteCommands(
         action: () => params.onActivateCompactAppDestination(destination),
       });
     }
+  }
+
+  if (features.workflowsEnabled === true) {
+    if (nav.openNewWorkflow) cmds.push({ id: 'workflow.new', title: t('workflows.newWorkflow'), icon: 'plus',
+      category: t('commandPalette.commands.actionsCategory'), shortcut: params.shortcutLabels?.['workflow.new'], action: nav.openNewWorkflow });
+    if (nav.openWorkflowAgentAuthoring) cmds.push({ id: 'workflow.createWithAgent', title: t('workflows.authoring.create'), icon: 'sparkle',
+      category: t('commandPalette.commands.actionsCategory'), shortcut: params.shortcutLabels?.['workflow.createWithAgent'], action: nav.openWorkflowAgentAuthoring });
   }
 
   if (features.petsCompanionEnabled === true) {
@@ -311,6 +342,21 @@ export function buildCommandPaletteCommands(
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));
 
   if (features.executionRunsEnabled) {
+    if (activeSessionId && activeSessionServerId) {
+      for (const kind of ['session', 'workingTree'] as const) {
+        const comparison = { kind };
+        cmds.push({
+          id: `walkthrough:${kind}`,
+          title: `${t('turnChanges.card.walkThrough')} · ${resolveSessionScmReviewComparisonLabel(comparison)}`,
+          icon: 'path',
+          category: t('widgetGlances.changesTitle'),
+          action: () => nav.push(buildSessionDetailsHref({
+            sessionId: activeSessionId, serverId: activeSessionServerId,
+            details: { kind: 'scmReview', comparison, view: 'walkthrough' },
+          })),
+        });
+      }
+    }
     const startReview = byId.get('review.start');
     const startPlan = byId.get('subagents.plan.start');
     const startDelegate = byId.get('subagents.delegate.start');
@@ -381,6 +427,70 @@ export function buildCommandPaletteCommands(
   }
 
   if (features.voiceEnabled) {
+    // Resolve the actual attempt when invoked, not the Session displayed when the palette opened.
+    const readVoice = async () => {
+      const response = await actions.execute('ui.voice_global.get', {});
+      if (!response || typeof response !== 'object' || !('result' in response)) return null;
+      const parsed = VoiceConversationActionResultSchema.safeParse(response.result);
+      return parsed.success ? parsed.data.voice : null;
+    };
+    const controls: ReadonlyArray<Readonly<{
+      id: VoiceConversationActionId;
+      title?: string;
+      input?: (voice: VoiceConversationStatus) => Readonly<Record<string, unknown>>;
+    }>> = [
+      { id: 'ui.voice_global.get' },
+      { id: 'ui.voice_global.start', title: t('voiceAssistant.startVoice') },
+      { id: 'ui.voice_global.end', title: t('voiceAssistant.endVoice') },
+      { id: 'ui.voice_global.set_muted', title: t('voiceSurface.a11y.mute'), input: () => ({ muted: true }) },
+      { id: 'ui.voice_global.set_muted', title: t('voiceSurface.a11y.unmute'), input: () => ({ muted: false }) },
+      { id: 'ui.voice_global.recover', title: t('voiceSurface.reconnect') },
+      { id: 'ui.voice_global.dismiss', input: voice => ({ kind: voice.canDismissFailedAttempt ? 'failed' : 'ended' }) },
+      { id: 'ui.voice_global.turn_control', title: t('common.send'), input: () => ({ control: 'commit_input' }) },
+      { id: 'ui.voice_global.turn_control', title: t('voiceSurface.a11y.bargeIn'), input: () => ({ control: 'interrupt' }) },
+      { id: 'ui.voice_global.turn_control', title: t('voiceSurface.a11y.cancelTurn'), input: () => ({ control: 'cancel' }) },
+      { id: 'ui.voice_global.hold_begin' }, { id: 'ui.voice_global.hold_release' }, { id: 'ui.voice_global.hold_cancel' },
+      { id: 'ui.voice_global.brief.request' }, { id: 'ui.voice_global.brief.retry' }, { id: 'ui.voice_global.brief.stop' },
+    ];
+    for (const [index, control] of controls.entries()) {
+      const spec = byId.get(control.id);
+      if (!spec) continue;
+      cmds.push({
+        id: `action:${control.id}:${index}`, actionSpecId: control.id,
+        title: control.title ?? spec.title, icon: 'microphone', category: t('commandPalette.commands.voiceCategory'),
+        action: async () => {
+          if (control.id === 'ui.voice_global.start') {
+            await actions.execute(control.id, { target: { kind: 'default' }, expectedAttempt: null });
+            return;
+          }
+          const voice = await readVoice();
+          if (!voice) return;
+          if (control.id === 'ui.voice_global.get') {
+            await alert(t('voiceAssistant.label'), t(resolveVoiceSurfaceStatusPresentation(resolveVoiceSurfaceState(voice)).labelKey));
+          } else if (control.id.startsWith('ui.voice_global.brief.')) {
+            await actions.execute(control.id, voice.attemptId ? { expectedAttemptId: voice.attemptId } : {});
+          } else if (voice.attemptId) {
+            await actions.execute(control.id, { expectedAttempt: voice.attemptId, ...control.input?.(voice) });
+          }
+        },
+      });
+    }
+    // Parameterized model/artifact operations keep the same anchored selection UI.
+    // Discovery is declaration-owned; opening that picker never reports operation completion.
+    const routes = new Map(flattenSettingsPageCatalog(SETTINGS_PAGE_CATALOG).map(page => [page.id, page.route]));
+    for (const page of getSettingsPageDeclarations(undefined, { voice: voiceSettingsParse(state.settings?.voice) })) {
+      if (!page.pageId.startsWith('voice')) continue;
+      for (const ref of Object.values(page.settings)) {
+        if (ref.operation?.kind !== 'invoke' || !settingRendersOnHost(ref)) continue;
+        const route = page.subpage?.route ?? routes.get(page.pageId);
+        const href = route ? buildSettingHref(route, ref) : null;
+        if (!href) continue;
+        cmds.push({
+          id: `setting-operation:${ref.anchor}`, title: ref.title ?? t(ref.titleKey), icon: 'gear',
+          category: t('commandPalette.commands.voiceCategory'), action: () => nav.push(href),
+        });
+      }
+    }
     const reset = byId.get('ui.voice_global.reset');
     if (reset) {
       cmds.push({

@@ -9,7 +9,7 @@ import {
 import { configuration } from '@/configuration';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 
-import type { UploadTransferTarget } from './uploadTransferTarget';
+import type { UploadTransferTarget } from '@happier-dev/transfers/node';
 import { writePromptAsset } from '@/prompts/assets/actions';
 
 export type PromptAssetUploadTarget = UploadTransferTarget<PromptAssetMutationResponseV1> & Readonly<{

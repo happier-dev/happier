@@ -12,6 +12,22 @@ function scrollTo(tracker: ReturnType<typeof createNearViewportTracker>, y: numb
 }
 
 describe('near-viewport window', () => {
+    it('uses the same demand window along a horizontal Canvas axis', () => {
+        const tracker = createNearViewportTracker({ quantum: 24, initialViewportHeight: 0, axis: 'x' });
+        tracker.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 900, height: 200 } } } as never);
+        expect(isSpanNearViewport(tracker.getWindow(), { top: 4000, height: 400 })).toBe(false);
+        tracker.onScroll({ nativeEvent: { contentOffset: { x: 4000, y: 0 } } } as never);
+        expect(isSpanNearViewport(tracker.getWindow(), { top: 4000, height: 400 })).toBe(true);
+        expect(isSpanNearViewport(tracker.getWindow(), { top: 0, height: 400 })).toBe(false);
+    });
+    it('can track only the visible window for retained presentation without widget overscan', () => {
+        const tracker = createNearViewportTracker({ quantum: 1, initialViewportHeight: 800, overscan: false });
+        expect(isSpanNearViewport(tracker.getWindow(), { top: 0, height: 200 })).toBe(true);
+        scrollTo(tracker, 201);
+        expect(isSpanNearViewport(tracker.getWindow(), { top: 0, height: 200 })).toBe(false);
+        scrollTo(tracker, 0);
+        expect(isSpanNearViewport(tracker.getWindow(), { top: 0, height: 200 })).toBe(true);
+    });
     it('keeps one viewport of overscan above and two below the quantized scroll position', () => {
         const window = resolveNearViewportWindow({ windowTopOffset: 1000, viewportHeight: 800, quantum: 100 });
         expect(window).toEqual({ top: 200, bottom: 2700 });

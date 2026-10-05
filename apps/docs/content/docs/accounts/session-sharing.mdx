@@ -1,9 +1,20 @@
 ---
-title: Session sharing
-description: Share sessions with teammates or through view-only public links, and understand where shared sessions appear in Happier.
+title: Sharing
+description: Share sessions and reusable work with people or Teams, choose their access, and recover when sharing is refused.
 ---
 
-Session sharing lets multiple people work from the same Happier session.
+Give someone access to a session or to the reusable work you want them to use.
+Sharing the original lets collaborators see subsequent changes; sending a copy
+gives them an independent document.
+
+## Availability
+
+The unified sharing sheet described here is **0.3 development behavior**, not
+stable-release availability. It serves sessions, workflows, roles, Launch
+Profiles and Saved Secret audiences. Use a current 0.3 client and Home with the
+relevant feature enabled; workflows also require the Home's Workflows feature.
+Session access requires session sharing, and session public links require public
+sharing. Missing server support does not grant access.
 
 The released sharing workflow supports two paths:
 
@@ -15,6 +26,63 @@ and **Groups**. It is part of the normal session-sharing feature, so it is
 available wherever session sharing is on, and a Home with session sharing turned
 off closes it too. It uses the same access authority as direct sharing. This is development-channel behavior, not a stable-release
 availability claim.
+
+## Share reusable work (0.3 development)
+
+Open a saved workflow and choose **Share** from its menu, or an Account role and
+choose **Share…**. For a saved custom Launch Profile, open its detail page and
+choose **Share…**. The first share publishes a value-free profile document;
+publication can require approval.
+Built-in or plugin-owned definitions do not become editable shared originals:
+make an editable copy first where that surface offers it.
+
+The sheet shows **Who has access**. Search for a person, Team or Group, add them,
+then choose their access on the row. Open a row to remove access and confirm the
+removal. You need owner or Admin access to manage document grants; only the
+owner can assign **Admin**. The roster can be read without permission to edit it.
+
+| Shared item | First level | Second level | Admin |
+| --- | --- | --- | --- |
+| Session | **Can view**: read the session | **Can steer**: contribute input and pending messages | Manage session access; runtime approval delegation is separate |
+| Workflow | **Can use**: see and run it | **Can edit**: change the shared original | Edit and manage document grants |
+| Role | **Can use**: use it, with personal overrides in your own Settings | **Can edit**: change it for everyone it is shared with | Edit and manage document grants |
+| Launch Profile | **Can use**: start sessions with it | **Can edit**: change the shared original | Edit and manage document grants |
+| Saved Secret | **Can use**: use the referenced secret in supported launches | No edit level in the audience sheet | No Admin level in the audience sheet |
+
+A workflow shared personally can be run on the recipient's machines. Its runs
+and triggers stay with the person who starts them; sharing the definition does
+not share one of those runs. A Team-shared workflow run is visible to its selected
+Team, subject to current membership and the surviving workflow grant. When the
+workflow has several Team grants, the launch must choose its run's Team rather
+than exposing the run to every Team. Session access and Team policy still control
+what somebody can do in a workflow's step sessions.
+
+**Copy link** copies an in-app address. It does not add a grant or create a
+public link. The recipient must already have access on that Home. For workflows,
+roles and published profiles, **Send a copy instead** exports the readable
+document through the device's save/share flow. Later edits to the original do not
+update that copy, and removing a grant cannot withdraw a copy already sent.
+
+### Launch Profiles and Saved Secret references
+
+A shared Launch Profile carries variable requirements and Saved Secret
+references, never stored environment-variable values. Publication refuses a
+profile with nonempty configured values. Replace those values with requirements
+and appropriate secret bindings before trying **Share…** again. This restriction
+applies to configured values even when a variable was not marked secret.
+
+Sharing the profile does not grant access to its referenced secrets. Manage the
+secret's audience separately from **Manage access** in the Saved Secret editor,
+or use **Add a shared secret** to create one for sharing. People, Teams and Groups
+all have the locked **Can use** level; adding or removing rows edits a draft until
+you confirm the editor's save/share operation. A personal Saved Secret remains
+personal until you explicitly share it.
+
+The audience sheet does not reveal the value. An authorized launch can supply
+that value to an Agent, app or local tool, so grant access only for uses you
+intend. A recipient with a missing or revoked reference must choose an accessible
+secret or configure the required value through the launch's supported input
+flow. See [Saved Secrets](/accounts/team-credentials#shared-saved-secrets).
 
 ## Where shared sessions appear
 
@@ -50,25 +118,27 @@ a compatibility deep link and opens that same Access view.
 
 ### Access levels
 
-Happier currently supports three direct-share access levels:
+The 0.3 sheet uses **Can view**, **Can steer** and **Admin**. Released 0.2
+uses the older **View only**, **Can edit** and **Can manage** labels for these
+levels.
 
-### View only
+### Can view
 
 Use this when someone should be able to read the session but not contribute new work.
 
-### Can edit
+### Can steer
 
 Use this when someone should be able to participate in the session itself.
 
 This is the collaborative mode for continuing the transcript together. It also applies to session-wide features such as the pending queue.
 
-### Can manage
+### Admin
 
 Use this when someone should be able to manage sharing for the session, including other direct shares and public-link settings.
 
 ## Permission-approval delegation
 
-For direct shares with **Can edit** or **Can manage** access, Happier can also optionally allow that recipient to approve permission prompts for the shared session.
+For direct shares with **Can steer** or **Admin** access, Happier can also optionally allow that recipient to approve permission prompts for the shared session.
 
 This is a separate per-recipient setting, not a separate access level.
 
@@ -154,10 +224,10 @@ transcript.
 
 The Team policy can propose or require an explicit Team grant for a Session
 created in that Team context. In the current development contract, both
-`team_default` and `team_required` start at **Can edit** without permission-
-approval delegation. A required grant cannot be removed or reduced below Can
-edit while that policy still applies. An explicitly stronger Can manage grant
-remains stronger and can later return to Can edit.
+`team_default` and `team_required` start at **Can steer** without permission-
+approval delegation. A required grant cannot be removed or reduced below **Can
+steer** while that policy still applies. An explicitly stronger Admin grant
+remains stronger and can later return to Can steer.
 
 The Session's primary Team can also restrict sharing outside that Team:
 
@@ -327,7 +397,8 @@ For details, see [Session read and unread state](/organize/session-read-state).
 2. On released 0.2, open **Sharing**. In the 0.3 development channel, open
    **Collaboration → Access**.
 3. Search for the person.
-4. Choose **View only**, **Can edit**, or **Can manage**.
+4. Choose **Can view**, **Can steer**, or **Admin** in 0.3 (the older labels
+   above apply on released 0.2).
 5. Optionally allow permission approvals for edit/admin recipients.
 
 ### Grant Team or Group access (0.3 development)
@@ -359,9 +430,47 @@ members who have not started following the Session.
    supplied by your selected layout, or search for it by name
 3. Open or pin the session you need
 
+## When access or approval is refused (0.3 development)
+
+If an administrator removes the grant that gives them their final document
+access, a successful removal closes their access too. The sheet clears the
+roster and editing controls and says **You no longer have access**. Another
+surviving personal, Team or Group grant can preserve a lower level of access;
+it does not preserve the removed Admin permission. Ask the owner or a current
+administrator to restore access if the removal was unintended.
+
+An approval request is pending work, not confirmation that sharing changed.
+Open its details and have an authorized person decide it, then refresh or reopen
+the shared item to inspect the acknowledged state. After an uncertain response,
+check the roster before repeating the change. A retryable failure offers retry;
+missing access, unavailable support or an ineligible recipient needs its stated
+prerequisite repaired first.
+
+If approval says **This sign-in cannot approve requests**, sign in to the same
+Home with that Account's recovery key, or approve from another device with an
+Account sign-in. A terminal-derived sign-in can request an operation without
+having authority to approve it. Home administration privileges, a content
+encryption key or another Account's sign-in do not replace the required Account
+authority. See [Account security](/accounts/account-security).
+
+For encrypted content, permission and key readiness are separate: access may
+still be preparing or locked. Use the displayed preparation/recovery action;
+the app does not reinterpret unavailable encrypted content as plaintext.
+
+Sharing with an existing Team is distinct from inviting somebody into it.
+[Team invitations](/accounts/team-invitations) need a published authenticated
+Home address and an application address for the join screen. A Home that has
+not published these cannot issue a transferable invitation link. Email delivery
+is a separate prerequisite for email invitations, not a substitute for those
+addresses.
+
 ## Related
 
 - [Inbox and approvals](/sessions/inbox-and-approvals)
 - [Friends](/accounts/friends)
 - [Pending queue](/sessions/pending-queue)
 - [Encryption model](/security/encryption)
+- [Work Boards](/organize/work-boards)
+- [Work glossary](/organize/work-glossary)
+- [Profiles](/agents/profiles)
+- [Teams](/accounts/teams)

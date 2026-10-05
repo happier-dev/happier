@@ -165,7 +165,7 @@ const BROWSER_ENABLED = {
     diagnostics: [],
     evaluatedAt: 1,
     scope: { scopeKind: 'runtime' },
-} as const;
+} satisfies NonNullable<React.ComponentProps<typeof BrowserShell>['browserFeatureDecision']>;
 
 type StreamFixture = 'live' | 'connecting' | 'stalled' | 'ended' | 'unavailable';
 

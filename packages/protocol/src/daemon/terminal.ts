@@ -181,17 +181,7 @@ export const DaemonTerminalCloseResponseSchema = z.union([
 ]);
 export type DaemonTerminalCloseResponse = z.infer<typeof DaemonTerminalCloseResponseSchema>;
 
-export const DaemonTerminalRestartRequestSchema = z.object({
-  terminalKey: z.string().min(1).max(2000),
-  cwd: z.string().min(1).max(10_000).optional(),
-  cols: z.number().int().min(2).max(500).optional(),
-  rows: z.number().int().min(2).max(500).optional(),
-  initialCommand: z.string().max(100_000).optional(),
-  launch: DaemonTerminalLaunchIntentSchema.optional(),
-}).passthrough().refine(
-  (value) => value.initialCommand === undefined || value.launch === undefined,
-  { message: 'initialCommand and launch are mutually exclusive' },
-);
+export const DaemonTerminalRestartRequestSchema = DaemonTerminalEnsureRequestSchema;
 export type DaemonTerminalRestartRequest = z.infer<typeof DaemonTerminalRestartRequestSchema>;
 
 export const DaemonTerminalRestartResponseSchema = DaemonTerminalEnsureResponseSchema;

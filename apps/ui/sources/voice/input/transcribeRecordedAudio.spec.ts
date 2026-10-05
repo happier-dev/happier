@@ -104,12 +104,12 @@ describe('recordedAudioTranscriptionController', () => {
     expect(text).toBe('hello openai compat');
     expect(openAiCompatTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: 'happier.voice.openai-compat/stt' }),
-      model: 'whisper-1',
-      language: 'en',
       source: { kind: 'native', uri: 'file:///rec.m4a' },
     }));
     expect(openAiCompatTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('baseUrl');
     expect(openAiCompatTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('apiKey');
+    expect(openAiCompatTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(openAiCompatTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('language');
   });
 
   it('routes canonical qualified Google STT settings through the selected-daemon credential client without a synced key', async () => {
@@ -138,12 +138,12 @@ describe('recordedAudioTranscriptionController', () => {
 
     expect(googleGeminiTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: 'happier.voice.google/gemini-stt' }),
-      model: 'gemini-2.5-flash',
       source: { kind: 'native', uri: 'file:///rec.m4a' },
       mimeType: 'audio/mp4',
-      language: 'en',
     }));
     expect(googleGeminiTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('apiKey');
+    expect(googleGeminiTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(googleGeminiTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('language');
     expect(text).toBe('hello gemini');
   });
 
@@ -176,11 +176,12 @@ describe('recordedAudioTranscriptionController', () => {
     expect(googleGeminiTranscribeSpy).toHaveBeenCalledTimes(1);
     expect(googleGeminiTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: 'happier.voice.google/gemini-stt' }),
-      model: 'gemini-2.5-flash',
-      language: 'en',
+      source: { kind: 'native', uri: 'file:///rec.m4a' },
     }));
     const dispatch = googleGeminiTranscribeSpy.mock.calls[0]?.[0];
     expect(dispatch).not.toHaveProperty('apiKey');
+    expect(dispatch).not.toHaveProperty('model');
+    expect(dispatch).not.toHaveProperty('language');
     expect(JSON.stringify(dispatch)).not.toContain('legacy-google-secret-ciphertext');
   });
 

@@ -34,7 +34,7 @@ import {
     ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
-import { useListPresentation } from './listPresentation';
+import { useListPresentation, usePageListInsets } from './listPresentation';
 import { PAGE_LIST_METRICS } from './pageListMetrics';
 import { SectionItemDensityProvider, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { SectionLeadingColumnProvider } from './sectionLeadingColumn';
@@ -141,6 +141,12 @@ const stylesheet = StyleSheet.create((theme) => {
         container: {
             width: '100%',
             paddingHorizontal: Platform.select(ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX),
+        },
+        containedContainer: {
+            paddingHorizontal: 0,
+        },
+        containedContent: {
+            marginHorizontal: 0,
         },
         header: {
             paddingTop: Platform.select({ ios: 26, default: 20 }),
@@ -393,6 +399,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
     columns: number;
     accessibilityLabel?: string;
     containerStyle?: StyleProp<ViewStyle>;
+    contentMarginPx?: number;
 }>) {
     const styles = stylesheet;
 
@@ -427,7 +434,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
         setWidthColumns((current) => (current === next ? current : next));
     }, [resolveColumnCountForContentWidth]);
 
-    const contentMarginPx = Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 0;
+    const contentMarginPx = props.contentMarginPx ?? Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 0;
     const handleMeasureLayout = React.useCallback((event: LayoutChangeEvent) => {
         const measuredWidthPx = event.nativeEvent.layout.width;
         if (!Number.isFinite(measuredWidthPx) || measuredWidthPx <= 0) return;
@@ -485,8 +492,10 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
             >
                 <ItemGroupColumns
                     activeColumns={activeColumns}
-                    style={styles.columnsBody}
-                    paddingHorizontal={isGrid ? contentMarginPx - cellGutterPx : 0}
+                    style={isGrid && contentMarginPx < cellGutterPx
+                        ? [styles.columnsBody, { width: 'auto', marginHorizontal: contentMarginPx - cellGutterPx }]
+                        : styles.columnsBody}
+                    paddingHorizontal={isGrid ? Math.max(0, contentMarginPx - cellGutterPx) : 0}
                     paddingVertical={0}
                     columnGap={0}
                     rowGap={isGrid ? ITEM_GROUP_COLUMN_ROW_GAP_PX : 0}
@@ -529,6 +538,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     const presentation = useListPresentation();
     const isPage = presentation === 'page';
+    const contained = usePageListInsets() === 'contained' && isPage;
     const {
         title,
         description,
@@ -550,6 +560,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         surface = 'sheet',
         density,
     } = props;
+    const resolvedContainerStyle = contained ? [styles.containedContent, containerStyle] : containerStyle;
 
     const wantsColumns = (columns ?? 1) > 1;
     if (wantsColumns && clipContent) {
@@ -571,7 +582,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     return (
         <View style={[styles.wrapper, style]}>
-            <View style={[styles.container, constrainToContentWidth ? { maxWidth } : undefined]}>
+            <View style={[styles.container, contained ? styles.containedContainer : null, constrainToContentWidth ? { maxWidth } : undefined]}>
                 {/* Header */}
                 {isPage && (title || description || action) ? (
                     <HappierPageSectionHeader
@@ -584,7 +595,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         ) : title}
                         description={description}
                         action={action ?? undefined}
-                        insetPx={(Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.headingOpticalInsetPx}
+                        insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.headingOpticalInsetPx}
                         renderText={(input) => input.role === 'sectionTitle'
                             ? <Text accessibilityRole="header" style={[styles.pageTitle, titleStyle]}>{input.text}</Text>
                             : <Text style={styles.pageDescription}>{input.text}</Text>}
@@ -620,7 +631,8 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                             <ItemGroupColumnedBody
                                 columns={columns ?? 1}
                                 accessibilityLabel={accessibilityLabel}
-                                containerStyle={containerStyle}
+                                containerStyle={resolvedContainerStyle}
+                                contentMarginPx={contained ? 0 : undefined}
                             >
                                 {projectedChildren}
                             </ItemGroupColumnedBody>
@@ -629,7 +641,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                                 accessibilityRole={accessibilityRole}
                                 accessibilityLabel={accessibilityLabel}
                                 virtualizedSegment={virtualizedSegment}
-                                containerStyle={containerStyle}
+                                containerStyle={resolvedContainerStyle}
                                 clipContent={clipContent}
                             >
                                 {projectedChildren}
@@ -639,7 +651,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                                 accessibilityRole={accessibilityRole}
                                 accessibilityLabel={accessibilityLabel}
                                 virtualizedSegment={virtualizedSegment}
-                                containerStyle={containerStyle}
+                                containerStyle={resolvedContainerStyle}
                                 clipContent={clipContent}
                                 bare={surface === 'none'}
                             >

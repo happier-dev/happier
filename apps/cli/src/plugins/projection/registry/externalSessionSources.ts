@@ -15,7 +15,7 @@ type ExternalSessionSourceProjection = Readonly<{
 }>;
 type ExternalSessionSourceDeclaration = Pick<
   PluginBackendExternalSessionSourceDeclarationV1,
-  'sourceKind' | 'schema' | 'key' | 'instances'
+  'sourceKind' | 'schema' | 'key' | 'instances' | 'contentSearch'
 >;
 
 export type ResolvedExternalSessionSourceProjection =

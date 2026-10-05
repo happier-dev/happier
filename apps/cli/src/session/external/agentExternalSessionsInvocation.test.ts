@@ -27,6 +27,7 @@ import {
     type BoundedAgentExternalSessionsContribution,
 } from './agentExternalSessionsInvocation';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import * as packagedRipgrep from '@/integrations/ripgrep';
 
 const identity = Object.freeze({
     pluginId: 'acme.external',
@@ -194,6 +195,48 @@ function createWrapper(params?: Readonly<{
 }
 
 describe('bounded Agent External Sessions invocation', () => {
+    it('runs packaged ripgrep on the source file set and cancels it with the invocation', async () => {
+        const started = deferred<AbortSignal>();
+        const run = vi.spyOn(packagedRipgrep, 'run').mockImplementation(async (_args, options) => {
+            const signal = options!.signal!;
+            started.resolve(signal);
+            return await new Promise<never>((_resolve, reject) => {
+                signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            });
+        });
+        const caller = new AbortController();
+        const wrapped = createWrapper({ contribution: contributionWith(async (_method, request) => {
+            await request.ripgrep.run({ args: ['--files-with-matches', '--fixed-strings', '--', 'body phrase'], paths: ['/source/session.jsonl'] });
+            return successFor('listCandidates');
+        }) });
+        const pending = wrapped.listCandidates(requestFor('listCandidates', caller.signal));
+        try {
+            const processSignal = await Promise.race([started.promise, (async () => {
+                const result = await pending;
+                expect(result.ok).toBe(true);
+                throw new Error('Contribution settled before packaged ripgrep started');
+            })()]);
+            expect(run.mock.calls[0]?.[0]).toEqual(['--files-with-matches', '--fixed-strings', '--', 'body phrase', '/source/session.jsonl']);
+            expect(run.mock.calls[0]?.[1]).toMatchObject({ maxStdoutBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes, terminateOnStdoutLimit: true });
+            caller.abort();
+            await expect(pending).resolves.toMatchObject({ ok: false, code: 'cancelled' });
+            expect(processSignal.aborted).toBe(true);
+        } finally {
+            caller.abort();
+            run.mockRestore();
+        }
+    });
+    it('admits content matches and partial coverage through the generation-bound producer boundary', async () => {
+        const searchTerm = '  literal body  ';
+        const match = { snippet: 'decoded body phrase', sourceItemId: 'source-item', messageIndex: 3 };
+        const wrapped = createWrapper({ contribution: contributionWith((_method, request) => {
+            expect(request).toMatchObject({ searchTarget: 'content', searchTerm });
+            return { ok: true, value: { candidates: [{ remoteSessionId: 'remote', updatedAtMs: 1, match }], nextCursor: null, contentCoverage: 'partial' } };
+        }) });
+        await expect(wrapped.listCandidates({ ...requestFor('listCandidates'), searchTarget: 'content', searchTerm })).resolves.toEqual({
+            ok: true, value: { candidates: [{ remoteSessionId: 'remote', updatedAtMs: 1, match }], nextCursor: null, contentCoverage: 'partial' },
+        });
+    });
     it('stamps generic execution authority instead of requiring it from host-facing requests', async () => {
         const createInvocationExec = vi.fn(async () => unavailableInvocationExec);
         const hostSuppliedExec = createUnavailablePluginServices().exec;

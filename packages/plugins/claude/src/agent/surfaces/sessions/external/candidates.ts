@@ -13,6 +13,10 @@ import {
     type ClaudeTitleIndexState,
 } from './metadata.js';
 import type { ClaudeExternalSessionSource } from './source.js';
+import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
+import { searchClaudeExternalTranscript } from './transcript.js';
+import { readClaudeJsonlFileSize } from './files.js';
+import { findExternalSessionContentMatchRange } from '@happier-dev/protocol';
 
 export type ClaudeExternalSessionCandidate = Readonly<{
     remoteSessionId: string;
@@ -23,11 +27,13 @@ export type ClaudeExternalSessionCandidate = Readonly<{
     archived?: boolean;
     details: Readonly<{ projectId: string }>;
     candidateIndexState?: ClaudeTitleIndexState;
+    match?: { snippet: string; sourceItemId: string; messageIndex: number };
 }>;
 
 type ClaudeCandidateSearchContext = Readonly<{
     searchTerm: string;
     searchMode: 'fast' | 'full';
+    searchTarget: 'metadata' | 'content';
 }>;
 
 type ClaudeCandidateCursorV5 =
@@ -84,6 +90,7 @@ function encodeCandidateCursor(cursor: ClaudeCandidateCursorV5): string {
             cursor.scanned,
             cursor.search.searchTerm,
             searchMode,
+            cursor.search.searchTarget,
         ]
         : [
             5,
@@ -93,6 +100,7 @@ function encodeCandidateCursor(cursor: ClaudeCandidateCursorV5): string {
             cursor.offset,
             cursor.search.searchTerm,
             searchMode,
+            cursor.search.searchTarget,
         ];
     return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
@@ -103,16 +111,17 @@ function decodeCandidateCursor(
     if (typeof raw !== 'string' || raw.trim().length === 0) return null;
     try {
         const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
-        if (!Array.isArray(parsed) || parsed.length !== 7 || parsed[0] !== 5) return null;
+        if (!Array.isArray(parsed) || parsed.length !== 8 || parsed[0] !== 5) return null;
         const searchMode = parsed[6] === 'f'
             ? 'fast'
             : parsed[6] === 'l'
                 ? 'full'
                 : null;
-        if (typeof parsed[5] !== 'string' || !searchMode) return null;
+        if (typeof parsed[5] !== 'string' || !searchMode || (parsed[7] !== 'metadata' && parsed[7] !== 'content')) return null;
         const search: ClaudeCandidateSearchContext = {
             searchTerm: parsed[5],
             searchMode,
+            searchTarget: parsed[7],
         };
         if (
             parsed[1] === 'e'
@@ -173,10 +182,12 @@ function canSearchClaudeFilename(searchTerm: string): boolean {
 function normalizeCandidateSearchContext(params: Readonly<{
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
+    searchTarget?: 'metadata' | 'content';
 }>): ClaudeCandidateSearchContext {
     return {
-        searchTerm: typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '',
+        searchTerm: typeof params.searchTerm === 'string' ? (params.searchTarget === 'content' ? params.searchTerm : params.searchTerm.trim()).toLowerCase() : '',
         searchMode: params.searchMode === 'fast' ? 'fast' : 'full',
+        searchTarget: params.searchTarget === 'content' ? 'content' : 'metadata',
     };
 }
 
@@ -298,6 +309,8 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     limit: number;
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
+    searchTarget?: 'metadata' | 'content';
+    ripgrep?: AgentExternalSessionsInvocation['ripgrep'];
     signal?: AbortSignal;
     resultBudget?: ClaudeCandidateResultBudget;
     readCandidateIndexState?: (candidate: Readonly<{
@@ -309,6 +322,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     nextCursor: string | null;
     searchIncomplete?: boolean;
     preparation?: ClaudeCandidatePreparation;
+    contentCoverage?: 'complete' | 'partial' | 'unsupported';
 }>> {
     throwIfAborted(params.signal);
     const limit = Math.max(1, Math.trunc(params.limit));
@@ -324,6 +338,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         && (
             decodedCursor.search.searchTerm !== search.searchTerm
             || decodedCursor.search.searchMode !== search.searchMode
+            || decodedCursor.search.searchTarget !== search.searchTarget
         )
     ) {
         throw new ClaudeCandidateInvalidCursorError(
@@ -331,7 +346,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         );
     }
 
-    if (searchTerm && canSearchClaudeFilename(rawSearchTerm)) {
+    if (search.searchTarget === 'metadata' && searchTerm && canSearchClaudeFilename(rawSearchTerm)) {
         const exactFilenameSnapshot = await findClaudeJsonlSessionsById({
             source: params.source,
             env: params.env,
@@ -447,6 +462,25 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         limit: scanLimit,
         signal: params.signal,
     });
+    let prefilteredPaths: ReadonlySet<string> | null = null;
+    let contentPartial = false;
+    if (search.searchTarget === 'content') {
+        if (!params.ripgrep) return { candidates: [], nextCursor: null, contentCoverage: 'unsupported' };
+        // JavaScript's decoded case folding differs from rg for Unicode queries.
+        // Only ASCII queries can use this exclusion prefilter; the codec owns matches.
+        if (searchTerm && !/[^\x00-\x7F]/.test(searchTerm) && traversed.entries.length > 0) {
+            // JSON escaping can hide Unicode, quotes and newlines from a literal
+            // prefilter. Any file containing an escape is decoded-scanned too.
+            const result = await params.ripgrep.run({
+                args: ['--no-config', '--files-with-matches', '--null', '--ignore-case', '--multiline', '--fixed-strings', '-e', searchTerm, '-e', '\\'],
+                paths: traversed.entries.map((entry) => entry.filePath),
+                signal: params.signal,
+            });
+            throwIfAborted(params.signal);
+            if (!result.stdoutTruncated && result.exitCode !== 0 && result.exitCode !== 1) throw new Error('Claude conversation prefilter failed.');
+            prefilteredPaths = result.stdoutTruncated ? null : new Set(result.stdout.split('\0').filter(Boolean));
+        }
+    }
     if (
         decodedCursor?.kind === 'claudeCandidateIndexScan'
         && decodedCursor.sourceGeneration !== traversed.sourceGeneration
@@ -466,7 +500,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
             scanned,
         };
     const searchIncomplete = searchTerm
-        ? (search.searchMode === 'fast' || traversed.hasMore ? true : undefined)
+        ? ((search.searchTarget === 'metadata' && search.searchMode === 'fast') || traversed.hasMore ? true : undefined)
         : undefined;
     const page: ClaudeExternalSessionCandidate[] = [];
     let previousScanPosition = scanPosition;
@@ -490,7 +524,21 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         previousSourceGeneration = session.sourceGeneration;
         let candidate: ClaudeExternalSessionCandidate;
         let needsSelectedRowTitle = false;
-        if (!searchTerm) {
+        if (search.searchTarget === 'content') {
+            if (!searchTerm || (prefilteredPaths && !prefilteredPaths.has(session.filePath))) continue;
+            const projection = await searchClaudeExternalTranscript({
+                filePath: session.filePath,
+                fileRelPath: `${session.projectId}/${session.remoteSessionId}.jsonl`,
+                query: searchTerm,
+                // Source record span and serialized result size are different
+                // resources: decode one real row, then pack its hit context.
+                maxBytes: Math.max(1, await readClaudeJsonlFileSize(session.filePath, params.signal)),
+                signal: params.signal,
+            });
+            contentPartial ||= projection.partial;
+            if (!projection.match) continue;
+            candidate = { ...await buildCandidate({ session, env: params.env, includeTitle: true, signal: params.signal }), match: projection.match };
+        } else if (!searchTerm) {
             candidate = buildMetadataCandidate({ session, env: params.env });
             needsSelectedRowTitle = true;
         } else if (search.searchMode === 'fast') {
@@ -527,6 +575,35 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                 search,
             })
             : null;
+        if (candidate.match && params.resultBudget) {
+            const original = candidate;
+            const match = candidate.match;
+            const hit = findExternalSessionContentMatchRange(match.snippet, searchTerm);
+            const fits = (snippet: string) => {
+                const withSnippet = { ...original, match: { ...match, snippet } };
+                const { title: _title, ...withoutTitle } = withSnippet;
+                return params.resultBudget!.fits([...page, withSnippet], cursorAfter, searchIncomplete, preparation)
+                    || params.resultBudget!.fits([...page, withoutTitle], cursorAfter, searchIncomplete, preparation);
+            };
+            if (hit && !fits(match.snippet)) {
+                const contextSnippet = (context: number) => {
+                    let start = Math.max(0, hit.start - context);
+                    let end = Math.min(match.snippet.length, hit.end + context);
+                    if (start > 0 && /[\uDC00-\uDFFF]/.test(match.snippet[start]!)) start -= 1;
+                    if (end < match.snippet.length && /[\uD800-\uDBFF]/.test(match.snippet[end - 1]!)) end += 1;
+                    return match.snippet.slice(start, end);
+                };
+                let lower = 0;
+                let upper = match.snippet.length;
+                while (lower < upper) {
+                    const middle = Math.ceil((lower + upper) / 2);
+                    if (fits(contextSnippet(middle))) lower = middle;
+                    else upper = middle - 1;
+                }
+                candidate = { ...original, match: { ...match, snippet: contextSnippet(lower) } };
+            }
+        }
+
         if (needsSelectedRowTitle) {
             const selected = await buildCandidateForSelectedRow({
                 session,
@@ -558,6 +635,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                 return {
                     candidates: page,
                     nextCursor: continuation,
+                    ...(search.searchTarget === 'content' ? { contentCoverage: 'partial' as const } : {}),
                     ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
                     ...(preparation !== undefined ? { preparation } : {}),
                 };
@@ -591,6 +669,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                     return {
                         candidates: page,
                         nextCursor: continuation,
+                        ...(search.searchTarget === 'content' ? { contentCoverage: 'partial' as const } : {}),
                         ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
                         ...(preparation !== undefined ? { preparation } : {}),
                     };
@@ -602,6 +681,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
             return {
                 candidates: page,
                 nextCursor: cursorAfter,
+                ...(search.searchTarget === 'content' ? { contentCoverage: contentPartial || cursorAfter ? 'partial' as const : 'complete' as const } : {}),
                 ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
                 ...(preparation !== undefined ? { preparation } : {}),
             };
@@ -631,6 +711,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     return {
         candidates: page,
         nextCursor,
+        ...(search.searchTarget === 'content' ? { contentCoverage: contentPartial || nextCursor ? 'partial' as const : 'complete' as const } : {}),
         ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
         ...(preparation !== undefined ? { preparation } : {}),
     };

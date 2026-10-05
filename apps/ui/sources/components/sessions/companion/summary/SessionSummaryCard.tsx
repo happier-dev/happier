@@ -19,6 +19,9 @@ import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissi
 import type { SessionPermissionAnswer } from '@/sync/ops/sessionPermissionAnswers';
 import { t } from '@/text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/SessionPendingPromptCards';
+import { TranscriptOriginSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 import type { SessionCompanionDensity } from '../state/sessionCompanionPreference';
 import {
@@ -271,7 +274,8 @@ const SummaryAsk = React.memo(function SummaryAsk(props: Readonly<{
     const [failed, setFailed] = React.useState(false);
     const [outcome, setOutcome] = React.useState<AskOutcome | null>(null);
     const nowMs = useSessionListRelativeNowMs(outcome !== null);
-    const request = props.needsYou?.request ?? null;
+    const candidate = props.needsYou?.request ?? null;
+    const request = candidate && 'requestId' in candidate ? candidate : null;
     const requestId = request?.requestId ?? null;
     React.useEffect(() => {
         // A new ask replaces both the confirmation and any failure for the last one.
@@ -515,6 +519,11 @@ const DetailRow = React.memo(function DetailRow(props: Readonly<{
 
 export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: Readonly<{
     model: SessionSummaryCardModel;
+    /** Exact Session context for canonical question and Action-confirmation controls. */
+    session?: Session;
+    serverId?: string | null;
+    /** This placement is a measurement-only copy of the visible card. */
+    readOnly?: boolean;
     density: SessionCompanionDensity;
     presentation?: 'card' | 'full';
     destinations?: SessionSummaryDestinationHandlers;
@@ -586,7 +595,25 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
                 </View>
             ) : null}
 
-            {exact ? (
+            {exact && model.needsYou && 'id' in model.needsYou.request && props.session ? (
+                <TranscriptOriginSourceProvider readOnly={props.readOnly === true}>
+                    <View style={styles.rows}>
+                        <SessionPendingPromptCards
+                            testID={`${testID}-ask`}
+                            sessionId={props.session.id}
+                            serverId={props.serverId ?? props.session.serverId}
+                            session={props.session}
+                            permissions={[]}
+                            userActions={[model.needsYou.request]}
+                        />
+                        {model.needsYou.moreCount > 0 ? (
+                            <Text testID={`${testID}-ask-more-waiting`} style={styles.quietLink}>
+                                {t('sessionCompanion.ask.moreWaiting', { count: model.needsYou.moreCount })}
+                            </Text>
+                        ) : null}
+                    </View>
+                </TranscriptOriginSourceProvider>
+            ) : exact ? (
                 <SummaryAsk
                     needsYou={model.needsYou}
                     offline={offline}

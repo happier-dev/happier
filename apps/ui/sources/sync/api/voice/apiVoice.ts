@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import { serverFetch, type ServerFetch } from '@/sync/http/client';
 
 export type VoiceTokenResponse =
     | {
@@ -33,7 +33,7 @@ function isVoiceTokenResponse(value: unknown): value is VoiceTokenResponse {
 
 export async function fetchHappierVoiceToken(
     credentials: AuthCredentials,
-    opts?: { sessionId?: string | null; signal?: AbortSignal; timeoutMs?: number },
+    opts?: { sessionId?: string | null; signal?: AbortSignal; timeoutMs?: number; request?: ServerFetch },
 ): Promise<VoiceTokenResponse> {
     const timeoutMs = opts?.timeoutMs ?? 10_000;
     const controller = new AbortController();
@@ -54,7 +54,7 @@ export async function fetchHappierVoiceToken(
         const sessionId = typeof opts?.sessionId === 'string' ? opts.sessionId.trim() : '';
         const body = sessionId ? { sessionId } : {};
 
-        response = await serverFetch('/v1/voice/token', {
+        response = await (opts?.request ?? serverFetch)('/v1/voice/token', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -91,7 +91,7 @@ async function postHappierVoiceSessionLifecycle(
     path: '/v1/voice/session/complete' | '/v1/voice/session/release',
     params: { leaseId: string; providerConversationId?: string },
     errorPrefix: string,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; request?: ServerFetch },
 ): Promise<void> {
     const timeoutMs = options?.timeoutMs ?? 5000;
 
@@ -99,7 +99,7 @@ async function postHappierVoiceSessionLifecycle(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await serverFetch(path, {
+        const response = await (options?.request ?? serverFetch)(path, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -122,7 +122,7 @@ async function postHappierVoiceSessionLifecycle(
 export async function completeHappierVoiceSession(
     credentials: AuthCredentials,
     params: { leaseId: string; providerConversationId: string },
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; request?: ServerFetch },
 ): Promise<void> {
     return postHappierVoiceSessionLifecycle(
         credentials,
@@ -136,7 +136,7 @@ export async function completeHappierVoiceSession(
 export async function releaseHappierVoiceSession(
     credentials: AuthCredentials,
     params: { leaseId: string },
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; request?: ServerFetch },
 ): Promise<void> {
     return postHappierVoiceSessionLifecycle(
         credentials,

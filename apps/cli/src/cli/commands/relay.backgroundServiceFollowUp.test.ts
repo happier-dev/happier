@@ -94,7 +94,7 @@ function installedDefaultFollowingService(happierHomeDir: string): DaemonService
     return {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.service',
         happierHomeDir,
         platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'

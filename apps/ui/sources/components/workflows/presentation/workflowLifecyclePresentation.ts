@@ -101,11 +101,29 @@ const WORKFLOW_LIFECYCLE_SHAPES: Readonly<Record<WorkflowInvocationLifecycleV1, 
     superseded: { marker: icon('arrow-clockwise') },
 };
 
+/**
+ * What the row is, when its authored block is known. A held **Wait for you**
+ * step shares the review hold's lifecycle but not its word (07 §6.2): it reads
+ * "Waiting for you", and "Waiting for your review" stays reserved for review
+ * holds. Tone, marker and attention are the lifecycle's and do not change.
+ */
+export type WorkflowInvocationLifecycleContext = Readonly<{ blockKind?: string | null }>;
+
+export function isWorkflowWaitForYouHold(
+    lifecycle: WorkflowInvocationLifecycleV1,
+    context?: WorkflowInvocationLifecycleContext,
+): boolean {
+    return lifecycle === 'waiting_for_review' && context?.blockKind === 'wait';
+}
+
 export function describeWorkflowInvocationLifecycle(
     lifecycle: WorkflowInvocationLifecycleV1,
+    context?: WorkflowInvocationLifecycleContext,
 ): WorkflowLifecyclePresentation {
     const shape = WORKFLOW_LIFECYCLE_SHAPES[lifecycle];
-    const label = t(`workflows.invocationState.${lifecycle}`);
+    const label = isWorkflowWaitForYouHold(lifecycle, context)
+        ? t('workflows.review.waitTitle')
+        : t(`workflows.invocationState.${lifecycle}`);
     const attention = WORKFLOW_ATTENTION_LIFECYCLES.includes(lifecycle);
     const status = resolveWorkStatusTone({ kind: 'workflow_step', facts: { lifecycle, word: label, inAttentionWindow: attention } });
     return {

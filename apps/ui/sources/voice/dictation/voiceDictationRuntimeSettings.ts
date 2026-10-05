@@ -39,12 +39,7 @@ export function createVoiceDictationRuntimeSettingsSnapshot(settings: any): any 
 
   return {
     ...(settings && typeof settings === 'object' ? settings : {}),
-    voice: {
-      ...runtimeVoice,
-      // `null` means provider/device default. Dictation never silently reads
-      // the conversational Voice language.
-      assistantLanguage: dictation.language,
-    },
+    voice: runtimeVoice,
   };
 }
 

@@ -18,7 +18,10 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 
 type UseDerivedSessionChangeSetResult = Readonly<{
     turnChangeSets: readonly TurnChangeSet[];
+    /** The presented turn: `presentedTurnId` when given, otherwise the Session's latest turn. */
     latestTurnId: string | null;
+    /** The Session's canonical latest turn, whatever turn is presented. */
+    sessionLatestTurnId: string | null;
     latestTurnChangeSet: TurnChangeSet | null;
     latestTurnScopedChangeSet: SessionChangeSet | null;
     sessionChangeSet: SessionChangeSet | null;
@@ -35,7 +38,22 @@ function buildDiffByPath(changeSet: SessionChangeSet | null): ReadonlyMap<string
     return entries.length > 0 ? new Map(entries) : null;
 }
 
-export function useDerivedSessionChangeSet(address: SessionAddress | null, repoRootPath?: string | null): UseDerivedSessionChangeSetResult {
+export type UseDerivedSessionChangeSetOptions = Readonly<{
+    /**
+     * Present this turn's evidence in the `latestTurn*` fields instead of the latest turn's (a turn
+     * card's link opens that exact turn). A turn without published evidence presents nothing.
+     */
+    presentedTurnId?: string | null;
+}>;
+
+export function useDerivedSessionChangeSet(
+    address: SessionAddress | null,
+    repoRootPath?: string | null,
+    options?: UseDerivedSessionChangeSetOptions,
+): UseDerivedSessionChangeSetResult {
+    const presentedTurnId = typeof options?.presentedTurnId === 'string' && options.presentedTurnId.trim().length > 0
+        ? options.presentedTurnId.trim()
+        : null;
     const requestedAddress = React.useMemo(
         () => normalizeSessionAddress(address?.serverId, address?.sessionId),
         [address?.serverId, address?.sessionId],
@@ -65,6 +83,7 @@ export function useDerivedSessionChangeSet(address: SessionAddress | null, repoR
     }, [messages]);
 
     const latestTurnChangeSet = React.useMemo(() => {
+        if (presentedTurnId) return turnChangeSets.find((turn) => turn.turnId === presentedTurnId) ?? null;
         const latestTurnId = exactSession?.latestTurnId;
         if (typeof latestTurnId === 'string' && latestTurnId.trim().length > 0) {
             // Empty and unavailable turns publish lifecycle facts without a Diff transcript row.
@@ -76,7 +95,7 @@ export function useDerivedSessionChangeSet(address: SessionAddress | null, repoR
         return turnChangeSets.reduce<TurnChangeSet | null>((latest, turn) => (
             latest === null || compareTurnChangeSetChronology(latest, turn) <= 0 ? turn : latest
         ), null);
-    }, [exactSession?.latestTurnId, turnChangeSets]);
+    }, [exactSession?.latestTurnId, presentedTurnId, turnChangeSets]);
 
     const sessionChangeSet = React.useMemo(() => {
         return deriveSessionChangeSet({
@@ -130,7 +149,8 @@ export function useDerivedSessionChangeSet(address: SessionAddress | null, repoR
 
     return {
         turnChangeSets,
-        latestTurnId: exactSession?.latestTurnId ?? null,
+        latestTurnId: presentedTurnId ?? exactSession?.latestTurnId ?? null,
+        sessionLatestTurnId: exactSession?.latestTurnId ?? null,
         latestTurnChangeSet,
         latestTurnScopedChangeSet,
         sessionChangeSet,

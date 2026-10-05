@@ -55,7 +55,7 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
             : mutation.actionId === "reviews.comments.reply" ? [mutation.input.parentCommentId]
             : mutation.actionId === "reviews.comments.bulkTransition" ? mutation.input.commentIds : [mutation.input.commentId];
         const sources: ReviewCommentStoredSourceV1[] = [];
-        const failed: Array<{ commentId: string; errorCode: string; error: string }> = [];
+        const failed: ReviewCommentPrepareMutationResponseV1['failed'] = [];
         for (const id of ids) {
             const source = await store.getSource({ accountId: principal.accountId, commentId: id });
             if (source) {

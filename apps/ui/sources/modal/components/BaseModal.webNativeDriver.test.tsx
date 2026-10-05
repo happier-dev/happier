@@ -29,6 +29,7 @@ installModalComponentCommonModuleMocks({
                 OS: 'web',
             },
             Animated: {
+                View: (props: any) => React.createElement('AnimatedView', props, props.children),
                 Value: function Value(this: any, initial: number) {
                     this.__value = initial;
                     this.interpolate = () => this;
@@ -55,10 +56,6 @@ vi.mock('@/utils/web/radixCjs', async () => {
     }),
   };
 });
-
-vi.mock('@/modal/portal/ModalPortalTarget', () => ({
-  ModalPortalTargetProvider: ({ target, children }: any) => React.createElement('ModalPortalTargetProvider', { target }, children),
-}));
 
 describe('BaseModal (web native driver)', () => {
   beforeEach(() => {
@@ -130,6 +127,16 @@ describe('BaseModal (web native driver)', () => {
     }
   });
 
+  it('keeps the browser backdrop available to glass inside the modal motion frame', async () => {
+    const { BaseModal } = await import('./BaseModal');
+    const rendered = await renderScreen(<BaseModal visible><div data-testid="glass-content" /></BaseModal>);
+    let ancestor = rendered.find((node) => node.props['data-testid'] === 'glass-content').parent;
+    while (ancestor && String(ancestor.type) !== 'AnimatedView') ancestor = ancestor.parent;
+    expect(Boolean(ancestor)).toBe(true);
+    const styles = Array.isArray(ancestor?.props.style) ? ancestor.props.style.flat(Infinity) : [ancestor?.props.style];
+    expect(styles.some((style) => style && 'transform' in style)).toBe(false);
+  });
+
   it('uses the shared modal overlay enter and exit durations on web', async () => {
     const { BaseModal } = await import('./BaseModal');
 
@@ -154,6 +161,7 @@ describe('BaseModal (web native driver)', () => {
 
   it('does not churn portal target state on ref detach (avoids update-depth loops)', async () => {
     const { BaseModal } = await import('./BaseModal');
+    const { ModalPortalTargetProvider } = await import('@/modal/portal/ModalPortalTarget');
 
     const rendered = await renderScreen(
       <BaseModal visible={true}>
@@ -166,7 +174,7 @@ describe('BaseModal (web native driver)', () => {
     // a callback ref (which can create ref attach/detach loops on web).
     expect(typeof portalHost.props.ref).toBe('object');
 
-    const provider = () => rendered.findByType('ModalPortalTargetProvider');
+    const provider = () => rendered.find((node) => node.type === ModalPortalTargetProvider);
     const before = provider().props.target;
     // react-test-renderer does not attach real DOM nodes to host refs, so the portal target
     // remains null here; the important property is that we avoid callback-ref state updates.

@@ -30,6 +30,8 @@ import type { VoiceProviderContribution } from './voiceProviders.js';
 import type { PromptAssetTypeDescriptorV1 } from '../../prompts/library/promptAssetsV1.js';
 import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descriptorV1.js';
 import { isBundledProviderCommandCatalogParserV1 } from '../../providers/detection/descriptorV1.js';
+import { normalizePluginWorkflowContributionV1 } from './workflows.js';
+import { parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
 
 export type PluginContributionReferenceRuleV2 = Readonly<{
   field: string;
@@ -126,7 +128,7 @@ export type PluginContributionCatalogEntryV2 = Readonly<{
   disposition: 'retained' | 'reshaped' | 'delegated';
   lifecycleStages: typeof PLUGIN_CONTRIBUTION_LIFECYCLE_STAGES_V2;
   readEntries(contributes: Readonly<Record<string, unknown>>): readonly unknown[];
-  canonicalize(value: unknown): unknown;
+  canonicalize(value: unknown, context: Readonly<{ pluginId: string }>): unknown;
   projectJsonSchema(): Readonly<Record<string, unknown>>;
   conflictKey(value: Readonly<Record<string, unknown>>): string | null;
   merge(existing: unknown, incoming: unknown): Readonly<{ ok: true; value: unknown } | { ok: false; code: 'plugin_contribution_conflict' }>;
@@ -192,6 +194,9 @@ const FAMILY_POLICIES = {
   commands: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
   tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
   resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'daemon', consumer: 'resource-service', platforms: ALL_PLATFORMS },
+  inputTypes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'inputTypes', allowedRuntimeRegistration: null, consumer: 'input-fields', platforms: ALL_PLATFORMS },
+  dragSources: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'dragSources', allowedRuntimeRegistration: 'dragSources', registrationHost: 'client', consumer: 'entity-drag-drop', platforms: ALL_PLATFORMS },
+  dropTargets: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: 'dropTargets', allowedRuntimeRegistration: 'dropTargets', registrationHost: 'client', consumer: 'entity-drag-drop', platforms: ALL_PLATFORMS },
   transcriptActivities: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'transcript-tail-host', platforms: ALL_PLATFORMS },
   sessionInfoSections: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'session-info-host', platforms: ALL_PLATFORMS },
   sessionHeaderActions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'session-header-host', platforms: ALL_PLATFORMS },
@@ -245,6 +250,26 @@ function extractRuleReferences(
 }
 
 function extractNestedReferences(family: string, value: Readonly<Record<string, unknown>>): PluginContributionReferenceCandidateV2[] {
+  if (family === 'dragSources' || family === 'dropTargets') {
+    const client = value.client as Readonly<{ artifactId?: unknown }> | undefined;
+    const actions = Array.isArray(value.actions) ? value.actions : [];
+    const kinds = Array.isArray(value.acceptedKinds) ? value.acceptedKinds : [];
+    return [
+      ...(client?.artifactId === undefined ? [] : [{ targetFamily: 'generated.uiArtifacts', reference: client.artifactId, path: ['client', 'artifactId'] }]),
+      ...actions.flatMap((action, index) => action?.kind === 'plugin' ? [{ targetFamily: 'actions', reference: action.action, path: ['actions', index, 'action'] }] : []),
+      ...kinds.flatMap((kind, index) => {
+        const reference = typeof kind === 'string' && kind.startsWith('plugin:') ? parseQualifiedPluginContributionKey(kind.slice(7)) : null;
+        return reference ? [{ targetFamily: 'dragSources', allowQualifiedCrossPlugin: true, allowQualifiedSamePlugin: true, reference, path: ['acceptedKinds', index] }] : [];
+      }),
+    ];
+  }
+  if (family === 'inputTypes') {
+    const options = value.options as Readonly<{ resource?: unknown }> | undefined;
+    return [
+      ...(options?.resource === undefined ? [] : [{ targetFamily: 'resources', reference: options.resource, path: ['options', 'resource'] }]),
+      ...(value.picker === undefined ? [] : [{ targetFamily: 'ui.renderers', reference: value.picker, path: ['picker'] }]),
+    ];
+  }
   const openSurfaceDestinationReferences = (
     destination: unknown,
     path: readonly (string | number)[],
@@ -428,6 +453,9 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
   if (family === 'ui.views') {
     const headerActions = Array.isArray(value.headerActions) ? value.headerActions : [];
     return [
+      ...(value.container === 'widget' && Array.isArray(value.resources) ? value.resources.map((reference, index) => ({
+        targetFamily: 'resources', allowQualifiedCrossPlugin: false, allowQualifiedSamePlugin: true, reference, path: ['resources', index],
+      })) : []),
       ...(value.container === 'appPage'
         ? rendererChainReferences(value.column, ['column'])
         : []),
@@ -629,6 +657,21 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
   return [];
 }
 
+function extractInputTypeReferences(family: string, value: Readonly<Record<string, unknown>>): PluginContributionReferenceCandidateV2[] {
+  const root = family === 'actions' ? value.inputHints : family === 'workflows' ? value.definition : family === 'ui.views' ? value.inputs : null;
+  if (!root || typeof root !== 'object' || Array.isArray(root)) return [];
+  const record = root as Readonly<Record<string, unknown>>;
+  const fields = family === 'workflows' ? record.inputs : record.fields;
+  if (!Array.isArray(fields)) return [];
+  const prefix = family === 'actions' ? ['inputHints', 'fields'] : family === 'workflows' ? ['definition', 'inputs'] : ['inputs', 'fields'];
+  return fields.flatMap((field, index) => {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) return [];
+    const inputType = (field as Readonly<Record<string, unknown>>).inputType;
+    return inputType === undefined ? [] : [{ targetFamily: 'inputTypes', allowQualifiedCrossPlugin: true, allowQualifiedSamePlugin: true,
+      reference: inputType, path: [...prefix, index, 'inputType'] }];
+  });
+}
+
 function declaresAgentExternalSessions(value: Readonly<Record<string, unknown>>): boolean {
   const capabilities = value.capabilities && typeof value.capabilities === 'object' && !Array.isArray(value.capabilities)
     ? value.capabilities as Readonly<Record<string, unknown>>
@@ -825,7 +868,9 @@ function createCatalogAdapters(input: Readonly<{
   };
   return {
     readEntries,
-    canonicalize: (value) => input.schema.parse(value),
+    canonicalize: (value, context) => input.manifestKey === 'workflows'
+      ? normalizePluginWorkflowContributionV1(value, context.pluginId)
+      : input.schema.parse(value),
     projectJsonSchema: () => Object.freeze(input.schema.toJSONSchema({
       io: 'input',
       unrepresentable: 'any',
@@ -897,6 +942,7 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
         return Object.freeze([
           ...extractRuleReferences(value, REFERENCE_RULES[descriptor.family] ?? []),
           ...extractNestedReferences(descriptor.family, value),
+          ...extractInputTypeReferences(descriptor.family, value),
         ]);
       },
       requiresRegistration(value) { return requiresFamilyRegistration(descriptor.family, value, policy.activationDemand); },
@@ -914,7 +960,7 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
               });
             },
           }
-        : descriptor.family === 'voiceProviders'
+        : descriptor.family === 'voiceProviders' || descriptor.family === 'dragSources' || descriptor.family === 'dropTargets'
         ? {
             runtimeRegistrationTarget: (value: Readonly<Record<string, unknown>>) => {
               if (value.kind === 'speech') return Object.freeze({ realm: 'daemon' as const });
@@ -958,6 +1004,7 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
   defineCatalogEntry({ manifestKey: 'ui.views', schema: PluginUiViewV2Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'fallbackRenderers', targetFamily: 'ui.renderers', many: true }]), extractReferences: (value: Readonly<Record<string, unknown>>) => Object.freeze([
     ...extractRuleReferences(value, [{ field: 'renderer', targetFamily: 'ui.renderers' }, { field: 'fallbackRenderers', targetFamily: 'ui.renderers', many: true }]),
     ...extractNestedReferences('ui.views', value),
+    ...extractInputTypeReferences('ui.views', value),
   ]), requiresRegistration: () => false, consumer: 'ui-surface-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.views' }),
   defineCatalogEntry({ manifestKey: 'ui.renderers', schema: PluginUiRendererV2Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: (value: Readonly<Record<string, unknown>>) => extractNestedReferences('ui.renderers', value), requiresRegistration: () => false, consumer: 'ui-renderer-host', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.renderers' }),
   defineCatalogEntry({ manifestKey: 'ui.settingsGroups', schema: PluginUiSettingsGroupV1Schema, identityField: 'id', identityKind: 'localId', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, references: Object.freeze([]), extractReferences: () => [], requiresRegistration: () => false, consumer: 'settings-catalog', platforms: ALL_PLATFORMS, fixtureId: 'all-family:ui.settingsGroups' }),

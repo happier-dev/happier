@@ -117,7 +117,7 @@ function keepGoingSet(inputs: Record<string, unknown>) {
 function installTriggerHost(initialSets: readonly unknown[]) {
     let sets = [...initialSets];
     execute.mockImplementation(async (actionId: string, input: Record<string, unknown>) => {
-        if (actionId === 'session.trigger.list') return { ok: true, result: { sets, pullRequestLinks: [] } };
+        if (actionId === 'session.trigger.list') return { ok: true, result: { sessionId: SESSION_ID, sets, pullRequestLinks: [] } };
         if (actionId === 'session.trigger.add') {
             const set = keepGoingSet(input.inputs as Record<string, unknown>);
             sets = [set];

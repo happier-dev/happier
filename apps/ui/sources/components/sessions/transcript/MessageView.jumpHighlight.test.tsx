@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { AgentTextMessage, UserTextMessage } from "@happier-dev/session-core/messages";
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
@@ -143,10 +143,10 @@ function jumpFadeCalls(calls: readonly unknown[][]): unknown[][] {
     });
 }
 
-async function renderTwoRows() {
+async function renderTwoRows(serverId: string | null = 'home-a') {
     const { View } = await import('react-native');
     const { MessageView } = await import('./MessageView');
-    return await renderScreen(
+    return await renderWithSessionTranscriptSource(
         <View>
             <View testID="row-u1">
                 <MessageView sessionId="s1" metadata={null} message={userMessage} />
@@ -155,10 +155,14 @@ async function renderTwoRows() {
                 <MessageView sessionId="s1" metadata={null} message={agentMessage} />
             </View>
         </View>,
+        createTestSessionTranscriptSource({ sessionId: 's1', serverId, messages: [userMessage, agentMessage] }),
     );
 }
 
 describe('MessageView jump landing highlight', () => {
+    // Load the real row graph before taking control of the highlight clock.
+    beforeAll(async () => { await import('./MessageView'); });
+
     beforeEach(() => {
         vi.useFakeTimers();
         reducedMotionState.value = false;
@@ -182,7 +186,7 @@ describe('MessageView jump landing highlight', () => {
         expect(screen.findAllByTestId(TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)).toHaveLength(0);
 
         await act(async () => {
-            applyTranscriptJumpHighlightForJumpResult('s1', {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
                 status: 'scrolled',
                 target: { kind: 'route-message-id', routeMessageId: 'local:local-u1', seqHint: 7 },
             });
@@ -205,7 +209,7 @@ describe('MessageView jump landing highlight', () => {
         const screen = await renderTwoRows();
 
         await act(async () => {
-            applyTranscriptJumpHighlightForJumpResult('s1', {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
                 status: 'scrolled',
                 target: { kind: 'route-message-id', routeMessageId: 'local:local-u1', seqHint: 7 },
             });
@@ -222,6 +226,23 @@ describe('MessageView jump landing highlight', () => {
         expect(bubbleStyle.paddingHorizontal).toBe(14);
     });
 
+    it('keeps a landed highlight out of a foreign or unbound Home transcript', async () => {
+        const { applyTranscriptJumpHighlightForJumpResult } = await import('./navigation/transcriptJumpHighlightStore');
+        const { TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID } = await import('./navigation/TranscriptJumpHighlightOverlay');
+        const foreignHome = await renderTwoRows('home-b');
+        const unboundHome = await renderTwoRows(null);
+
+        await act(async () => {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
+                status: 'scrolled',
+                target: { kind: 'route-message-id', routeMessageId: 'local:local-u1', seqHint: 7 },
+            });
+        });
+
+        expect(foreignHome.findAllByTestId(TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)).toHaveLength(0);
+        expect(unboundHome.findAllByTestId(TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID)).toHaveLength(0);
+    });
+
     it('paints the agent block highlight on the agent message element', async () => {
         const { applyTranscriptJumpHighlightForJumpResult } =
             await import('./navigation/transcriptJumpHighlightStore');
@@ -229,7 +250,7 @@ describe('MessageView jump landing highlight', () => {
         const screen = await renderTwoRows();
 
         await act(async () => {
-            applyTranscriptJumpHighlightForJumpResult('s1', {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
                 status: 'scrolled',
                 target: { kind: 'route-message-id', routeMessageId: 'local:local-a1', seqHint: 8 },
             });
@@ -248,7 +269,7 @@ describe('MessageView jump landing highlight', () => {
         const screen = await renderTwoRows();
 
         await act(async () => {
-            applyTranscriptJumpHighlightForJumpResult('s1', {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
                 status: 'window-rendered',
                 target: { kind: 'seq', seq: 8 },
                 windowId: 'w-1',
@@ -270,7 +291,7 @@ describe('MessageView jump landing highlight', () => {
         const screen = await renderTwoRows();
 
         await act(async () => {
-            applyTranscriptJumpHighlightForJumpResult('s1', {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
                 status: 'scrolled',
                 target: { kind: 'route-message-id', routeMessageId: 'local:local-u1' },
             });
@@ -296,7 +317,7 @@ describe('MessageView jump landing highlight', () => {
         const screen = await renderTwoRows();
 
         await act(async () => {
-            applyTranscriptJumpHighlightForJumpResult('s1', {
+            applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 's1' }, {
                 status: 'scrolled',
                 target: { kind: 'route-message-id', routeMessageId: 'local:local-u1' },
             });

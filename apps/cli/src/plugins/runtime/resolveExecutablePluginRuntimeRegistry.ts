@@ -149,7 +149,7 @@ import {
     projectExternalSessionSourceRefusalDiagnostics,
 } from './lifecycle/contributions/externalSessionSourceRefusals';
 import { buildTargetActionInvocationRegistry } from './invocation/buildTargetActionRegistry';
-import { executeContributedAction } from './invocation/actions/executeContributedAction';
+import { executeContributedAction, type ClientContributedActionExecutor } from './invocation/actions/executeContributedAction';
 import { createHostContributedActionInvoker } from './invocation/actions/hostContributedActionInvoker';
 import {
     resolveCurrentSessionCapabilityBinding,
@@ -581,6 +581,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     readPluginSourceCustody?(pluginId: string): PluginSourceCustody | null;
     targetActivationFacts?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['targetActivationFacts'];
     targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
+    /** Existing authenticated machine reverse RPC; the answering UI owns client execution. */
+    executeClientAction?: ClientContributedActionExecutor;
     /**
      * Current manifest Action policy projection. Unlike daemon invocation,
      * this is intentionally independent of target handler registration.
@@ -718,7 +720,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     activatedPluginIds: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatedPluginIds'];
     activateContributionsOnDemand: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activateContributionsOnDemand'];
     resolveCaptureSource(reference: PluginContributionIdentityV1): Promise<Readonly<{
-        declaration: import('@happier-dev/protocol').PluginCaptureSourceContributionV1;
+            declaration: import('@happier-dev/protocol/plugins/contributions/v2').PluginCaptureSourceContributionV1;
         runtime: import('@happier-dev/plugin-sdk').PluginCaptureSourceRuntime;
         occurrenceId: string;
         retirementSignal: AbortSignal;
@@ -1202,7 +1204,11 @@ function mergeActivatedContributes(
     const withCurrentDeclarativeSources = (registry: ResolvedContributionRegistry): ResolvedContributionRegistry => {
         const roles = registry.roles ?? [];
         const workflows = registry.workflows ?? [];
-        if (roles.length === 0 && workflows.length === 0) return registry;
+        const inputTypes = registry.inputTypes ?? [];
+        const dragSources = registry.dragSources ?? [];
+        const dropTargets = registry.dropTargets ?? [];
+        if (roles.length === 0 && workflows.length === 0 && inputTypes.length === 0
+            && dragSources.length === 0 && dropTargets.length === 0) return registry;
         return Object.freeze({
             ...registry,
             get roles() {
@@ -1210,6 +1216,15 @@ function mergeActivatedContributes(
             },
             get workflows() {
                 return Object.freeze(workflows.filter((workflow) => isPluginRuntimeCurrent(workflow.pluginId)));
+            },
+            get inputTypes() {
+                return Object.freeze(inputTypes.filter((type) => isPluginRuntimeCurrent(type.pluginId)));
+            },
+            get dragSources() {
+                return Object.freeze(dragSources.filter((source) => isPluginRuntimeCurrent(source.pluginId)));
+            },
+            get dropTargets() {
+                return Object.freeze(dropTargets.filter((target) => isPluginRuntimeCurrent(target.pluginId)));
             },
         });
     };
@@ -1615,6 +1630,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         generation?: number;
         /** Daemon-owned live machine identity for host-stamped nested Action callers. */
         resolveCurrentMachineId?: () => string | null;
+        executeClientAction?: ClientContributedActionExecutor;
         /** Existing authenticated Machine admission authority for protected Session input. */
         machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
         /** Existing daemon-local transfer carrier for host-authored media bytes. */
@@ -1826,6 +1842,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...contributes.agents.flatMap((agent) => agent.pluginId ? [agent.pluginId] : []),
             ...(contributes.roles ?? []).map((role) => role.pluginId),
             ...(contributes.workflows ?? []).map((workflow) => workflow.pluginId),
+            ...(contributes.inputTypes ?? []).map((type) => type.pluginId),
+            ...(contributes.dragSources ?? []).map((source) => source.pluginId),
+            ...(contributes.dropTargets ?? []).map((target) => target.pluginId),
         ])
         : new Set([
             ...params.pluginIds,
@@ -1840,7 +1859,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!target
             && !contributes.agents.some((agent) => agent.pluginId === pluginId)
             && !(contributes.roles ?? []).some((role) => role.pluginId === pluginId)
-            && !(contributes.workflows ?? []).some((workflow) => workflow.pluginId === pluginId)) continue;
+            && !(contributes.workflows ?? []).some((workflow) => workflow.pluginId === pluginId)
+            && !(contributes.inputTypes ?? []).some((type) => type.pluginId === pluginId)
+            && !(contributes.dragSources ?? []).some((source) => source.pluginId === pluginId)
+            && !(contributes.dropTargets ?? []).some((dropTarget) => dropTarget.pluginId === pluginId)) continue;
         const activationSource = target
             ? resolveCommittedActivationSource(target, { recordActivatedManifestAuthority: false })
             : null;
@@ -3796,6 +3818,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 }),
             ),
             input: request.input,
+            ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
             ...(params?.scopedActionRuntime
                 ? {
                     actionsSettings:
@@ -4686,6 +4709,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     };
     targetActionInvocations = buildTargetActionInvocationRegistry({
         contributes: authoritativeContributes,
+        readRuntimeRegistry: () => resolvedRuntimeRegistryOwner,
         resolveCurrentPluginMaterializationRef,
         readCurrentPluginOccurrenceId,
         readCurrentPluginSourceCustody,
@@ -6432,6 +6456,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return activatedRegistry.targetActivationFacts;
         },
         targetActionInvocations: committedTargetActionInvocations,
+        ...(params?.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
         resolveActionPresentUserGatePolicy,
         ...(authoritativeContributes.readAdmittedTargetedContributions
             ? { readAdmittedTargetedContributions: authoritativeContributes.readAdmittedTargetedContributions }

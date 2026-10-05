@@ -61,7 +61,7 @@ describe('IconButton', () => {
         expect(surface.height).toBe(28);
     });
 
-    it('caps horizontal press-frame growth at half the neighbour gap so adjacent targets never overlap', async () => {
+    it('honours the declared floor and allocates remaining width when the neighbour gap cannot cover it', async () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
@@ -75,12 +75,11 @@ describe('IconButton', () => {
         );
 
         const frame = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
-        expect(frame.width).toBe(32);
+        expect(frame.width).toBe(44);
         expect(frame.marginHorizontal).toBe(-2);
-        // The free axis still reaches the platform floor.
+        // Only the margin expansion is capped: layout allocates the rest, so targets never overlap.
         expect(frame.height).toBe(44);
-        // WCAG 2.2 AA SC 2.5.8 remains satisfied on the constrained axis.
-        expect(frame.width as number).toBeGreaterThanOrEqual(24);
+        expect((frame.width as number) + 2 * (frame.marginHorizontal as number)).toBe(40);
     });
 
     it('does not grow the press frame when no minimum target is declared', async () => {

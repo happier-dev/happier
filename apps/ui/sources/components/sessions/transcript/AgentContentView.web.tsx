@@ -1,12 +1,13 @@
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { ComposerKeyboardScaffold } from '@/components/sessions/keyboardAvoidance';
-import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { useSessionCockpitComposerBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import * as React from 'react';
 import { View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useUnistyles } from 'react-native-unistyles';
 import { useKeyboardDismissOnTap } from './useKeyboardDismissOnTap';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 interface AgentContentViewProps {
     input?: React.ReactNode | null;
@@ -17,14 +18,13 @@ interface AgentContentViewProps {
 export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
     const safeArea = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
-    const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
+    const bottomChromeHeight = useSessionCockpitComposerBottomChromeHeight();
     const keyboardDismissOnTapHandlers = useKeyboardDismissOnTap();
     const { theme } = useUnistyles();
-    // Reserve the floating bar's height inside the session screen (see the native
-    // controller for the rationale): the bar overlays content, so the composer is
-    // lifted above it here rather than by an in-flow chrome-host reservation.
+    // The shell's measured bottom band (bar plus a docked phone Island) overlays content.
+    // Lift the composer above it here, not through an in-flow chrome-host reservation.
     return (
-        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: theme.colors.surface.base }}>
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true) }}>
         <ComposerKeyboardScaffold
             testID="agent-content-keyboard-host"
             mode="session"

@@ -5,7 +5,7 @@ import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { createHash } from "node:crypto";
 import { writeSessionPublicShare, writeArtifactPublicShare, deleteSessionPublicShare, projectStoredContentPublicShare, checkStoredContentPublicShareRateLimit } from "@/app/share/storedContentPublicShare";
-import { resolveStoredContentPublicShareOrigin } from "@/app/share/storedContentPublicShareOrigin";
+import { resolveStoredContentPublicShareSubjectOrigin } from "@/app/share/storedContentPublicShareOrigin";
 import { assertSessionCapabilityInTx } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { readAccountStoredContentCompatibilityForHttpRequest, enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
@@ -21,6 +21,7 @@ import { buildShareableSessionMessagePublicationWhere, isSessionTranscriptSharea
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { createPublicShareMessagesAccessToken, validatePublicShareMessagesAccessToken, requirePublicShareAccessGrantSecret, PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER } from "./publicShareMessageAccessGrant";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { readArtifactBlob } from '@/app/artifacts/artifactBlobService';
 
 const subjectQuery = z.object({ subjectKind: z.enum(["session", "artifact"]), subjectId: z.string().min(1) });
 const shareParams = z.object({ shareId: z.string().min(1) });
@@ -47,7 +48,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
         if (result.type === "publication-error") return reply.code(409).send({ error: result.error, code: result.code });
         if (result.type === "external-sharing-error") return reply.code(result.error === "session_access_authentication_unavailable" ? 503 : 403).send({ error: result.error });
         if (result.type === "error") return reply.code(result.error === "public_share_isolation_unavailable" ? 503 : 400).send({ error: result.error });
-        return reply.send({ publicShare: projectStoredContentPublicShare(result.publicShare), isolatedOrigin: resolveStoredContentPublicShareOrigin(result.publicShare.id)! });
+        return reply.send({ publicShare: projectStoredContentPublicShare(result.publicShare), isolatedOrigin: resolveStoredContentPublicShareSubjectOrigin(result.publicShare)! });
     });
     app.get("/v1/public-shares", { preHandler: app.authenticate, schema: { querystring: subjectQuery } }, async (request, reply) => {
         const subject = { kind: request.query.subjectKind, id: request.query.subjectId };
@@ -93,7 +94,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
         const hash = createHash("sha256").update(request.params.lookupId, "utf8").digest();
         const result = await inTx(async tx => {
             const share = await tx.publicSessionShare.findUnique({ where: { tokenHash: hash } });
-            const origin = share && resolveStoredContentPublicShareOrigin(share.id);
+            const origin = share && resolveStoredContentPublicShareSubjectOrigin(share);
             if (!share || share.keyDerivation !== "fragment_v1" || !isPublicSessionShareActive(share) || !origin || new URL(origin).hostname !== request.hostname) return { type: "missing" as const };
             const rateLimit = checkStoredContentPublicShareRateLimit(share.id, request.ip);
             if (rateLimit !== "allowed") return { type: rateLimit };
@@ -102,6 +103,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
             let content;
             let messagesAccessToken: string | null = null;
             let pageGrant = false;
+            let artifactBlob: { actorAccountId: string; artifactId: string; blobId: string } | null = null;
             if (share.artifactId && !share.sessionId) {
                 const artifact = await tx.artifact.findFirst({ where: { id: share.artifactId, accountId: share.createdByUserId, ...artifactVisibleWhere }, include: { account: { select: { encryptionMode: true } } } });
                 if (!artifact) return { type: "missing" as const };
@@ -111,6 +113,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
                 const opened = openArtifactStoredContentPair({ ...artifact, artifactId: artifact.id, mode: encryptionMode });
                 if (!opened) return { type: "missing" as const };
                 content = { kind: "artifact" as const, header: Buffer.from(opened.header).toString("base64"), body: Buffer.from(opened.body).toString("base64"), headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion };
+                if (artifact.currentBlobId) artifactBlob = { actorAccountId: artifact.accountId, artifactId: artifact.id, blobId: artifact.currentBlobId };
             } else if (share.sessionId && !share.artifactId) {
                 const session = await tx.session.findUnique({ where: { id: share.sessionId }, select: {
                     encryptionMode: true, metadata: true, metadataVersion: true, metadataLayoutVersion: true, ownerMetadata: true, agentState: true, agentStateVersion: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
@@ -119,7 +122,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
                 encryptionMode = session.encryptionMode;
                 let metadata;
                 try { metadata = projectSessionMetadataForRecipient({ session, recipient: { type: "shared", accountId: null, ownerAccountMode: session.metadataLayoutVersion === 1 ? await readSessionMetadataOwnerAccountMode(tx, session.accountId) : undefined } }); }
-                catch (error) { if (isSessionMetadataPrivacyUpgradeRequiredError(error)) return { type: "missing" as const }; throw error; }
+                catch (error) { if (isSessionMetadataPrivacyUpgradeRequiredError(error)) return { type: "privacy-error" as const }; throw error; }
                 const grantHeader = request.headers[PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER];
                 if (request.query.beforeSeq !== undefined) {
                     pageGrant = validatePublicShareMessagesAccessToken({ secret: requirePublicShareAccessGrantSecret(), token: typeof grantHeader === "string" ? grantHeader : undefined, publicShareId: share.id, sessionId: share.sessionId, tokenHashHex: hash.toString("hex") });
@@ -137,11 +140,19 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
                 if (!await consumePublicShareUse(tx, share, hash)) return { type: "missing" as const };
                 await logPublicShareAccess(share.id, null, share.isConsentRequired ? request.ip : undefined, share.isConsentRequired ? getUserAgent(request.headers) : undefined, tx);
             }
-            return { type: "ok" as const, value: { subject: projectStoredContentPublicShare(share).subject, encryptionMode, encryptedDataKey: share.encryptedDataKey ? Buffer.from(share.encryptedDataKey).toString("base64") : null, keyDerivation: "fragment_v1" as const, isConsentRequired: share.isConsentRequired, messagesAccessToken, content } };
+            return { type: "ok" as const, artifactBlob, value: { subject: projectStoredContentPublicShare(share).subject, encryptionMode, encryptedDataKey: share.encryptedDataKey ? Buffer.from(share.encryptedDataKey).toString("base64") : null, keyDerivation: "fragment_v1" as const, isConsentRequired: share.isConsentRequired, messagesAccessToken, content } };
         });
         reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
         if (result.type === "consent") return reply.code(403).send({ error: "consent_required", requiresConsent: true });
+        if (result.type === "privacy-error") return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
         if (result.type !== "ok") return reply.code(result.type === "limited" ? 429 : result.type === "unavailable" ? 503 : 404).send({ error: "public_share_unavailable" });
+        if (result.artifactBlob && result.value.content.kind === 'artifact') {
+            try {
+                const blob = await readArtifactBlob(result.artifactBlob);
+                if (!blob.ok) return reply.code(503).send({ error: 'public_share_unavailable' });
+                return reply.send({ ...result.value, content: { ...result.value.content, blob: blob.value } });
+            } catch { return reply.code(503).send({ error: 'public_share_unavailable' }); }
+        }
         return reply.send(result.value);
     });
 }

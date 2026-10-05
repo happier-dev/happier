@@ -32,6 +32,20 @@ const agent = {
 } as const;
 
 describe('Agent catalog declarations', () => {
+  it('admits declared JSON output independently of continuation and rejects unknown formats or capability fields', () => {
+    const contribution = { ...agent, capabilities: {
+      ...agent.capabilities, structuredOutput: { formats: ['json'] },
+    } };
+    expect(PluginAgentContributionV2Schema.safeParse(contribution).success).toBe(true);
+    expect(PluginAgentContributionV2Schema.parse(agent).capabilities).not.toHaveProperty('structuredOutput');
+    expect(PluginAgentContributionV2Schema.safeParse({ ...contribution, capabilities: {
+      ...contribution.capabilities, structuredOutput: { formats: ['xml'] },
+    } }).success).toBe(false);
+    expect(PluginAgentContributionV2Schema.safeParse({ ...contribution, capabilities: {
+      ...contribution.capabilities, structuredOutput: { formats: ['json'], resume: true },
+    } }).success).toBe(false);
+  });
+
   it('declares revision delivery through resume explicitly and fails closed for undeclared or unknown mechanisms', () => {
     const withStartup = (revisionChanges?: string) => ({
       ...agent,

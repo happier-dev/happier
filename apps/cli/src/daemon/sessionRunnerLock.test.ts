@@ -8,6 +8,20 @@ import { describe, expect, it } from 'vitest';
 import { acquireSessionRunnerLock, releaseSessionRunnerLock, sessionRunnerLockPathForSessionId } from './sessionRunnerLock';
 
 describe('sessionRunnerLock', () => {
+  it('persists command identity from the same canonical OS sample as its start witness', async () => {
+    const { hashProcessCommand } = await import('./sessionRegistry');
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-sample-'));
+    const res = await acquireSessionRunnerLock({ happyHomeDir, sessionId: 'canonical-os-sample', pid: 54321,
+      readProcessIdentityByPid: async () => ({ pid: 54321, processStartTimeMs: 1000, command: 'observed runner command' }) });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    try {
+      const raw = await readFile(sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'canonical-os-sample' })!, 'utf8');
+      expect(JSON.parse(raw)).toMatchObject({ processStartTimeMs: 1000, processCommandHash: hashProcessCommand('observed runner command') });
+    } finally {
+      await res.release();
+    }
+  });
   it('acquires and releases a new lock', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
 

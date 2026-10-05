@@ -43,6 +43,7 @@ import {
     resolveCurrentClaimablePluginMachineMaterializationTx,
 } from "./operations";
 import { registerPluginAvailabilityRoutes } from "./routes";
+import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
 
 const ACCOUNT_ID = "account-plugin-availability";
 const MACHINE_ID = "machine-plugin-availability";
@@ -335,6 +336,46 @@ describe("plugin Availability operations", () => {
             },
         });
     }
+
+    it('reads the complete Account transition inventory without exposing retained plugin archives to ordinary APIs', async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const fixture = createHostedReleaseFixture({ version: '1.2.3', ordinal: 1 });
+        await publishHostedRelease(service, fixture);
+        await selectHostedRelease(service, fixture, null);
+        await hostReleaseArchives(service, fixture);
+        // Account transition includes protected archives even when hosting is no longer selected.
+        await db.accountPluginIntent.updateMany({ where: { accountId: ACCOUNT_ID }, data: { enabled: false } });
+        await db.artifactRevision.create({ data: { artifactId: fixture.uiArtifactId, bodyVersion: 1,
+            body: Buffer.from(fixture.uiArtifact.body, 'base64') } });
+        const ordinary = Array.from({ length: 501 }, (_, index) => ({ id: `ordinary-${String(index).padStart(4, '0')}`,
+            accountId: ACCOUNT_ID, header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Document' }), 'base64'),
+            body: Buffer.from(encodePlainArtifactStoredContent({ body: 'Content' }), 'base64'),
+            dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') }));
+        await db.artifact.createMany({ data: ordinary });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const headers = { 'x-test-user-id': ACCOUNT_ID };
+            const first = await app.inject({ method: 'GET', url: '/v1/account/encryption/artifacts?limit=500', headers });
+            expect(first.statusCode, first.body).toBe(200);
+            const page = first.json();
+            expect(page.items).toHaveLength(500);
+            expect(page.items.find((row: { id: string }) => row.id === fixture.uiArtifactId))
+                .toMatchObject({ ownership: { kind: 'pluginUi', pluginId: PLUGIN_ID }, revisions: [{ bodyVersion: 1 }] });
+            expect(page.items.find((row: { id: string }) => row.id === fixture.packageArtifactId))
+                .toMatchObject({ ownership: { kind: 'packageAsset', pluginId: PLUGIN_ID } });
+            const last = await app.inject({ method: 'GET', url: `/v1/account/encryption/artifacts?limit=500&afterId=${encodeURIComponent(page.nextCursor)}`, headers });
+            expect(last.statusCode, last.body).toBe(200);
+            expect(last.json()).toMatchObject({ nextCursor: null });
+            expect(last.json().items).toHaveLength(3);
+            const listed = await app.inject({ method: 'GET', url: '/v1/artifacts?limit=500', headers });
+            expect(listed.statusCode).toBe(200);
+            expect(listed.json().every((row: { id: string }) => row.id.startsWith('ordinary-'))).toBe(true);
+            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${fixture.uiArtifactId}`, headers })).statusCode).toBe(404);
+            // Corrupt qualified linkage fails the migration read before returning any content.
+            await db.accountPluginUiArtifact.updateMany({ where: { artifactId: fixture.uiArtifactId }, data: { artifactDigest: `sha256:${'f'.repeat(64)}` } });
+            expect((await app.inject({ method: 'GET', url: '/v1/account/encryption/artifacts', headers })).statusCode).toBe(503);
+        });
+    });
 
     async function seedCurrentPlainHostedArchives() {
         harness.resetEnv({

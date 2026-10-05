@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type {
+  AgentSessionModelsSource,
   AgentSessionRuntimeContext,
   AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -41,6 +42,61 @@ type SessionParamsWithCredentials =
   }>;
 
 describe('bindClaudeAgentSdkFallbackSession', () => {
+  it.each([
+    { requestedModel: 'sonnet', runtimeModel: 'claude-sonnet-4-6' },
+    { requestedModel: 'sonnet[1m]', runtimeModel: 'claude-sonnet-4-6[1m]' },
+  ])('publishes actual SDK launch effort only after init without echoing pending configuration ($requestedModel)', async ({ requestedModel, runtimeModel }) => {
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+      exec: exec.service,
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx, directory: '/tmp/claude-project', launchEnv: {}, happierSessionId: 'sdk-effort-observation',
+      supportsEffort: true, initialModelId: requestedModel, initialEffort: 'low',
+    });
+    let modelSource: AgentSessionModelsSource | undefined;
+    // Public host registration ports collect the plugin's output; OS/SDK transport uses the canonical testkit.
+    const context = { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) },
+      models: { bind: (source: AgentSessionModelsSource) => { modelSource = source; return { dispose() {} }; } },
+    } } } as unknown as AgentSessionRuntimeContext;
+    const session = createClaudeNativeSessionRuntimeFromOperations({ ...operations, supportsEffort: true }, {
+      kind: 'create', sessionId: 'sdk-effort-observation', cwd: '/tmp/claude-project', configuration: {
+        mode: { value: null, updatedAtMs: 1 }, model: { value: requestedModel, updatedAtMs: 1 },
+        permissionIntent: { value: 'default', updatedAtMs: 1 },
+        options: { reasoning_effort: { value: 'medium', updatedAtMs: 2 } },
+      },
+    }, context);
+    const readBaseModel = () => modelSource?.read().models?.find(model => model.id === 'claude-sonnet-4-6');
+    const readEffort = () => modelSource?.read().models?.find(model => model.id === runtimeModel)
+      ?.modelOptions?.find(option => option.id === 'reasoning_effort')?.currentValue;
+    const baseContextWindow = readBaseModel()?.contextWindowTokens;
+    try {
+      expect(readBaseModel()?.modelOptions?.find(option => option.id === 'reasoning_effort')?.currentValue).toBe('high');
+      await operations.sendProviderTurnPrompt('continue');
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+      expect(exec.spawnClient.mock.calls[0]?.[0].launch.args).toEqual(expect.arrayContaining(['--model', requestedModel, '--effort', 'low']));
+      expect(readBaseModel()?.modelOptions?.find(option => option.id === 'reasoning_effort')?.currentValue).toBe('high');
+      await operations.updateProviderConfiguration({ configOption: { id: 'reasoning_effort', value: 'medium' } });
+      await exec.emit({ type: 'system', subtype: 'init', model: runtimeModel, session_id: 'sdk-effort-native' });
+      await vi.waitFor(() => expect(readEffort()).toBe('low'));
+      await exec.emit({ type: 'assistant', uuid: 'observed-model-only', message: {
+        role: 'assistant', model: runtimeModel, content: [{ type: 'text', text: 'ready' }],
+      } });
+      expect(readEffort()).toBe('low');
+      expect(readBaseModel()?.contextWindowTokens).toBe(baseContextWindow);
+      expect(modelSource?.read().observedAt).toBe(0);
+      // A different model-only observation retires the active effort witness. Returning without
+      // effort evidence must retain the catalog fallback, not a previous model's applied overlay.
+      for (const model of ['claude-opus-4-8', runtimeModel]) {
+        await exec.emit({ type: 'assistant', uuid: `model-only-${model}`, message: {
+          role: 'assistant', model, content: [{ type: 'text', text: 'ready' }],
+        } });
+      }
+      await vi.waitFor(() => expect(readEffort()).toBe('high'));
+    } finally { await session.dispose(); }
+  });
+
   it('maps native startup instructions on SDK resume with prompt snapshots disabled', async () => {
     const exec = createSdkExecFixture();
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {

@@ -29,7 +29,8 @@ function contribution(input: Readonly<{
     contributor: {
       pluginId: input.pluginId,
       contributionId: input.contributionId,
-      immutableGenerationId: GENERATION,
+      occurrenceId: GENERATION,
+      sourceCustody: { kind: 'development', registeredRootId: 'source-root' },
     },
     protocol: {
       id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -53,7 +54,7 @@ function descriptor(input: Readonly<{ displayName: string; settingsPageId?: stri
 
 function snapshot(contributions: readonly unknown[]): PluginUiTargetedContributionsV1 {
   return {
-    target: { pluginId: 'happier.triage', immutableGenerationId: 'target-generation-a' },
+    target: { pluginId: 'happier.triage', occurrenceId: 'target-generation-a', sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
     points: [{
       pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
       protocols: [{

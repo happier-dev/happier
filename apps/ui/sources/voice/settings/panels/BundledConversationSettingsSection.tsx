@@ -13,8 +13,6 @@ import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
   createBundledConversationUi,
-  type BundledConversationProviderClient,
-  type BundledConversationVoiceCatalogItem,
 } from '@/voice/credentials/bundledConversationClient';
 import {
   VoiceCredentialItem,
@@ -36,6 +34,7 @@ import {
   parseRealtimeSettingsDescriptor,
   readRealtimeSavedSecretCredentialPurpose,
   resolveRealtimeProviderConfig,
+  resolveVisibleRealtimeSettingsDescriptor,
   type RealtimeProviderSettingsOwner,
   type RealtimeSettingsDescriptor,
 } from './realtime/descriptor';
@@ -48,6 +47,10 @@ import {
   type VoiceCredentialSourceFieldStatus,
 } from './realtime/VoiceCredentialSourceField';
 import { VoiceProviderSettingsActions } from './realtime/VoiceProviderSettingsActions';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { fetchVoiceSettingsCatalog } from './realtime/voiceCatalog';
 
 const providerRegistry = createDefaultVoiceProviderRegistry();
 
@@ -65,29 +68,6 @@ function createUiSafely(providerId: string) {
   }
 }
 
-function normalizeCatalogRows(
-  rows: readonly BundledConversationVoiceCatalogItem[] | readonly Readonly<{ id: string; name: string; metadata?: unknown }>[],
-): readonly Readonly<{ id: string; name: string; subtitle?: string; previewUrl?: string | null }>[] {
-  return rows.flatMap((raw) => {
-    const value = record(raw);
-    if (!value) return [];
-    const id = typeof value.id === 'string' ? value.id : typeof value.voiceId === 'string' ? value.voiceId : null;
-    if (!id || typeof value.name !== 'string') return [];
-    const metadata = record(value.metadata);
-    const labels = record(value.labels);
-    const subtitle = typeof value.category === 'string' ? value.category
-      : typeof metadata?.description === 'string' ? metadata.description
-        : typeof labels?.accent === 'string' ? labels.accent : undefined;
-    const previewUrl = typeof value.previewUrl === 'string' ? value.previewUrl
-      : typeof metadata?.previewUrl === 'string' ? metadata.previewUrl : null;
-    return [{ id, name: value.name, ...(subtitle ? { subtitle } : {}), previewUrl }];
-  });
-}
-
-async function fetchCatalog(client: BundledConversationProviderClient, signal?: AbortSignal | null) {
-  return normalizeCatalogRows(await client.fetchVoiceCatalog(signal));
-}
-
 function UnavailableSettings(props: Readonly<{ status: string }>) {
   return <ItemGroup title={tLoose('settingsVoice.realtimeProviders.unavailable.title')}>
     <Item
@@ -101,11 +81,27 @@ export function BundledConversationSettingsSection(props: Readonly<{
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  /**
+   * Rows the host owns that belong at the top of the service's account group (the service's Pay with
+   * choice), so the page shows one Account section whatever the service contributes. Without a
+   * contributed account group they stand in their own Account section.
+   */
+  accountLead?: React.ReactNode;
 }>) {
   const voice = React.useMemo(() => voiceSettingsParse(props.voice), [props.voice]);
+  const accountLeadOnly = props.accountLead ? (
+    <ItemGroup
+      title={t('settingsVoice.pages.conversations.accountTitle')}
+      description={t('settingsVoice.pages.conversations.accountDescription')}
+    >
+      {props.accountLead}
+    </ItemGroup>
+  ) : null;
   const latestVoiceRef = React.useRef(voice);
   latestVoiceRef.current = voice;
   const providerId = resolveVoiceProviderId(voice.providerId);
+  const settingRef = useVoiceContributedSettingRefs(providerId ?? '');
+  const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const registrationsRevision = React.useSyncExternalStore(
     subscribeExternalVoiceProviderRegistrations,
     getExternalVoiceProviderRegistrationsRevision,
@@ -154,9 +150,8 @@ export function BundledConversationSettingsSection(props: Readonly<{
     ? providerEntry.declaration
     : null;
   const visibleDescriptor = React.useMemo<RealtimeSettingsDescriptor | null>(() => {
-    if (!descriptor || byoActive || !descriptor.modes.includes('byo')) return descriptor;
-    return Object.freeze({ ...descriptor, fields: Object.freeze(descriptor.fields.filter((field) => field.kind === 'welcome')) });
-  }, [byoActive, descriptor]);
+    return descriptor ? resolveVisibleRealtimeSettingsDescriptor(descriptor, config) : null;
+  }, [config, descriptor]);
   const credentialTargetKey = providerId ?? '';
   const [credentialState, setCredentialState] = React.useState<Readonly<{
     targetKey: string;
@@ -184,7 +179,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
       access: { realm, phase: 'prepare' },
     });
   }, [contribution, credentialProviderDeclaration, credentialSourceStatus?.selection]);
-  const credentialUsable = credentialDeclaration && credentialDeclaration.sources.length > 1
+  const credentialUsable = credentialDeclaration?.sources.some((source) => source.kind === 'connectedAccount')
     ? credentialSourceStatus?.selection.kind === 'connectedAccount'
       ? credentialSourceStatus.usable
       : credentialSourceStatus?.selection.kind === 'savedSecret'
@@ -215,7 +210,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
     catalogRequestRef.current = { generation, controller };
     const targetKey = credentialTargetKey;
     setCatalogState({ targetKey, value: { phase: 'loading' } });
-    void fetchCatalog(client, controller.signal).then((rows) => {
+    void fetchVoiceSettingsCatalog(client, controller.signal).then((rows) => {
       if (catalogRequestRef.current.generation === generation && !controller.signal.aborted) {
         setCatalogState({ targetKey, value: { phase: 'ready', rows } });
       }
@@ -250,7 +245,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
     [credentialTargetKey],
   );
 
-  if (!providerId || !bundledUi) return null;
+  if (!providerId || !bundledUi) return accountLeadOnly;
   if (!descriptor || !owner || !visibleDescriptor) {
     return <UnavailableSettings status="provider" />;
   }
@@ -274,13 +269,9 @@ export function BundledConversationSettingsSection(props: Readonly<{
       typeof rawUrl === 'string' ? [{ kind, url: rawUrl }] : []
     ))
     : [];
-  if (!primarySettingsVisible && visibleLinks.length === 0) return null;
+  if (!primarySettingsVisible && visibleLinks.length === 0) return accountLeadOnly;
 
-  return <>
-    {!primarySettingsVisible ? null : <ItemGroup
-      title={descriptor.titleKey ? tLoose(descriptor.titleKey) : tLoose('settingsVoice.realtimeProviders.setup.title')}
-      description={descriptor.footerKey ? tLoose(descriptor.footerKey) : undefined}
-    >
+  const credentialControls = <>
       {!credentialSourceVisible || !contribution || !credentialDeclaration || !credentialProviderDeclaration ? null : <VoiceCredentialSourceField
         contribution={contribution}
         declaration={credentialProviderDeclaration}
@@ -315,17 +306,55 @@ export function BundledConversationSettingsSection(props: Readonly<{
         onStatusChanged={onCredentialStatusChanged}
         onChanged={onCredentialChanged}
       />}
+  </>;
+  const credentialSetting = settingRef('credential');
+  const sourceSetting = settingRef('credentialSource');
+  const anchoredCredentialControls = <SettingAnchor settings={[credentialSetting, sourceSetting].filter((setting) => setting !== undefined)}>
+    {credentialControls}
+  </SettingAnchor>;
+  const groups: NonNullable<RealtimeSettingsDescriptor['groups']> = visibleDescriptor.groups ?? [{
+    id: 'provider',
+    titleKey: descriptor.titleKey ?? 'settingsVoice.realtimeProviders.setup.title',
+    includeCredentials: true,
+    fieldPaths: visibleDescriptor.fields.map((field) => field.path),
+  }];
+  const credentialsAssigned = groups.some((group) => group.includeCredentials === true);
+  const accountGroupIndex = credentialsAssigned ? groups.findIndex((group) => group.includeCredentials === true) : 0;
+  const presentationText = (value: unknown): string | undefined => {
+    if (value === undefined) return undefined;
+    if (typeof value === 'string' && providerEntry?.source.kind !== 'external') return tLoose(value);
+    if (providerEntry) return localizePluginText(providerEntry.pluginId, value);
+    const localized = record(value);
+    return typeof localized?.key === 'string' ? tLoose(localized.key)
+      : typeof localized?.fallback === 'string' ? localized.fallback : undefined;
+  };
+
+  return <>
+    {!primarySettingsVisible ? accountLeadOnly : groups.map((group, index) => {
+      const fields = visibleDescriptor.fields.filter((field) => group.fieldPaths.includes(field.path));
+      const finalGroup = index === groups.length - 1;
+      const includeCredentials = group.includeCredentials === true || (!credentialsAssigned && index === 0);
+      const accountLead = index === accountGroupIndex ? props.accountLead : null;
+      if (fields.length === 0 && !accountLead && !(includeCredentials && (credentialSettingsVisible || credentialSourceVisible))
+        && !(finalGroup && settingsActions.some((action) => action.placement?.kind === 'contributionFooter'))) return null;
+      return <ItemGroup key={group.id}
+        title={presentationText(group.titleKey)}
+        description={presentationText(group.descriptionKey) ?? (index === 0 && descriptor.footerKey ? tLoose(descriptor.footerKey) : undefined)}
+      >
+      {accountLead}
+      {includeCredentials ? anchoredCredentialControls : null}
       <RealtimeProviderFields
         providerId={providerId}
-        descriptor={visibleDescriptor}
+        descriptor={{ ...visibleDescriptor, fields }}
         owner={owner}
         config={config}
         onConfigChange={persistConfig}
-        credentialStatus={credentialAvailability?.status ?? 'missing'}
+        credentialStatus={credentialUsable ? 'ready' : credentialAvailability?.status ?? 'missing'}
         catalog={catalog}
         onRequestCatalog={requestCatalog}
         popoverBoundaryRef={props.popoverBoundaryRef}
         welcomeSelection={resolveVoiceWelcomeSelection(voice.welcome)}
+        assistantLanguage={voice.assistantLanguage}
         onWelcomeSelection={(selection) => props.setVoice(applyVoiceWelcomeSelection(
           voice,
           selection === 'off' ? 'off' : selection === 'on_first_turn' ? 'on_first_turn' : 'immediate',
@@ -334,25 +363,29 @@ export function BundledConversationSettingsSection(props: Readonly<{
           providerId={providerId}
           owner={owner}
           actions={settingsActions}
+          agentAction={providerEntry?.presentation?.agentAction}
           config={config}
           placement={{ kind: 'afterField', fieldId: field.path }}
         />}
       />
-      <VoiceProviderSettingsActions
+      {!finalGroup ? null : <VoiceProviderSettingsActions
         providerId={providerId}
         owner={owner}
         actions={settingsActions}
         config={config}
         placement={{ kind: 'contributionFooter' }}
-      />
-    </ItemGroup>}
+      />}
+    </ItemGroup>;
+    })}
 
-    {visibleLinks.length === 0 ? null : <ItemGroup title={tLoose('settingsVoice.realtimeProviders.links.title')}>
+    {visibleLinks.length === 0 ? null : <ItemGroup title={tLoose(providerEntry?.presentation?.resources?.titleKey ?? 'settingsVoice.realtimeProviders.links.title')}>
       {visibleLinks.map(({ kind, url }) => <Item
         key={kind}
         icon={<Icon name="arrow-square-out" />}
-        title={tLoose(`settingsVoice.realtimeProviders.links.${kind}.title`)}
-        subtitle={tLoose(`settingsVoice.realtimeProviders.links.${kind}.subtitle`)}
+        title={tLoose((kind === 'account' ? providerEntry?.presentation?.resources?.accountTitleKey
+          : kind === 'apiKeys' ? providerEntry?.presentation?.resources?.apiKeysTitleKey : undefined)
+          ?? `settingsVoice.realtimeProviders.links.${kind}.title`)}
+        subtitle={providerEntry?.presentation?.resources ? undefined : tLoose(`settingsVoice.realtimeProviders.links.${kind}.subtitle`)}
         onPress={() => fireAndForget((async () => {
           if (await Linking.canOpenURL(url)) await Linking.openURL(url);
         })(), { tag: `BundledConversationSettings.openLink.${kind}` })}

@@ -27,7 +27,7 @@ await loadSyncSingletonForTests();
 beforeEach(async () => { await harness.reset(); clearActiveUnsavedChangesGuard(); alert.mockReset(); });
 afterEach(async () => {
     standardCleanup(); clearActiveUnsavedChangesGuard();
-    await (await import('@/sync/sync')).syncSwitchServer(null);
+    await (await import('@/sync/syncEngine')).syncSwitchServer(null);
 });
 
 it('edits personal names and replacement bytes inline through the real Account settings CAS', async () => {
@@ -49,7 +49,7 @@ it('edits personal names and replacement bytes inline through the real Account s
         version = request.expectedVersion + 1;
         return { body: { success: true, version } };
     } });
-    const { syncRestore } = await import('@/sync/sync');
+    const { syncRestore } = await import('@/sync/syncEngine');
     await act(async () => syncRestore({ token: createAccountTokenForTests(accountId) }));
     const { storage } = await import('@/sync/domains/state/storage');
     await vi.waitFor(() => expect(storage.getState().settings.secrets[0]?.name).toBe(secret.name));

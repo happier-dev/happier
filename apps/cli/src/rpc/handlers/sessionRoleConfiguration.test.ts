@@ -33,7 +33,7 @@ describe('session role configuration RPC', () => {
       // subtree parser, admission policy and registered mutation owner run below.
       resolveAgentStartContext: async (context) => resolveCliAgentStartContextV1({
         sessionId: 'lead', machineId: 'source-machine', directory: '/repo',
-        backendTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'agent' } },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         metadata: source, starterDepth: 2, turnDepth: 3, callerPermissionMode: context.callerPermissionMode ?? null, settings: null,
       }),
       sessionList: async ({ query }) => ({ queryVersion: 1, sessions: inSubtree && query?.storage === 'active' ? [{

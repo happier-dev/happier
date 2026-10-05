@@ -1,3 +1,4 @@
+import { installFileFindAccountBoundaryMocks } from './fileFindSeedTestHelpers';
 import * as React from 'react';
 
 import { act } from 'react-test-renderer';
@@ -6,6 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { LOCAL_SETTING_DEFINITIONS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+
+installFileFindAccountBoundaryMocks();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -52,6 +56,31 @@ function PaneScopeProbe(props: Readonly<{ triggerOpenDetails?: boolean }>) {
 }
 
 describe('AppPaneProvider persistence', () => {
+    it('hands Find launch input once to its exact destination without persisting the query', async () => {
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        let context: ReturnType<typeof useAppPaneContext> | null = null;
+        function Probe() { context = useAppPaneContext(); return null; }
+        const screen = await renderScreen(<AppPaneProvider><Probe /></AppPaneProvider>);
+        const destination = { host: 'project' as const, id: 'wr_1', accountId: 'account-a', path: 'src/a.ts',
+            scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' } };
+        const seed = { query: 'private needle', options: { matchCase: false, regex: false }, target: { kind: 'file' as const, path: 'src/a.ts' } };
+        if (!context) throw new Error('Pane host did not mount');
+        const handoff = (context as ReturnType<typeof useAppPaneContext>).fileFindSeedHandoff;
+        const authority = captureActiveServerAccountScopeLifetime();
+        if (!authority) throw new Error('Expected real Account lifetime');
+        handoff.stage(destination, seed, authority);
+        expect(handoff.take({ ...destination, accountId: 'account-b' })).toBeNull();
+        expect(handoff.take({ ...destination, scope: { ...destination.scope, serverId: 'home-b' } })).toBeNull();
+        expect(handoff.take(destination)).toEqual(seed);
+        expect(handoff.take(destination)).toBeNull();
+        const cancel = handoff.stage(destination, seed, authority);
+        cancel();
+        expect(handoff.take(destination)).toBeNull();
+        expect(JSON.stringify(localSettingsMock)).not.toContain(seed.query);
+        handoff.stage(destination, seed, authority);
+        await screen.unmount();
+        expect(handoff.take(destination)).toBeNull();
+    });
     beforeEach(() => {
         standardCleanup();
         localSettingsMock = {};

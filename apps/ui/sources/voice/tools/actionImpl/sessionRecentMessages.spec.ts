@@ -58,7 +58,11 @@ describe('getSessionRecentMessagesForVoiceTool', () => {
             },
             // A retained transcript is only readable through a stored Session row, which
             // supplies its Home provenance; here that Home is the loaded one.
-            sessions: { s1: { id: 's1' } },
+            sessions: { s1: {
+                id: 's1',
+                serverId: getActiveServerSnapshot().serverId,
+                viewer: { follow: { follows: true, notificationLevel: 'important', includeInVoice: true } },
+            } },
             sessionMessages: {
                 s1: createTestSessionMessages([
                     { id: 'm1', kind: 'user-text', localId: null, text: 'hello', createdAt: 1 },
@@ -430,8 +434,9 @@ describe('voice recent-message live-context qualification', () => {
             },
             sessions: { s1: { id: 's1', serverId: activeServerId } },
             sessionMessages: { s1: createTestSessionMessages(ROWS) },
+            sessionListRowsByServerId: {},
         }) as never);
-        // The raw store carries no live context: only the canonical bound-target owner can.
+        // Attempt-local context starts empty and cannot substitute for Account Follow consent.
         useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
         return activeServerId;
     }

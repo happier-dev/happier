@@ -62,6 +62,9 @@ export function projectNativeAgentCliRuntimeDescriptor(params: Readonly<{
             : executable.knownUserBinDirSuffixes
                 ? { knownUserBinDirSuffixes: Object.freeze([...executable.knownUserBinDirSuffixes]) }
                 : {}),
+        ...(executable.knownEnvironmentBinDirs
+            ? { knownEnvironmentBinDirs: Object.freeze(executable.knownEnvironmentBinDirs.map((directory) => Object.freeze({ ...directory }))) }
+            : {}),
         ...(executable.systemCommandResolutionStrategy
             ? { systemCommandResolutionStrategy: executable.systemCommandResolutionStrategy }
             : {}),

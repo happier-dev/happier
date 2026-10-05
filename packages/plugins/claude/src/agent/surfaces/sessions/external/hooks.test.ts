@@ -49,6 +49,7 @@ function invocation(
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 10_000,
         maxSerializedBytes: 65_536,
+        ripgrep: { run: async () => ({ exitCode: 1, stdout: '', stderr: '' }) },
         ...overrides,
     };
 }

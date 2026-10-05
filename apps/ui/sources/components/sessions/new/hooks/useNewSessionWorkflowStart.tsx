@@ -17,7 +17,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { NewSessionSimplePanelProps } from '../components/NewSessionSimplePanel';
 
 /** New's workflow selection lives at its composer leaf, alongside the existing prompt store. */
-export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSessionSimplePanelProps; prompt: string }>) {
+export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSessionSimplePanelProps; prompt: string; surfaceGroup?: WorkflowRunComposerProps['surfaceGroup'] }>) {
     const { panelProps: props, prompt } = params;
     const router = useRouter();
     const runNow = useWorkflowRunNowController();
@@ -83,8 +83,11 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
         router.push({ pathname: '/workflows/runs/[runId]', params: { runId: admitted.run.id } } as never);
     }, [props.selectedMachineId, props.selectedPath, router, runNow, selection, targetIsCurrent, workflowDecision?.state]);
     const composer = selection === null ? null : <WorkflowRunComposer key={selection.id}
+        surfaceGroup={params.surfaceGroup}
         definition={selection.definition} sourceArtifactId={selection.source.kind === 'saved' ? selection.source.definitionId : null}
         inputs={selection.definition.inputs} values={main ? { ...values, [main.name]: prompt } : values}
+        optionsConsumer={selection.source.kind === 'saved' ? { kind: 'workflow', workflow: selection.source.definitionId }
+            : selection.source.kind === 'catalog' ? { kind: 'workflow', workflow: selection.source.workflow } : undefined}
         onChangeValues={setValues} rawTextValues={main ? { ...rawTextValues, [main.name]: prompt } : rawTextValues}
         onChangeRawTextValues={changeRawTextValues} workflowName={selection.name} preview={selection.description}
         workflowChip={chip} retainedText={main ? undefined : prompt} machineId={props.selectedMachineId}

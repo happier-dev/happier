@@ -54,28 +54,23 @@ const status = vi.hoisted(() => vi.fn(async (machineId: string) => ({
 vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: any) => React.createElement('Item', props) }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children) }));
 vi.mock('@/components/ui/forms/Switch', () => ({ Switch: (props: any) => React.createElement('Switch', props) }));
-vi.mock('react-native', () => ({
-  Platform: { OS: 'web' },
-  Pressable: 'Pressable',
-  View: 'View',
-}));
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({ theme: { colors: { status: { error: '#f00' }, text: { secondary: '#777' } } } }),
-}));
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+  return createUnistylesMock();
+});
 vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
 vi.mock('@/modal', () => ({ Modal: { confirm: vi.fn(async () => true), alert: modalAlert } }));
 vi.mock('@/text', () => ({ t: (key: string) => key, tLoose: (key: string) => key }));
 vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (promise: Promise<unknown>) => void promise.catch(fireAndForgetError),
 }));
-vi.mock('@/sync/domains/settings/voiceSettings', () => ({
-  readVoiceDiagnosticsSettings: (voice: any) => voice.diagnostics,
-  writeVoiceDiagnosticsSettings: (voice: any, diagnostics: any) => ({ ...voice, diagnostics }),
-  voiceSettingsDefaults: { credentialBindings: [] },
-  voiceSettingsParse: (voice: any) => ({ credentialBindings: [], ...(voice ?? {}) }),
-}));
 vi.mock('@/sync/domains/state/storage', () => ({
   useSetting: () => ({ diagnostics }),
+  useLocalSetting: () => undefined,
 }));
 vi.mock('@/sync/store/hooks', () => ({
   useActiveServerAccountScope: () => null,
@@ -119,6 +114,7 @@ vi.mock('./client', () => ({
 }));
 
 import { VoiceDiagnosticsSettingsSection } from './VoiceDiagnosticsSettingsSection';
+import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { useVoiceDiagnosticsRuntimeSync } from './useVoiceDiagnosticsRuntimeSync';
 import {
   beginVoiceDiagnosticsRevocationObligation,
@@ -454,6 +450,7 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     });
 
     expect(tree.root.findByProps({ title: 'settingsVoice.diagnostics.captureFailed' })).toBeTruthy();
+    expect(tree.root.findAllByProps({ nativeID: `setting-${VOICE_PRIVACY_SETTINGS.settings.diagnosticsExport.anchor}` })).toHaveLength(0);
     expect(tree.root.findAllByProps({ title: 'settingsVoice.diagnostics.cleanupRequired' })).toHaveLength(0);
     expect(tree.root.findAllByProps({ title: 'settingsVoice.diagnostics.retryCapture' })).toHaveLength(0);
     expect(tree.root.findAllByProps({ title: 'settingsVoice.diagnostics.retryCleanup' })).toHaveLength(0);

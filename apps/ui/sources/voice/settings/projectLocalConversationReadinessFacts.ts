@@ -9,8 +9,10 @@ import type {
   VoiceCredentialReadinessFact,
   VoiceReadinessFact,
   VoiceRoleReadiness,
+  VoiceSettingsReadinessFact,
 } from '@/voice/registry/readiness';
-import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { resolveVoiceRoleReadiness } from '@/voice/registry/readiness';
+import { projectVoiceProviderSettings, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { projectVoiceSpeechCredentialReadiness } from '@/voice/registry/speechCredentialReadiness';
 import { projectVoiceSpeechEndpointReadiness } from '@/voice/registry/speechEndpointReadiness';
@@ -29,6 +31,11 @@ import {
 } from './voiceProviderLocalAvailability';
 
 type VoiceReadinessPlatform = 'web' | 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'unknown';
+
+export type LocalVoiceSpeechReadiness = Readonly<{
+  hear: VoiceRoleReadiness | null;
+  speak: VoiceRoleReadiness | null;
+}>;
 
 function projectPathFact(
   path: VoiceLocalProviderModeAvailability['paths'][keyof VoiceLocalProviderModeAvailability['paths']],
@@ -72,6 +79,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   }>>>;
   resolveSavedSecret?: (ref: string) => SavedSecretReferenceResolution;
 }>): Readonly<{
+  settings: VoiceSettingsReadinessFact;
   serverFeature: VoiceReadinessFact;
   executionMachine: VoiceReadinessFact;
   runtime: VoiceReadinessFact;
@@ -79,6 +87,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   endpoint: VoiceReadinessFact;
   credential: VoiceCredentialReadinessFact;
   daemonRouteReadiness: VoiceRoleReadiness | null;
+  speechReadiness: LocalVoiceSpeechReadiness;
 }> {
   const local = resolveLocalVoiceAdapterSettings({ voice: input.voice });
   const stt = parseLocalVoiceSttSettings(local.config.stt);
@@ -98,7 +107,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       providerEnvelope: input.voice.providers[tts.provider] ?? null,
       executionMachineId: input.executionMachineId ?? null,
     }),
-  ];
+  ] as const;
   const endpoint: VoiceReadinessFact = endpointFacts.includes('missing')
     ? 'missing'
     : endpointFacts.includes('incompatible')
@@ -135,7 +144,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       rawAuthorization: input.rawCredentialAuthorizationByContribution?.[tts.provider] ?? null,
       resolveSavedSecret: input.resolveSavedSecret,
     }),
-  ];
+  ] as const;
   const credential: VoiceCredentialReadinessFact = credentialFacts.includes('missing')
     ? 'missing'
     : credentialFacts.includes('approval_required')
@@ -147,9 +156,59 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     || input.voiceAgentEnabled
     ? 'ready'
     : 'missing';
+  const adapterEntry = input.registry.get(local.adapterId);
+  const adapterSettings = adapterEntry
+    ? projectVoiceProviderSettings(adapterEntry, input.voice.providers[local.adapterId] ?? null)
+    : null;
+  const projectSpeechReadiness = (
+    role: 'conversation_stt' | 'conversation_tts',
+    providerId: string,
+    roleEndpoint: VoiceReadinessFact,
+    roleCredential: VoiceCredentialReadinessFact,
+  ) => {
+    const entry = input.registry.get(providerId);
+    const settings = entry
+      ? projectVoiceProviderSettings(entry, input.voice.providers[providerId] ?? null)
+      : null;
+    const settingsStatus: VoiceSettingsReadinessFact = adapterSettings?.status !== 'ready'
+      ? adapterSettings?.status ?? 'unknown'
+      : settings?.status ?? (entry?.projectSettings ? 'unknown' : 'ready');
+    const readiness = resolveVoiceRoleReadiness({
+      registry: input.registry,
+      role,
+      providerId,
+      platform: input.platform,
+      localAvailability: input.localInput,
+      modeId: settings?.modeId,
+      settingsRequirements: settings?.requirements,
+      facts: {
+        settings: settingsStatus,
+        executionMachine: input.executionMachineSelectionKind === 'selected_unreachable'
+          ? 'incompatible'
+          : input.executionMachineId ? 'ready' : 'missing',
+        endpoint: roleEndpoint,
+        credential: roleCredential,
+        // The available neural model/runtime check combines selected packs.
+        // It cannot attribute a partial failure to either speech role.
+      },
+    });
+    return { settings: settingsStatus, readiness: readiness.code.endsWith('_unknown') ? null : readiness };
+  };
+  const hear = projectSpeechReadiness('conversation_stt', stt.provider, endpointFacts[0], credentialFacts[0]);
+  const speak = projectSpeechReadiness('conversation_tts', tts.provider, endpointFacts[1], credentialFacts[1]);
+  // Preserve the aggregate's exact endpoint repair before a leaf's generic
+  // missing-setting result. Other required leaf settings still block readiness.
+  const settings = endpoint === 'missing' && adapterSettings?.status === 'ready'
+    ? 'ready'
+    : [hear.settings, speak.settings].find((fact) => fact !== 'ready') ?? 'ready';
+  const speechReadiness: LocalVoiceSpeechReadiness = {
+    hear: hear.readiness,
+    speak: speak.readiness,
+  };
 
   if (input.voice.providerId !== 'local_conversation') {
     return {
+      settings,
       serverFeature,
       executionMachine: input.executionMachineId != null ? 'ready' : 'missing',
       runtime: projectUnselectedRuntimeFact(input.local),
@@ -157,6 +216,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       endpoint: 'ready',
       credential,
       daemonRouteReadiness: null,
+      speechReadiness,
     };
   }
 
@@ -210,6 +270,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   }
 
   return {
+    settings,
     serverFeature,
     executionMachine,
     runtime,
@@ -217,5 +278,6 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     endpoint,
     credential,
     daemonRouteReadiness,
+    speechReadiness,
   };
 }

@@ -1410,6 +1410,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
   // transition-deduped). Dedupe commits only after the host-owned transcript outbox accepts custody.
   const runtimeConfigOutcomeEmitter = createClaudeUnifiedRuntimeConfigOutcomeEmitter({
     sendSessionEvent: async (event: ClaudeUnifiedRuntimeConfigOutcomeSessionEvent) => {
+      const effort = event.changes.find(change => change.key === 'reasoningEffort');
+      if (event.status === 'applied'
+        && event.timing !== 'scheduled_for_next_prompt' && event.timing !== 'queued_until_safe_window' && event.timing !== 'next_idle'
+        && effort?.reason !== 'delivered_unverified' && typeof effort?.effective === 'string') {
+        const model = event.changes.find(change => change.key === 'model');
+        const modelId = typeof model?.effective === 'string' && model.reason !== 'delivered_unverified'
+          ? model.effective : verifiedModelId ?? launchModelId;
+        await statuslineApplier.applyModelEvidence({ modelId, reasoningEffort: effort.effective });
+      }
       return await publishSessionEvent(event, {
         failureWarnMessage: '[ClaudeUnifiedTerminal] runtime-config-outcome publish failed',
         debugMeta: { status: event.status },

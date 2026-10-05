@@ -5,16 +5,15 @@
  * that is a structural fact here rather than a convention:
  *
  * - the **issue summary** is read at the detail root and scoped to the surface's
- *   own signal, because the Release association tab's very presence depends on
+ *   root active interval, because the Release association tab's very presence depends on
  *   it and a conditional tab cannot read its own condition;
  * - the **tag distribution**, its **value drill-down** and the **activity**
  *   history are read inside their panels and scoped to the panel's active
  *   interval, so leaving aborts the request, rejects a late result, and discards
  *   every Tier-B value the panel held (`SENTRY.md` §7.2b);
  * - the **retained-events** walk is likewise panel-scoped. Its tab declares
- *   `retain`, which buys its list geometry and nothing else: the reducer is
- *   reset the moment the panel becomes inactive, so a retained subtree never
- *   keeps event rows a reader is no longer looking at.
+ *   `retain`, preserving settled allowlisted pages and their paging position
+ *   within this exact detail. Leaving aborts only unsettled paging work.
  *
  * No reader here holds a credential, builds a URL, or sees a raw provider body.
  * Each names its exact configured instance and entry and invokes one
@@ -24,6 +23,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { useTriageDetailRequest as useSentryDetailRequest } from '@happier-dev/triage-sources/ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -64,14 +64,7 @@ function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
   });
 }
 
-function useLocalRef(input: TriageDetailSurfaceInputV1) {
-  const { entryRef } = input.observation;
-  return useMemo(() => ({
-    kindId: entryRef.kindId,
-    collisionScope: entryRef.collisionScope,
-    entryId: entryRef.entryId,
-  }), [entryRef.collisionScope, entryRef.entryId, entryRef.kindId]);
-}
+export { useSentryDetailRequest };
 
 type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
 
@@ -117,25 +110,36 @@ export function useSentryIssueSummary(
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
+  const { active, activeSignal } = useTabPanelActivity();
+  const request = useSentryDetailRequest(input);
+  const { instance, localRef } = request;
   const [state, setState] = useState<SentryReadStateV1<SentryIssueSummaryV1>>({
     kind: 'loading',
   });
+  const previousRequest = useRef(request);
+  const settledRequest = useRef<typeof request | null>(null);
+  if (previousRequest.current !== request) {
+    previousRequest.current = request;
+    setState({ kind: 'loading' });
+  }
 
   useEffect(() => {
+    if (!active || activeSignal.aborted || signal.aborted || settledRequest.current === request) return undefined;
     const controller = new AbortController();
     const abort = (): void => {
       controller.abort();
     };
     signal.addEventListener('abort', abort);
+    activeSignal.addEventListener('abort', abort);
     void (async () => {
       const execution = await execute({
         v: 1,
-        instance: input.instance,
+        instance,
         localRef,
         projection: 'overview',
       }, { signal: controller.signal }) as ExecuteResult;
       if (controller.signal.aborted) return;
+      settledRequest.current = request;
       if (execution.status !== 'success') {
         setState({
           kind: 'unavailable',
@@ -161,9 +165,10 @@ export function useSentryIssueSummary(
     })();
     return () => {
       signal.removeEventListener('abort', abort);
+      activeSignal.removeEventListener('abort', abort);
       controller.abort();
     };
-  }, [execute, input.instance, localRef, signal]);
+  }, [active, activeSignal, execute, instance, localRef, request, signal]);
 
   return state;
 }
@@ -188,7 +193,7 @@ function useSentryPanelProjection<T>(
   );
   const { execute } = useExecutePluginAction(action);
   const { active, activeSignal } = useTabPanelActivity();
-  const localRef = useLocalRef(input);
+  const { instance, localRef } = useSentryDetailRequest(input);
   const [state, setState] = useState<SentryReadStateV1<T>>({ kind: 'loading' });
 
   useEffect(() => {
@@ -198,7 +203,7 @@ function useSentryPanelProjection<T>(
     void (async () => {
       const execution = await execute({
         v: 1,
-        instance: input.instance,
+        instance,
         localRef,
         projection,
       }, { signal: activeSignal }) as ExecuteResult;
@@ -230,7 +235,7 @@ function useSentryPanelProjection<T>(
     };
     // `select` is a render-stable selector supplied by the concrete hooks below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, activeSignal, execute, input.instance, localRef, projection]);
+  }, [active, activeSignal, execute, instance, localRef, projection]);
 
   return state;
 }
@@ -300,7 +305,10 @@ type PageReader<TRow> = (
  * make the panel read the same page forever, and the read module's own
  * non-advancing guard only sees one response at a time.
  */
-function useSentryPagedWalk<TRow>(readPage: PageReader<TRow>): SentryPagedControllerV1<TRow> {
+function useSentryPagedWalk<TRow>(
+  readPage: PageReader<TRow>,
+  retainSettledPages = false,
+): SentryPagedControllerV1<TRow> {
   const [state, dispatch] = useReducer(
     sentryPagedReducer<TRow>,
     undefined,
@@ -309,6 +317,9 @@ function useSentryPagedWalk<TRow>(readPage: PageReader<TRow>): SentryPagedContro
   const { active, activeSignal } = useTabPanelActivity();
   const interval = useRef<AbortSignal | null>(null);
   const requested = useRef<Set<string>>(new Set());
+  const currentState = useRef(state);
+  currentState.current = state;
+  const previousReader = useRef(readPage);
 
   const runPage = useCallback(async (
     token: number,
@@ -330,17 +341,32 @@ function useSentryPagedWalk<TRow>(readPage: PageReader<TRow>): SentryPagedContro
   }, [readPage]);
 
   useEffect(() => {
-    if (!active) return undefined;
-    interval.current = activeSignal;
-    requested.current = new Set();
-    dispatch({ kind: 'panelLeft' });
-    void runPage(1, null, activeSignal);
-    return () => {
-      interval.current = null;
+    const readerChanged = previousReader.current !== readPage;
+    previousReader.current = readPage;
+    if (readerChanged) {
       requested.current = new Set();
       dispatch({ kind: 'panelLeft' });
+    }
+    if (!active) return undefined;
+    interval.current = activeSignal;
+    if (readerChanged || !retainSettledPages || currentState.current.kind !== 'ready') {
+      requested.current = new Set();
+      dispatch({ kind: 'panelLeft' });
+      void runPage(1, null, activeSignal);
+    }
+    return () => {
+      interval.current = null;
+      if (retainSettledPages && currentState.current.kind === 'ready') {
+        if (currentState.current.pending && currentState.current.continuation !== null) {
+          requested.current.delete(currentState.current.continuation);
+        }
+        dispatch({ kind: 'walkAbandoned' });
+      } else {
+        requested.current = new Set();
+        dispatch({ kind: 'panelLeft' });
+      }
     };
-  }, [active, activeSignal, runPage]);
+  }, [active, activeSignal, readPage, retainSettledPages, runPage]);
 
   const loadMore = useCallback(() => {
     const pageSignal = interval.current;
@@ -372,8 +398,7 @@ export function useSentryOccurrences(
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
-  const { instance } = input;
+  const { instance, localRef } = useSentryDetailRequest(input);
 
   const readPage: PageReader<SentryProjectedEventRowV1> = useCallback(async (
     continuation,
@@ -412,7 +437,7 @@ export function useSentryOccurrences(
     };
   }, [execute, instance, localRef, sample]);
 
-  return useSentryPagedWalk(readPage);
+  return useSentryPagedWalk(readPage, true);
 }
 
 export function useSentryTagValues(
@@ -424,8 +449,7 @@ export function useSentryTagValues(
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
-  const { instance } = input;
+  const { instance, localRef } = useSentryDetailRequest(input);
 
   const readPage: PageReader<SentryProjectedTagValueV1> = useCallback(async (
     continuation,

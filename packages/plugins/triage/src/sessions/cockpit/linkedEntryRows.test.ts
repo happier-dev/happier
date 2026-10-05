@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,

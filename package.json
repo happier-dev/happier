@@ -116,7 +116,7 @@
     "test:wiring:self": "node --experimental-strip-types --test scripts/issue-triage-workflows.contract.test.mjs scripts/testing/lib/*.test.ts scripts/testing/validateTestWiring.test.ts scripts/testing/runPluginWorkspaceTests.test.ts scripts/testing/runSharedPackageTests.test.ts",
     "test:wiring": "node --experimental-strip-types ./scripts/testing/validateTestWiring.ts",
     "test:policy:self": "node --experimental-strip-types --test scripts/testing/lib/testPolicyRules.test.ts scripts/testing/validateTestPolicy.test.ts scripts/testing/migrations/lib/*.test.ts scripts/testing/migrations/runtimeUnification/*.test.ts scripts/testing/migrations/runtimeUnification/validators/*.test.ts scripts/testing/smoke/*.test.ts",
-    "test:tooling:self": "node --experimental-strip-types --test scripts/ensureCliCommonDistModule.test.mjs scripts/qa/resolveQaUiUrl.test.mjs scripts/workspaces/buildTypeScriptPackageDist.test.mjs scripts/workspaces/bundleWorkspaceDeps.execYarn.contract.test.mjs scripts/workspaces/distLocalImports.test.mjs scripts/workspaces/execYarnCommand.test.mjs scripts/workspaces/loadCliCommonWorkspacesModule.test.mjs scripts/workspaces/prepareTypeScriptProjectBuild.test.mjs scripts/workspaces/resolveTypeScriptCliInvocation.test.mjs scripts/workspaces/resolveWorkspaceDependencyBuildOrder.test.mjs scripts/workspaces/syncBundledWorkspacePackages.test.mjs scripts/workspaces/workspaceBundleLock.test.mjs scripts/workspaces/workspaceBundlePublication.test.mjs scripts/workspaces/workspaceChildBuildEnv.test.mjs scripts/workspaces/workspacePackageBuildOutputContracts.test.mjs scripts/migrations/extensions/bootstrapExtensionPackage.test.ts scripts/migrations/extensions/syncCliBundledExtensionPackaging.test.ts",
+"test:tooling:self": "node --experimental-strip-types --test scripts/testing/vitestWorkers.test.mjs scripts/ensureCliCommonDistModule.test.mjs scripts/qa/resolveQaUiUrl.test.mjs scripts/workspaces/buildTypeScriptPackageDist.test.mjs scripts/workspaces/bundleWorkspaceDeps.execYarn.contract.test.mjs scripts/workspaces/distLocalImports.test.mjs scripts/workspaces/execYarnCommand.test.mjs scripts/workspaces/loadCliCommonWorkspacesModule.test.mjs scripts/workspaces/prepareTypeScriptProjectBuild.test.mjs scripts/workspaces/resolveTypeScriptCliInvocation.test.mjs scripts/workspaces/resolveWorkspaceDependencyBuildOrder.test.mjs scripts/workspaces/syncBundledWorkspacePackages.test.mjs scripts/workspaces/workspaceBundleLock.test.mjs scripts/workspaces/workspaceBundlePublication.test.mjs scripts/workspaces/workspaceChildBuildEnv.test.mjs scripts/workspaces/workspacePackageBuildOutputContracts.test.mjs scripts/migrations/extensions/bootstrapExtensionPackage.test.ts scripts/migrations/extensions/syncCliBundledExtensionPackaging.test.ts",
     "test:policy": "node --experimental-strip-types ./packages/tests/src/testkit/terminal/cleanupFence.ts && node --experimental-strip-types ./scripts/testing/validateTestPolicy.ts",
     "test:inventory": "node --experimental-strip-types ./scripts/testing/validateTestInventory.ts",
     "test:migration:inventory": "node --experimental-strip-types ./scripts/testing/migrations/validateMigrationInventory.ts",
@@ -259,7 +259,7 @@
   "resolutions": {
     "@react-navigation/core": "7.21.5",
     "@react-navigation/native": "7.3.8",
-    "@tauri-apps/api": "2.8.0",
+    "@tauri-apps/api": "2.12.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "tar": "7.5.22"

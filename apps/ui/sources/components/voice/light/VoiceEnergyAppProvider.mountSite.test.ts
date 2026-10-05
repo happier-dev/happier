@@ -31,12 +31,12 @@ describe('VoiceEnergyAppProvider mount site', () => {
 
     it('encloses SidebarNavigator rather than sitting below it', () => {
         const root = readApp(join('app', '_layout.tsx'));
-        // `appContent` holds SidebarNavigator and is wrapped by the provider.
+        // The sidebar stays below the energy provider even when the root inlines it.
         const provider = root.indexOf('<VoiceEnergyAppProvider>');
         const close = root.indexOf('</VoiceEnergyAppProvider>');
         expect(provider).toBeGreaterThan(-1);
         expect(close).toBeGreaterThan(provider);
-        expect(root.slice(provider, close)).toContain('appContent');
+        expect(root.slice(provider, close)).toContain('<SidebarNavigator');
     });
 
     it('does not rely on the nested route layout, which the sidebar sits above', () => {

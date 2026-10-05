@@ -67,6 +67,16 @@ describe('spawn-session execution authorization', () => {
 });
 
 describe('spawn-session error detail contract (D2 structured continuity)', () => {
+  it('carries only typed initial-trigger birth refusals as terminal creation outcomes', () => {
+    for (const code of ['invalid_input', 'target_unavailable', 'feature_disabled']) {
+      const detail = { kind: 'session_creation_initial_trigger_refused', code };
+      expect(SessionCreationTerminalSpawnErrorDetailSchema.safeParse(detail).success).toBe(true);
+      expect(normalizeSpawnSessionErrorDetail(detail)).toEqual(detail);
+      expect(isSessionCreationTerminalSpawnErrorDetail(detail)).toBe(true);
+      expect(normalizeSpawnSessionErrorDetail({ ...detail, rawDiagnostic: '/private' })).toBeUndefined();
+    }
+    expect(normalizeSpawnSessionErrorDetail({ kind: 'session_creation_initial_trigger_refused', code: 'timeout' })).toBeUndefined();
+  });
   it('preserves only the exact initial-access update requirement as a terminal creation refusal', () => {
     const detail = {
       kind: 'update_required',

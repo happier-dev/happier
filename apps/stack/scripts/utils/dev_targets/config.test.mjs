@@ -9,6 +9,17 @@ import {
   upgradeDevTargetsConfigToVersion3,
 } from './config.mjs';
 
+test('runtime build placement uses the existing target and local fallback contract', () => {
+  const config = parseDevTargetsConfig({
+    version: 3,
+    targets: [{ name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' }],
+    runtimePlacement: { build: { mode: 'prefer-target', target: 'worker' } },
+  });
+  assert.deepEqual(config.runtimePlacement.build, { mode: 'prefer-target', target: 'worker', fallback: 'local' });
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config).build, config.runtimePlacement.build);
+  assert.throws(() => parseDevTargetsConfig({ ...config, runtimePlacement: { build: { mode: 'prefer-target', target: 'absent' } } }), /unknown target/);
+});
+
 test('resolveDevTargetsConfigPath keeps dev target state inside the selected stack', () => {
   assert.equal(
     resolveDevTargetsConfigPath({
@@ -516,7 +527,7 @@ test('version 3 rejects legacy raw Lima fields and unsafe managed runtime combin
         limaHome: '/tmp/lima', profile: 'worker-balanced',
       },
     }],
-  }), /managed Lima runtimes must use platform "posix"/i);
+  }), Error);
   assert.throws(() => parseDevTargetsConfig({
     version: 3,
     targets: [{
@@ -561,4 +572,22 @@ test('explicit version 3 upgrade converts legacy local Lima ownership at the con
     architecture: 'aarch64',
   });
   assert.deepEqual(resolveDevTargetExecutionPolicy(upgraded).commands, version2.commandExecution);
+});
+
+
+test('managed Windows WSL workers retain Linux execution and operator capacity', () => {
+  const runtime = {
+    kind: 'wsl', instance: 'HappierWorker', user: 'happier',
+    host: { kind: 'ssh', ssh: 'windows-host', sshConfigFile: '/tmp/windows.ssh.config' },
+    capacity: { mode: 'dedicated', shared: { cpus: 8, memoryGiB: 8 }, dedicated: { cpus: 12, memoryGiB: 12 } },
+  };
+  const config = parseDevTargetsConfig({ version: 3, targets: [{
+    name: 'windows-linux', platform: 'posix', ssh: 'windows-linux',
+    repoDir: '/home/happier/happier-dev', cliHomeDir: '/home/happier/.happier', managedRuntime: runtime,
+  }] });
+  assert.deepEqual(config.targets[0].managedRuntime, runtime);
+  assert.deepEqual(resolveManagedRuntimeCapacityResources(runtime), { cpus: 12, memoryGiB: 12 });
+  assert.throws(() => parseDevTargetsConfig({ ...config, targets: [{ ...config.targets[0],
+    managedRuntime: { ...runtime, instance: 'worker;whoami' },
+  }] }), /invalid.*WSL.*instance/i);
 });

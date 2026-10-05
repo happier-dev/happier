@@ -13,15 +13,22 @@ import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { Icon } from '@/components/ui/icons/Icon';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 
 type SearchResultsListProps = {
     theme: any;
     isSearching: boolean;
     searchQuery: string;
     searchResultsQuery?: string;
+    searchError?: boolean;
+    hasMore?: boolean;
+    onRetry?: () => void;
     searchResults: FileItem[];
     onFilePress: (file: FileItem) => void;
     fileHref?: (fullPath: string) => string | null;
+    workspaceScope?: WorkspaceScopeBase | null;
     onFilePressPinned?: (file: FileItem) => void;
     onFolderPress?: (folder: FileItem) => void;
     onLayout?: ScrollViewProps['onLayout'];
@@ -54,9 +61,13 @@ export const SearchResultsList = React.memo(({
     isSearching,
     searchQuery,
     searchResultsQuery,
+    searchError,
+    hasMore,
+    onRetry,
     searchResults,
     onFilePress,
     fileHref,
+    workspaceScope,
     onFilePressPinned,
     onFolderPress,
     onLayout,
@@ -64,13 +75,21 @@ export const SearchResultsList = React.memo(({
     onScroll,
     scrollEventThrottle,
 }: SearchResultsListProps) => {
+    const accountScope = useActiveServerAccountScope();
     const showsPreviousResults = isSearching || (searchResultsQuery !== undefined && searchResultsQuery !== searchQuery.trim());
     const keyExtractor = React.useCallback((file: FileItem) => `file-${file.fullPath}`, []);
     // Retain both the scroll owner and the previous query's rows while updating.
     const listData = searchResults;
     const hasResults = listData.length > 0;
+    const coverageNotice = React.useMemo(() => searchError ? (
+        <SurfaceStateCard testID="files-search-error" size="line" kind="unavailable" title={t('errors.unknownError')}
+            action={onRetry ? { label: t('common.retry'), onPress: onRetry } : undefined} />
+    ) : hasMore ? (
+        <SurfaceStateCard testID="files-search-incomplete" size="line" kind="warning" title={t('universalSearch.moreResultsAvailable')} />
+    ) : null, [searchError, hasMore, onRetry]);
     const listHeaderComponent = React.useMemo(() => (
         Boolean(searchQuery) && hasResults ? (
+            <>
             <View
                 style={{
                     backgroundColor: theme.colors.surface.inset,
@@ -92,6 +111,8 @@ export const SearchResultsList = React.memo(({
                     {isSearching ? ` · ${t('files.searching')}` : null}
                 </Text>
             </View>
+            {coverageNotice}
+            </>
         ) : null
     ), [
         isSearching,
@@ -99,6 +120,7 @@ export const SearchResultsList = React.memo(({
         hasResults,
         searchQuery,
         searchResults.length,
+        coverageNotice,
         theme.colors.border.default,
         theme.colors.surface.inset,
         theme.colors.text.link,
@@ -109,7 +131,7 @@ export const SearchResultsList = React.memo(({
     const listEmptyComponent = React.useMemo(() => (
         isSearching ? (
             <SurfaceStateCard testID="files-search-searching" size="line" kind="loading" title={t('files.searching')} />
-        ) : searchQuery ? (
+        ) : coverageNotice ? coverageNotice : searchQuery ? (
             <SurfaceStateCard
                 testID="files-search-no-results"
                 size="line"
@@ -121,10 +143,13 @@ export const SearchResultsList = React.memo(({
         ) : (
             <SurfaceStateCard testID="files-search-empty" kind="empty" iconName="folder" title={t('files.noFilesInProject')} />
         )
-    ), [isSearching, searchQuery]);
+    ), [isSearching, searchQuery, coverageNotice]);
 
     const renderItem = React.useCallback(({ item: file, index }: { item: FileItem; index: number }) => (
-        <WorkspaceDestinationRow href={file.fileType === 'file' ? fileHref?.(file.fullPath) ?? null : null}>
+        <WorkspaceDestinationRow href={file.fileType === 'file' ? fileHref?.(file.fullPath) ?? null : null}
+            entityItem={file.fileType === 'file' && workspaceScope && accountScope?.serverId === workspaceScope.serverId
+                ? { kind: 'repository-file', scope: accountScope, machineId: workspaceScope.machineId,
+                    path: resolveMachineAbsolutePath({ rootPath: workspaceScope.rootPath, requestPath: file.fullPath }) } : null}>
         <Item
             title={(
                 <InlineRepoPathLabel
@@ -162,6 +187,8 @@ export const SearchResultsList = React.memo(({
         />
         </WorkspaceDestinationRow>
     ), [
+        workspaceScope,
+        accountScope,
         fileHref,
         onFilePress,
         onFilePressPinned,

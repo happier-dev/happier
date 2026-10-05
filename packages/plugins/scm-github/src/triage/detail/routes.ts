@@ -47,9 +47,9 @@ export const GITHUB_CHANGED_FILES_PAGE_SIZE_V1 = GITHUB_MAX_DETAIL_PAGE_SIZE_V1;
  *
  * `verify-github-sentry.md` G1: *"Responses include a maximum of 3000 files."*
  * Paging harder does not reach file 3,001, and the Compare endpoint is worse
- * (300 files, first page only), so it is not used as a fallback anywhere in this
- * vertical. Reaching this number is a rendered known-incomplete state, never a
- * silent cap.
+ * (300 files, first page only), so it is never a file-inventory fallback in this
+ * vertical. Its immutable merge-base metadata is read separately. Reaching this
+ * number is a rendered known-incomplete state, never a silent cap.
  */
 export const GITHUB_CHANGED_FILES_CEILING_V1 = 3_000;
 
@@ -134,6 +134,17 @@ export function buildGithubPullRequestUrl(input: Readonly<{
 }>): string {
   assertEntryNumber(input.entryNumber);
   return buildGithubApiUrl(['repos', input.route.owner, input.route.name, 'pulls', input.entryNumber]);
+}
+
+/** Pinned comparison metadata only; the PR files route remains the inventory owner. */
+export function buildGithubComparisonUrl(input: Readonly<{
+  route: GithubRepositoryRouteV1; baseOid: string; headOid: string;
+}>): string {
+  if (!/^[a-f0-9]{40}$/u.test(input.baseOid) || !/^[a-f0-9]{40}$/u.test(input.headOid)) {
+    throw new Error('github_comparison_revision_invalid');
+  }
+  // Only merge_base_commit is consumed; one commit row is sufficient metadata geometry.
+  return pagedUrl(['repos', input.route.owner, input.route.name, 'compare', `${input.baseOid}...${input.headOid}`], { perPage: 1, page: 1 });
 }
 
 /** Reads the `page` a validated follow-up URL advances to. */

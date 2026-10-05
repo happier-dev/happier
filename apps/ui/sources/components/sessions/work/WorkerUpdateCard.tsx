@@ -26,6 +26,8 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { StructuredFindText, useStructuredFindState, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
 
 const MARK_SIZE = 15;
 
@@ -48,6 +50,28 @@ const KIND_LABEL_KEYS = {
     execution_run: 'sessionWork.kinds.backgroundRun',
     workflow_run: 'sessionWork.kinds.workflowRun',
 } as const satisfies Record<WorkerUpdateV1['workerKind'], string>;
+
+function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<{ title?: string; at?: number; canInspect?: boolean }> = {}) {
+    const age = options.at === undefined ? '' : formatShortRelativeTime(options.at);
+    const kind = t(KIND_LABEL_KEYS[update.workerKind]);
+    const engine = update.engine;
+    const engineLabel = engine ? resolveExecutionRunBackendLabel({ kind: 'backend', backendId: engine.agentId }) ?? engine.agentId : null;
+    return {
+        title: options.title ?? update.headline,
+        state: readOwnerWord(update),
+        kind: age ? `${kind} · ${age}` : kind,
+        result: update.result,
+        engine: engineLabel ? `${engineLabel}${engine?.modelId ? ` · ${engine.modelId}` : ''}` : null,
+        truncated: update.truncated ? t('sessionWork.workerUpdate.truncated') : null,
+        inspect: options.canInspect ? (update.transcriptPointer?.kind === 'session' ? t('runs.openSession') : t('runs.openRun')) : null,
+    };
+}
+
+/** Historical completion rows consume the same human fields as the actual shared worker card. */
+export function projectWorkerUpdateFindText(update: WorkerUpdateV1, options: Readonly<{ title?: string; at?: number; canInspect?: boolean }> = {}): readonly StructuredFindTextBlock[] {
+    const content = buildWorkerUpdateDisplayText(update, options);
+    return Object.entries(content).flatMap(([field, text]) => field !== 'inspect' && text ? [{ id: `structured-worker-${field}`, text }] : []);
+}
 
 /** A run has no agent of its own to show, so it is marked by its kind (Work rows use the same glyphs). */
 const KIND_GLYPHS = {
@@ -185,15 +209,17 @@ export function WorkerUpdateCard(props: Readonly<{
 }>) {
     const transcriptSource = useSessionTranscriptSource();
     const { update } = props;
+    const find = useStructuredFindState();
+    const decorate = (field: string, text: string, selectable = false) => {
+        const ranges = find.ranges(`structured-worker-${field}`);
+        return ranges?.length ? <FindHighlightedText text={text} ranges={ranges} selectable={selectable} /> : text;
+    };
     const title = useWorkerTitle(update, props.serverId);
-    const status = resolveWorkStatusTone({ kind: 'worker_update', facts: { update, word: readOwnerWord(update) } });
     const engine = update.engine;
-    const engineLabel = engine ? resolveExecutionRunBackendLabel({ kind: 'backend', backendId: engine.agentId }) ?? engine.agentId : null;
-    const age = props.at === undefined ? '' : formatShortRelativeTime(props.at);
-    const kindLabel = age ? `${t(KIND_LABEL_KEYS[update.workerKind])} · ${age}` : t(KIND_LABEL_KEYS[update.workerKind]);
     const pointer = update.transcriptPointer;
-    const inspectLabel = pointer?.kind === 'session' ? t('runs.openSession') : t('runs.openRun');
     const canInspect = update.canInspect && props.navigationEnabled !== false && transcriptSource.navigate !== null && pointer !== undefined;
+    const content = buildWorkerUpdateDisplayText(update, { title, at: props.at, canInspect });
+    const status = resolveWorkStatusTone({ kind: 'worker_update', facts: { update, word: content.state } });
     const inspect = () => {
         if (!canInspect || !pointer) return;
         if (pointer.kind === 'workflow_run') {
@@ -207,7 +233,7 @@ export function WorkerUpdateCard(props: Readonly<{
         if (href) transcriptSource.navigate?.(href);
     };
     const resultBody = props.children === undefined
-        ? (update.result ? <Text testID="worker-update-result" selectable style={styles.result}>{update.result}</Text> : null)
+        ? (content.result ? <Text testID="worker-update-result" selectable style={styles.result}>{decorate('result', content.result, true)}</Text> : null)
         : props.children;
     const deliverableServerId = props.serverId ?? transcriptSource.serverId;
     const body = resultBody || update.deliverables?.length ? <>
@@ -221,19 +247,19 @@ export function WorkerUpdateCard(props: Readonly<{
         <SurfaceCard testID={`worker-update:${update.workerId}`} tone="muted" padding="none" style={workStatusSurfaceStyle(status.tone)}>
             <View style={[styles.head, body ? null : styles.headAlone]}>
                 <WorkerMark update={update} />
-                <Text testID="worker-update-title" numberOfLines={1} style={styles.title}>{title}</Text>
-                <Text testID="worker-update-state" numberOfLines={1} style={[styles.word, workStatusWordStyle(status.tone)]}>{status.word}</Text>
+                <StructuredFindText blockId="structured-worker-title" testID="worker-update-title" numberOfLines={1} style={styles.title} text={content.title} />
+                <StructuredFindText blockId="structured-worker-state" testID="worker-update-state" numberOfLines={1} style={[styles.word, workStatusWordStyle(status.tone)]} text={status.word} />
                 <View style={styles.grow} />
-                <Text testID="worker-update-kind" numberOfLines={1} style={styles.kind}>{kindLabel}</Text>
+                <StructuredFindText blockId="structured-worker-kind" testID="worker-update-kind" numberOfLines={1} style={styles.kind} text={content.kind} />
             </View>
             {body ? <View style={styles.body}>{body}</View> : null}
             {hasFooter ? (
                 <View testID="worker-update-footer" style={styles.footer}>
                     {props.facts}
-                    {engine ? <Text testID="worker-update-engine" numberOfLines={1} style={styles.fact}>{engineLabel}{engine.modelId ? ` · ${engine.modelId}` : ''}</Text> : null}
-                    {update.truncated ? <Text testID="worker-update-truncated" numberOfLines={1} style={styles.fact}>{t('sessionWork.workerUpdate.truncated')}</Text> : null}
+                    {engine ? <StructuredFindText blockId="structured-worker-engine" testID="worker-update-engine" numberOfLines={1} style={styles.fact} text={content.engine ?? ''} /> : null}
+                    {content.truncated ? <StructuredFindText blockId="structured-worker-truncated" testID="worker-update-truncated" numberOfLines={1} style={styles.fact} text={content.truncated} /> : null}
                     <View style={styles.grow} />
-                    {canInspect ? <RoundButton testID="worker-update-inspect" size="small" display="inverted" title={inspectLabel} onPress={inspect} /> : null}
+                    {content.inspect ? <RoundButton testID="worker-update-inspect" size="small" display="inverted" title={decorate('inspect', content.inspect)} onPress={inspect} /> : null}
                 </View>
             ) : null}
         </SurfaceCard>

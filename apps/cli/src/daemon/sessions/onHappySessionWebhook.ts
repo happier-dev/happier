@@ -363,6 +363,8 @@ export function buildSessionCreationTerminalSpawnErrorResult(
       ? 'Session creation correspondence conflicts with the existing Session'
       : errorDetail.kind === 'update_required'
         ? 'Session initial access requires updated collaboration support'
+        : errorDetail.kind === 'session_creation_initial_trigger_refused'
+          ? 'Session initial trigger admission was refused'
         : 'Session creation organization placement is invalid',
     errorDetail,
   };
@@ -920,48 +922,23 @@ export function createOnHappySessionWebhook(params: Readonly<{
       await awaitTrackedMarkerPromotion();
       if (!requiresCanonicalMarkerAdoption && reportTargetsTrackedOwner && trackedForPid?.pid !== pid) return;
       const currentSessionMarkerPid = resolveSessionMarkerPid();
-      const [processIdentity, proc] = await Promise.all([
-        readProcessIdentityByPidFn(currentSessionMarkerPid),
-        findHappyProcessByPidFn(currentSessionMarkerPid),
-      ]);
+      const processIdentity = await readProcessIdentityByPidFn(currentSessionMarkerPid);
       await awaitTrackedMarkerPromotion();
       if (!requiresCanonicalMarkerAdoption && reportTargetsTrackedOwner && trackedForPid?.pid !== pid) return;
       if (currentSessionMarkerPid !== resolveSessionMarkerPid()) {
         await persistSessionMarker(beforeStartupReadiness);
         return;
       }
-      const discoveredProcessCommand =
+      const processCommand =
         typeof processIdentity?.command === 'string' && processIdentity.command.trim().length > 0
           ? processIdentity.command
-          : typeof proc?.command === 'string' && proc.command.trim().length > 0
-            ? proc.command
-            : undefined;
-      const trackedProcessCommand =
-        typeof trackedForPid?.processCommand === 'string' && trackedForPid.processCommand.trim().length > 0
-          ? trackedForPid.processCommand
           : undefined;
-      const daemonChildSpawnArgsCommand =
-        trackedForPid?.startedBy === 'daemon' &&
-        Array.isArray(trackedForPid.childProcess?.spawnargs) &&
-        trackedForPid.childProcess.spawnargs.length > 0
-          ? trackedForPid.childProcess.spawnargs
-              .filter((arg): arg is string => typeof arg === 'string' && arg.trim().length > 0)
-              .join(' ')
-          : undefined;
-      const processCommand = discoveredProcessCommand ?? trackedProcessCommand ?? daemonChildSpawnArgsCommand;
       const processCommandHash = processCommand ? hashProcessCommand(processCommand) : undefined;
       const processStartTimeMs = processIdentity?.processStartTimeMs;
-      if (processCommandHash) {
-        // Store on the tracked session too so stopSession can require a match.
-        if (trackedForPid) {
-          trackedForPid.processCommandHash = processCommandHash;
-          trackedForPid.processCommand = processCommand;
-          if (processStartTimeMs !== undefined) {
-            trackedForPid.processStartTimeMs = processStartTimeMs;
-          }
-        }
-      } else {
-        logger.debug(`[DAEMON RUN] Could not determine process command for PID ${currentSessionMarkerPid}; marker will be weaker`);
+      if (trackedForPid && processIdentity) {
+        trackedForPid.processCommandHash = processCommandHash;
+        trackedForPid.processCommand = processCommand;
+        trackedForPid.processStartTimeMs = processStartTimeMs;
       }
 
       const storedCredentials =

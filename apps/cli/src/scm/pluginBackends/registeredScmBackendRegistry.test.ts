@@ -501,7 +501,7 @@ describe('registered SCM backend registry', () => {
         expect(resolved.diagnostics[0]?.message).toContain('read.diffFile');
     });
 
-    it('rejects activation when an advertised executable commit leaf has no handler', () => {
+    it.each(['create', 'safePlan', 'resolveOutcome'] as const)('rejects activation when advertised commit.%s lacks its required handler', (leaf) => {
         const registration: ScmBackendRuntimeRegistration = {
             id: 'acme-vcs',
             handlers: {
@@ -516,6 +516,7 @@ describe('registered SCM backend registry', () => {
                         error: 'not implemented',
                     }),
                 },
+                ...(leaf === 'create' ? {} : { commit: { create: async () => ({ success: true }) } }),
             },
         };
 
@@ -524,7 +525,7 @@ describe('registered SCM backend registry', () => {
                 pluginId: 'acme.scm.backend',
                 contributionId: 'acme-vcs',
                 definition: createDefinition({
-                    capabilities: createCapabilities({ commitCreate: 'supported' }),
+                    capabilities: { ...createCapabilities(), commit: { [leaf]: { support: 'supported' } } },
                 }),
             }],
             registrations: [{
@@ -541,7 +542,7 @@ describe('registered SCM backend registry', () => {
         ]);
         expect(resolved.diagnostics[0]?.message).toContain("Plugin 'acme.scm.backend'");
         expect(resolved.diagnostics[0]?.message).toContain("SCM backend 'acme-vcs'");
-        expect(resolved.diagnostics[0]?.message).toContain('commit.create');
+        expect(resolved.diagnostics[0]?.message).toContain(`commit.${leaf}`);
     });
 
     it('adapts advertised executable branch leaves through plugin handlers', async () => {

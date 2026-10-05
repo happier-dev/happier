@@ -9,6 +9,11 @@ export type { PublicActionInputById, PublicActionResultById };
 
 export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "action.invoke",
+  "app.updates.check",
+  "app.updates.restart",
+  "app.updates.retry",
+  "app.updates.skip",
+  "app.updates.update",
   "approval.request.create",
   "approval.request.decide",
   "artifact.access.grants.remove",
@@ -77,14 +82,23 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "browser.view.close",
   "browser.view.focus",
   "browser.view.open",
+  "composer.attachments.pick",
+  "composer.transaction.apply",
   "computer.control.handBack",
   "computer.control.interrupt",
   "computer.input",
   "computer.permissions.openSettings",
   "computer.target.select",
+  "connectedServices.accounts.default.set",
   "connectedServices.accounts.rename",
   "connectedServices.identityPrivacy.set",
+  "connectedServices.pools.create",
   "connectedServices.pools.default.set",
+  "connectedServices.pools.delete",
+  "connectedServices.pools.members.add",
+  "connectedServices.pools.members.patch",
+  "connectedServices.pools.members.remove",
+  "connectedServices.pools.patch",
   "connectedServices.pools.reorder",
   "connectedServices.pools.switchNow",
   "connectedServices.quota.refresh",
@@ -154,6 +168,8 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.add.ssh.start",
   "machines.agents.install",
   "machines.agents.install.cancel",
+  "machines.agents.signIn.cancel",
+  "machines.agents.signIn.restart",
   "machines.agents.signIn.start",
   "machines.pairing.create",
   "machines.pools.create",
@@ -162,6 +178,11 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.terminal.open",
   "memory.ensure_up_to_date",
   "notifications.notify_me",
+  "notifications.webhooks.add",
+  "notifications.webhooks.remove",
+  "notifications.webhooks.signingSecret.clear",
+  "notifications.webhooks.signingSecret.set",
+  "notifications.webhooks.update",
   "plugins.dev.build",
   "plugins.dev.test",
   "plugins.dev.typecheck",
@@ -172,7 +193,12 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "plugins.scaffold",
   "plugins.settings.reset",
   "plugins.settings.set",
+  "prompt_doc.create",
+  "prompt_doc.favorite.set",
+  "repository.upload.pick",
+  "review.explain_findings",
   "review.start",
+  "review.walkthrough",
   "reviews.comments.attachEvidence",
   "reviews.comments.bulkTransition",
   "reviews.comments.claimPublicationDispatch",
@@ -202,7 +228,20 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "scm.commit.undoLast",
   "scm.conflict.acceptSide",
   "scm.conflict.markResolved",
+  "scm.diffSummary.addOutputs",
+  "scm.diffSummary.commitPlan.accept",
+  "scm.diffSummary.commitPlan.cancel",
+  "scm.diffSummary.commitPlan.includeHookChanges",
+  "scm.diffSummary.commitPlan.stop",
+  "scm.diffSummary.discuss",
   "scm.diffSummary.generate",
+  "scm.diffSummary.refine",
+  "scm.diffSummary.result.clear",
+  "scm.diffSummary.result.delete",
+  "scm.diffSummary.result.edit",
+  "scm.diffSummary.result.undo",
+  "scm.diffSummary.reviewed.mark",
+  "scm.diffSummary.reviewed.unmark",
   "scm.hostingRepository.publish",
   "scm.pullRequest.checkout",
   "scm.pullRequest.openOrReuse",
@@ -237,6 +276,12 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.board.item.remove",
   "session.board.item.upsert",
   "session.board.layout.update",
+  "session.canvas.tabs.activate",
+  "session.canvas.tabs.close",
+  "session.canvas.tabs.move",
+  "session.canvas.tabs.open",
+  "session.canvas.tabs.pin",
+  "session.canvas.tabs.reorder",
   "session.delete",
   "session.discussion.archive",
   "session.discussion.create",
@@ -260,6 +305,9 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.mode.set",
   "session.notes.set",
   "session.open",
+  "session.organization.move",
+  "session.pending.next",
+  "session.pending.reorder",
   "session.pendingInput.interruptAndRun",
   "session.permission.remote.grants.revoke",
   "session.permission.respond",
@@ -289,9 +337,11 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.terminals.focus",
   "session.terminals.list_view",
   "session.terminals.open",
+  "session.terminals.open_in_details",
   "session.terminals.rename",
   "session.terminals.reorder",
   "session.terminals.resize",
+  "session.terminals.restart",
   "session.terminals.run_script",
   "session.terminals.split",
   "session.trigger.add",
@@ -309,6 +359,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "sessions.external.operation.retry",
   "sessions.external.takeover.start",
   "sessions.external.unfollow",
+  "settings.invoke",
   "settings.set",
   "shell.column.set",
   "subagents.delegate.start",
@@ -353,13 +404,45 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "teams.policy.set",
   "teams.restore",
   "teams.update",
+  "todos.reorder",
+  "todos.session.link",
   "transcript.import",
   "transcript.unfollow",
   "ui.command_palette.invoke",
   "ui.current_context.command.invoke",
+  "ui.find",
+  "ui.prompts.picker.open",
   "ui.voice_agent.teleport",
+  "ui.voice_global.brief.request",
+  "ui.voice_global.brief.retry",
+  "ui.voice_global.brief.stop",
+  "ui.voice_global.dismiss",
+  "ui.voice_global.end",
+  "ui.voice_global.hold_begin",
+  "ui.voice_global.hold_cancel",
+  "ui.voice_global.hold_release",
+  "ui.voice_global.recover",
   "ui.voice_global.reset",
+  "ui.voice_global.set_muted",
+  "ui.voice_global.start",
+  "ui.voice_global.turn_control",
   "voice_agent.start",
+  "widgets.area.layout.update",
+  "widgets.definition.create",
+  "widgets.definition.delete",
+  "widgets.definition.duplicate",
+  "widgets.definition.saveFromSession",
+  "widgets.definition.update",
+  "widgets.instance.add",
+  "widgets.instance.frame.set",
+  "widgets.instance.inputs.reset",
+  "widgets.instance.inputs.set",
+  "widgets.instance.move",
+  "widgets.instance.remove",
+  "widgets.instance.rename",
+  "widgets.instance.width.set",
+  "widgets.snapshot.post",
+  "workflow.authoring.conversation.bind",
   "workflow.definition.create",
   "workflow.definition.delete",
   "workflow.definition.edit",
@@ -424,6 +507,16 @@ export type GeneratedActions = Readonly<{
       readonly list: (input: PublicActionInputById["agents.session_modes.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"agents.session_modes.list">>;
     }> ;
   }> ;
+  readonly app: Readonly<{
+    readonly updates: Readonly<{
+      readonly check: (input: PublicActionInputById["app.updates.check"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"app.updates.check">>;
+      readonly get: (input: PublicActionInputById["app.updates.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"app.updates.get">>;
+      readonly restart: (input: PublicActionInputById["app.updates.restart"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"app.updates.restart">>;
+      readonly retry: (input: PublicActionInputById["app.updates.retry"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"app.updates.retry">>;
+      readonly skip: (input: PublicActionInputById["app.updates.skip"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"app.updates.skip">>;
+      readonly update: (input: PublicActionInputById["app.updates.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"app.updates.update">>;
+    }> ;
+  }> ;
   readonly approval: Readonly<{
     readonly request: Readonly<{
       readonly create: (input: PublicActionInputById["approval.request.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"approval.request.create">>;
@@ -445,6 +538,7 @@ export type GeneratedActions = Readonly<{
     readonly get: (input: PublicActionInputById["artifact.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.get">>;
     readonly list: (input: PublicActionInputById["artifact.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.list">>;
     readonly publicLink: Readonly<{
+      readonly audit: (input: PublicActionInputById["artifact.public_link.audit"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.public_link.audit">>;
       readonly create: (input: PublicActionInputById["artifact.public_link.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.public_link.create">>;
       readonly list: (input: PublicActionInputById["artifact.public_link.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.public_link.list">>;
       readonly revoke: (input: PublicActionInputById["artifact.public_link.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.public_link.revoke">>;
@@ -557,6 +651,14 @@ export type GeneratedActions = Readonly<{
     readonly getLogTail: (input: PublicActionInputById["bugreport.getLogTail"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"bugreport.getLogTail">>;
     readonly uploadArtifact: (input: PublicActionInputById["bugreport.uploadArtifact"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"bugreport.uploadArtifact">>;
   }> ;
+  readonly composer: Readonly<{
+    readonly attachments: Readonly<{
+      readonly pick: (input: PublicActionInputById["composer.attachments.pick"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"composer.attachments.pick">>;
+    }> ;
+    readonly transaction: Readonly<{
+      readonly apply: (input: PublicActionInputById["composer.transaction.apply"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"composer.transaction.apply">>;
+    }> ;
+  }> ;
   readonly computer: Readonly<{
     readonly capture: (input: PublicActionInputById["computer.capture"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.capture">>;
     readonly control: Readonly<{
@@ -579,15 +681,26 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly connectedServices: Readonly<{
     readonly accounts: Readonly<{
+      readonly default: Readonly<{
+        readonly set: (input: PublicActionInputById["connectedServices.accounts.default.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.accounts.default.set">>;
+      }> ;
       readonly rename: (input: PublicActionInputById["connectedServices.accounts.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.accounts.rename">>;
     }> ;
     readonly identityPrivacy: Readonly<{
       readonly set: (input: PublicActionInputById["connectedServices.identityPrivacy.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.identityPrivacy.set">>;
     }> ;
     readonly pools: Readonly<{
+      readonly create: (input: PublicActionInputById["connectedServices.pools.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.create">>;
       readonly default: Readonly<{
         readonly set: (input: PublicActionInputById["connectedServices.pools.default.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.default.set">>;
       }> ;
+      readonly delete: (input: PublicActionInputById["connectedServices.pools.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.delete">>;
+      readonly members: Readonly<{
+        readonly add: (input: PublicActionInputById["connectedServices.pools.members.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.members.add">>;
+        readonly patch: (input: PublicActionInputById["connectedServices.pools.members.patch"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.members.patch">>;
+        readonly remove: (input: PublicActionInputById["connectedServices.pools.members.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.members.remove">>;
+      }> ;
+      readonly patch: (input: PublicActionInputById["connectedServices.pools.patch"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.patch">>;
       readonly reorder: (input: PublicActionInputById["connectedServices.pools.reorder"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.reorder">>;
       readonly switchNow: (input: PublicActionInputById["connectedServices.pools.switchNow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.pools.switchNow">>;
     }> ;
@@ -800,6 +913,8 @@ export type GeneratedActions = Readonly<{
       }> ;
       readonly list: (input: PublicActionInputById["machines.agents.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.list">>;
       readonly signIn: Readonly<{
+        readonly cancel: (input: PublicActionInputById["machines.agents.signIn.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.signIn.cancel">>;
+        readonly restart: (input: PublicActionInputById["machines.agents.signIn.restart"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.signIn.restart">>;
         readonly start: (input: PublicActionInputById["machines.agents.signIn.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.signIn.start">>;
         readonly status: (input: PublicActionInputById["machines.agents.signIn.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.signIn.status">>;
       }> ;
@@ -828,6 +943,16 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly notifications: Readonly<{
     readonly notifyMe: (input: PublicActionInputById["notifications.notify_me"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.notify_me">>;
+    readonly webhooks: Readonly<{
+      readonly add: (input: PublicActionInputById["notifications.webhooks.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.add">>;
+      readonly list: (input: PublicActionInputById["notifications.webhooks.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.list">>;
+      readonly remove: (input: PublicActionInputById["notifications.webhooks.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.remove">>;
+      readonly signingSecret: Readonly<{
+        readonly clear: (input: PublicActionInputById["notifications.webhooks.signingSecret.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.signingSecret.clear">>;
+        readonly set: (input: PublicActionInputById["notifications.webhooks.signingSecret.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.signingSecret.set">>;
+      }> ;
+      readonly update: (input: PublicActionInputById["notifications.webhooks.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.update">>;
+    }> ;
   }> ;
   readonly paths: Readonly<{
     readonly listRecent: (input: PublicActionInputById["paths.list_recent"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"paths.list_recent">>;
@@ -884,6 +1009,10 @@ export type GeneratedActions = Readonly<{
     readonly update: (input: PublicActionInputById["prompt_bundle.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_bundle.update">>;
   }> ;
   readonly promptDoc: Readonly<{
+    readonly create: (input: PublicActionInputById["prompt_doc.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_doc.create">>;
+    readonly favorite: Readonly<{
+      readonly set: (input: PublicActionInputById["prompt_doc.favorite.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_doc.favorite.set">>;
+    }> ;
     readonly get: (input: PublicActionInputById["prompt_doc.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_doc.get">>;
     readonly update: (input: PublicActionInputById["prompt_doc.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_doc.update">>;
   }> ;
@@ -897,12 +1026,22 @@ export type GeneratedActions = Readonly<{
     readonly invocations: Readonly<{
       readonly list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompts.invocations.list">>;
     }> ;
+    readonly library: Readonly<{
+      readonly list: (input: PublicActionInputById["prompts.library.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompts.library.list">>;
+    }> ;
+  }> ;
+  readonly repository: Readonly<{
+    readonly upload: Readonly<{
+      readonly pick: (input: PublicActionInputById["repository.upload.pick"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"repository.upload.pick">>;
+    }> ;
   }> ;
   readonly review: Readonly<{
     readonly engines: Readonly<{
       readonly list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.engines.list">>;
     }> ;
+    readonly explainFindings: (input: PublicActionInputById["review.explain_findings"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.explain_findings">>;
     readonly start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.start">>;
+    readonly walkthrough: (input: PublicActionInputById["review.walkthrough"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.walkthrough">>;
   }> ;
   readonly reviews: Readonly<{
     readonly comments: Readonly<{
@@ -954,6 +1093,7 @@ export type GeneratedActions = Readonly<{
     readonly commit: Readonly<{
       readonly backout: (input: PublicActionInputById["scm.commit.backout"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.commit.backout">>;
       readonly create: (input: PublicActionInputById["scm.commit.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.commit.create">>;
+      readonly resolveOutcome: (input: PublicActionInputById["scm.commit.resolveOutcome"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.commit.resolveOutcome">>;
       readonly undoLast: (input: PublicActionInputById["scm.commit.undoLast"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.commit.undoLast">>;
     }> ;
     readonly conflict: Readonly<{
@@ -965,7 +1105,30 @@ export type GeneratedActions = Readonly<{
       readonly file: (input: PublicActionInputById["scm.diff.file"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diff.file">>;
     }> ;
     readonly diffSummary: Readonly<{
+      readonly addOutputs: (input: PublicActionInputById["scm.diffSummary.addOutputs"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.addOutputs">>;
+      readonly capture: (input: PublicActionInputById["scm.diffSummary.capture"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.capture">>;
+      readonly commitPlan: Readonly<{
+        readonly accept: (input: PublicActionInputById["scm.diffSummary.commitPlan.accept"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.commitPlan.accept">>;
+        readonly cancel: (input: PublicActionInputById["scm.diffSummary.commitPlan.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.commitPlan.cancel">>;
+        readonly includeHookChanges: (input: PublicActionInputById["scm.diffSummary.commitPlan.includeHookChanges"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.commitPlan.includeHookChanges">>;
+        readonly recover: (input: PublicActionInputById["scm.diffSummary.commitPlan.recover"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.commitPlan.recover">>;
+        readonly stop: (input: PublicActionInputById["scm.diffSummary.commitPlan.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.commitPlan.stop">>;
+      }> ;
+      readonly discuss: (input: PublicActionInputById["scm.diffSummary.discuss"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.discuss">>;
       readonly generate: (input: PublicActionInputById["scm.diffSummary.generate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.generate">>;
+      readonly refine: (input: PublicActionInputById["scm.diffSummary.refine"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.refine">>;
+      readonly result: Readonly<{
+        readonly clear: (input: PublicActionInputById["scm.diffSummary.result.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.result.clear">>;
+        readonly delete: (input: PublicActionInputById["scm.diffSummary.result.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.result.delete">>;
+        readonly edit: (input: PublicActionInputById["scm.diffSummary.result.edit"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.result.edit">>;
+        readonly list: (input: PublicActionInputById["scm.diffSummary.result.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.result.list">>;
+        readonly read: (input: PublicActionInputById["scm.diffSummary.result.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.result.read">>;
+        readonly undo: (input: PublicActionInputById["scm.diffSummary.result.undo"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.result.undo">>;
+      }> ;
+      readonly reviewed: Readonly<{
+        readonly mark: (input: PublicActionInputById["scm.diffSummary.reviewed.mark"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.reviewed.mark">>;
+        readonly unmark: (input: PublicActionInputById["scm.diffSummary.reviewed.unmark"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.reviewed.unmark">>;
+      }> ;
     }> ;
     readonly hostingRepository: Readonly<{
       readonly describePublishTargets: (input: PublicActionInputById["scm.hostingRepository.describePublishTargets"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.hostingRepository.describePublishTargets">>;
@@ -1062,6 +1225,17 @@ export type GeneratedActions = Readonly<{
         readonly update: (input: PublicActionInputById["session.board.layout.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.board.layout.update">>;
       }> ;
     }> ;
+    readonly canvas: Readonly<{
+      readonly tabs: Readonly<{
+        readonly activate: (input: PublicActionInputById["session.canvas.tabs.activate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.activate">>;
+        readonly close: (input: PublicActionInputById["session.canvas.tabs.close"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.close">>;
+        readonly list: (input: PublicActionInputById["session.canvas.tabs.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.list">>;
+        readonly move: (input: PublicActionInputById["session.canvas.tabs.move"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.move">>;
+        readonly open: (input: PublicActionInputById["session.canvas.tabs.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.open">>;
+        readonly pin: (input: PublicActionInputById["session.canvas.tabs.pin"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.pin">>;
+        readonly reorder: (input: PublicActionInputById["session.canvas.tabs.reorder"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.canvas.tabs.reorder">>;
+      }> ;
+    }> ;
     readonly checkpoint: (input: PublicActionInputById["session.checkpoint"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.checkpoint">>;
     readonly checkpointCodeRollback: (input: PublicActionInputById["session.checkpoint_code_rollback"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.checkpoint_code_rollback">>;
     readonly continueWithReplay: (input: PublicActionInputById["session.continue_with_replay"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.continue_with_replay">>;
@@ -1153,6 +1327,13 @@ export type GeneratedActions = Readonly<{
       readonly set: (input: PublicActionInputById["session.notes.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.notes.set">>;
     }> ;
     readonly open: (input: PublicActionInputById["session.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.open">>;
+    readonly organization: Readonly<{
+      readonly move: (input: PublicActionInputById["session.organization.move"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.organization.move">>;
+    }> ;
+    readonly pending: Readonly<{
+      readonly next: (input: PublicActionInputById["session.pending.next"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.pending.next">>;
+      readonly reorder: (input: PublicActionInputById["session.pending.reorder"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.pending.reorder">>;
+    }> ;
     readonly pendingInput: Readonly<{
       readonly interruptAndRun: (input: PublicActionInputById["session.pendingInput.interruptAndRun"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.pendingInput.interruptAndRun">>;
     }> ;
@@ -1234,9 +1415,11 @@ export type GeneratedActions = Readonly<{
       readonly list: (input: PublicActionInputById["session.terminals.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.list">>;
       readonly listView: (input: PublicActionInputById["session.terminals.list_view"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.list_view">>;
       readonly open: (input: PublicActionInputById["session.terminals.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.open">>;
+      readonly openInDetails: (input: PublicActionInputById["session.terminals.open_in_details"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.open_in_details">>;
       readonly rename: (input: PublicActionInputById["session.terminals.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.rename">>;
       readonly reorder: (input: PublicActionInputById["session.terminals.reorder"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.reorder">>;
       readonly resize: (input: PublicActionInputById["session.terminals.resize"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.resize">>;
+      readonly restart: (input: PublicActionInputById["session.terminals.restart"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.restart">>;
       readonly runScript: (input: PublicActionInputById["session.terminals.run_script"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.run_script">>;
       readonly split: (input: PublicActionInputById["session.terminals.split"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminals.split">>;
     }> ;
@@ -1328,6 +1511,7 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly settings: Readonly<{
     readonly get: (input: PublicActionInputById["settings.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"settings.get">>;
+    readonly invoke: (input: PublicActionInputById["settings.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"settings.invoke">>;
     readonly list: (input: PublicActionInputById["settings.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"settings.list">>;
     readonly set: (input: PublicActionInputById["settings.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"settings.set">>;
   }> ;
@@ -1480,6 +1664,12 @@ export type GeneratedActions = Readonly<{
     readonly restore: (input: PublicActionInputById["teams.restore"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"teams.restore">>;
     readonly update: (input: PublicActionInputById["teams.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"teams.update">>;
   }> ;
+  readonly todos: Readonly<{
+    readonly reorder: (input: PublicActionInputById["todos.reorder"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"todos.reorder">>;
+    readonly session: Readonly<{
+      readonly link: (input: PublicActionInputById["todos.session.link"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"todos.session.link">>;
+    }> ;
+  }> ;
   readonly transcript: Readonly<{
     readonly follow: (input: PublicActionInputById["transcript.follow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.follow">>;
     readonly import: (input: PublicActionInputById["transcript.import"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.import">>;
@@ -1499,21 +1689,90 @@ export type GeneratedActions = Readonly<{
       }> ;
       readonly read: (input: PublicActionInputById["ui.current_context.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.current_context.read">>;
     }> ;
+    readonly find: (input: PublicActionInputById["ui.find"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.find">>;
     readonly pet: Readonly<{
       readonly choose: (input: PublicActionInputById["ui.pet.choose"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.pet.choose">>;
+    }> ;
+    readonly prompts: Readonly<{
+      readonly picker: Readonly<{
+        readonly open: (input: PublicActionInputById["ui.prompts.picker.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.prompts.picker.open">>;
+      }> ;
     }> ;
     readonly voiceAgent: Readonly<{
       readonly teleport: (input: PublicActionInputById["ui.voice_agent.teleport"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_agent.teleport">>;
     }> ;
     readonly voiceGlobal: Readonly<{
+      readonly brief: Readonly<{
+        readonly request: (input: PublicActionInputById["ui.voice_global.brief.request"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.request">>;
+        readonly retry: (input: PublicActionInputById["ui.voice_global.brief.retry"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.retry">>;
+        readonly stop: (input: PublicActionInputById["ui.voice_global.brief.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.stop">>;
+      }> ;
+      readonly dismiss: (input: PublicActionInputById["ui.voice_global.dismiss"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.dismiss">>;
+      readonly end: (input: PublicActionInputById["ui.voice_global.end"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.end">>;
+      readonly get: (input: PublicActionInputById["ui.voice_global.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.get">>;
+      readonly holdBegin: (input: PublicActionInputById["ui.voice_global.hold_begin"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.hold_begin">>;
+      readonly holdCancel: (input: PublicActionInputById["ui.voice_global.hold_cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.hold_cancel">>;
+      readonly holdRelease: (input: PublicActionInputById["ui.voice_global.hold_release"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.hold_release">>;
+      readonly recover: (input: PublicActionInputById["ui.voice_global.recover"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.recover">>;
       readonly reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.reset">>;
+      readonly setMuted: (input: PublicActionInputById["ui.voice_global.set_muted"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.set_muted">>;
+      readonly start: (input: PublicActionInputById["ui.voice_global.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.start">>;
+      readonly turnControl: (input: PublicActionInputById["ui.voice_global.turn_control"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.turn_control">>;
     }> ;
   }> ;
   readonly voiceAgent: Readonly<{
     readonly start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"voice_agent.start">>;
   }> ;
   readonly wait: (input: PublicActionInputById["wait"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"wait">>;
+  readonly widgets: Readonly<{
+    readonly area: Readonly<{
+      readonly layout: Readonly<{
+        readonly get: (input: PublicActionInputById["widgets.area.layout.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.area.layout.get">>;
+        readonly update: (input: PublicActionInputById["widgets.area.layout.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.area.layout.update">>;
+      }> ;
+    }> ;
+    readonly catalog: Readonly<{
+      readonly list: (input: PublicActionInputById["widgets.catalog.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.catalog.list">>;
+    }> ;
+    readonly definition: Readonly<{
+      readonly create: (input: PublicActionInputById["widgets.definition.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.create">>;
+      readonly delete: (input: PublicActionInputById["widgets.definition.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.delete">>;
+      readonly duplicate: (input: PublicActionInputById["widgets.definition.duplicate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.duplicate">>;
+      readonly get: (input: PublicActionInputById["widgets.definition.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.get">>;
+      readonly list: (input: PublicActionInputById["widgets.definition.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.list">>;
+      readonly saveFromSession: (input: PublicActionInputById["widgets.definition.saveFromSession"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.saveFromSession">>;
+      readonly update: (input: PublicActionInputById["widgets.definition.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.definition.update">>;
+    }> ;
+    readonly instance: Readonly<{
+      readonly add: (input: PublicActionInputById["widgets.instance.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.add">>;
+      readonly frame: Readonly<{
+        readonly set: (input: PublicActionInputById["widgets.instance.frame.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.frame.set">>;
+      }> ;
+      readonly inputs: Readonly<{
+        readonly get: (input: PublicActionInputById["widgets.instance.inputs.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.inputs.get">>;
+        readonly reset: (input: PublicActionInputById["widgets.instance.inputs.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.inputs.reset">>;
+        readonly set: (input: PublicActionInputById["widgets.instance.inputs.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.inputs.set">>;
+        readonly validate: (input: PublicActionInputById["widgets.instance.inputs.validate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.inputs.validate">>;
+      }> ;
+      readonly list: (input: PublicActionInputById["widgets.instance.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.list">>;
+      readonly move: (input: PublicActionInputById["widgets.instance.move"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.move">>;
+      readonly refresh: (input: PublicActionInputById["widgets.instance.refresh"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.refresh">>;
+      readonly remove: (input: PublicActionInputById["widgets.instance.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.remove">>;
+      readonly rename: (input: PublicActionInputById["widgets.instance.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.rename">>;
+      readonly width: Readonly<{
+        readonly set: (input: PublicActionInputById["widgets.instance.width.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.width.set">>;
+      }> ;
+    }> ;
+    readonly snapshot: Readonly<{
+      readonly post: (input: PublicActionInputById["widgets.snapshot.post"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.snapshot.post">>;
+    }> ;
+  }> ;
   readonly workflow: Readonly<{
+    readonly authoring: Readonly<{
+      readonly conversation: Readonly<{
+        readonly bind: (input: PublicActionInputById["workflow.authoring.conversation.bind"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.conversation.bind">>;
+      }> ;
+    }> ;
     readonly definition: Readonly<{
       readonly create: (input: PublicActionInputById["workflow.definition.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.definition.create">>;
       readonly delete: (input: PublicActionInputById["workflow.definition.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.definition.delete">>;
@@ -1548,6 +1807,9 @@ export type GeneratedActions = Readonly<{
     readonly validate: (input: PublicActionInputById["workflow.validate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.validate">>;
   }> ;
   readonly workspace: Readonly<{
+    readonly files: Readonly<{
+      readonly search: (input: PublicActionInputById["workspace.files.search"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workspace.files.search">>;
+    }> ;
     readonly groups: Readonly<{
       readonly focus: (input: PublicActionInputById["workspace.groups.focus"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workspace.groups.focus">>;
       readonly maximize: (input: PublicActionInputById["workspace.groups.maximize"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workspace.groups.maximize">>;
@@ -1623,6 +1885,16 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         list: (input: PublicActionInputById["agents.session_modes.list"], options?: ActionExecutionOptions) => execute("agents.session_modes.list", input, options),
       },
     },
+    app: {
+      updates: {
+        check: (input: PublicActionInputById["app.updates.check"], options?: ActionExecutionOptions) => execute("app.updates.check", input, options),
+        get: (input: PublicActionInputById["app.updates.get"], options?: ActionExecutionOptions) => execute("app.updates.get", input, options),
+        restart: (input: PublicActionInputById["app.updates.restart"], options?: ActionExecutionOptions) => execute("app.updates.restart", input, options),
+        retry: (input: PublicActionInputById["app.updates.retry"], options?: ActionExecutionOptions) => execute("app.updates.retry", input, options),
+        skip: (input: PublicActionInputById["app.updates.skip"], options?: ActionExecutionOptions) => execute("app.updates.skip", input, options),
+        update: (input: PublicActionInputById["app.updates.update"], options?: ActionExecutionOptions) => execute("app.updates.update", input, options),
+      },
+    },
     approval: {
       request: {
         create: (input: PublicActionInputById["approval.request.create"], options?: ActionExecutionOptions) => execute("approval.request.create", input, options),
@@ -1644,6 +1916,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       get: (input: PublicActionInputById["artifact.get"], options?: ActionExecutionOptions) => execute("artifact.get", input, options),
       list: (input: PublicActionInputById["artifact.list"], options?: ActionExecutionOptions) => execute("artifact.list", input, options),
       publicLink: {
+        audit: (input: PublicActionInputById["artifact.public_link.audit"], options?: ActionExecutionOptions) => execute("artifact.public_link.audit", input, options),
         create: (input: PublicActionInputById["artifact.public_link.create"], options?: ActionExecutionOptions) => execute("artifact.public_link.create", input, options),
         list: (input: PublicActionInputById["artifact.public_link.list"], options?: ActionExecutionOptions) => execute("artifact.public_link.list", input, options),
         revoke: (input: PublicActionInputById["artifact.public_link.revoke"], options?: ActionExecutionOptions) => execute("artifact.public_link.revoke", input, options),
@@ -1756,6 +2029,14 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       getLogTail: (input: PublicActionInputById["bugreport.getLogTail"], options?: ActionExecutionOptions) => execute("bugreport.getLogTail", input, options),
       uploadArtifact: (input: PublicActionInputById["bugreport.uploadArtifact"], options?: ActionExecutionOptions) => execute("bugreport.uploadArtifact", input, options),
     },
+    composer: {
+      attachments: {
+        pick: (input: PublicActionInputById["composer.attachments.pick"], options?: ActionExecutionOptions) => execute("composer.attachments.pick", input, options),
+      },
+      transaction: {
+        apply: (input: PublicActionInputById["composer.transaction.apply"], options?: ActionExecutionOptions) => execute("composer.transaction.apply", input, options),
+      },
+    },
     computer: {
       capture: (input: PublicActionInputById["computer.capture"], options?: ActionExecutionOptions) => execute("computer.capture", input, options),
       control: {
@@ -1778,15 +2059,26 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
     },
     connectedServices: {
       accounts: {
+        default: {
+          set: (input: PublicActionInputById["connectedServices.accounts.default.set"], options?: ActionExecutionOptions) => execute("connectedServices.accounts.default.set", input, options),
+        },
         rename: (input: PublicActionInputById["connectedServices.accounts.rename"], options?: ActionExecutionOptions) => execute("connectedServices.accounts.rename", input, options),
       },
       identityPrivacy: {
         set: (input: PublicActionInputById["connectedServices.identityPrivacy.set"], options?: ActionExecutionOptions) => execute("connectedServices.identityPrivacy.set", input, options),
       },
       pools: {
+        create: (input: PublicActionInputById["connectedServices.pools.create"], options?: ActionExecutionOptions) => execute("connectedServices.pools.create", input, options),
         default: {
           set: (input: PublicActionInputById["connectedServices.pools.default.set"], options?: ActionExecutionOptions) => execute("connectedServices.pools.default.set", input, options),
         },
+        delete: (input: PublicActionInputById["connectedServices.pools.delete"], options?: ActionExecutionOptions) => execute("connectedServices.pools.delete", input, options),
+        members: {
+          add: (input: PublicActionInputById["connectedServices.pools.members.add"], options?: ActionExecutionOptions) => execute("connectedServices.pools.members.add", input, options),
+          patch: (input: PublicActionInputById["connectedServices.pools.members.patch"], options?: ActionExecutionOptions) => execute("connectedServices.pools.members.patch", input, options),
+          remove: (input: PublicActionInputById["connectedServices.pools.members.remove"], options?: ActionExecutionOptions) => execute("connectedServices.pools.members.remove", input, options),
+        },
+        patch: (input: PublicActionInputById["connectedServices.pools.patch"], options?: ActionExecutionOptions) => execute("connectedServices.pools.patch", input, options),
         reorder: (input: PublicActionInputById["connectedServices.pools.reorder"], options?: ActionExecutionOptions) => execute("connectedServices.pools.reorder", input, options),
         switchNow: (input: PublicActionInputById["connectedServices.pools.switchNow"], options?: ActionExecutionOptions) => execute("connectedServices.pools.switchNow", input, options),
       },
@@ -1999,6 +2291,8 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         },
         list: (input: PublicActionInputById["machines.agents.list"], options?: ActionExecutionOptions) => execute("machines.agents.list", input, options),
         signIn: {
+          cancel: (input: PublicActionInputById["machines.agents.signIn.cancel"], options?: ActionExecutionOptions) => execute("machines.agents.signIn.cancel", input, options),
+          restart: (input: PublicActionInputById["machines.agents.signIn.restart"], options?: ActionExecutionOptions) => execute("machines.agents.signIn.restart", input, options),
           start: (input: PublicActionInputById["machines.agents.signIn.start"], options?: ActionExecutionOptions) => execute("machines.agents.signIn.start", input, options),
           status: (input: PublicActionInputById["machines.agents.signIn.status"], options?: ActionExecutionOptions) => execute("machines.agents.signIn.status", input, options),
         },
@@ -2027,6 +2321,16 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
     },
     notifications: {
       notifyMe: (input: PublicActionInputById["notifications.notify_me"], options?: ActionExecutionOptions) => execute("notifications.notify_me", input, options),
+      webhooks: {
+        add: (input: PublicActionInputById["notifications.webhooks.add"], options?: ActionExecutionOptions) => execute("notifications.webhooks.add", input, options),
+        list: (input: PublicActionInputById["notifications.webhooks.list"], options?: ActionExecutionOptions) => execute("notifications.webhooks.list", input, options),
+        remove: (input: PublicActionInputById["notifications.webhooks.remove"], options?: ActionExecutionOptions) => execute("notifications.webhooks.remove", input, options),
+        signingSecret: {
+          clear: (input: PublicActionInputById["notifications.webhooks.signingSecret.clear"], options?: ActionExecutionOptions) => execute("notifications.webhooks.signingSecret.clear", input, options),
+          set: (input: PublicActionInputById["notifications.webhooks.signingSecret.set"], options?: ActionExecutionOptions) => execute("notifications.webhooks.signingSecret.set", input, options),
+        },
+        update: (input: PublicActionInputById["notifications.webhooks.update"], options?: ActionExecutionOptions) => execute("notifications.webhooks.update", input, options),
+      },
     },
     paths: {
       listRecent: (input: PublicActionInputById["paths.list_recent"], options?: ActionExecutionOptions) => execute("paths.list_recent", input, options),
@@ -2083,6 +2387,10 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       update: (input: PublicActionInputById["prompt_bundle.update"], options?: ActionExecutionOptions) => execute("prompt_bundle.update", input, options),
     },
     promptDoc: {
+      create: (input: PublicActionInputById["prompt_doc.create"], options?: ActionExecutionOptions) => execute("prompt_doc.create", input, options),
+      favorite: {
+        set: (input: PublicActionInputById["prompt_doc.favorite.set"], options?: ActionExecutionOptions) => execute("prompt_doc.favorite.set", input, options),
+      },
       get: (input: PublicActionInputById["prompt_doc.get"], options?: ActionExecutionOptions) => execute("prompt_doc.get", input, options),
       update: (input: PublicActionInputById["prompt_doc.update"], options?: ActionExecutionOptions) => execute("prompt_doc.update", input, options),
     },
@@ -2096,12 +2404,22 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       invocations: {
         list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => execute("prompts.invocations.list", input, options),
       },
+      library: {
+        list: (input: PublicActionInputById["prompts.library.list"], options?: ActionExecutionOptions) => execute("prompts.library.list", input, options),
+      },
+    },
+    repository: {
+      upload: {
+        pick: (input: PublicActionInputById["repository.upload.pick"], options?: ActionExecutionOptions) => execute("repository.upload.pick", input, options),
+      },
     },
     review: {
       engines: {
         list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => execute("review.engines.list", input, options),
       },
+      explainFindings: (input: PublicActionInputById["review.explain_findings"], options?: ActionExecutionOptions) => execute("review.explain_findings", input, options),
       start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => execute("review.start", input, options),
+      walkthrough: (input: PublicActionInputById["review.walkthrough"], options?: ActionExecutionOptions) => execute("review.walkthrough", input, options),
     },
     reviews: {
       comments: {
@@ -2153,6 +2471,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       commit: {
         backout: (input: PublicActionInputById["scm.commit.backout"], options?: ActionExecutionOptions) => execute("scm.commit.backout", input, options),
         create: (input: PublicActionInputById["scm.commit.create"], options?: ActionExecutionOptions) => execute("scm.commit.create", input, options),
+        resolveOutcome: (input: PublicActionInputById["scm.commit.resolveOutcome"], options?: ActionExecutionOptions) => execute("scm.commit.resolveOutcome", input, options),
         undoLast: (input: PublicActionInputById["scm.commit.undoLast"], options?: ActionExecutionOptions) => execute("scm.commit.undoLast", input, options),
       },
       conflict: {
@@ -2164,7 +2483,30 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         file: (input: PublicActionInputById["scm.diff.file"], options?: ActionExecutionOptions) => execute("scm.diff.file", input, options),
       },
       diffSummary: {
+        addOutputs: (input: PublicActionInputById["scm.diffSummary.addOutputs"], options?: ActionExecutionOptions) => execute("scm.diffSummary.addOutputs", input, options),
+        capture: (input: PublicActionInputById["scm.diffSummary.capture"], options?: ActionExecutionOptions) => execute("scm.diffSummary.capture", input, options),
+        commitPlan: {
+          accept: (input: PublicActionInputById["scm.diffSummary.commitPlan.accept"], options?: ActionExecutionOptions) => execute("scm.diffSummary.commitPlan.accept", input, options),
+          cancel: (input: PublicActionInputById["scm.diffSummary.commitPlan.cancel"], options?: ActionExecutionOptions) => execute("scm.diffSummary.commitPlan.cancel", input, options),
+          includeHookChanges: (input: PublicActionInputById["scm.diffSummary.commitPlan.includeHookChanges"], options?: ActionExecutionOptions) => execute("scm.diffSummary.commitPlan.includeHookChanges", input, options),
+          recover: (input: PublicActionInputById["scm.diffSummary.commitPlan.recover"], options?: ActionExecutionOptions) => execute("scm.diffSummary.commitPlan.recover", input, options),
+          stop: (input: PublicActionInputById["scm.diffSummary.commitPlan.stop"], options?: ActionExecutionOptions) => execute("scm.diffSummary.commitPlan.stop", input, options),
+        },
+        discuss: (input: PublicActionInputById["scm.diffSummary.discuss"], options?: ActionExecutionOptions) => execute("scm.diffSummary.discuss", input, options),
         generate: (input: PublicActionInputById["scm.diffSummary.generate"], options?: ActionExecutionOptions) => execute("scm.diffSummary.generate", input, options),
+        refine: (input: PublicActionInputById["scm.diffSummary.refine"], options?: ActionExecutionOptions) => execute("scm.diffSummary.refine", input, options),
+        result: {
+          clear: (input: PublicActionInputById["scm.diffSummary.result.clear"], options?: ActionExecutionOptions) => execute("scm.diffSummary.result.clear", input, options),
+          delete: (input: PublicActionInputById["scm.diffSummary.result.delete"], options?: ActionExecutionOptions) => execute("scm.diffSummary.result.delete", input, options),
+          edit: (input: PublicActionInputById["scm.diffSummary.result.edit"], options?: ActionExecutionOptions) => execute("scm.diffSummary.result.edit", input, options),
+          list: (input: PublicActionInputById["scm.diffSummary.result.list"], options?: ActionExecutionOptions) => execute("scm.diffSummary.result.list", input, options),
+          read: (input: PublicActionInputById["scm.diffSummary.result.read"], options?: ActionExecutionOptions) => execute("scm.diffSummary.result.read", input, options),
+          undo: (input: PublicActionInputById["scm.diffSummary.result.undo"], options?: ActionExecutionOptions) => execute("scm.diffSummary.result.undo", input, options),
+        },
+        reviewed: {
+          mark: (input: PublicActionInputById["scm.diffSummary.reviewed.mark"], options?: ActionExecutionOptions) => execute("scm.diffSummary.reviewed.mark", input, options),
+          unmark: (input: PublicActionInputById["scm.diffSummary.reviewed.unmark"], options?: ActionExecutionOptions) => execute("scm.diffSummary.reviewed.unmark", input, options),
+        },
       },
       hostingRepository: {
         describePublishTargets: (input: PublicActionInputById["scm.hostingRepository.describePublishTargets"], options?: ActionExecutionOptions) => execute("scm.hostingRepository.describePublishTargets", input, options),
@@ -2261,6 +2603,17 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           update: (input: PublicActionInputById["session.board.layout.update"], options?: ActionExecutionOptions) => execute("session.board.layout.update", input, options),
         },
       },
+      canvas: {
+        tabs: {
+          activate: (input: PublicActionInputById["session.canvas.tabs.activate"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.activate", input, options),
+          close: (input: PublicActionInputById["session.canvas.tabs.close"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.close", input, options),
+          list: (input: PublicActionInputById["session.canvas.tabs.list"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.list", input, options),
+          move: (input: PublicActionInputById["session.canvas.tabs.move"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.move", input, options),
+          open: (input: PublicActionInputById["session.canvas.tabs.open"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.open", input, options),
+          pin: (input: PublicActionInputById["session.canvas.tabs.pin"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.pin", input, options),
+          reorder: (input: PublicActionInputById["session.canvas.tabs.reorder"], options?: ActionExecutionOptions) => execute("session.canvas.tabs.reorder", input, options),
+        },
+      },
       checkpoint: (input: PublicActionInputById["session.checkpoint"], options?: ActionExecutionOptions) => execute("session.checkpoint", input, options),
       checkpointCodeRollback: (input: PublicActionInputById["session.checkpoint_code_rollback"], options?: ActionExecutionOptions) => execute("session.checkpoint_code_rollback", input, options),
       continueWithReplay: (input: PublicActionInputById["session.continue_with_replay"], options?: ActionExecutionOptions) => execute("session.continue_with_replay", input, options),
@@ -2352,6 +2705,13 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         set: (input: PublicActionInputById["session.notes.set"], options?: ActionExecutionOptions) => execute("session.notes.set", input, options),
       },
       open: (input: PublicActionInputById["session.open"], options?: ActionExecutionOptions) => execute("session.open", input, options),
+      organization: {
+        move: (input: PublicActionInputById["session.organization.move"], options?: ActionExecutionOptions) => execute("session.organization.move", input, options),
+      },
+      pending: {
+        next: (input: PublicActionInputById["session.pending.next"], options?: ActionExecutionOptions) => execute("session.pending.next", input, options),
+        reorder: (input: PublicActionInputById["session.pending.reorder"], options?: ActionExecutionOptions) => execute("session.pending.reorder", input, options),
+      },
       pendingInput: {
         interruptAndRun: (input: PublicActionInputById["session.pendingInput.interruptAndRun"], options?: ActionExecutionOptions) => execute("session.pendingInput.interruptAndRun", input, options),
       },
@@ -2433,9 +2793,11 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         list: (input: PublicActionInputById["session.terminals.list"], options?: ActionExecutionOptions) => execute("session.terminals.list", input, options),
         listView: (input: PublicActionInputById["session.terminals.list_view"], options?: ActionExecutionOptions) => execute("session.terminals.list_view", input, options),
         open: (input: PublicActionInputById["session.terminals.open"], options?: ActionExecutionOptions) => execute("session.terminals.open", input, options),
+        openInDetails: (input: PublicActionInputById["session.terminals.open_in_details"], options?: ActionExecutionOptions) => execute("session.terminals.open_in_details", input, options),
         rename: (input: PublicActionInputById["session.terminals.rename"], options?: ActionExecutionOptions) => execute("session.terminals.rename", input, options),
         reorder: (input: PublicActionInputById["session.terminals.reorder"], options?: ActionExecutionOptions) => execute("session.terminals.reorder", input, options),
         resize: (input: PublicActionInputById["session.terminals.resize"], options?: ActionExecutionOptions) => execute("session.terminals.resize", input, options),
+        restart: (input: PublicActionInputById["session.terminals.restart"], options?: ActionExecutionOptions) => execute("session.terminals.restart", input, options),
         runScript: (input: PublicActionInputById["session.terminals.run_script"], options?: ActionExecutionOptions) => execute("session.terminals.run_script", input, options),
         split: (input: PublicActionInputById["session.terminals.split"], options?: ActionExecutionOptions) => execute("session.terminals.split", input, options),
       },
@@ -2527,6 +2889,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
     },
     settings: {
       get: (input: PublicActionInputById["settings.get"], options?: ActionExecutionOptions) => execute("settings.get", input, options),
+      invoke: (input: PublicActionInputById["settings.invoke"], options?: ActionExecutionOptions) => execute("settings.invoke", input, options),
       list: (input: PublicActionInputById["settings.list"], options?: ActionExecutionOptions) => execute("settings.list", input, options),
       set: (input: PublicActionInputById["settings.set"], options?: ActionExecutionOptions) => execute("settings.set", input, options),
     },
@@ -2679,6 +3042,12 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       restore: (input: PublicActionInputById["teams.restore"], options?: ActionExecutionOptions) => execute("teams.restore", input, options),
       update: (input: PublicActionInputById["teams.update"], options?: ActionExecutionOptions) => execute("teams.update", input, options),
     },
+    todos: {
+      reorder: (input: PublicActionInputById["todos.reorder"], options?: ActionExecutionOptions) => execute("todos.reorder", input, options),
+      session: {
+        link: (input: PublicActionInputById["todos.session.link"], options?: ActionExecutionOptions) => execute("todos.session.link", input, options),
+      },
+    },
     transcript: {
       follow: (input: PublicActionInputById["transcript.follow"], options?: ActionExecutionOptions) => execute("transcript.follow", input, options),
       import: (input: PublicActionInputById["transcript.import"], options?: ActionExecutionOptions) => execute("transcript.import", input, options),
@@ -2698,21 +3067,90 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         },
         read: (input: PublicActionInputById["ui.current_context.read"], options?: ActionExecutionOptions) => execute("ui.current_context.read", input, options),
       },
+      find: (input: PublicActionInputById["ui.find"], options?: ActionExecutionOptions) => execute("ui.find", input, options),
       pet: {
         choose: (input: PublicActionInputById["ui.pet.choose"], options?: ActionExecutionOptions) => execute("ui.pet.choose", input, options),
+      },
+      prompts: {
+        picker: {
+          open: (input: PublicActionInputById["ui.prompts.picker.open"], options?: ActionExecutionOptions) => execute("ui.prompts.picker.open", input, options),
+        },
       },
       voiceAgent: {
         teleport: (input: PublicActionInputById["ui.voice_agent.teleport"], options?: ActionExecutionOptions) => execute("ui.voice_agent.teleport", input, options),
       },
       voiceGlobal: {
+        brief: {
+          request: (input: PublicActionInputById["ui.voice_global.brief.request"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.request", input, options),
+          retry: (input: PublicActionInputById["ui.voice_global.brief.retry"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.retry", input, options),
+          stop: (input: PublicActionInputById["ui.voice_global.brief.stop"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.stop", input, options),
+        },
+        dismiss: (input: PublicActionInputById["ui.voice_global.dismiss"], options?: ActionExecutionOptions) => execute("ui.voice_global.dismiss", input, options),
+        end: (input: PublicActionInputById["ui.voice_global.end"], options?: ActionExecutionOptions) => execute("ui.voice_global.end", input, options),
+        get: (input: PublicActionInputById["ui.voice_global.get"], options?: ActionExecutionOptions) => execute("ui.voice_global.get", input, options),
+        holdBegin: (input: PublicActionInputById["ui.voice_global.hold_begin"], options?: ActionExecutionOptions) => execute("ui.voice_global.hold_begin", input, options),
+        holdCancel: (input: PublicActionInputById["ui.voice_global.hold_cancel"], options?: ActionExecutionOptions) => execute("ui.voice_global.hold_cancel", input, options),
+        holdRelease: (input: PublicActionInputById["ui.voice_global.hold_release"], options?: ActionExecutionOptions) => execute("ui.voice_global.hold_release", input, options),
+        recover: (input: PublicActionInputById["ui.voice_global.recover"], options?: ActionExecutionOptions) => execute("ui.voice_global.recover", input, options),
         reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => execute("ui.voice_global.reset", input, options),
+        setMuted: (input: PublicActionInputById["ui.voice_global.set_muted"], options?: ActionExecutionOptions) => execute("ui.voice_global.set_muted", input, options),
+        start: (input: PublicActionInputById["ui.voice_global.start"], options?: ActionExecutionOptions) => execute("ui.voice_global.start", input, options),
+        turnControl: (input: PublicActionInputById["ui.voice_global.turn_control"], options?: ActionExecutionOptions) => execute("ui.voice_global.turn_control", input, options),
       },
     },
     voiceAgent: {
       start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => execute("voice_agent.start", input, options),
     },
     wait: (input: PublicActionInputById["wait"], options?: ActionExecutionOptions) => execute("wait", input, options),
+    widgets: {
+      area: {
+        layout: {
+          get: (input: PublicActionInputById["widgets.area.layout.get"], options?: ActionExecutionOptions) => execute("widgets.area.layout.get", input, options),
+          update: (input: PublicActionInputById["widgets.area.layout.update"], options?: ActionExecutionOptions) => execute("widgets.area.layout.update", input, options),
+        },
+      },
+      catalog: {
+        list: (input: PublicActionInputById["widgets.catalog.list"], options?: ActionExecutionOptions) => execute("widgets.catalog.list", input, options),
+      },
+      definition: {
+        create: (input: PublicActionInputById["widgets.definition.create"], options?: ActionExecutionOptions) => execute("widgets.definition.create", input, options),
+        delete: (input: PublicActionInputById["widgets.definition.delete"], options?: ActionExecutionOptions) => execute("widgets.definition.delete", input, options),
+        duplicate: (input: PublicActionInputById["widgets.definition.duplicate"], options?: ActionExecutionOptions) => execute("widgets.definition.duplicate", input, options),
+        get: (input: PublicActionInputById["widgets.definition.get"], options?: ActionExecutionOptions) => execute("widgets.definition.get", input, options),
+        list: (input: PublicActionInputById["widgets.definition.list"], options?: ActionExecutionOptions) => execute("widgets.definition.list", input, options),
+        saveFromSession: (input: PublicActionInputById["widgets.definition.saveFromSession"], options?: ActionExecutionOptions) => execute("widgets.definition.saveFromSession", input, options),
+        update: (input: PublicActionInputById["widgets.definition.update"], options?: ActionExecutionOptions) => execute("widgets.definition.update", input, options),
+      },
+      instance: {
+        add: (input: PublicActionInputById["widgets.instance.add"], options?: ActionExecutionOptions) => execute("widgets.instance.add", input, options),
+        frame: {
+          set: (input: PublicActionInputById["widgets.instance.frame.set"], options?: ActionExecutionOptions) => execute("widgets.instance.frame.set", input, options),
+        },
+        inputs: {
+          get: (input: PublicActionInputById["widgets.instance.inputs.get"], options?: ActionExecutionOptions) => execute("widgets.instance.inputs.get", input, options),
+          reset: (input: PublicActionInputById["widgets.instance.inputs.reset"], options?: ActionExecutionOptions) => execute("widgets.instance.inputs.reset", input, options),
+          set: (input: PublicActionInputById["widgets.instance.inputs.set"], options?: ActionExecutionOptions) => execute("widgets.instance.inputs.set", input, options),
+          validate: (input: PublicActionInputById["widgets.instance.inputs.validate"], options?: ActionExecutionOptions) => execute("widgets.instance.inputs.validate", input, options),
+        },
+        list: (input: PublicActionInputById["widgets.instance.list"], options?: ActionExecutionOptions) => execute("widgets.instance.list", input, options),
+        move: (input: PublicActionInputById["widgets.instance.move"], options?: ActionExecutionOptions) => execute("widgets.instance.move", input, options),
+        refresh: (input: PublicActionInputById["widgets.instance.refresh"], options?: ActionExecutionOptions) => execute("widgets.instance.refresh", input, options),
+        remove: (input: PublicActionInputById["widgets.instance.remove"], options?: ActionExecutionOptions) => execute("widgets.instance.remove", input, options),
+        rename: (input: PublicActionInputById["widgets.instance.rename"], options?: ActionExecutionOptions) => execute("widgets.instance.rename", input, options),
+        width: {
+          set: (input: PublicActionInputById["widgets.instance.width.set"], options?: ActionExecutionOptions) => execute("widgets.instance.width.set", input, options),
+        },
+      },
+      snapshot: {
+        post: (input: PublicActionInputById["widgets.snapshot.post"], options?: ActionExecutionOptions) => execute("widgets.snapshot.post", input, options),
+      },
+    },
     workflow: {
+      authoring: {
+        conversation: {
+          bind: (input: PublicActionInputById["workflow.authoring.conversation.bind"], options?: ActionExecutionOptions) => execute("workflow.authoring.conversation.bind", input, options),
+        },
+      },
       definition: {
         create: (input: PublicActionInputById["workflow.definition.create"], options?: ActionExecutionOptions) => execute("workflow.definition.create", input, options),
         delete: (input: PublicActionInputById["workflow.definition.delete"], options?: ActionExecutionOptions) => execute("workflow.definition.delete", input, options),
@@ -2747,6 +3185,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       validate: (input: PublicActionInputById["workflow.validate"], options?: ActionExecutionOptions) => execute("workflow.validate", input, options),
     },
     workspace: {
+      files: {
+        search: (input: PublicActionInputById["workspace.files.search"], options?: ActionExecutionOptions) => execute("workspace.files.search", input, options),
+      },
       groups: {
         focus: (input: PublicActionInputById["workspace.groups.focus"], options?: ActionExecutionOptions) => execute("workspace.groups.focus", input, options),
         maximize: (input: PublicActionInputById["workspace.groups.maximize"], options?: ActionExecutionOptions) => execute("workspace.groups.maximize", input, options),

@@ -1,3 +1,7 @@
+import { promptPickerTranslations } from './promptPickerTranslations';
+import { pendingNavigationTranslations } from './pendingNavigationTranslations';
+import { fileContentSearchTranslations } from './fileContentSearchTranslations';
+import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
 import { folderlessSessionTranslations } from './folderlessSessionTranslations';
 import { sessionCollaborationTranslations } from './sessionCollaborationTranslations';
 import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
@@ -33,6 +37,7 @@ import { pluginSettingsPresentationTranslations } from './pluginSettingsPresenta
 import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
 import { sessionWorkTranslations } from './sessionWorkTranslations';
+import { entityDragDropTranslations } from './entityDragDropTranslations';
 import { agentStartTranslations } from './agentStartTranslations';
 import { goalControlTranslations } from './goalControlTranslations';
 import { inboxWorkTranslations } from './inboxWorkTranslations';
@@ -42,6 +47,14 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { committedMessageActionTranslations } from './committedMessageActionTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -76,6 +89,8 @@ import { actionConfirmationTranslations } from './actionConfirmationTranslations
 import { detailPageTranslations } from './detailPageTranslations';
 import { rolesTranslations } from './rolesTranslations';
 import { boardsTranslations } from './boardsTranslations';
+import { findTranslations } from './findTranslations';
+import { transcriptFindTranslations } from './transcriptFindTranslations';
 import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
 import { workStatusTranslations } from './workStatusTranslations';
 import { shareSheetTranslations } from './shareSheetTranslations';
@@ -97,11 +112,16 @@ import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslat
 import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
 import { settingsOverviewTranslations } from './settingsOverviewTranslations';
 import { homeSetupTranslations } from './homeSetupTranslations';
+import { personalizeTranslations } from './personalizeTranslations';
 import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
 import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
+import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
+import { voicePresenceTranslations } from './voicePresenceTranslations';
+import { voiceMomentsTranslations } from './voiceMomentsTranslations';
 import { homeIndexTranslations } from './homeIndexTranslations';
 import { addFlowsTranslations } from './addFlowsTranslations';
 import { machineAddTranslations } from './machineAddTranslations';
@@ -263,6 +283,7 @@ const newSessionMcpTranslationExtension = {
 } as const;
 
 const settingsAppearanceTranslationExtension = {
+  glassControls: glassAppearanceTranslations['it'],
   switchToDarkTheme: 'Passa al tema scuro',
   switchToLightTheme: 'Passa al tema chiaro',
   themeToggle: {
@@ -424,6 +445,7 @@ const settingsAppearanceTranslationExtension = {
       syntax: 'Sintassi',
       versionControl: 'Controllo della versione',
       diff: 'Diff',
+      find: 'Corrispondenze di ricerca',
       permission: 'Autorizzazioni',
       overlay: 'Sovrapposizioni',
     },
@@ -787,11 +809,16 @@ export const it = {
     homeDeviceApproval: homeDeviceApprovalTranslations.it,
     settingsOverview: settingsOverviewTranslations.it,
     homeSetup: homeSetupTranslations.it,
+    personalize: personalizeTranslations.it,
     connectedServicesSetup: connectedServicesSetupTranslations.it,
     homeWidgets: homeWidgetTranslations.it,
     widgetFrame: widgetFrameTranslations.it,
+    inputPicker: inputPickerTranslations.it,
     widgetAdd: widgetAddTranslations.it,
+    widgetDefinition: widgetDefinitionTranslations.it,
     widgetGlances: widgetGlanceTranslations.it,
+    voicePresence: voicePresenceTranslations.it,
+    voiceMoments: voiceMomentsTranslations.it,
     homeIndex: homeIndexTranslations.it,
     addFlows: addFlowsTranslations.it,
     machineAdd: machineAddTranslations.it,
@@ -807,6 +834,8 @@ export const it = {
     detailPages: detailPageTranslations.it,
     roles: rolesTranslations.it,
     boards: boardsTranslations.it,
+    find: findTranslations.it,
+    transcriptFind: transcriptFindTranslations['it'],
     workStatus: workStatusTranslations.it,
     shareSheet: shareSheetTranslations.it,
     surfaceState: surfaceStateTranslations.it,
@@ -820,6 +849,7 @@ export const it = {
     },
     workspaceSync: workspaceSyncTranslations.it,
     sessionDrafts: sessionDraftTranslations.it,
+    pendingNavigation: pendingNavigationTranslations.it,
     sessionDirectoryRecovery: sessionDirectoryRecoveryTranslations.it,
     transferRecovery: {
         title: 'Completa il caricamento preparato',
@@ -834,6 +864,7 @@ export const it = {
     sessionBoard: sessionBoardTranslations.it,
     sessionAgentActivity: sessionAgentActivityTranslations.it,
     sessionWork: sessionWorkTranslations.it,
+    entityDragDrop: entityDragDropTranslations.it,
     agentStart: agentStartTranslations.it,
     goalControl: goalControlTranslations.it,
     sessionGitPane: sessionGitPaneTranslations.it,
@@ -842,6 +873,14 @@ export const it = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.it,
     sessionConversation: sessionConversationSurfaceTranslations.it,
     ...changedFileEvidenceTranslations.it,
+    ...turnChangesTranslations.it,
+    ...committedMessageActionTranslations.it,
+    ...scmComparisonTranslations.it,
+    ...walkthroughTranslations.it,
+    ...walkthroughSettingsTranslations.it,
+    ...walkthroughStartTranslations.it,
+    ...reviewWalkthroughTranslations.it,
+    ...commitProposalTranslations.it,
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.it,
     pluginSurfaces: {
         state: {
@@ -908,13 +947,19 @@ export const it = {
         setShortcutInvalidMessage: 'Inserisci almeno un tasto non modificatore, facoltativamente con Mod, Ctrl, Maiusc o Alt.',
         resetCommandAccessibility: ({ command }: { command: string }) => `Reset ${command} shortcut`,
         commands: {
+            findOpen: transcriptFindTranslations['it'].findOpen,
+            findNext: transcriptFindTranslations['it'].findNext,
+            findPrevious: transcriptFindTranslations['it'].findPrevious,
             ...workspaceTabKeyboardTranslations,
             ...terminalWorkspaceKeyboardTranslations,
             composerAbortConfirm: 'Conferma interruzione',
             composerFocus: 'Metti a fuoco il compositore',
+            composerPromptsOpen: promptPickerTranslations.it.open,
+            voiceToggle: 'Avvia o termina Voce',
             composerSendImmediate: 'Invia subito',
             composerSendPending: 'Invia alla coda in sospeso',
             commandPaletteOpen: 'Apri la ricerca',
+            searchTextInFiles: fileContentSearchTranslations["it"].textInFiles,
             browserAddressFocus: 'Attiva la barra degli indirizzi del browser',
             browserBack: 'Indietro nel browser',
             browserForward: 'Avanti nel browser',
@@ -923,6 +968,7 @@ export const it = {
             shortcutsHelpOpen: 'Apri guida scorciatoie',
             sessionNew: 'Crea nuova sessione',
             sessionMruNext: 'Sessione recente successiva',
+            sessionPendingNext: 'Prossima richiesta in sospeso',
             sessionMruPrevious: 'Sessione recente precedente',
             sessionVisibleNext: 'Sessione visibile successiva',
             sessionVisiblePrevious: 'Sessione visibile precedente',
@@ -1091,6 +1137,7 @@ export const it = {
     stopWaiting: "Smetti di attendere",
     loadError: "Impossibile caricare l'approvazione.",
     decisionError: "Impossibile aggiornare l'approvazione.",
+    decisionAuthorityError: "Questo accesso non consente di approvare le richieste. Accedi a questo Home con la chiave di recupero del tuo account oppure approva da un altro dispositivo con un accesso account.",
     unsafeDetailsTitle: "Questi dettagli non possono essere mostrati in sicurezza",
     unsafeDetailsBody: "Happier non è riuscito a mostrare questa richiesta esattamente come è stata inviata, quindi non può essere approvata. Rifiutala oppure chiedi di inviarla di nuovo.",
     approveUnavailableHint: "L'approvazione non è disponibile finché questi dettagli non possono essere mostrati in sicurezza.",
@@ -1738,7 +1785,10 @@ export const it = {
   },
 
   common: {
+        decrease: "Diminuisci",
+        increase: "Aumenta",
     // Simple string constants
+    search: 'Cerca',
     add: "Aggiungi",
     edit: "Modifica",
     change: "Cambia",
@@ -1751,6 +1801,10 @@ export const it = {
     decline: "Rifiuta",
     submit: "Invia",
     close: "Chiudi",
+    minimizeWindow: "Riduci a icona la finestra",
+    maximizeWindow: "Ingrandisci la finestra",
+    restoreWindow: "Ripristina la finestra",
+    closeWindow: "Chiudi la finestra",
     dismissKeyboard: 'Nascondi tastiera',
       open: "Apri",
       done: "Fatto",
@@ -1870,6 +1924,7 @@ export const it = {
     pluginUi: {
       loading: "Caricamento",
       empty: "Nulla da mostrare",
+      collectionEmpty: 'Nessuno',
       error: "Qualcosa è andato storto",
       moreActions: "Altre azioni",
     },
@@ -3016,7 +3071,7 @@ export const it = {
     systemTaskStartFailed: "Impossibile avviare l’attività di sistema.",
     appearance: "Aspetto",
     appearanceSubtitle: "Personalizza l'aspetto dell'app",
-      voiceAssistant: "Assistente vocale",
+      voiceAssistant: "Voce",
       voiceAssistantSubtitle: "Parla con i tuoi agenti e detta nel compositore.",
       memorySearch: "Ricerca memoria locale",
       memorySearchSubtitle: "Cerca nelle conversazioni passate (sul dispositivo)",
@@ -7696,6 +7751,7 @@ export const it = {
   },
 
     universalSearch: {
+        content: fileContentSearchTranslations["it"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: 'Aggiorna Happier su questa macchina per cercare i commit.',
     moreResultsAvailable: 'Sono disponibili altri risultati. Affina la ricerca.',
@@ -7710,7 +7766,7 @@ export const it = {
   },
 
   commandPalette: {
-    placeholder: "Digita un comando o cerca...",
+    placeholder: fileContentSearchTranslations["it"].placeholder,
     noCommandsFound: "Nessun comando trovato",
     activationFailed: "Impossibile completare il comando.",
         shortcutsHelpTitle: 'Scorciatoie da tastiera',
@@ -7793,9 +7849,10 @@ export const it = {
     thinking: "Sta pensando…",
     speaking: "Sta parlando",
     microphonePermissionRequired: "Serve l’accesso al microfono",
+    microphoneBlocked: "Microfono bloccato",
     interrupted: "Interrotto",
     active: "Assistente vocale attivo",
-    connectionError: "Errore di connessione",
+    connectionError: "Connessione non riuscita",
     label: "Assistente vocale",
     tapToEnd: "Tocca per terminare",
     startDictation: "Avvia dettatura",
@@ -8452,6 +8509,7 @@ export const it = {
   },
 
   agentInput: {
+      promptPicker: promptPickerTranslations['it'],
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selezionato.`,
       },
@@ -8682,7 +8740,7 @@ export const it = {
       }) => `In sospeso: ${current} → ${requested}`,
     },
     actionMenu: {
-      title: "AZIONI",
+      title: "Azioni",
       files: "File",
       stop: "Ferma",
     },
@@ -11064,9 +11122,9 @@ settingsSession: {
         },
         messageActions: {
           groupTitle: 'Azioni messaggio',
-          groupFooter: 'Configura la selezione dei messaggi e le azioni di inoltro nella trascrizione.',
+          groupFooter: 'Scegli quali azioni compaiono sotto ogni messaggio. Un’azione disattivata sparisce dalla riga e dal menu a pressione prolungata.',
           selectionEnabled: {
-            title: 'Abilita selezione messaggi',
+            title: 'Seleziona',
             subtitle: 'Mostra un’icona di selezione sotto i messaggi per copiarli o inoltrarli in blocco',
           },
           sendToSessionEnabled: {
@@ -11414,6 +11472,7 @@ settingsSession: {
     consoleSubtitle: "Apri la sessione in una finestra standard della console di Windows.",
   },
   settingsVoice: {
+    ...voiceSettingsPagesTranslations.it,
     ...voiceDiagnosticsTranslations.it,
     intents: {
       dictation: { title: 'Dettatura', subtitle: 'Trasforma una frase pronunciata in testo nel compositore.' },
@@ -11427,7 +11486,7 @@ settingsSession: {
       sectionFooter: 'Rivedi o elimina le trascrizioni delle conversazioni vocali globali e senza destinazione.',
       pageDescription: 'Trascrizioni della voce globale e delle conversazioni avviate fuori da una sessione.',
       entryTitle: 'Cronologia vocale',
-      entrySubtitle: 'Cerca, esporta o cancella le trascrizioni vocali salvate.',
+      entrySubtitle: "Cerca, esporta o cancella le conversazioni vocali passate.",
       searchTitle: 'Cerca nella cronologia caricata',
       searchFooter: 'La ricerca usa i messaggi vocali già decifrati su questo dispositivo.',
       searchPlaceholder: 'Cerca trascrizioni o provider',
@@ -11443,15 +11502,15 @@ settingsSession: {
       loadOlderFooter: 'I messaggi meno recenti restano sul server finché non li carichi o cancelli.',
       loadingOlder: 'Caricamento messaggi meno recenti…',
       loadOlderFailed: 'Impossibile caricare la cronologia vocale precedente.',
-      exportTitle: 'Esporta cronologia vocale',
+      exportTitle: "Esporta cronologia vocale",
       exportSubtitle: 'Carica la cronologia rimanente e salvala come JSON.',
       exporting: 'Preparazione esportazione…',
       exportSucceeded: 'L’esportazione della cronologia vocale è pronta.',
       exportFailed: 'Impossibile esportare la cronologia vocale.',
-      clearTitle: 'Cancella cronologia vocale',
+      clearTitle: "Cancella cronologia vocale",
       clearSubtitle: 'Elimina l’intera cronologia vocale autonoma per questo account.',
       clearing: 'Cancellazione cronologia vocale…',
-      clearConfirmTitle: 'Cancellare la cronologia vocale?',
+      clearConfirmTitle: "Cancellare la cronologia vocale?",
       clearConfirmBody: 'L’intera cronologia vocale autonoma di questo account verrà eliminata definitivamente. L’azione non può essere annullata.',
       clearConfirmAction: 'Cancella cronologia',
       clearSucceeded: 'La cronologia vocale è stata cancellata.',
@@ -11503,17 +11562,17 @@ settingsSession: {
       "Configura le funzionalità vocali. Puoi disattivare completamente la voce, usare Happier Voice (richiede abbonamento) o usare il tuo account ElevenLabs.",
     mode: {
       off: "Disattivato",
-      offSubtitle: "Disattiva tutte le funzionalità vocali",
-      happier: "Happier Voice",
+      offSubtitle: "Nessuna conversazione vocale. La dettatura resta disponibile.",
+      happier: "Happier",
       happierSubtitle: "Usa Happier Voice (abbonamento richiesto)",
       local: "Voce OSS locale",
       localSubtitle: "Usa endpoint STT/TTS locali compatibili con OpenAI",
-      byo: "Usa il mio ElevenLabs",
+      byo: "Il mio account ElevenLabs",
       byoSubtitle: "Usa la tua chiave API e il tuo agente ElevenLabs",
       openaiRealtime: "OpenAI Realtime",
       openaiRealtimeSubtitle: "Usa una chiave API salvata o un account OpenAI selezionato esplicitamente",
-      grokRealtime: "Grok Voice · BYOK",
-      grokRealtimeSubtitle: "Usa la tua chiave API xAI per la voce in tempo reale",
+      grokRealtime: "Grok Voice",
+      grokRealtimeSubtitle: "Usa la tua chiave API xAI",
     },
     realtimeProviders: {
       ...voiceProviderPrivacyTranslations.it,
@@ -11537,6 +11596,13 @@ settingsSession: {
       activityFeedEnabledSubtitle: "Mostra eventi vocali recenti a schermo",
       activityFeedAutoExpandOnStart: "Espandi automaticamente all'avvio",
       activityFeedAutoExpandOnStartSubtitle: "Espandi il feed automaticamente quando la voce parte",
+      presenceContainer: {
+          title: "Posizione della voce",
+          subtitle: "Scegli dove appare la voce su questo dispositivo.",
+          topBar: "Barra superiore",
+          island: "Isola",
+          orb: "Orb",
+      },
       orbEnabled: "Orb vocale fluttuante",
       orbEnabledSubtitle: "Mostra il compagno vocale trascinabile su questo dispositivo. La voce resta disponibile dalla barra laterale e dal compositore.",
       scopeTitle: "Ambito voce predefinito",
@@ -11589,7 +11655,7 @@ settingsSession: {
       },
     },
     byo: {
-      title: "Usa il mio ElevenLabs",
+      title: "Il mio account ElevenLabs",
 	      agentReuseDialog: {
 	        title: "L’agente Happier esiste già",
 	        messageWithId: ({ name, id }: { name: string; id: string }) =>
@@ -12009,9 +12075,9 @@ settingsSession: {
         },
 
         provider: {
-          title: "Neurale locale (beta)",
+          title: "Modello vocale Happier",
           subtitle:
-            "STT tramite daemon sul web; i pacchetti di streaming Sherpa nativi restano disponibili quando supportati.",
+            "Gira sui tuoi computer; l’audio resta con te.",
           detail: "Motore Sherpa",
         },},
       executionMachine: {
@@ -12020,7 +12086,7 @@ settingsSession: {
         title: "Macchina di esecuzione",
         fallbackSubtitle: "Scegli una macchina per la voce locale.",
         autoTitle: "Automatica",
-        autoSubtitle: "Usa l’attività recente per scegliere una macchina disponibile.",
+        autoSubtitle: "Scegli una macchina per questo account e continua a usarla. Se è offline, scegline un’altra esplicitamente.",
         onlineLabel: "In linea",
         offlineLabel: "Non in linea",
         unknownMachineLabel: "Macchina sconosciuta",
@@ -12037,15 +12103,15 @@ settingsSession: {
         },
         handsFree: {
           title: "Mani libere",
-          enableTitle: "Abilita mani libere",
-          silenceTitle: "Timeout silenzio (ms)",
-          minSpeechTitle: "Parlato minimo (ms)",
+          enableTitle: "A mani libere",
+          silenceTitle: "Pausa prima della risposta",
+          minSpeechTitle: "Ignora suoni più brevi di",
         },
         customBackendIdSubtitle: "Inserisci un id backend personalizzato.",
         searchBackendsPlaceholder: "Cerca backend",
         searchModelsPlaceholder: "Cerca modelli",
         machineAutoSubtitle:
-          "Seleziona automaticamente una macchina in base all’uso recente.",
+          "Scegli una macchina per questo account e continua a usarla. Se è offline, scegline un’altra esplicitamente.",
         rootSessionPolicy: {
           title: "Politica sessione radice",
           fallbackSubtitle: "Scegli una politica.",
@@ -12087,12 +12153,12 @@ settingsSession: {
           fallbackSubtitle: "Scegli dove eseguire l’agente vocale.",
           stayInVoiceHomeTitle: "Resta in voice home",
           stayInVoiceHomeEnabledSubtitle:
-            "Mantieni l’agente sulla macchina voice home.",
+            "Mantieni l’agente nella sua cartella iniziale di Voce.",
           stayInVoiceHomeDisabledSubtitle:
-            "Consenti all’agente di seguire la macchina della sessione.",
+            "Consenti all’agente di usare la cartella del progetto della sessione.",
           allowTeleportTitle: "Consenti teletrasporto",
           teleportEnabledSubtitle:
-            "Consenti di spostare l’agente su un’altra macchina quando serve.",
+            "Consenti di spostare l’agente nella cartella del progetto della sessione di lavoro.",
           teleportDisabledSubtitle: "Teletrasporto disabilitato.",
         },
         machineRecovery: {
@@ -12229,9 +12295,9 @@ settingsSession: {
       mediatorVerbosityShort: "Breve",
       mediatorVerbosityBalanced: "Bilanciato",
       mediatorIdleTtl: "TTL inattività mediatore",
-      mediatorIdleTtlSubtitle: "Arresto automatico dopo inattività (60–3600s)",
-      mediatorIdleTtlDescription: "Inserisci un numero tra 60 e 3600.",
-      mediatorIdleTtlInvalid: "Inserisci un numero tra 60 e 3600.",
+      mediatorIdleTtlSubtitle: "Arresto automatico dopo inattività (60–21600s)",
+      mediatorIdleTtlDescription: "Inserisci un numero tra 60 e 21600.",
+      mediatorIdleTtlInvalid: "Inserisci un numero tra 60 e 21600.",
       mediatorChatModelSource: "Origine modello (chat)",
       mediatorChatModelSourceSubtitle:
         "Usa il modello della sessione o un modello veloce personalizzato",
@@ -12290,9 +12356,9 @@ settingsSession: {
       sttModelTitle: "Modello STT",
       sttModelDescription:
         "Nome modello da inviare al server STT (campo compatibile con OpenAI).",
-      deviceStt: "STT del dispositivo (sperimentale)",
+      deviceStt: "Voce di questo dispositivo",
       deviceSttSubtitle:
-        "Usa il riconoscimento vocale sul dispositivo invece di un endpoint compatibile con OpenAI",
+        "Veloce e gratuito. Il dispositivo o il browser può inviare l’audio al produttore per riconoscerlo.",
       sttProvider: "Provider STT",
       neuralStt: {
         title: "STT sul dispositivo",
@@ -12499,10 +12565,10 @@ settingsSession: {
     },
     languageTitle: "Lingua",
     languageDescription:
-      "Scegli la tua lingua preferita per le interazioni dell'assistente vocale. Questa impostazione si sincronizza su tutti i tuoi dispositivi.",
-    preferredLanguage: "Lingua preferita",
+      "Scegli la lingua supportata dal servizio vocale. Alcuni servizi usano una sola lingua per riconoscimento e risposte.",
+    preferredLanguage: "Rispondi in",
     preferredLanguageSubtitle:
-      "Lingua usata per le risposte dell'assistente vocale",
+      "Lingua di risposta preferita, se supportata dal servizio",
     language: {
       searchPlaceholder: "Cerca lingue...",
       title: "Lingue",
@@ -12522,6 +12588,7 @@ settingsSession: {
   },
 
   settingsAccount: {
+      ...accountEncryptionRecoveryTranslations['it'],
     providerCatalogUnavailable: 'Impossibile verificare le connessioni di accesso disponibili.',
     securityPageDescription: "Metodi di accesso, recupero, sessioni e crittografia per questo Home.",
     accountServiceUnsupportedTitle: ({ accountService }: { accountService: string }) => `${accountService} non può ancora trovare gli Home`,
@@ -12788,7 +12855,10 @@ settingsSession: {
     },
     defaultTitle: "Novità",
     onboardingShowcase: {
-        details: PRODUCT_STORY_DETAILS_ENGLISH,
+        details: {
+            ...PRODUCT_STORY_DETAILS_ENGLISH,
+            voice: { ...PRODUCT_STORY_DETAILS_ENGLISH.voice, body: "Chiedi delle tue sessioni e ragiona sui prossimi cambiamenti ad alta voce. Le richieste di permesso richiedono comunque un tocco." },
+        },
                 "title": "Benvenuto in Happier",
                 "subtitle": "I tuoi agenti IA, ovunque lavori.",
                 "cards": {
@@ -12801,7 +12871,7 @@ settingsSession: {
                         "existingTitle": "Sessioni esistenti, già disponibili",
                         "existingBody": "Qualsiasi sessione Claude, Codex o OpenCode in esecuzione sulla tua macchina, aprila in Happier in tempo reale.",
                         "voiceTitle": "Un assistente vocale con cui ragionare",
-                        "voiceBody": "Chiedi cosa stanno facendo i tuoi agenti, approva richieste di permesso e invia messaggi. A mani libere.",
+                        "voiceBody": "Chiedi cosa fanno i tuoi agenti e invia messaggi con la voce. Approva le richieste di permesso con un tocco.",
                         "reviewTitle": "Rivedi diff e lascia commenti",
                         "reviewBody": "Segna righe specifiche in file o diff, scegli quali note inviare e passale direttamente a un agente.",
                         "subagentsTitle": "Subagenti cross-provider",
@@ -12863,7 +12933,7 @@ settingsSession: {
                     "voiceAssistant": {
                         "title": "Un collega con cui parlare",
                         "wideTitle": "Assistente vocale: un collega con cui parlare",
-                        "body": "L’assistente vocale monitora tutte le sessioni in esecuzione. Ragiona sui prossimi cambiamenti, approva permessi e molto altro, a mani libere.",
+                        "body": "Chiedi delle tue sessioni e ragiona sui prossimi cambiamenti ad alta voce. Le richieste di permesso richiedono comunque un tocco.",
                         "alt": "Immagine segnaposto astratta per l'assistente vocale."
                     },
                     "reviewComments": {
@@ -14782,6 +14852,24 @@ settingsSession: {
     browseActivityUnknown: "Sconosciuta",
         browseSearchPlaceholder: "Cerca nelle sessioni caricate…",
         browseSearchAgentPlaceholder: ({ agent }: { agent: string }) => `Cerca sessioni di ${agent}…`,
+        browseTitles: "Titoli",
+        browseConversations: "Conversazioni",
+        browseSearchTarget: "Cerca in",
+        browseContentPlaceholder: "Cerca nel testo delle conversazioni…",
+        browseContentSearchPrompt: "Inserisci una frase e cerca nelle conversazioni.",
+        browseContentSubmit: "Cerca",
+        browseContentUpdateRequired: ({ machine }: { machine: string }) => `Aggiorna Happier su ${machine} per cercare nelle conversazioni.`,
+        browseContentPartial: "Non è stato possibile cercare in alcune conversazioni.",
+        browseContentNotSearchable: "Non ricercabile",
+        browseContentStopped: "Ricerca interrotta. I risultati sono incompleti.",
+        browseContentPaletteSearch: ({ query }: { query: string }) => `Cerca “${query}” nelle conversazioni di Claude Code e Codex`,
+        browseContentOnMachine: ({ machine }: { machine: string }) => `Conversazioni su ${machine}`,
+        browseContentOpen: "Apri in Happier",
+        browseContentShow: "Mostra nelle Sessioni esterne",
+        browseContentPreviewOpens: ({ query }: { query: string }) => `Apre la conversazione a questo messaggio con Trova su “${query}”.`,
+        browseContentPreviewEmpty: "Qui compare il messaggio corrispondente.",
+        browseContentMore: "Cerca altre conversazioni",
+        browseContentBack: "Torna alla ricerca",
         browseNoSearchResults: "Nessuna sessione caricata corrisponde ancora a questa ricerca.",
     browseIndexing: "Indicizzazione delle sessioni esterne…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} di ${total} sessioni indicizzate`,
@@ -14860,3 +14948,5 @@ settingsSession: {
 
 export type TranslationsIt = typeof it;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
+import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
+import { glassAppearanceTranslations } from './glassAppearanceTranslations';

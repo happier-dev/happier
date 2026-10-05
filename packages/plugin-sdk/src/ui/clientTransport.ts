@@ -1,8 +1,14 @@
 import {
+    PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema,
+    PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema,
     PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PLUGIN_UI_HOST_METHODS_V1,
+    PluginUiReadEntityDragItemRequestV1Schema,
+    PluginUiReadEntityDragItemResultV1Schema,
+    PluginUiUpdateEntityDragDropRequestV1Schema,
+    PluginUiUpdateEntityDragDropResultV1Schema,
     ComposerDecorationResultV1Schema,
     ComposerContentHandleV1Schema,
     ComposerContentInspectWireResultV1Schema,
@@ -213,7 +219,7 @@ type EstablishedSubscription = Readonly<{
 }>;
 type SubscriptionHostMethod = Extract<
     CanonicalHostMethod,
-    'watchContext' | 'watchResource' | 'watchComposer' | 'acquireComposerInputLock' | 'watchSession' | 'watchLiveStream'
+    'watchContext' | 'watchResource' | 'watchComposer' | 'acquireComposerInputLock' | 'watchSession' | 'watchLiveStream' | 'watchEntityDragDrop'
 >;
 
 /**
@@ -1040,6 +1046,33 @@ export async function createPluginUiHostApiClientFromTransport(
             if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'Stored image response is invalid.');
             return result.data;
         },
+        readEntityDragItem: async (readRequest, requestOptions) => {
+            const payload = PluginUiReadEntityDragItemRequestV1Schema.safeParse(readRequest);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Entity identity request is invalid.');
+            const result = PluginUiReadEntityDragItemResultV1Schema.safeParse(await request('readEntityDragItem', payload.data, requestOptions?.signal));
+            if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'Entity identity response is invalid.');
+            return result.data;
+        },
+        widgetArea: async (input, requestOptions) => {
+            const payload = PluginUiWidgetAreaRequestV1Schema.safeParse(input);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Widget area request is invalid.');
+            const result = PluginUiWidgetAreaResultV1Schema.safeParse(await request('widgetArea', payload.data, requestOptions?.signal));
+            if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'Widget area response is invalid.');
+            return result.data;
+        },
+        updateEntityDragDrop: async (update, requestOptions) => {
+            const payload = PluginUiUpdateEntityDragDropRequestV1Schema.safeParse(update);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Hosted drag event is invalid.');
+            const result = PluginUiUpdateEntityDragDropResultV1Schema.safeParse(await request('updateEntityDragDrop', payload.data, requestOptions?.signal));
+            if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'Hosted drag response is invalid.');
+            return result.data;
+        },
+        watchEntityDragDrop: async (input, listener, requestOptions) => {
+            const payload = PluginUiWatchEntityDragDropRequestV1Schema.safeParse(input);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload');
+            const subscription = await subscribe('watchEntityDragDrop', payload.data, value => listener(PluginUiEntityDragDropStateV1Schema.parse(value)), requestOptions?.signal);
+            return Object.freeze({ dispose: subscription.dispose });
+        },
         watchSession: async (sessionId, listener, requestOptions) => {
             const payload = PluginUiWatchSessionRequestV1Schema.safeParse({ sessionId });
             if (!payload.success) {
@@ -1296,7 +1329,10 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         notify: async (message, notifyOptions) => { await request('notify', { message, ...(notifyOptions?.severity === undefined ? {} : { severity: notifyOptions.severity }) }, notifyOptions?.signal); },
         confirm: async (message, confirmOptions) => {
-            const decoded = decodePluginUiConfirmResult(await request('confirm', { message, ...(confirmOptions?.title === undefined ? {} : { title: confirmOptions.title }) }, confirmOptions?.signal));
+            const decoded = decodePluginUiConfirmResult(await request('confirm', { message,
+                ...(confirmOptions?.title === undefined ? {} : { title: confirmOptions.title }),
+                ...(confirmOptions?.action === undefined ? {} : { action: confirmOptions.action }),
+            }, confirmOptions?.signal));
             if (!decoded.ok) throw new PluginUiHostApiClientError('invalid_payload', decoded.diagnostic);
             return decoded.value;
         },

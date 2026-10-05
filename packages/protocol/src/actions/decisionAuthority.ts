@@ -10,6 +10,8 @@ export const TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS = ['session.user_action.answe
 export const AGENT_REQUESTABLE_PRESENT_USER_ACTION_IDS = [
   'account.apiTokens.create', 'account.apiTokens.update', 'account.apiTokens.revoke',
   'account.apiTokens.revokeAll', 'account.security.terminalPresentUser.set',
+  'account.encryption.historicalKey.forget',
+  'account.encryption.automationTemplates.recover',
 ] as const;
 
 export function isAgentRequestablePresentUserActionId(actionId: string): boolean {

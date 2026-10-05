@@ -1,3 +1,4 @@
+import { runExecutionHostGuestCommand } from './delegation.mjs';
 import { doctorManagedLimaInstance } from '../managed_lima/manager.mjs';
 import { startManagedLimaInstance } from '../managed_lima/lifecycle.mjs';
 import { resolveManagedLimaCapacityResources } from '../managed_lima/capacity.mjs';
@@ -70,6 +71,7 @@ export async function executeCandidateHostCommand({
   command,
   args = [],
   doctor = doctorManagedLimaInstance,
+  boundary,
 }) {
   if (!profile || profile.mode !== 'managed-lima') throw new Error('[execution-host] managed Lima profile is required');
   const cwd = String(guestCwd ?? '').trim();
@@ -87,8 +89,5 @@ export async function executeCandidateHostCommand({
   if (diagnosis.ok !== true) {
     throw new Error('[execution-host] managed Lima doctor reported drift; run `hstack dev-vm doctor` before execution');
   }
-  const result = await executor.run('limactl', [
-    'shell', '--workdir', cwd, profile.instance, '--', executable, ...args,
-  ]);
-  return result ?? { exitCode: 0 };
+  return await runExecutionHostGuestCommand({ profile, guestCwd: cwd, command: executable, args, boundary });
 }

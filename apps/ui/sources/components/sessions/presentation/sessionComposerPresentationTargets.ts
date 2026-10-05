@@ -68,6 +68,7 @@ import { subscribeSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepo
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionCompanionMutationObserver } from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
 
 type ComposerMentionRef = ComposerSnapshotV1['references'][number];
 
@@ -175,6 +176,8 @@ export type ComposerPresentationTarget = Readonly<{
      * Account, replaced scope, or unmounted input can be observed or focused.
      */
     isCurrent?: () => boolean;
+    /** Exact incumbent Account placement for client Actions; never inferred from a Composer id. */
+    readScope?: () => ServerAccountScope | null;
     /**
      * Whether this input is visible to the viewer now. Several presentations of one Session may be
      * mounted at once (a retained hidden route surface, an embedded plugin pane); command
@@ -196,6 +199,10 @@ export type ComposerPresentationTarget = Readonly<{
     createAttachmentInstanceId?: () => string;
     /** Focuses the exact visual input; `false` means this target is not editable. */
     focusComposer?: () => boolean | void;
+    /** Opens this mounted input's picker without reading or changing its draft. */
+    openPromptPicker?: () => boolean;
+    /** Opens the incumbent file picker; selection and staging remain with its attachment owner. */
+    openAttachmentPicker?: () => boolean;
     /**
      * Opens one of this input's action chips (its popover) for an explicit request from another
      * surface, such as the Work tab opening the Goal control. `false` while the chip is absent or the
@@ -226,6 +233,7 @@ export type ComposerPresentationTarget = Readonly<{
      */
     applySessionPresentationIntent?: (
         intent: CurrentSessionPresentationIntentV1,
+        onCompanionMutation?: SessionCompanionMutationObserver,
     ) => CurrentSessionPresentationIntentResultV1;
 }>;
 
@@ -270,6 +278,7 @@ export function useStableComposerPresentationTarget(
                 ...(target.isCurrent ? {
                     isCurrent: () => readCurrent().isCurrent?.() ?? true,
                 } : {}),
+                ...(target.readScope ? { readScope: () => readCurrent().readScope?.() ?? null } : {}),
                 ...(target.isPresented ? {
                     isPresented: () => readCurrent().isPresented?.() ?? true,
                 } : {}),
@@ -288,6 +297,12 @@ export function useStableComposerPresentationTarget(
                 ...(target.focusComposer ? {
                     focusComposer: () => readCurrent().focusComposer!(),
                 } : {}),
+                ...(target.openPromptPicker ? {
+                    openPromptPicker: () => readCurrent().openPromptPicker?.() ?? false,
+                } : {}),
+                ...(target.openAttachmentPicker ? {
+                    openAttachmentPicker: () => readCurrent().openAttachmentPicker?.() ?? false,
+                } : {}),
                 ...(target.openActionChip ? {
                     openActionChip: (chipKey) => readCurrent().openActionChip?.(chipKey) ?? false,
                 } : {}),
@@ -304,7 +319,7 @@ export function useStableComposerPresentationTarget(
                     acquireComposerInputLock: (input) => readCurrent().acquireComposerInputLock!(input),
                 } : {}),
                 ...(target.applySessionPresentationIntent ? {
-                    applySessionPresentationIntent: (intent) => readCurrent().applySessionPresentationIntent!(intent),
+                    applySessionPresentationIntent: (intent, onCompanionMutation) => readCurrent().applySessionPresentationIntent!(intent, onCompanionMutation),
                 } : {}),
             },
         };
@@ -1493,6 +1508,57 @@ export function applyComposerPresentationTransaction(
     });
 }
 
+function readScopedMountedComposerTarget(ref: ComposerRefV1, scope: ServerAccountScope): ComposerPresentationTarget | null {
+    if (!areServerAccountScopesEqual(getActiveServerAccountScope(), scope)) return null;
+    const registrations = ref.kind === 'session'
+        ? qualifiedSessionTargets.get(sessionAddressKey({ serverId: scope.serverId, sessionId: ref.sessionId }))
+        : targets.get(composerRefV1Key(ref));
+    const target = resolveTargetRegistration(registrations?.filter(candidate => {
+        if (!candidate.readScope) return ref.kind === 'session';
+        try { return areServerAccountScopesEqual(candidate.readScope(), scope); }
+        catch { return false; }
+    }));
+    return target && isComposerPresentationTargetPresented(target) ? target : null;
+}
+
+/** Scoped mounted admission reads the same owner the client Action will mutate. */
+export function readMountedComposerPresentationSnapshot(request: Readonly<{
+    ref: ComposerRefV1;
+    scope: ServerAccountScope;
+}>): ComposerSnapshotV1 | null {
+    return readScopedMountedComposerTarget(request.ref, request.scope)?.readSnapshot?.() ?? null;
+}
+
+/** Agent/UI parity uses the same transaction core, with actual mounted placement required. */
+export function applyMountedComposerPresentationTransaction(request: ComposerPresentationTransactionRequest & Readonly<{
+    scope: ServerAccountScope;
+    signal?: AbortSignal;
+}>): ComposerTransactionResultV1 {
+    const target = readScopedMountedComposerTarget(request.ref, request.scope);
+    if (!target || request.signal?.aborted) return { status: 'composerUnavailable' };
+    return applyComposerPresentationTransactionAtOwner({
+        request, target, attachmentAuthorityResolver: null, admittedContributor: null,
+        isTargetCurrent: candidate => !request.signal?.aborted
+            && readScopedMountedComposerTarget(request.ref, request.scope) === candidate,
+    });
+}
+
+export function requestRegisteredComposerAttachmentPicker(request: Readonly<{
+    ref: ComposerRefV1;
+    scope: ServerAccountScope;
+    signal?: AbortSignal;
+}>): Readonly<{ status: 'opened' | 'notEditable' | 'unavailable' }> {
+    const target = readScopedMountedComposerTarget(request.ref, request.scope);
+    if (!target || request.signal?.aborted) return { status: 'unavailable' };
+    const snapshot = target.readSnapshot?.();
+    if (!snapshot) return { status: 'unavailable' };
+    if (!snapshot.state.editable || snapshot.state.submitting || snapshot.state.inputLock?.mode === 'editAndSubmit') {
+        return { status: 'notEditable' };
+    }
+    if (!snapshot.capabilities.attachments || !target.openAttachmentPicker) return { status: 'unavailable' };
+    return { status: target.openAttachmentPicker() ? 'opened' : 'unavailable' };
+}
+
 export function registerComposerPresentationTarget(
     ref: ComposerRefV1,
     target: ComposerPresentationTarget,
@@ -1513,6 +1579,36 @@ export function readComposerPresentationTarget(ref: ComposerRefV1): ComposerPres
 /** Focuses one exact mounted composer ref through the incumbent presentation registry. */
 export function requestRegisteredComposerFocus(ref: ComposerRefV1): boolean {
     return tryFocusVisualSessionComposer(readRegisteredTarget(ref));
+}
+
+/** Prompt display uses the same mounted document/address owner as focus and edits. */
+export function requestRegisteredComposerPromptPicker(options: Readonly<{
+    ref?: ComposerRefV1;
+    serverId?: string | null;
+}>): ComposerRefV1 | null {
+    const tryOpen = (target: ComposerPresentationTarget | null, focusedOnly: boolean): ComposerRefV1 | null => {
+        if (!target?.openPromptPicker || !isComposerPresentationTargetCurrent(target)
+            || !isComposerPresentationTargetPresented(target)) return null;
+        try {
+            const snapshot = target.readSnapshot?.();
+            if (!snapshot?.state.editable || (focusedOnly && !snapshot.state.focused)) return null;
+            return target.openPromptPicker() ? snapshot.ref : null;
+        } catch {
+            return null;
+        }
+    };
+    if (options.ref) {
+        if (options.ref.kind !== 'session') return tryOpen(readRegisteredTarget(options.ref), false);
+        const address = normalizeSessionAddress(options.serverId ?? getActiveServerAccountScope()?.serverId, options.ref.sessionId);
+        return address ? tryOpen(resolveQualifiedSessionTarget(sessionAddressKey(address)), false) : null;
+    }
+    for (const registrations of Array.from(targets.values()).reverse()) {
+        for (let index = registrations.length - 1; index >= 0; index -= 1) {
+            const opened = tryOpen(registrations[index]!, true);
+            if (opened) return opened;
+        }
+    }
+    return null;
 }
 
 export function applyRegisteredNewSessionDirectoryIntent(ref: ComposerRefV1, intent: SessionDirectoryIntentV1, expectedScope?: Readonly<Partial<ServerAccountScope>>): boolean {
@@ -2411,9 +2507,9 @@ export function readSessionComposerPresentationTargetAtAddress(
         ...(target.readSnapshot ? { readSnapshot: target.readSnapshot } : {}),
         ...(target.applySessionPresentationIntent
             ? {
-                applySessionPresentationIntent: (intent: CurrentSessionPresentationIntentV1) => (
+                applySessionPresentationIntent: (intent: CurrentSessionPresentationIntentV1, onCompanionMutation?: SessionCompanionMutationObserver) => (
                     isExactTargetCurrent()
-                        ? target.applySessionPresentationIntent!(intent)
+                        ? target.applySessionPresentationIntent!(intent, onCompanionMutation)
                         : { status: 'notCurrent' as const }
                 ),
             }
@@ -2542,6 +2638,7 @@ export function readSessionComposerActionChipAvailable(addressRaw: SessionAddres
 export type SessionPresentationOnlyTarget = Readonly<{
     applySessionPresentationIntent: (
         intent: CurrentSessionPresentationIntentV1,
+        onCompanionMutation?: SessionCompanionMutationObserver,
     ) => CurrentSessionPresentationIntentResultV1;
     /** The surface is mounted AND presented; a retained hidden surface is not current. */
     isCurrent: () => boolean;
@@ -2580,10 +2677,10 @@ export function readSessionPresentationAdapterAtAddress(
     const presented = qualifiedSessionPresentationOnlyTargetByAddress.get(addressKey) ?? null;
     if (presented && isSessionPresentationOnlyTargetCurrent(presented)) {
         return Object.freeze({
-            apply: (intent: CurrentSessionPresentationIntentV1) => (
+            apply: (intent: CurrentSessionPresentationIntentV1, onCompanionMutation?: SessionCompanionMutationObserver) => (
                 qualifiedSessionPresentationOnlyTargetByAddress.get(addressKey) === presented
                     && isSessionPresentationOnlyTargetCurrent(presented)
-                    ? presented.applySessionPresentationIntent(intent)
+                    ? presented.applySessionPresentationIntent(intent, onCompanionMutation)
                     : { status: 'notCurrent' as const }
             ),
         });

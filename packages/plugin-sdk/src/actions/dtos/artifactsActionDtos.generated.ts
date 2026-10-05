@@ -80,6 +80,10 @@ export type ArtifactsActionInputById = {
         artifactId: string;
         shareId: string;
     };
+    readonly "artifact.public_link.audit": {
+        artifactId: string;
+        shareId: string;
+    };
 };
 export type ArtifactsActionResultById = {
     readonly "artifact.create": {
@@ -88,6 +92,8 @@ export type ArtifactsActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         };
+        previewUrl?: string | undefined;
+        previewError?: 'artifact_html_preview_unavailable' | undefined;
     };
     readonly "artifact.get": {
         artifact: {
@@ -111,6 +117,8 @@ export type ArtifactsActionResultById = {
                 bodyVersion: number;
             };
         } | null;
+        previewUrl?: string | undefined;
+        previewError?: 'artifact_html_preview_unavailable' | undefined;
     };
     readonly "artifact.list": {
         items: {
@@ -133,6 +141,8 @@ export type ArtifactsActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         };
+        previewUrl?: string | undefined;
+        previewError?: 'artifact_html_preview_unavailable' | undefined;
     };
     readonly "artifact.delete": {
         artifactId: string;
@@ -144,6 +154,8 @@ export type ArtifactsActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         };
+        previewUrl?: string | undefined;
+        previewError?: 'artifact_html_preview_unavailable' | undefined;
     };
     readonly "artifact.revisions.list": {
         artifactId: string;
@@ -166,6 +178,8 @@ export type ArtifactsActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         };
+        previewUrl?: string | undefined;
+        previewError?: 'artifact_html_preview_unavailable' | undefined;
     };
     readonly "artifact.storage.usage": {
         usedBytes: number;
@@ -188,6 +202,7 @@ export type ArtifactsActionResultById = {
             updatedAt: number;
             keyDerivation: 'fragment_v1' | 'legacy_token_v1';
         };
+        url: string;
     };
     readonly "artifact.public_link.list": {
         publicShares: {
@@ -209,5 +224,13 @@ export type ArtifactsActionResultById = {
         artifactId: string;
         shareId: string;
         revoked: true;
+    };
+    readonly "artifact.public_link.audit": {
+        accessLog: {
+            id: string;
+            accessedAt: number;
+            ipAddress: string | null;
+            userAgent: string | null;
+        }[];
     };
 };

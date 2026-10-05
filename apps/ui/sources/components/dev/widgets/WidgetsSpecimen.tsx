@@ -6,8 +6,11 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { ADD_SPECIMEN_FRAMES } from './addSpecimens';
+import { AREA_SPECIMEN_FRAMES } from './areaSpecimens';
+import { DATA_SPECIMEN_FRAMES } from './dataSpecimens';
 import { FRAME_SPECIMEN_FRAMES } from './frameSpecimens';
 import { GLANCE_SPECIMEN_FRAMES } from './glanceSpecimens';
+import { SETUP_SPECIMEN_FRAMES } from './setupSpecimens';
 import type { WidgetSpecimenFrames } from './widgetSpecimenTypes';
 
 /**
@@ -30,6 +33,8 @@ export function WidgetsSpecimen(props: Readonly<{ only: string | null; phone: bo
         ...FRAME_SPECIMEN_FRAMES,
         ...ADD_SPECIMEN_FRAMES,
         ...GLANCE_SPECIMEN_FRAMES,
+        ...SETUP_SPECIMEN_FRAMES,
+        ...DATA_SPECIMEN_FRAMES,
     };
     const ids = props.only ? [props.only] : Object.keys(frames);
     return (

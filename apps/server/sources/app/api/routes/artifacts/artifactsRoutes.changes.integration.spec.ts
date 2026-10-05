@@ -120,6 +120,14 @@ describe("artifactsRoutes (AccountChange integration)", () => {
 
                 expect(res.statusCode).toBe(200);
                 expect(res.json()).toHaveLength(2);
+                expect(res.json()[0]).not.toHaveProperty('body');
+                const full = await app.inject({
+                    method: 'GET', url: '/v1/artifacts?limit=2&includeBody=true',
+                    headers: { 'x-test-user-id': account.id },
+                });
+                expect(full.statusCode).toBe(200);
+                expect(full.json()).toHaveLength(2);
+                expect(full.json()[0]).toMatchObject({ bodyVersion: 1, body: expect.any(String) });
             },
         );
     });
@@ -450,6 +458,11 @@ describe("artifactsRoutes (AccountChange integration)", () => {
                     }),
                 ]);
 
+                const listedWithBody = await app.inject({ method: 'GET', url: '/v1/artifacts?includeBody=true',
+                    headers: { 'x-test-user-id': account.id } });
+                expect(listedWithBody.statusCode).toBe(200);
+                expect(listedWithBody.json()[0]).toMatchObject({ id: artifactId, header: updatedHeader, body, bodyVersion: 1 });
+
                 const read = await app.inject({
                     method: "GET",
                     url: `/v1/artifacts/${artifactId}`,
@@ -592,6 +605,10 @@ describe("artifactsRoutes (AccountChange integration)", () => {
                 expect(read.body).not.toContain(header);
                 expect(read.body).not.toContain(body);
                 expect(read.body).not.toContain("must-not-leak");
+                const list = await app.inject({ method: 'GET', url: '/v1/artifacts?includeBody=true',
+                    headers: { 'x-test-user-id': account.id } });
+                expect(list.statusCode).toBe(500);
+                expect(list.body).not.toContain('must-not-leak');
             },
         );
     });

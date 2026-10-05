@@ -48,7 +48,7 @@ import { buildGithubRepositoryKey, parseGithubRoutingToken } from './locator.js'
 import {
   toTriageFailure,
   toTriageLocalRef,
-  toTriageObservation,
+  toTriageGetResult,
   toTriageScanEvidence,
   toTriageScanObservation,
 } from './mapping/protocol.js';
@@ -62,8 +62,10 @@ import type { GithubTriageEntryLocalRefV1 } from './types.js';
  * This module is the ONLY Triage boundary in this plugin. Everything below it is
  * GitHub's own vertical — the shared REST client, the five-lane scan, the
  * endpoint-specific `get` ladders — and everything above it is the strict public
- * contract. Credentials appear only inside the client construction below; no
- * materialized header, account ref or provider bag reaches a result.
+ * contract. Materialized credentials and provider-native bags stay inside the
+ * client construction below. A get result can route the configured, value-free
+ * account reference through its transient comparison source; it is not persisted
+ * in the corpus observation.
  */
 
 export type GithubTriageOperationDependenciesV1 = Readonly<{
@@ -515,7 +517,7 @@ export async function getGithubTriageEntry(
     now: dependencies.now ?? (() => context.invokedAtMs),
     signal: context.signal,
   });
-  return toTriageObservation(observation);
+  return toTriageGetResult(observation, getInput.instance);
 }
 
 /**

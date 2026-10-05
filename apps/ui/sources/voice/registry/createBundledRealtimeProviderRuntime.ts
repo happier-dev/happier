@@ -28,6 +28,7 @@ import type {
   VoiceRealtimeProtocolAdapter,
 } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 import { createRealtimeBargeInCoordinator } from '@/voice/runtime/realtime/createRealtimeBargeInCoordinator';
+import { ensureInterruptionWordSegmentationAvailable } from '@/voice/runtime/input/segmentInterruptionWords';
 import { isVoiceMachineErrorKind } from '@/voice/runtime/machine/voiceMachineError';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcript/voiceTurnInterruption';
@@ -62,7 +63,11 @@ function abortIfRequested(signal: AbortSignal): void {
   if (signal.aborted) throw Object.assign(new Error('voice_attempt_aborted'), { name: 'AbortError' });
 }
 
-const PROVIDER_SETTINGS_SETUP_DECLINE_CODE = 'realtime_byo_not_configured';
+function isProviderSettingsSetupDeclineCode(code: unknown): code is
+  | 'realtime_byo_not_configured'
+  | 'realtime_agent_update_required' {
+  return code === 'realtime_byo_not_configured' || code === 'realtime_agent_update_required';
+}
 
 function isCredentialSetupDeclineCode(code: string): boolean {
   return readVoiceProviderCredentialRemediationCode({ code }) !== null;
@@ -72,9 +77,8 @@ function readActionableSetupDeclineCode(error: unknown): string | null {
   const remediationCode = readVoiceProviderCredentialRemediationCode(error);
   if (remediationCode) return remediationCode;
   const candidate = error as { code?: unknown } | null;
-  return candidate?.code === PROVIDER_SETTINGS_SETUP_DECLINE_CODE
-    ? PROVIDER_SETTINGS_SETUP_DECLINE_CODE
-    : null;
+  const code = candidate?.code;
+  return isProviderSettingsSetupDeclineCode(code) ? code : null;
 }
 
 /**
@@ -89,7 +93,7 @@ function readActionableSetupDeclineCode(error: unknown): string | null {
  */
 function machineErrorKindForFailureCode(code: string): VoiceMachineErrorKind {
   if (isVoiceMachineErrorKind(code)) return code;
-  if (code === PROVIDER_SETTINGS_SETUP_DECLINE_CODE) return 'provider_setup_required';
+  if (isProviderSettingsSetupDeclineCode(code)) return 'provider_setup_required';
   return isCredentialSetupDeclineCode(code) ? 'provider_auth_invalid' : 'provider_error';
 }
 
@@ -177,6 +181,7 @@ export function createBundledRealtimeProviderRuntime(
     transcriptCarrierRebindDrain: BundledRetiringDirectMediaTranscriptDrain | null;
     micRequested: boolean;
     inputMuted: boolean;
+    holdCaptureOpen: boolean | null;
     appliedInputMuted: boolean;
     inputMuteTail: Promise<void>;
     preparePromise: Promise<void | Readonly<{ kind: 'declined'; code: string }>> | null;
@@ -323,7 +328,9 @@ export function createBundledRealtimeProviderRuntime(
   };
   const mic = host.createMicSession({
     onFailure(failure) {
-      if (runtime?.getOwnedControlSessionId()) void runtime.fail(failure.kind);
+      if (runtime?.getOwnedControlSessionId()) {
+        fireAndForget(runtime.fail(failure.kind), { tag: 'VoiceConversation.microphoneFailure' });
+      }
     },
     onLevel(level: number) {
       inputLevelWriter?.write(level);
@@ -336,6 +343,7 @@ export function createBundledRealtimeProviderRuntime(
     transcriptCarrierRebindDrain: null,
     micRequested: false,
     inputMuted: false,
+    holdCaptureOpen: null,
     appliedInputMuted: false,
     inputMuteTail: Promise.resolve(),
     preparePromise: null,
@@ -381,7 +389,7 @@ export function createBundledRealtimeProviderRuntime(
           return null;
         }
         const muted = readMuted();
-        await config.setInputMuted?.(muted);
+        await config.setInputMuted?.(attempt.holdCaptureOpen === null ? muted : !attempt.holdCaptureOpen);
         return muted;
       };
       if (!config.setInputMuted) return await applyInputMute();
@@ -486,11 +494,19 @@ export function createBundledRealtimeProviderRuntime(
   const acquiresHostMicSession = (): boolean => (
     usesHostWebRtcMic || (usesHostPcmCapture && host.getPlatform() === 'web')
   );
+  const isClientBargeInEnabled = (): boolean => {
+    const capabilities = config.resolveSurfaceCapabilities(host.getSettings());
+    return capabilities?.bargeInEnabled === true
+      && (capabilities.interruptionPolicy ?? 'client_two_stage') === 'client_two_stage';
+  };
   const resources = Object.freeze({
     async preflight(input: Readonly<{
       controlSessionId: string; attemptId: number; request: VoiceRealtimeJsonValue; signal: AbortSignal;
     }>) {
       const request = readRequest(input.request);
+      if (request.textOnly !== true && isClientBargeInEnabled()) {
+        ensureInterruptionWordSegmentationAvailable();
+      }
       const targetSessionAddress = readRequestedTargetSessionAddress(request);
       if (config.execution.kind === 'direct_media') return;
       await host.ensureBound({
@@ -737,6 +753,23 @@ export function createBundledRealtimeProviderRuntime(
 
   runtime = host.createConversationController({
     adapter: protocol,
+    // Track gating belongs to the host WebRTC mic owner. PCM and provider-managed
+    // engines must prove their own capture/admission boundary before advertising hold.
+    ...(usesHostWebRtcMic ? { holdCapture: {
+      async setOpen({ controlSessionId, attemptId, open }: Readonly<{
+        controlSessionId: string; attemptId: number; open: boolean | null;
+      }>) {
+        const attempt = resourceAttempts.get(attemptId);
+        if (!attempt || attempt.releasePromise || runtime?.getOwnedAttemptId() !== attemptId) return;
+        attempt.holdCaptureOpen = open;
+        const muted = await settleInputMute(controlSessionId, attemptId, attempt, () => attempt.inputMuted);
+        if (muted === null || resourceAttempts.get(attemptId) !== attempt
+          || attempt.releasePromise || runtime?.getOwnedAttemptId() !== attemptId) return;
+        const captureMuted = attempt.holdCaptureOpen === null ? muted : !attempt.holdCaptureOpen;
+        mic.setMuted(captureMuted);
+        if (captureMuted) inputLevelWriter?.reset();
+      },
+    } } : {}),
     machine: {
       connecting: ({ controlSessionId, attemptId }: Readonly<{ controlSessionId: string; attemptId: number }>) =>
         host.machine.transitionToConnecting(controlSessionId, providerId, attemptId),
@@ -745,6 +778,11 @@ export function createBundledRealtimeProviderRuntime(
       }>) => {
         if (active) {
           bargeInCoordinator?.reset();
+          const attempt = resourceAttempts.get(attemptId);
+          if (attempt) {
+            attempt.holdCaptureOpen = null;
+            if (usesHostWebRtcMic) mic.setMuted(attempt.inputMuted);
+          }
         }
         if (retryAvailable === undefined) {
           host.machine.setReconnecting(controlSessionId, providerId, active, attemptId);
@@ -851,9 +889,9 @@ export function createBundledRealtimeProviderRuntime(
             onStarted(handle) {
               handle.watch((event) => {
                 if (signal.aborted || lifetime.signal.aborted) return;
-                void runtime?.fail(
+                fireAndForget(runtime?.fail(
                   event.diagnostic?.code ?? `agent_realtime_${event.reason}`,
-                );
+                ), { tag: 'VoiceConversation.agentRealtimeFailure' });
               });
             },
           });
@@ -1067,7 +1105,7 @@ export function createBundledRealtimeProviderRuntime(
           }) ?? Promise.resolve();
           const failInterruptionIfCurrent = (): void => {
             host.runCurrentGenerationEffect(() => {
-              void runtime?.fail('voice_interruption_failed');
+              fireAndForget(runtime?.fail('voice_interruption_failed'), { tag: 'VoiceConversation.interruptionFailure' });
             });
           };
           const notifyTranscriptIfCurrent = (): void => {
@@ -1374,10 +1412,11 @@ export function createBundledRealtimeProviderRuntime(
         bargeInCoordinator?.onInputSpeechStopped();
       }
     },
-    onConnectionReady: async ({ controlSessionId, attemptId, request, connection, signal }: Readonly<{
+    onConnectionReady: async ({ controlSessionId, attemptId, request, session, connection, signal }: Readonly<{
       controlSessionId: string;
       attemptId: number;
       request: VoiceRealtimeJsonValue;
+      session: VoiceRealtimePreparedSession;
       connection: VoiceRealtimeConnection;
       signal: AbortSignal;
     }>) => {
@@ -1403,6 +1442,7 @@ export function createBundledRealtimeProviderRuntime(
           host.machine.setMuted(controlSessionId, providerId, attemptId, settledMuted);
         }
       }
+      if (session.initialContextDelivery === 'prepared') return;
       const initialContext = readRequest(request).initialContext;
       if (typeof initialContext !== 'string' || !initialContext.trim()) return;
       for (const event of config.encodeContextUpdate(initialContext)) {
@@ -1438,6 +1478,7 @@ export function createBundledRealtimeProviderRuntime(
     const projected = {
       ...host.machine.projectSnapshot(providerId, snapshot),
       canCommitInput: runtime?.canCommitInput() === true,
+      canHoldToTalk: runtime?.canHoldToTalk?.() === true,
     };
     const terminalCode = projected.errorCode === 'provider_error'
       && typeof projected.errorMessage === 'string'
@@ -1491,15 +1532,13 @@ export function createBundledRealtimeProviderRuntime(
     ...(encodePostBargeInControls
       ? { continueAfterConfirmedSpeech: () => sendEvents(encodePostBargeInControls()) }
       : {}),
-    onInterruptError: () => { void runtime?.fail('voice_interruption_failed'); },
+    onInterruptError: () => {
+      if (runtime) fireAndForget(runtime.fail('voice_interruption_failed'), { tag: 'VoiceConversation.interruptionFailure' });
+    },
     transitionToSpeaking: (controlSessionId) => host.machine.transitionToSpeaking(controlSessionId, providerId),
     transitionToConnected: (controlSessionId) => host.machine.transitionToConnected(controlSessionId, providerId),
     getControlSessionId: () => runtime!.getOwnedControlSessionId(),
-    isBargeInEnabled: () => {
-      const capabilities = config.resolveSurfaceCapabilities(host.getSettings());
-      if (capabilities?.bargeInEnabled !== true) return false;
-      return (capabilities.interruptionPolicy ?? 'client_two_stage') === 'client_two_stage';
-    },
+    isBargeInEnabled: isClientBargeInEnabled,
   });
 
   /**
@@ -1709,6 +1748,14 @@ export function createBundledRealtimeProviderRuntime(
       if (!runtime || runtime.getActiveControlSessionId() !== sessionId) return;
       await runtime.performTurnControl('commit_input');
     },
+    beginHoldToTalk({ sessionId }) {
+      if (runtime?.getActiveControlSessionId() !== sessionId) return null;
+      return runtime.beginHoldToTalk?.() ?? null;
+    },
+    async cancelHoldToTalk({ sessionId }) {
+      if (runtime?.getOwnedControlSessionId() !== sessionId) return;
+      await runtime.cancelHoldToTalk?.();
+    },
     async bargeIn() {
       await interruptActiveResponse();
     },
@@ -1719,6 +1766,10 @@ export function createBundledRealtimeProviderRuntime(
       const controlSessionId = runtime?.getOwnedControlSessionId();
       const attemptId = runtime?.getOwnedAttemptId();
       if (!controlSessionId || attemptId === null || attemptId === undefined) return;
+      if (muted) {
+        await runtime?.cancelHoldToTalk?.();
+        if (runtime?.getOwnedAttemptId() !== attemptId || runtime.getOwnedControlSessionId() !== controlSessionId) return;
+      }
       // The controller owns the attempt before resource preparation begins.
       // Retain an interruption/user mute on that exact attempt immediately so
       // the eventual capture/connection cannot publish an unmuted resource.
@@ -1955,10 +2006,13 @@ export function createBundledRealtimeProviderRuntime(
         activeHostedLease = null;
         bargeInCoordinator?.reset();
         closeLevelWriters();
-        await stop().catch(() => {});
+        await stop();
         activeTranscriptAttempt = null;
         recordedTranscriptDrops.clear();
-      })();
+      })().catch((error: unknown) => {
+        disposePromise = null;
+        throw error;
+      });
       return disposePromise;
     },
   });

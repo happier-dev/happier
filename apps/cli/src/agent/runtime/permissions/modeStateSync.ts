@@ -14,9 +14,10 @@ export function readPermissionModeUpdatedAtFromMetadataSnapshot(metadata: Metada
   return typeof metadata?.permissionModeUpdatedAt === 'number' ? metadata.permissionModeUpdatedAt : 0;
 }
 
-export async function applyStartupPermissionModeSeedIfNewer(opts: {
+export async function applyStartupPermissionModeSeed(opts: {
   explicitPermissionMode: unknown;
   session: PermissionModeSeedSession;
+  sessionKind?: 'fresh' | 'attach' | 'resume';
   currentPermissionModeUpdatedAt: number;
   take?: number;
   apply: (next: { mode: PermissionMode; updatedAt: number }) => void;
@@ -27,10 +28,13 @@ export async function applyStartupPermissionModeSeedIfNewer(opts: {
 
   const seeded = await resolveStartupPermissionModeFromSession({
     session: opts.session,
+    sessionKind: opts.sessionKind,
     take: opts.take,
   });
 
-  if (!seeded || seeded.updatedAt <= opts.currentPermissionModeUpdatedAt) {
+  // A copied timestamp does not prove that the new process applied its saved mode.
+  // Initialization adopts an equal-age seed; subsequent metadata sync remains strictly newer.
+  if (!seeded || seeded.updatedAt < opts.currentPermissionModeUpdatedAt) {
     return opts.currentPermissionModeUpdatedAt;
   }
 
@@ -62,7 +66,7 @@ export async function initializePermissionModeStateSync(opts: {
   permissionModeUpdatedAt: number;
   syncFromMetadata: (metadata: Metadata | null | undefined) => number;
 }> {
-  let permissionModeUpdatedAt = await applyStartupPermissionModeSeedIfNewer({
+  let permissionModeUpdatedAt = await applyStartupPermissionModeSeed({
     explicitPermissionMode: opts.explicitPermissionMode,
     session: opts.session,
     currentPermissionModeUpdatedAt: opts.currentPermissionModeUpdatedAt,

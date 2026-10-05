@@ -36,7 +36,6 @@ import type {
 import {
   readHappierPointerModifiers,
   resolveHappierListMultiSelectionKeyboardIntent,
-  resolveHappierListMultiSelectionPointerAction,
   resolveHappierPointerPlatform,
 } from '../presentation/collection/multiSelection.js';
 import {
@@ -66,69 +65,24 @@ import {
   HappierItemOverflow,
 } from '../presentation/collection/ItemOverflow.js';
 import type { HappierTone } from '../presentation/semantics.js';
-import { usePluginUiFocusTarget, usePluginUiFocusTargetBindingInternal, type PluginUiFocusTarget } from './Focus.js';
-import { Icon } from './Icon.js';
-import { HappierTextField } from '../presentation/form/Fields.js';
-import type { HappierTextSelection } from '../presentation/portableTypes.js';
-import { Button } from './Button.js';
 import {
   ListMultiSelectionProvider,
+  activateListItem,
   ListSelectionActionBar,
   useOptionalListMultiSelectionStore,
   useListMultiSelectionStoreSnapshot,
   type ListMultiSelectionKey,
   type ListMultiSelectionStore,
 } from './ListMultiSelection.js';
-import { Row, Stack } from './Layout.js';
 import { ContextMenu } from './Overlay.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import { ListCollectionControlContext } from './listCollectionControl.js';
+import { ListCollectionHeader, useListCollectionSearch } from './listCollectionHeader.js';
 import { HappierDisclosure, resolveHappierDisclosureFrameStyle } from '../presentation/collection/Disclosure.js';
 import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../presentation/collection/collectionMotion.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { useHappierUiAccessibility } from '../environment/context.js';
-
-/**
- * The List's own search field: one well with a leading search glyph, named by
- * its label for assistive technology and showing that name as its placeholder
- * until the author supplies a shorter one. A search box above a list does not
- * carry a visible form label; a second, bold "Search …" line above the field
- * only repeated what the field already says.
- */
-function ListSearchField(props: Readonly<{
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  onCompositionChange: (isComposing: boolean) => void;
-  onEscape: () => boolean;
-  selection: HappierTextSelection;
-  onSelectionChange: (selection: HappierTextSelection) => void;
-  focusTarget: PluginUiFocusTarget;
-  placeholder?: string;
-  testID?: string;
-}>): ReactElement {
-  const theme = usePluginTheme();
-  const focusBinding = usePluginUiFocusTargetBindingInternal(props.focusTarget);
-  return (
-    <HappierTextField
-      label={props.label}
-      placeholder={props.placeholder ?? props.label}
-      value={props.value}
-      onChangeText={props.onChange}
-      onCompositionChange={props.onCompositionChange}
-      onEscape={props.onEscape}
-      autoCapitalize="none"
-      autoCorrect={false}
-      selection={props.selection}
-      onSelectionChange={props.onSelectionChange}
-      controlRef={focusBinding}
-      leading={<Icon name="search" size="small" tone="muted" />}
-      theme={theme}
-      {...(props.testID === undefined ? {} : { testID: props.testID })}
-    />
-  );
-}
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
 // React Native defines values <=16 as unthrottled. Anchor preservation needs
@@ -568,7 +522,7 @@ type ListItemSelectionDisposition = 'open' | 'handled';
 
 export type ListAccessibilityPattern = 'listbox' | 'grid';
 
-type ListItemSelectionContextValue = Readonly<{
+export type ListItemSelectionContextValue = Readonly<{
   itemKey: string;
   multiSelectable: boolean;
   selected: boolean;
@@ -584,7 +538,7 @@ type ListItemSelectionContextValue = Readonly<{
   rowCount: number;
 }>;
 
-const ListItemSelectionContext = createContext<ListItemSelectionContextValue | null>(null);
+export const ListItemSelectionContext = createContext<ListItemSelectionContextValue | null>(null);
 
 type VirtualizedListRowProps<Item> = Readonly<{
   item: Item;
@@ -611,6 +565,7 @@ type VirtualizedListRowProps<Item> = Readonly<{
    */
   isTabStop: boolean;
   onSelect: (key: string, event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
+  onFocus: (key: string) => void;
   onRovingKey: (index: number, key: string, event: unknown) => boolean;
   registerTarget: (key: string, target: HappierFocusable | null) => void;
   accessibilityPattern: ListAccessibilityPattern;
@@ -635,6 +590,7 @@ class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Ite
           setSize: props.setSize,
           roving: {
             isTabStop: props.isTabStop,
+            onFocus: () => props.onFocus(props.itemKey),
             onKeyDown: (key, event) => props.onRovingKey(props.rowIndex, key, event),
             register: (target) => props.registerTarget(props.itemKey, target),
           },
@@ -715,7 +671,7 @@ const virtualizedListBoxStyle: HappierPortableStyle = {
   overflow: 'hidden',
 };
 
-function useRowFocusRequest(): RowFocusRequest {
+export function useRowFocusRequest(): RowFocusRequest {
   const requested = useRef<string | null>(null);
   return useMemo<RowFocusRequest>(() => ({
     claim: (key) => {
@@ -736,20 +692,11 @@ function useRowFocusRequest(): RowFocusRequest {
 function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>): ReactElement {
   const listRootRef = useRef<View | null>(null);
   const collectionControl = useContext(ListCollectionControlContext);
-  const translate = usePluginTranslation();
   // Density changes only the spacing between authored rows. It does not select
   // a separate item implementation or carry core row policy into the public
   // component surface.
   const densityStyle: HappierPortableStyle = props.density === 'compact' ? { gap: 4 } : { gap: 8 };
-  const [uncontrolledQuery, setUncontrolledQuery] = useState(props.search?.defaultValue ?? '');
-  const controlledQuery = props.search?.value;
-  const query = controlledQuery === undefined ? uncontrolledQuery : controlledQuery;
-  const [composingQuery, setComposingQuery] = useState<string | null>(null);
-  const composingQueryRef = useRef<string | null>(null);
-  composingQueryRef.current = composingQuery;
-  const [searchSelection, setSearchSelection] = useState({ start: query.length, end: query.length });
-  const searchFocusTarget = usePluginUiFocusTarget();
-  const displayedQuery = composingQuery ?? query;
+  const { query, control: searchControl } = useListCollectionSearch(props.search, listRootRef);
   const filter = props.search?.filter;
   const keyForItem = props.keyForItem;
   const [authorItems, authorSections] = useMemo(() => {
@@ -887,11 +834,12 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     return eligible;
   }, [authorItems, authorSections, isItemSelectable, keyForItem, multiStore, retainedSelectionKeys]);
   useEffect(() => {
+    if (collectionControl?.ownsSelectionRows) return;
     multiStore?.setVisibleRows({
       visibleOrderedKeys: visibleSelectionKeys,
       eligibleKeys: eligibleSelectionKeys,
     });
-  }, [eligibleSelectionKeys, multiStore, visibleSelectionKeys]);
+  }, [collectionControl?.ownsSelectionRows, eligibleSelectionKeys, multiStore, visibleSelectionKeys]);
 
   const [uncontrolledSelectedKey, setUncontrolledSelectedKey] = useState<string | null>(
     props.selection?.defaultSelectedKey ?? null,
@@ -904,17 +852,22 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // reader can traverse a 2,000-row listbox without committing a selection the
   // rest of the surface would immediately act on, and a background refresh,
   // scan arrival or watch update moves neither.
-  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const [localFocusedKey, setFocusedKey] = useState<string | null>(null);
+  const focusedKey = collectionControl?.focus === undefined ? localFocusedKey : collectionControl.focus.key;
+  const lastReportedFocus = useRef<string | null>(null);
   // One owner for "focus moved", so both movement paths report the same fact
   // and neither reads the author's callback through a memoized closure that an
   // inline arrow would invalidate on every render.
   const requestFocus = (key: string) => {
-    setFocusedKey(key);
+    if (collectionControl?.focus === undefined) setFocusedKey(key);
     // One cursor, reported twice: the store's focus is what a bulk-action bar
     // and a row checkbox read, and letting it drift from the List's own focus
     // would be the second cursor this capability exists to avoid.
     multiStoreRef.current?.setFocusedKey(key);
-    props.selection?.onFocusedKeyChange?.(key);
+    if (lastReportedFocus.current !== key) {
+      lastReportedFocus.current = key;
+      props.selection?.onFocusedKeyChange?.(key);
+    }
   };
   const requestFocusRef = useRef(requestFocus);
   requestFocusRef.current = requestFocus;
@@ -933,6 +886,13 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const multiSelectedKeysRef = useRef(multiSnapshot.selectedKeys);
   multiSelectedKeysRef.current = multiSnapshot.selectedKeys;
   const rowFocusRequest = useRowFocusRequest();
+  const observesCollectionFocus = useRef(false);
+  observesCollectionFocus.current = collectionControl?.focus !== undefined;
+  const observeFocus = useCallback((key: string) => {
+    if (!observesCollectionFocus.current) return;
+    rowFocusRequest.abandon();
+    requestFocusRef.current(key);
+  }, [rowFocusRequest]);
 
   // Pointer and touch activation is one gesture that both focuses and selects;
   // only the keyboard separates the two. The gesture has already placed native
@@ -944,100 +904,9 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     event?: HappierGestureResponderEvent,
   ): ListItemSelectionDisposition => {
     rowFocusRequest.abandon();
-    const store = multiStoreRef.current;
-    if (store !== null) {
-      const modifiers = readHappierPointerModifiers(event);
-      const action = resolveHappierListMultiSelectionPointerAction({
-        isSelectionMode: store.getSnapshot().isSelectionMode,
-        platform: resolveHappierPointerPlatform(Platform.OS),
-        ...modifiers,
-      });
-      if (action !== 'open') {
-        // A modified press builds a SET. Moving the single selected key here
-        // would open a detail the reader did not ask for and discard the set
-        // they were assembling, which is exactly the two cursors collapsing
-        // into one.
-        requestFocusRef.current(key);
-        if (action === 'toggle') store.toggle(key);
-        else store.selectRange(key);
-        return 'handled';
-      }
-    }
-    requestFocusRef.current(key);
-    requestSelectionRef.current(key);
-    return 'open';
+    return activateListItem({ key, event, store: multiStoreRef.current,
+      focus: requestFocusRef.current, open: requestSelectionRef.current });
   }, [rowFocusRequest]);
-  const requestQueryChange = (nextQuery: string) => {
-    if (composingQueryRef.current !== null) {
-      composingQueryRef.current = nextQuery;
-      setComposingQuery(nextQuery);
-      props.search?.onComposingValueChange?.(nextQuery);
-      return;
-    }
-    if (nextQuery === query) return;
-    if (controlledQuery === undefined) setUncontrolledQuery(nextQuery);
-    props.search?.onValueChange?.(nextQuery);
-  };
-  const requestCompositionChange = (isComposing: boolean) => {
-    if (isComposing) {
-      composingQueryRef.current = displayedQuery;
-      setComposingQuery(displayedQuery);
-      props.search?.onComposingValueChange?.(displayedQuery);
-      return;
-    }
-    const settled = composingQueryRef.current;
-    composingQueryRef.current = null;
-    setComposingQuery(null);
-    props.search?.onComposingValueChange?.(null);
-    if (settled !== null) {
-      if (controlledQuery === undefined) setUncontrolledQuery(settled);
-      props.search?.onValueChange?.(settled);
-    }
-  };
-  const clearSearch = () => {
-    if (displayedQuery === '') return false;
-    composingQueryRef.current = null;
-    setComposingQuery(null);
-    props.search?.onComposingValueChange?.(null);
-    if (controlledQuery === undefined) setUncontrolledQuery('');
-    props.search?.onValueChange?.('');
-    return true;
-  };
-  useEffect(() => {
-    if (composingQueryRef.current !== null) return;
-    setSearchSelection((current) => {
-      const start = Math.min(current.start, query.length);
-      const end = Math.min(current.end, query.length);
-      return start === current.start && end === current.end ? current : { start, end };
-    });
-  }, [query]);
-  const searchEnabled = props.search !== undefined;
-  useEffect(() => {
-    if (!searchEnabled || Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== '/' || event.isComposing || event.defaultPrevented) return;
-      const root = listRootRef.current;
-      const activeElement = document.activeElement;
-      if (
-        activeElement === null
-        || root === null
-        || typeof (root as unknown as { contains?: unknown }).contains !== 'function'
-        || !(root as unknown as { contains(node: Node): boolean }).contains(activeElement)
-      ) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && (
-        target.isContentEditable
-        || target.tagName === 'INPUT'
-        || target.tagName === 'TEXTAREA'
-        || target.tagName === 'SELECT'
-      )) return;
-      if (!searchFocusTarget.focus()) return;
-      event.preventDefault();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => { document.removeEventListener('keydown', onKeyDown); };
-  }, [searchEnabled, searchFocusTarget]);
-
   // ---- Collection keyboard navigation -------------------------------------
   // A listbox is one composite widget, so it owns a single roving tab stop and
   // arrow/Home/End movement over the WHOLE filtered array. Only this owner can
@@ -1076,10 +945,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // The single tab stop follows logical focus. Before the reader has moved it —
   // and after a query filters the focused row away — the selected row is the
   // collection's current choice, so Tab still returns to something meaningful.
-  const tabStopIndex = resolveHappierRovingTabStop({
+  const tabStopIndex = collectionControl?.focus === undefined ? resolveHappierRovingTabStop({
     entries: rovingEntries,
     selectedIndex: focusedIndex >= 0 ? focusedIndex : selectedIndex,
-  });
+  }) : rowIndexByKey.get(collectionControl.focus.tabStopKey ?? '') ?? -1;
   const tabStopIndexRef = useRef(tabStopIndex);
   tabStopIndexRef.current = tabStopIndex;
 
@@ -1236,17 +1105,29 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   };
   const requestRowFocusRef = useRef(requestRowFocus);
   requestRowFocusRef.current = requestRowFocus;
-  const authorFocusRequest = props.selection?.focusRequest;
+  const authorFocusRequest = collectionControl?.focus === undefined
+    ? props.selection?.focusRequest : collectionControl.focus.request ?? undefined;
+  const handledFocusRequest = useRef<typeof authorFocusRequest>(undefined);
   useEffect(() => {
     if (authorFocusRequest === undefined) return;
+    if (handledFocusRequest.current === authorFocusRequest) return;
     const rowIndex = rowIndexByKey.get(authorFocusRequest.key);
     if (rowIndex === undefined) return;
     if (rovingEntries[rowIndex]?.disabled === true) return;
+    handledFocusRequest.current = authorFocusRequest;
     requestFocusRef.current(authorFocusRequest.key);
     requestRowFocusRef.current(authorFocusRequest.key, rowIndex);
+    collectionControl?.focus?.onRequestHandled?.(authorFocusRequest);
   }, [authorFocusRequest, rovingEntries]);
   const moveFocus = (fromIndex: number, key: string, event: unknown): boolean => {
     const currentRowIndex = focusedIndex >= 0 ? focusedIndex : fromIndex;
+    const controlledNavigation = collectionControl?.focus;
+    if (controlledNavigation !== undefined) {
+      const from = rows[currentRowIndex]?.key;
+      if (from === undefined) return false;
+      if (controlledNavigation.onKey(key, from, event)) return true;
+      return collectionControl?.onRowKey?.(key, from) === true;
+    }
     const multiStoreForKey = multiStoreRef.current;
     if (multiStoreForKey !== null) {
       const snapshot = multiStoreForKey.getSnapshot();
@@ -1335,49 +1216,11 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     return rowIndex === undefined ? null : rows[rowIndex]?.item ?? null;
   }, [headerRenderer, rowIndexByKey, rows, selectedKey]);
   const authorHeader = resolveVirtualizedHeader(props.header, { selectedItem });
-  const searchControl = props.search ? (
-    <ListSearchField
-      label={props.search.label}
-      value={displayedQuery}
-      onChange={requestQueryChange}
-      onCompositionChange={requestCompositionChange}
-      onEscape={clearSearch}
-      selection={searchSelection}
-      onSelectionChange={setSearchSelection}
-      focusTarget={searchFocusTarget}
-      {...(props.search.placeholder === undefined ? {} : { placeholder: props.search.placeholder })}
-      {...(props.search.testID === undefined ? {} : { testID: props.search.testID })}
-    />
-  ) : null;
-  /**
-   * The touch path into the SAME multi-selection store keyboard modifiers use.
-   *
-   * Touch has no Control/Command key, so without this explicit mode control an
-   * opted-in list exposed its bulk capability only to pointer/keyboard users.
-   * Once the mode is live, the ordinary row press already resolves to `toggle`
-   * through the canonical collection rule; no row-owned checkbox state or
-   * second reducer is needed.
-   */
-  const selectionModeControl = multiStore === null || eligibleSelectionKeys.length === 0 ? null : (
-    <Row gap="small" align="center">
-      <Button
-        title={multiSnapshot.isSelectionMode
-          ? translate('happier.plugin-ui.list.finishSelection', 'Done selecting')
-          : translate('happier.plugin-ui.list.selectItems', 'Select')}
-        variant="plain"
-        testID="happier-list-selection-mode"
-        onPress={() => {
-          if (multiSnapshot.isSelectionMode) multiStore.exit();
-          else multiStore.enter();
-        }}
-      />
-    </Row>
+  const headerContent = collectionControl?.hideChrome ? authorHeader : (
+    <ListCollectionHeader search={searchControl} store={multiStore} selectable={eligibleSelectionKeys.length > 0}>
+      {authorHeader}
+    </ListCollectionHeader>
   );
-  const headerContent = searchControl === null
-    && selectionModeControl === null
-    && (authorHeader === null || authorHeader === undefined)
-    ? null
-    : <Stack gap="small">{searchControl}{selectionModeControl}{authorHeader}</Stack>;
   // Chrome is a SIBLING of the collection element, never a cell inside it. A
   // listbox admits groups/options, grid admits rows, and list admits list items; a search
   // textbox, an author header or an empty-state block placed in the scroller
@@ -1436,12 +1279,13 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
           : multiSelectedKeysRef.current.has(itemKey)}
         isTabStop={selectionEnabled && tabStopIndexRef.current === input.rowIndex}
         onSelect={selectItem}
+        onFocus={observeFocus}
         onRovingKey={onRovingKey}
         registerTarget={registerTarget}
         accessibilityPattern={accessibilityPattern}
       />
     );
-  }, [accessibilityPattern, activatableRows, keyForItem, multiRovingEntries, multiStore, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
+  }, [accessibilityPattern, activatableRows, keyForItem, multiRovingEntries, multiStore, observeFocus, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
 
   const flatSetSize = visibleItems?.length ?? 0;
   const renderFlatRow = useCallback(({ item, index }: Readonly<{ item: Item; index: number }>) => (

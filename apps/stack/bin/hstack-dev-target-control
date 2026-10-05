@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # Canonical native owner for dev-target control placement and causal sync admission.
-# Each queued sync-flush request executes its own Mutagen flush after flock
-# admission, followed by a fresh exact-session post-flush inspection of the
-# actual Mutagen status model. It stays native because every preferred-execution
+# A queued request can share only a successful flush started after its demand.
+# Requests arriving during a flush require a later cycle. Every admission also
+# inspects fresh exact-session health. It stays native because every preferred-execution
 # command crosses this boundary, including commands used while the JavaScript
 # runtime is busy.
 
@@ -173,11 +173,41 @@ EOF
   return 0
 }
 
+read_sync_flight() {
+  flight_started=0
+  flight_success=0
+  [ -e "$flight_path" ] || return 0
+  IFS=' ' read -r flight_started flight_success flight_extra < "$flight_path" || return 1
+  case "$flight_started" in ''|*[!0-9]*) return 1 ;; esac
+  case "$flight_success" in ''|*[!0-9]*) return 1 ;; esac
+  [ -z "$flight_extra" ] && [ "$flight_success" -le "$flight_started" ]
+}
+
+write_sync_flight() {
+  flight_temp="$flight_path.$$"
+  if printf '%s %s\n' "$flight_started" "$flight_success" > "$flight_temp" \
+    && mv -f -- "$flight_temp" "$flight_path"; then
+    return 0
+  fi
+  rm -f -- "$flight_temp"
+  return 1
+}
+
 locked_sync_flush() {
   session_name=$1
-  shift
+  observed_started=$2
+  shift 2
   [ "${1-}" = -- ] || usage
   shift
+  flight_path="$(sync_control_state_dir)/$session_name.flight"
+  read_sync_flight || exit 1
+  if [ "$flight_success" -eq "$flight_started" ] && [ "$flight_success" -gt "$observed_started" ]; then
+    check_sync_session_clean "$session_name"
+    exit "$?"
+  fi
+  # Publish start before dispatch so demand during this flight cannot join it.
+  flight_started=$((flight_started + 1))
+  write_sync_flight || exit 1
   control_child=''
   cancel_locked_flush() {
     trap - HUP INT TERM
@@ -197,15 +227,19 @@ locked_sync_flush() {
   [ "$status" -eq 0 ] || exit "$status"
   check_sync_session_clean "$session_name"
   check_status=$?
+  [ "$check_status" -eq 0 ] || exit "$check_status"
+  flight_success=$flight_started
+  write_sync_flight || exit 1
   exit "$check_status"
 }
 
 case "${1-}" in
   --locked-sync-flush)
-    [ "$#" -ge 4 ] || usage
+    [ "$#" -ge 5 ] || usage
     session_name=$2
-    shift 2
-    locked_sync_flush "$session_name" "$@"
+    observed_started=$3
+    shift 3
+    locked_sync_flush "$session_name" "$observed_started" "$@"
     ;;
   --sync-check)
     [ "$#" -eq 2 ] || usage
@@ -227,6 +261,9 @@ case "${1-}" in
     lock_dir=$(sync_control_state_dir)
     mkdir -p -- "$lock_dir" || exit 1
     if command -v flock >/dev/null 2>&1; then
+      flight_path="$lock_dir/$session_name.flight"
+      read_sync_flight || exit 1
+      observed_started=$flight_started
       lock_child=''
       cancel_lock_wait() {
         trap - HUP INT TERM
@@ -238,7 +275,7 @@ case "${1-}" in
       }
       trap 'cancel_lock_wait' HUP INT TERM
       flock --exclusive --no-fork "$lock_dir/$session_name.lock" \
-        "$control_path" --locked-sync-flush "$session_name" "$@" &
+        "$control_path" --locked-sync-flush "$session_name" "$observed_started" "$@" &
       lock_child=$!
       wait "$lock_child"
       status=$?

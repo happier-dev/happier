@@ -18,10 +18,11 @@ import {
     buildSessionPresentationNoticeKeyPrefix,
     type SessionBoardPresentationPort,
     type SessionPresentationMutationOutcome,
+    type SessionCompanionMutationObserver,
 } from './sessionCompanionPresentationAdapter';
 
 export type SessionPresentationIntentApplier =
-    (intent: CurrentSessionPresentationIntentV1) => CurrentSessionPresentationIntentResultV1;
+    (intent: CurrentSessionPresentationIntentV1, onCompanionMutation?: SessionCompanionMutationObserver) => CurrentSessionPresentationIntentResultV1;
 
 /**
  * Publishes this mounted Session's local presentation port to PEP's current-UI
@@ -149,6 +150,7 @@ export const SessionCompanionPresentationBridge = React.memo(
 
         const applier = React.useCallback((
             intent: CurrentSessionPresentationIntentV1,
+            onCompanionMutation?: SessionCompanionMutationObserver,
         ): CurrentSessionPresentationIntentResultV1 => applySessionPresentationIntent({
             companion: controller,
             board,
@@ -157,7 +159,7 @@ export const SessionCompanionPresentationBridge = React.memo(
             openFullSurface: props.openFullSurface,
             publishNotice: publishPresentationNotice,
             noticeKeyPrefix: buildSessionPresentationNoticeKeyPrefix(address, sessionId),
-        }, intent), [address, board, controller, mountedBoard?.pluginRuntime, props.openFullSurface, returnToChat, sessionId]);
+        }, intent, onCompanionMutation), [address, board, controller, mountedBoard?.pluginRuntime, props.openFullSurface, returnToChat, sessionId]);
 
         const applierRef = props.applierRef;
         React.useEffect(() => {

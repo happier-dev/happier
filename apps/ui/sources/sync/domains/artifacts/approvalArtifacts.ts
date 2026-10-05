@@ -46,12 +46,12 @@ function collectSessionReferencesFromUnknownArray(
 }
 
 function parseApprovalRequestArtifact(artifact: DecryptedArtifact): ApprovalRequest | null {
-    const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
+    const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, typeof artifact.body === 'string' ? artifact.body : null);
     return parsed?.family === 'built_in' ? parsed.request : null;
 }
 
 export function isOpenApprovalInboxArtifact(artifact: DecryptedArtifact): boolean {
-    const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
+    const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, typeof artifact.body === 'string' ? artifact.body : null);
     return parsed?.request.status === 'open';
 }
 

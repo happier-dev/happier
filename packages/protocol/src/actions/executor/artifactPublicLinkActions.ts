@@ -5,8 +5,8 @@ import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMat
   StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema,
   StoredContentPublicSharesListResponseV1Schema } from '../../sharing/storedContentPublicShareV1.js';
 
-export type ArtifactPublicLinkActionIdV1 = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke';
-/** Local keyholding-host delivery only; never an Action, approval or HTTP payload. */
+export type ArtifactPublicLinkActionIdV1 = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit';
+/** Complete link issued by the keyholding host after approved creation; never an HTTP payload. */
 export type ArtifactPublicLinkIssuedV1 = Readonly<{ lookupId: string; secret: string; shareId: string; url: string }>;
 export type ArtifactPublicLinkKeyholdingResourceV1 = ArtifactSharingResourceV1 & Readonly<{
   encryptionMode: 'plain' | 'e2ee'; dataKey: Uint8Array | null;
@@ -34,14 +34,18 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
       if (result.publicShares.some(row => row.subject.kind !== 'artifact' || row.subject.id !== input.artifactId)) throw Object.assign(new Error('public_share_subject_mismatch'), { code: 'public_share_subject_mismatch' });
       return result;
     }
-    if (args.actionId === 'artifact.public_link.revoke') {
+    if (args.actionId === 'artifact.public_link.revoke' || args.actionId === 'artifact.public_link.audit') {
       const revoke = ArtifactActionInputSchemasV1[args.actionId].parse(input);
       const owned = StoredContentPublicSharesListResponseV1Schema.parse(await params.request({ method: 'GET', path: listPath, signal: args.signal }));
       if (!owned.publicShares.some(row => row.id === revoke.shareId && row.subject.kind === 'artifact' && row.subject.id === input.artifactId)) throw Object.assign(new Error('public_share_not_found'), { code: 'public_share_not_found' });
+      if (args.actionId === 'artifact.public_link.audit') {
+        const result = await params.request({ method: 'GET', path: `/v1/public-shares/${encodeURIComponent(revoke.shareId)}/access-log`, signal: args.signal });
+        args.signal?.throwIfAborted();
+        return ArtifactActionOutputSchemasV1[args.actionId].parse(result);
+      }
       await params.request({ method: 'DELETE', path: `/v1/public-shares/${encodeURIComponent(revoke.shareId)}`, signal: args.signal });
       return { artifactId: input.artifactId, shareId: revoke.shareId, revoked: true };
     }
-    if (!params.onPublicLinkIssued) throw Object.assign(new Error('public_link_custody_unavailable'), { code: 'public_link_custody_unavailable' });
     const create = ArtifactActionInputSchemasV1['artifact.public_link.create'].parse(input);
     if ((resource.encryptionMode === 'e2ee') !== (resource.dataKey !== null)) throw Object.assign(new Error('artifact_encryption_material_unavailable'), { code: 'artifact_encryption_material_unavailable' });
     const material = generateStoredContentPublicShareMaterialV1(params.randomBytes);
@@ -53,14 +57,14 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
       ...(create.isConsentRequired === undefined ? {} : { isConsentRequired: create.isConsentRequired }) });
     const result = StoredContentPublicShareCreateResponseV1Schema.parse(await params.request({ method: 'POST', path: '/v1/public-shares', body, signal: args.signal }));
     if (result.publicShare.subject.kind !== 'artifact' || result.publicShare.subject.id !== create.artifactId || result.publicShare.keyDerivation !== 'fragment_v1') throw Object.assign(new Error('public_share_subject_mismatch'), { code: 'public_share_subject_mismatch' });
+    const url = buildStoredContentPublicShareUrlV1({ ...material, origin: result.isolatedOrigin });
     try {
-      await params.onPublicLinkIssued({ ...material, shareId: result.publicShare.id,
-        url: buildStoredContentPublicShareUrlV1({ ...material, origin: result.isolatedOrigin }) });
+      await params.onPublicLinkIssued?.({ ...material, shareId: result.publicShare.id, url });
     } catch {
       // The Home committed; a host custody exception cannot disclose the secret or prove rollback.
       throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });
     }
     args.signal?.throwIfAborted();
-    return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare });
+    return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare, url });
   };
 }

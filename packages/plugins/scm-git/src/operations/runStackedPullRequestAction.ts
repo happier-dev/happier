@@ -3,6 +3,8 @@ import type {
   ScmBranchCreateResponse,
   ScmCommitCreateRequest,
   ScmCommitCreateResponse,
+  ScmCommitPublication,
+  ScmOperationOutcome,
   ScmOperationErrorCode,
   ScmPullRequestOpenOrReuseRequest,
   ScmPullRequestOpenOrReuseResponse,
@@ -15,7 +17,7 @@ import type {
   ScmRemoteResponse,
   ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES, normalizeScmOperationOutcome } from '@happier-dev/plugin-sdk/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
@@ -89,16 +91,22 @@ function phasesForAction(action: ScmPullRequestRunStackedRequest['action']): rea
     }
 }
 
-function errorResponse(input: Readonly<{
+function buildErrorResponse(input: Readonly<{
     error: string;
     errorCode?: ScmOperationErrorCode;
     events: readonly ScmPullRequestRunStackedProgressEvent[];
+    commitSha?: string;
+    commitPublication?: ScmCommitPublication;
+    outcome?: ScmOperationOutcome;
 }>): ScmPullRequestRunStackedResponse {
     return {
         success: false,
         error: input.error,
         ...(input.errorCode ? { errorCode: input.errorCode } : {}),
         events: [...input.events],
+        ...(input.commitSha ? { commitSha: input.commitSha } : {}),
+        ...(input.commitPublication ? { commitPublication: input.commitPublication } : {}),
+        ...(input.outcome ? { outcome: input.outcome } : {}),
     };
 }
 
@@ -130,6 +138,13 @@ export function createGitRunStackedPullRequestAction(
             append({ kind: 'action_started' });
 
             let commitSha: string | null = null;
+            let commitPublication: ScmCommitPublication | undefined;
+            const errorResponse = (failure: Readonly<{ error: string; errorCode?: ScmOperationErrorCode; events: readonly ScmPullRequestRunStackedProgressEvent[]; outcome?: ScmOperationOutcome }>) => buildErrorResponse({
+                ...failure,
+                ...(commitSha ? { commitSha } : {}),
+                ...(commitPublication ? { commitPublication } : {}),
+                ...(failure.outcome ? {} : commitSha ? { outcome: normalizeScmOperationOutcome({ success: false, errorCode: failure.errorCode, error: failure.error, commitSha }) } : {}),
+            });
             let openOrReuseResponse: ScmPullRequestOpenOrReuseResponse | null = null;
             const requestedBaseBranch = request.base?.trim() || null;
             const requestedFeatureBranch = request.featureBranch?.trim() || null;
@@ -234,15 +249,19 @@ export function createGitRunStackedPullRequestAction(
                             ...(request.filePaths?.length ? { scope: { kind: 'paths', include: request.filePaths } } : {}),
                         },
                     });
-                    if (!commit.success) {
+                    commitPublication = commit.publication;
+                    const outcome = normalizeScmOperationOutcome(commit);
+                    const effect = 'effect' in outcome ? outcome.effect : undefined;
+                    commitSha = effect?.kind === 'commit' ? effect.commitSha : null;
+                    if (outcome.kind !== 'succeeded') {
                         append({ kind: 'action_failed', phase, message: commit.error });
                         return errorResponse({
                             error: commit.error ?? 'Commit failed',
                             errorCode: commit.errorCode,
                             events,
+                            outcome,
                         });
                     }
-                    commitSha = commit.commitSha ?? null;
                     append({ kind: 'phase_finished', phase });
                     continue;
                 }
@@ -352,6 +371,7 @@ export function createGitRunStackedPullRequestAction(
                 ...(openOrReuseResponse?.composeUrl ? { composeUrl: openOrReuseResponse.composeUrl } : {}),
                 branch: effectiveHeadBranch,
                 commitSha,
+                ...(commitPublication ? { commitPublication } : {}),
                 nextAction: openOrReuseResponse?.nextAction ?? { kind: 'none' },
                 events,
             };

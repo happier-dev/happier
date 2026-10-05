@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { InitialPresentationReadinessProvider } from '@/components/ui/presentation/InitialPresentationReadinessContext';
+import { act } from 'react-test-renderer';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,6 +70,16 @@ describe('DiffViewer (web renderer selection)', () => {
         expect(screen.findByTestId('pierre-diff-viewer')).toBeTruthy();
         expect(screen.findByTestId('happier-unified-diff-viewer')).toBeNull();
         expect(screen.findByTestId('lazy-mount-on-screen')).toBeNull();
+    });
+
+    it('uses the canonical line renderer for Find and restores Pierre when Find closes', async () => {
+        const { DiffViewer } = await import('./DiffViewer.web');
+        const props = { mode: 'unified' as const, unifiedDiff: '@@ -1 +1 @@\n-old\n+match', filePath: 'a.ts', virtualized: true };
+        const screen = await renderScreen(<DiffViewer {...props} findActive />);
+        expect(screen.findByTestId('pierre-diff-viewer')).toBeNull();
+        expect(screen.findByTestId('happier-unified-diff-viewer')).not.toBeNull();
+        await act(async () => { screen.tree.update(<DiffViewer {...props} findActive={false} />); });
+        expect(screen.findByTestId('pierre-diff-viewer')).not.toBeNull();
     });
 
     it('wraps virtualized Pierre diffs in LazyMountOnScreen for lazy mounting', async () => {

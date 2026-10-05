@@ -13,6 +13,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { useActiveServerAccountScope, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '../rail/buildRolesRailPickerOption';
 
 /**
  * A role's engine as a page field: the value ("Claude · opus-5.5") in the field box, opening the same
@@ -25,6 +26,8 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
     leading?: React.ReactNode;
     disabled?: boolean;
     onChange: (engine: RoleEngineV1) => void;
+    /** Engine-group consumers may also choose a Role through the incumbent rail. */
+    roleSelection?: RolesRailPickerOptionParams;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
@@ -55,6 +58,7 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
                     anchorRef={anchorRef}
                     engine={props.engine}
                     onChange={props.onChange}
+                    roleSelection={props.roleSelection}
                     onRequestClose={() => setOpen(false)}
                 />
             ) : null}
@@ -67,6 +71,7 @@ function RoleEnginePopover(props: Readonly<{
     anchorRef: React.RefObject<View | null>;
     engine: RoleEngineV1 | undefined;
     onChange: (engine: RoleEngineV1) => void;
+    roleSelection?: RolesRailPickerOptionParams;
     onRequestClose: () => void;
 }>) {
     const settings = useSettings();
@@ -82,6 +87,7 @@ function RoleEnginePopover(props: Readonly<{
     }), [acpCatalogSettingsV1, backendEnabledByTargetKey]);
     const options = React.useMemo(() => buildSessionAgentPickerOptions({
         entries,
+        leadingOptions: props.roleSelection ? [buildRolesRailPickerOption(props.roleSelection)] : undefined,
         identityScope: { machineId: null, serverId: capabilityServerId || null, current: false },
         resolvePresentation: () => ({ disabled: false, muted: false }),
         resolveBehavior: ({ entry }) => ({
@@ -115,7 +121,7 @@ function RoleEnginePopover(props: Readonly<{
                 },
             }),
         }),
-    }), [capabilityServerId, engine, entries, onChange, settings]);
+    }), [capabilityServerId, engine, entries, onChange, props.roleSelection, settings]);
 
     return (
         <AgentInputChipPickerPopover

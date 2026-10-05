@@ -130,7 +130,7 @@ function pressAndApplyBrowserFocusDefault(target: Element): { cancelled: boolean
     return { cancelled: event.defaultPrevented };
 }
 
-async function renderSurface(children: React.ReactNode) {
+async function renderSurface(children: React.ReactNode, preserveHostFocus = true) {
     const { CommandMenuSurface } = await import('../CommandMenuSurface');
     await act(async () => {
         root.render(
@@ -139,6 +139,7 @@ async function renderSurface(children: React.ReactNode) {
                 anchor={RECT_ANCHOR}
                 onRequestClose={() => {}}
                 testID="command-menu-surface"
+                preserveHostFocus={preserveHostFocus}
             >
                 {children}
             </CommandMenuSurface>,
@@ -147,6 +148,15 @@ async function renderSurface(children: React.ReactNode) {
 }
 
 describe('CommandMenuSurface (web focus preservation)', () => {
+    it('allows an editable picker field to receive pointer focus', async () => {
+        await renderSurface(<input data-testid="picker-search" />, false);
+        hostField.focus();
+        const field = container.querySelector<HTMLInputElement>('[data-testid="picker-search"]')!;
+        const { cancelled } = pressAndApplyBrowserFocusDefault(field);
+        if (!cancelled) field.focus();
+        expect(cancelled).toBe(false);
+        expect(document.activeElement).toBe(field);
+    });
     it('leaves keyboard focus on the host field when a row is pressed', async () => {
         await renderSurface(<div data-testid="command-menu-row">Row</div>);
 

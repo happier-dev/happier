@@ -494,64 +494,7 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
     useIsTablet: () => false,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: (_sessionId: string, textStore: Readonly<{ getPrompt: () => string; setPrompt: (text: string) => void }>) => {
-        const value = textStore.getPrompt();
-        const onChange = textStore.setPrompt;
-        draftHookSpies.valuesBySessionId.set(_sessionId, value);
-        const update = (text: string) => {
-            draftHookSpies.valuesBySessionId.set(_sessionId, text);
-            onChange(text);
-        };
-        return {
-            clearDraft: () => {
-                draftHookSpies.clearDraft();
-                update('');
-            },
-            clearDraftIfCurrentValueMatches: (expectedValue: string) => {
-                draftHookSpies.clearDraftIfCurrentValueMatches(expectedValue);
-                const currentValue = draftHookSpies.valuesBySessionId.get(_sessionId) ?? '';
-                if (currentValue !== expectedValue) return false;
-                update('');
-                return true;
-            },
-            clearDraftForSessionIfCurrentValueMatches: (snapshot: Readonly<{ sessionId: string; text: string }>) => {
-                draftHookSpies.clearDraftForSessionIfCurrentValueMatches(snapshot);
-                const currentValue = draftHookSpies.valuesBySessionId.get(_sessionId) ?? '';
-                if (currentValue !== snapshot.text) return false;
-                update('');
-                return true;
-            },
-            readLatestDraftValue: () => draftHookSpies.valuesBySessionId.get(_sessionId) ?? '',
-            setDraftValue: (nextValueOrUpdater: string | ((currentValue: string) => string)) => {
-                const currentValue = draftHookSpies.valuesBySessionId.get(_sessionId) ?? '';
-                const nextValue = typeof nextValueOrUpdater === 'function'
-                    ? nextValueOrUpdater(currentValue)
-                    : nextValueOrUpdater;
-                draftHookSpies.setDraftValue(nextValue);
-                update(nextValue);
-            },
-            restoreDraft: (text: string) => {
-                draftHookSpies.restoreDraft(text);
-                update(text);
-            },
-            restoreDraftForSessionIfCurrentValueMatches: (
-                snapshot: Readonly<{ sessionId: string; text: string }>,
-                expectedCurrentValue: string,
-            ) => {
-                draftHookSpies.restoreDraftForSessionIfCurrentValueMatches(snapshot, expectedCurrentValue);
-                const currentValue = draftHookSpies.valuesBySessionId.get(_sessionId) ?? '';
-                if (currentValue !== expectedCurrentValue) return false;
-                update(snapshot.text);
-                return true;
-            },
-            restoreComposerSnapshot: (snapshot: Readonly<{ sessionId: string; text: string }>) => {
-                draftHookSpies.restoreComposerSnapshot(snapshot);
-                update(snapshot.text);
-            },
-        };
-    },
-}));
+// Draft custody and restoration use the real hook and repository beneath the text-store boundary.
 vi.mock('@/hooks/session/useSessionAgentInputComposerPersistence', () => ({
     useSessionAgentInputComposerPersistence: () => ({
         expanded: inputComposerExpandedState.current,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TodoItemV1Schema, TodoSessionLinkInputV1Schema } from '@happier-dev/protocol';
 
 import {
     AccountStoredJsonContentEncryptionMaterialUnavailableError,
@@ -10,36 +11,17 @@ import {
 export const TODO_PREFIX = 'todo.';
 export const TODO_INDEX_KEY = 'todo.index';
 
-const TodoLinkedSessionSchema = z.object({
-    title: z.string(),
-    linkedAt: z.number(),
-    // Bare session-id keys without these fields are the 0.2 reader input.
-    session: z.object({
-        sessionId: z.string().min(1),
-        serverId: z.string().min(1),
-        accountId: z.string().min(1),
-    }).strict().optional(),
-}).strict();
-
 export const ZenTaskSourceSchema = z.object({
     kind: z.literal('zen_task'),
     taskId: z.string().min(1),
     title: z.string(),
-    scope: z.object({ serverId: z.string().min(1), accountId: z.string().min(1) }).strict(),
+    scope: TodoSessionLinkInputV1Schema.shape.scope,
 }).strict();
 
 /** Local draft custody; never part of the synchronized authoring document. */
 export type ZenTaskSource = z.infer<typeof ZenTaskSourceSchema>;
 
-export const TodoItemSchema = z.object({
-    id: z.string().min(1),
-    title: z.string(),
-    done: z.boolean(),
-    createdAt: z.number(),
-    updatedAt: z.number(),
-    completedAt: z.number().optional(),
-    linkedSessions: z.record(z.string(), TodoLinkedSessionSchema).optional(),
-}).strict();
+export const TodoItemSchema = TodoItemV1Schema;
 
 export const TodoIndexSchema = z.object({
     undoneOrder: z.array(z.string()),

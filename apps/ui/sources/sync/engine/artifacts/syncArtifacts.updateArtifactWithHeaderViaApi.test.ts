@@ -8,7 +8,71 @@ import { decodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 
+
+const fileReference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62',
+  mime: 'application/zip', sizeBytes: 3, sha256: 'a'.repeat(64) };
+
 describe('updateArtifactWithHeaderViaApi', () => {
+  it.each(['plain', 'e2ee'] as const)('deliberately clears a %s file through the binary-aware route and keeps later text edits on the ordinary route', async (mode) => {
+    const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
+    const dataKey = ArtifactEncryption.generateDataEncryptionKey();
+    const artifactDataKeys: ArtifactDataKeyCache = new Map(mode === 'e2ee'
+      ? [['document', { envelope: 'cached-key', dataKey }]] : []);
+    let current: DecryptedArtifact = { id: 'document', title: 'File', header: { title: 'File' }, rawHeader: { title: 'File' },
+      body: fileReference, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, storageMode: mode, isDecrypted: true };
+    const writes: Readonly<{ path: string; request: ArtifactUpdateRequest }>[] = [];
+    let storedFile = true;
+    // Captured HTTP models the required binary-head admission contract, not verified current server behavior.
+    // All codecs and Sync logic stay real.
+    const request = async (path: string, init?: RequestInit) => {
+      const wire = JSON.parse(String(init?.body)) as ArtifactUpdateRequest;
+      writes.push({ path, request: wire });
+      if (storedFile) {
+        if (path !== '/v1/artifacts/document/content/binary' || !Object.hasOwn(wire, 'blob') || wire.blob !== null) {
+          return Response.json({ error: 'artifact_binary_write_required' }, { status: 409 });
+        }
+        expect(wire.expectedBodyVersion).toBe(1);
+        expect(wire.body).toBeTypeOf('string');
+        storedFile = false;
+      }
+      return Response.json({ success: true, headerVersion: current.headerVersion + (wire.header === undefined ? 0 : 1),
+        bodyVersion: current.bodyVersion! + 1 });
+    };
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    const replacement = mode === 'plain' ? null : 'replacement text';
+    const update = (body: string | null) => updateArtifactWithHeaderViaApi({ credentials: { token: 'token' }, artifactId: current.id,
+      header: { title: 'File' }, body, encryption, artifactDataKeys, request, getArtifact: () => current,
+      updateArtifact: row => { current = row; } });
+    await update(replacement);
+    expect(storedFile).toBe(false);
+    expect(current.body).toBe(replacement);
+    const opened = mode === 'plain' ? decodePlainArtifactStoredContent(writes[0]!.request.body!)
+      : await new ArtifactEncryption(dataKey).decryptBody(writes[0]!.request.body!);
+    expect(opened).toEqual({ body: replacement });
+    await update('later text');
+    expect(writes[1]?.path).toBe('/v1/artifacts/document');
+    expect(Object.hasOwn(writes[1]!.request, 'blob')).toBe(false);
+    expect(current.body).toBe('later text');
+  });
+
+  it('keeps an unchanged file out of a header-only write and preserves its body version', async () => {
+    const current: DecryptedArtifact = { id: 'document', title: 'File', header: { title: 'File' }, rawHeader: { title: 'File' },
+      body: fileReference, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'plain', isDecrypted: true };
+    const updated: DecryptedArtifact[] = [];
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    await updateArtifactWithHeaderViaApi({ credentials: { token: 'token' }, artifactId: current.id,
+      header: { title: 'Renamed file' }, body: { ...fileReference }, encryption: null, artifactDataKeys: new Map(), getArtifact: () => current,
+      request: async (path, init) => {
+        const wire = JSON.parse(String(init?.body)) as ArtifactUpdateRequest;
+        expect(path).toBe('/v1/artifacts/document');
+        expect(wire.body).toBeUndefined();
+        expect(Object.hasOwn(wire, 'blob')).toBe(false);
+        return Response.json({ success: true, headerVersion: 2, bodyVersion: 1 });
+      }, updateArtifact: row => updated.push(row) });
+    expect(updated[0]?.body).toEqual(fileReference);
+    expect(updated[0]?.bodyVersion).toBe(1);
+  });
+
   it.each(['plain', 'e2ee'] as const)('preserves reference-only updates to a retained blob in %s', async (mode) => {
     const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
     const dataKey = mode === 'e2ee' ? ArtifactEncryption.generateDataEncryptionKey() : null;

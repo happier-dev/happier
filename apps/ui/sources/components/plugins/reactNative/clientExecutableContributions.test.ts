@@ -12,6 +12,8 @@ import {
     createPluginUiClientExecutableRegistrationIndex,
     getPluginUiClientExecutableTargetAddressKey,
     resolvePluginUiClientActionRegistration,
+    resolvePluginUiClientDragSourceRegistration,
+    resolvePluginUiClientDropTargetRegistration,
 } from './clientExecutableContributions';
 import {
     createPluginUiExecutableModuleHost,
@@ -282,6 +284,28 @@ function createLifecycle() {
 }
 
 describe('generic client executable contribution registration', () => {
+    it('resolves synchronous entity callbacks only for committed exact occurrences and withdraws on retirement', async () => {
+        const index = createPluginUiClientExecutableRegistrationIndex();
+        const contributes = PluginContributesV2Schema.parse({
+            dragSources: [{ id: 'issue', title: 'Issue', referenceSchema: { type: 'string' }, client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }],
+            dropTargets: [{ id: 'review', title: 'Review', acceptedKinds: ['session'], actions: [{ kind: 'host', actionId: 'session.open' }], client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }],
+        });
+        const source = { id: `${pluginId}/issue`, pluginId, pluginVersion: '1.0.0', occurrenceId, definition: contributes.dragSources[0]!, ...executionOrigin };
+        const dropTarget = { id: `${pluginId}/review`, pluginId, pluginVersion: '1.0.0', occurrenceId, definition: contributes.dropTargets[0]!, ...executionOrigin };
+        const scope = index.createScope({ pluginId, contributes, target, executionOrigin, occurrenceId, pluginVersion: '1.0.0', lifecycle: createLifecycle() });
+        scope.api.dragSources.register('issue', { describe: reference => ({ title: String(reference) }) });
+        scope.api.dropTargets.register('review', { resolve: () => ({ status: 'refused', reason: { code: 'unavailable', message: 'Unavailable' } }) });
+        expect(resolvePluginUiClientDragSourceRegistration({ source, platform: 'web', reader: index })).toBeNull();
+        scope.commit();
+        expect(resolvePluginUiClientDragSourceRegistration({ source, platform: 'web', reader: index })?.runtime.describe('Issue 1')).toEqual({ title: 'Issue 1' });
+        expect(resolvePluginUiClientDropTargetRegistration({ target: dropTarget, platform: 'web', reader: index })?.runtime.resolve({ item: { kind: 'session', scope: { serverId: 'server-1', accountId: 'account-1' }, address: { serverId: 'server-1', sessionId: 'session-1' } }, destination: null, input: 'chooser', targetInput: null }).status).toBe('refused');
+        expect(resolvePluginUiClientDragSourceRegistration({ source: { ...source, occurrenceId: 'retired' }, platform: 'web', reader: index })).toBeNull();
+        expect(resolvePluginUiClientDropTargetRegistration({ target: dropTarget, platform: 'ios', reader: index })).toBeNull();
+        const retirement = scope.unwind();
+        expect(resolvePluginUiClientDragSourceRegistration({ source, platform: 'web', reader: index })).toBeNull();
+        expect(resolvePluginUiClientDropTargetRegistration({ target: dropTarget, platform: 'web', reader: index })).toBeNull();
+        await retirement;
+    });
     it('resolves an Action only after its exact registration commits and retires it synchronously', async () => {
         const index = createPluginUiClientExecutableRegistrationIndex();
         const listener = vi.fn();

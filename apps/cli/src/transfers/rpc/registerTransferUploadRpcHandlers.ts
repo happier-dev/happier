@@ -7,7 +7,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol';
 import { sanitizeAttachmentFileName } from '../targets/resolveAttachmentTransferTarget';
 
-import { TransferSessionStore } from '../core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import {
   resolveTransferUploadInitTarget,

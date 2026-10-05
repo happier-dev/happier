@@ -138,7 +138,7 @@ function strictExecutionInput(params: Readonly<{
                     serverId: "server-account-encryption-migration",
                     machineId: "machine-account-encryption-migration",
                 },
-                directory: "/tmp/account-encryption-migration",
+                directory: { kind: "path", path: "/tmp/account-encryption-migration" },
                 agentTarget: {
                     kind: "agent",
                     identity: {
@@ -181,7 +181,7 @@ function encryptedStrictExecutionInput(params: Readonly<{
                     serverId: "server-account-encryption-migration",
                     machineId: "machine-account-encryption-migration",
                 },
-                directory: "/tmp/account-encryption-migration",
+                directory: { kind: "path", path: "/tmp/account-encryption-migration" },
                 agentTarget: {
                     kind: "agent",
                     identity: {

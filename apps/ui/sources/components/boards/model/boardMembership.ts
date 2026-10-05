@@ -16,7 +16,7 @@ export type BoardMember = Readonly<{
     picked: boolean;
     /** A section or the filter holds it (it may also be picked): it stays on the board without the pick. */
     sourced: boolean;
-    /** False when its Home is not mounted on this device: shown as unavailable, never deleted. */
+    /** False when its Home or source cannot serve it here: shown as unavailable, never deleted. */
     available: boolean;
 }>;
 
@@ -35,6 +35,10 @@ export type BoardMembership = Readonly<{
 export type BoardMembershipSources = Readonly<{
     isHomeMounted: (serverId: string) => boolean;
     sections: Readonly<Partial<Record<WorkBoardSectionV1, readonly BoardItemRefV1[] | null>>>;
+    /** An answered page is still incomplete while its canonical source has more pages or has failed. */
+    sectionComplete?: Readonly<Partial<Record<WorkBoardSectionV1, boolean>>>;
+    /** Mounting a Home does not imply that an Account-scoped source serves it. */
+    isSourceAvailable?: (ref: BoardItemRefV1) => boolean;
     filtered: readonly BoardItemRefV1[] | null | undefined;
     /** False while some Home has not answered the filter yet; the answered Homes' Sessions still show. */
     filterComplete?: boolean;
@@ -46,6 +50,8 @@ export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembers
     const chosenSections = new Set(board.source.sections ?? []);
     const byKey = new Map<string, BoardMember>();
     let complete = true;
+    const available = (ref: BoardItemRefV1) => sources.isHomeMounted(ref.qualifiedId.serverId)
+        && sources.isSourceAvailable?.(ref) !== false;
     const add = (ref: BoardItemRefV1, sourced: boolean) => {
         const key = buildWorkBoardItemKeyV1(ref);
         if (byKey.has(key)) return;
@@ -54,12 +60,13 @@ export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembers
             ref,
             picked: pickedKeys.has(key),
             sourced,
-            available: sources.isHomeMounted(ref.qualifiedId.serverId),
+            available: available(ref),
         });
     };
     for (const section of WORK_BOARD_SECTIONS_V1) {
         if (!chosenSections.has(section)) continue;
         const refs = sources.sections[section];
+        if (sources.sectionComplete?.[section] === false) complete = false;
         if (!refs) {
             complete = false;
             continue;
@@ -71,11 +78,11 @@ export function projectBoardMembership(board: WorkBoardV1, sources: BoardMembers
         sources.filtered?.forEach((ref) => add(ref, true));
     }
     board.source.picked.forEach((ref) => add(ref, false));
-    // A placed card from a Home that is not mounted cannot be answered by its section or filter here; its
+    // A placed card whose Home or source is unavailable cannot be answered by its section or filter here; its
     // qualified position key still names it, so it stays on the board as unavailable rather than vanishing.
     for (const key of Object.keys(board.positionsByItemRef)) {
         const ref = readWorkBoardItemKeyV1(key);
-        if (ref && !sources.isHomeMounted(ref.qualifiedId.serverId)) add(ref, true);
+        if (ref && !available(ref)) add(ref, true);
     }
     return { members: [...byKey.values()], complete };
 }

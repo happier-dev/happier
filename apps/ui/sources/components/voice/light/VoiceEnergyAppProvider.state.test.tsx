@@ -11,6 +11,7 @@ import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 import { resolveVoiceEnergyState } from './resolveVoiceEnergyState';
 import { useVoiceEnergy, type VoiceEnergy, type VoiceEnergyState } from './useVoiceEnergy';
+import { VoiceEnergyAppProvider } from './VoiceEnergyAppProvider';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,8 +45,7 @@ describe('VoiceEnergyAppProvider state bridge', () => {
     let inputWriter: VoiceRuntimeLevelWriter | null = null;
 
     afterEach(() => {
-        act(() => tree?.unmount());
-        inputWriter?.close();
+        act(() => { tree?.unmount(); inputWriter?.close(); });
         inputWriter = null;
         tree = null;
         observed.energy = null;
@@ -54,7 +54,7 @@ describe('VoiceEnergyAppProvider state bridge', () => {
     async function project(
         snapshot: VoiceSessionSnapshot,
         inputSourceActive = false,
-    ): Promise<Pick<VoiceEnergyState, 'luminosity' | 'energized'>> {
+    ): Promise<Readonly<{ luminosity: number; sourceActive: boolean }>> {
         runtime.snapshot = snapshot;
         if (inputSourceActive) {
             inputWriter = voiceRuntimeLevelStore.open({
@@ -62,7 +62,6 @@ describe('VoiceEnergyAppProvider state bridge', () => {
                 sourceId: 'state-bridge-test',
             });
         }
-        const { VoiceEnergyAppProvider } = await import('./VoiceEnergyAppProvider');
         act(() => {
             tree = renderer.create(
                 <VoiceEnergyAppProvider>
@@ -73,7 +72,7 @@ describe('VoiceEnergyAppProvider state bridge', () => {
         expect(observed.energy).not.toBeNull();
         return {
             luminosity: observed.energy!.luminosity.get(),
-            energized: observed.energy!.sourceActive.get() > 0,
+            sourceActive: observed.energy!.sourceActive.get() > 0,
         };
     }
 
@@ -163,7 +162,7 @@ describe('VoiceEnergyAppProvider state bridge', () => {
     it.each(states)('projects $name through the canonical surface state', async ({ snapshot, expected }) => {
         await expect(project(snapshot)).resolves.toMatchObject({
             luminosity: expected.luminosity,
-            energized: expected.energized,
+            sourceActive: false,
         });
     });
 
@@ -174,12 +173,13 @@ describe('VoiceEnergyAppProvider state bridge', () => {
         },
     );
 
-    it('does not turn an open input source into a semantic energized state', async () => {
+    it('keeps actual source ownership separate from the semantic energized state', async () => {
         const snapshot = { ...base, mode: 'idle' as const };
 
         await expect(project(snapshot, true)).resolves.toMatchObject({
             luminosity: 0.18,
-            energized: false,
+            sourceActive: true,
         });
+        expect(resolveVoiceEnergyState('idle').energized).toBe(false);
     });
 });

@@ -64,8 +64,9 @@ export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty 
         previousIds = ids;
         const next = (ids ?? []).flatMap((id) => {
             const value = state.workflowTriggerSetsById[id];
-            // 0.2 Manual Automations still own their prompt even without a scheduled trigger.
-            return value && (includeEmpty || value.triggers.length > 0 || (queryKey === 'account_inline' && value.legacy)) ? [value] : [];
+            // Manual Account Automations keep their owned steps after reviewed conversion too.
+            return value && (includeEmpty || value.triggers.length > 0
+                || (queryKey === 'account_inline' && (value.legacy || value.target))) ? [value] : [];
         });
         if (next.length === previous.length && next.every((value, index) => previous[index] === value)) return previous;
         previous = next;

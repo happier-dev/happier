@@ -6,7 +6,6 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
-    MAX_TRIAGE_DETAIL_TABS_V1,
     TRIAGE_DETAIL_ACTIONS_PANEL_V1,
     TRIAGE_DETAIL_SHARED_TABS_V1,
 } from './bounds.js';
@@ -39,6 +38,8 @@ export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('source'),
         id: TriageIdentifierV1ProtocolSchema,
         title: TriageTextV1ProtocolSchema,
+        /** Resolved through the source's admitted translation projection; title is the fallback. */
+        titleKey: TriageTextV1ProtocolSchema.optional(),
     }, { policy: 'closed' }),
 ]);
 export type TriageSourceDetailTabV1 = ReturnType<typeof TriageSourceDetailTabV1Schema.parse>;
@@ -59,7 +60,6 @@ export const TriageSourceKindDescriptorV1ProtocolSchema = defineProtocolObject({
      */
     detailTabs: defineProtocolArray(TriageSourceDetailTabV1Schema, {
         minItems: 1,
-        maxItems: MAX_TRIAGE_DETAIL_TABS_V1,
     }).optional(),
     /**
      * This kind's write controls render as the `actions` panel, which the

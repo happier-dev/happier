@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -8,7 +9,8 @@ import { showDocumentShareSheet } from '@/components/sharing/documents/showDocum
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -31,6 +33,7 @@ import { ArtifactProvenanceLabel } from './ArtifactProvenance';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 import { useArtifactBody } from './useArtifactBody';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
+import { ArtifactHtmlBody } from './ArtifactHtmlBody';
 
 function bodyMarkdown(artifact: DecryptedArtifact): string | null {
     const body = artifact.body;
@@ -113,6 +116,9 @@ export function ArtifactView(props: Readonly<{
 }
 
 function ArtifactBody(props: Readonly<{ artifact: DecryptedArtifact }>) {
+    if (isArtifactHtmlHeaderV1(props.artifact.rawHeader ?? props.artifact.header)) return <ArtifactHtmlBody
+        artifactId={props.artifact.id} headerVersion={props.artifact.headerVersion} bodyVersion={props.artifact.bodyVersion}
+        body={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readPreviewUrl={sync.fetchArtifactHtmlPreview} />;
     if (props.artifact.body !== null && typeof props.artifact.body === 'object') return <ArtifactBinaryBody
         artifactId={props.artifact.id} reference={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readBytes={sync.fetchArtifactBinary} />;
     const markdown = bodyMarkdown(props.artifact);
@@ -155,9 +161,9 @@ function ArtifactPageHeader(props: Readonly<{ artifact: DecryptedArtifact; onDel
             title={props.artifact.title || t('artifacts.untitled')}
             alwaysShowTitle
             leading={(
-                <PageHeaderMarkTile appearance="glyph">
+                <PageHeaderMarkSlot>
                     <Icon name={ARTIFACT_KIND_ICONS[kind]} size={24} color={theme.colors.text.secondary} />
-                </PageHeaderMarkTile>
+                </PageHeaderMarkSlot>
             )}
             meta={readFacts(props.artifact)}
             details={(

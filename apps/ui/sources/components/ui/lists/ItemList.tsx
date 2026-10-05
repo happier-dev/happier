@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View, StyleProp, ViewStyle, Platform, ScrollViewProps } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { PopoverScrollSourceProvider } from '@/components/ui/popover';
@@ -8,6 +8,7 @@ import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockp
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
 import { ListPresentationProvider, PageColumnProvider, type ListPresentation } from './listPresentation';
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 const BASE_CONTENT_PADDING_BOTTOM = Platform.select({ ios: 34, default: 16 }) ?? 16;
 
@@ -28,11 +29,16 @@ export interface ItemListProps extends ScrollViewProps {
     keyboardAware?: boolean;
 }
 
-const stylesheet = StyleSheet.create((theme, runtime) => ({
+const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-        backgroundColor: theme.colors.background.canvas,
+    },
+    groupedBackground: {
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.background.canvas, 'content', true),
+    },
+    pageBackground: {
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
     },
     contentContainer: {
         paddingBottom: Platform.select({ ios: 34, default: 16 }),
@@ -55,7 +61,6 @@ function isRefObject<T>(ref: React.ForwardedRef<T>): ref is React.MutableRefObje
 }
 
 export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((props, ref) => {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const internalRef = React.useRef<ScrollView>(null);
     const isInsideModalBoundary = useIsInsideModalBoundary();
@@ -81,9 +86,9 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     const installWebModalWheelFix = isWeb && isInsideModalBoundary && rawOnWheel == null;
 
     // Override background for non-inset grouped lists on iOS
-    const backgroundColor = presentation === 'page' || (isIOS && !insetGrouped)
-        ? theme.colors.surface.base
-        : theme.colors.background.canvas;
+    const backgroundStyle = presentation === 'page' || (isIOS && !insetGrouped)
+        ? styles.pageBackground
+        : styles.groupedBackground;
 
     const { onScroll, ...restScrollViewProps } = scrollViewProps;
 
@@ -102,7 +107,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         ref: setRefs,
         style: [
             styles.container,
-            { backgroundColor },
+            backgroundStyle,
             style,
         ],
         contentContainerStyle: [
@@ -145,8 +150,6 @@ export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewPro
     containerStyle?: StyleProp<ViewStyle>;
     insetGrouped?: boolean;
 }>((props) => {
-    const { theme } = useUnistyles();
-    
     const {
         children,
         style,
@@ -157,12 +160,12 @@ export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewPro
     const isIOS = Platform.OS === 'ios';
 
     // Override background for non-inset grouped lists on iOS
-    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface.base : theme.colors.background.canvas;
+    const backgroundStyle = (isIOS && !insetGrouped) ? stylesheet.pageBackground : stylesheet.groupedBackground;
 
     return (
         <View 
             style={[
-                { backgroundColor },
+                backgroundStyle,
                 style
             ]}
         >

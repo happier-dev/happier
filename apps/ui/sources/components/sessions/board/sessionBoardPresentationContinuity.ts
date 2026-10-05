@@ -3,7 +3,7 @@ import { readSessionSurfaceNoteTextV1 } from '@happier-dev/protocol/sessions/boa
 import type { SessionBoardItemProjection } from '@/sync/domains/session/board';
 
 import type { SessionBoardPresentationPosition } from './SessionBoardContinuity';
-import type { SessionBoardItemRect } from './SessionBoardItemMoveHandle';
+import type { SessionBoardItemRect } from './sessionBoardMoveStrategy';
 
 export function captureSessionBoardPresentationPosition(input: Readonly<{
     orderedItemIds: readonly string[];

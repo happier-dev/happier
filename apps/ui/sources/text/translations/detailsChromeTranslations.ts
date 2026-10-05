@@ -7,6 +7,8 @@ type DetailsChromeTranslations = Readonly<{
     closeUnsavedTabA11y: string;
     emptyTitle: string;
     emptyReason: string;
+    browseFiles: string;
+    previewHint: string;
     reviewChanges: (params: Readonly<{ count: number }>) => string;
     reviewChangesReason: (params: Readonly<{ count: number }>) => string;
     splitNeedsWiderPane: string;
@@ -15,7 +17,9 @@ type DetailsChromeTranslations = Readonly<{
 export const detailsChromeTranslations = {
     en: {
         closeUnsavedTabA11y: 'Close tab, it has unsaved changes',
-        emptyTitle: 'Nothing open',
+        emptyTitle: 'Files, changes and commits open here',
+        browseFiles: 'Browse files',
+        previewHint: 'One click opens a preview tab; open it again to keep it.',
         emptyReason: 'Files, changes and commits you open show up here, next to where you opened them.',
         reviewChanges: ({ count }) => (count === 1 ? 'Review 1 change' : `Review ${count} changes`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -25,7 +29,9 @@ export const detailsChromeTranslations = {
     },
     ca: {
         closeUnsavedTabA11y: 'Tanca la pestanya, té canvis sense desar',
-        emptyTitle: 'No hi ha res obert',
+        emptyTitle: 'Els fitxers, canvis i commits s’obren aquí',
+        browseFiles: 'Explora els fitxers',
+        previewHint: 'Un clic obre una previsualització; torna a obrir-la per conservar-la.',
         emptyReason: 'Els fitxers, canvis i commits que obris apareixen aquí, al costat d’on els has obert.',
         reviewChanges: ({ count }) => (count === 1 ? 'Revisa 1 canvi' : `Revisa ${count} canvis`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -35,7 +41,9 @@ export const detailsChromeTranslations = {
     },
     de: {
         closeUnsavedTabA11y: 'Tab schließen, ungespeicherte Änderungen',
-        emptyTitle: 'Nichts geöffnet',
+        emptyTitle: 'Dateien, Änderungen und Commits öffnen sich hier',
+        browseFiles: 'Dateien durchsuchen',
+        previewHint: 'Ein Klick öffnet eine Vorschau; öffne sie erneut, um sie zu behalten.',
         emptyReason: 'Dateien, Änderungen und Commits, die du öffnest, erscheinen hier – neben der Stelle, von der aus du sie geöffnet hast.',
         reviewChanges: ({ count }) => (count === 1 ? '1 Änderung prüfen' : `${count} Änderungen prüfen`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -45,7 +53,9 @@ export const detailsChromeTranslations = {
     },
     es: {
         closeUnsavedTabA11y: 'Cerrar pestaña, tiene cambios sin guardar',
-        emptyTitle: 'Nada abierto',
+        emptyTitle: 'Aquí se abren archivos, cambios y commits',
+        browseFiles: 'Explorar archivos',
+        previewHint: 'Un clic abre una vista previa; ábrela de nuevo para conservarla.',
         emptyReason: 'Los archivos, cambios y commits que abras aparecen aquí, junto a donde los abriste.',
         reviewChanges: ({ count }) => (count === 1 ? 'Revisar 1 cambio' : `Revisar ${count} cambios`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -55,7 +65,9 @@ export const detailsChromeTranslations = {
     },
     fr: {
         closeUnsavedTabA11y: 'Fermer l’onglet, modifications non enregistrées',
-        emptyTitle: 'Rien d’ouvert',
+        emptyTitle: 'Les fichiers, modifications et commits s’ouvrent ici',
+        browseFiles: 'Parcourir les fichiers',
+        previewHint: 'Un clic ouvre un aperçu ; ouvrez-le à nouveau pour le garder.',
         emptyReason: 'Les fichiers, modifications et commits que vous ouvrez apparaissent ici, à côté de l’endroit d’où vous les avez ouverts.',
         reviewChanges: ({ count }) => (count === 1 ? 'Relire 1 modification' : `Relire ${count} modifications`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -65,7 +77,9 @@ export const detailsChromeTranslations = {
     },
     it: {
         closeUnsavedTabA11y: 'Chiudi scheda, modifiche non salvate',
-        emptyTitle: 'Niente di aperto',
+        emptyTitle: 'File, modifiche e commit si aprono qui',
+        browseFiles: 'Sfoglia i file',
+        previewHint: 'Un clic apre un’anteprima; aprila di nuovo per conservarla.',
         emptyReason: 'File, modifiche e commit che apri compaiono qui, accanto a dove li hai aperti.',
         reviewChanges: ({ count }) => (count === 1 ? 'Rivedi 1 modifica' : `Rivedi ${count} modifiche`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -75,7 +89,9 @@ export const detailsChromeTranslations = {
     },
     ja: {
         closeUnsavedTabA11y: 'タブを閉じる（未保存の変更があります）',
-        emptyTitle: '開いているものはありません',
+        emptyTitle: 'ファイル、変更、コミットはここで開きます',
+        browseFiles: 'ファイルを参照',
+        previewHint: '1 回クリックするとプレビューが開きます。もう一度開くと保持されます。',
         emptyReason: '開いたファイル、変更、コミットは、開いた場所の隣のここに表示されます。',
         reviewChanges: ({ count }) => `${count} 件の変更を確認`,
         reviewChangesReason: ({ count }) => `このセッションで ${count} 個のファイルが変更されました。会話を離れずにここで確認できます。`,
@@ -83,7 +99,9 @@ export const detailsChromeTranslations = {
     },
     pl: {
         closeUnsavedTabA11y: 'Zamknij kartę, ma niezapisane zmiany',
-        emptyTitle: 'Nic nie jest otwarte',
+        emptyTitle: 'Tutaj otwierają się pliki, zmiany i commity',
+        browseFiles: 'Przeglądaj pliki',
+        previewHint: 'Kliknięcie otwiera podgląd; otwórz go ponownie, aby zachować kartę.',
         emptyReason: 'Otwierane pliki, zmiany i commity pojawiają się tutaj, obok miejsca, z którego je otworzono.',
         reviewChanges: ({ count }) => (count === 1 ? 'Przejrzyj 1 zmianę' : `Przejrzyj zmiany (${count})`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -93,7 +111,9 @@ export const detailsChromeTranslations = {
     },
     pt: {
         closeUnsavedTabA11y: 'Fechar aba, tem alterações não salvas',
-        emptyTitle: 'Nada aberto',
+        emptyTitle: 'Arquivos, alterações e commits abrem aqui',
+        browseFiles: 'Explorar arquivos',
+        previewHint: 'Um clique abre uma prévia; abra de novo para manter a aba.',
         emptyReason: 'Os arquivos, alterações e commits que você abre aparecem aqui, ao lado de onde você os abriu.',
         reviewChanges: ({ count }) => (count === 1 ? 'Revisar 1 alteração' : `Revisar ${count} alterações`),
         reviewChangesReason: ({ count }) => (count === 1
@@ -103,7 +123,9 @@ export const detailsChromeTranslations = {
     },
     ru: {
         closeUnsavedTabA11y: 'Закрыть вкладку, есть несохранённые изменения',
-        emptyTitle: 'Ничего не открыто',
+        emptyTitle: 'Здесь открываются файлы, изменения и коммиты',
+        browseFiles: 'Открыть файлы',
+        previewHint: 'Один щелчок открывает предпросмотр; откройте снова, чтобы сохранить вкладку.',
         emptyReason: 'Файлы, изменения и коммиты, которые вы открываете, появляются здесь — рядом с местом, откуда вы их открыли.',
         reviewChanges: ({ count }) => `Просмотреть изменения (${count})`,
         reviewChangesReason: ({ count }) => `В этой сессии изменено файлов: ${count}. Прочитайте их здесь, не покидая разговор.`,
@@ -111,7 +133,9 @@ export const detailsChromeTranslations = {
     },
     'zh-Hans': {
         closeUnsavedTabA11y: '关闭标签页，有未保存的更改',
-        emptyTitle: '没有打开的内容',
+        emptyTitle: '文件、更改和提交在这里打开',
+        browseFiles: '浏览文件',
+        previewHint: '单击打开预览标签页；再次打开即可保留。',
         emptyReason: '你打开的文件、更改和提交会显示在这里，就在你打开它们的位置旁边。',
         reviewChanges: ({ count }) => `查看 ${count} 处更改`,
         reviewChangesReason: ({ count }) => `此会话中有 ${count} 个文件被更改。无需离开对话即可在这里阅读。`,
@@ -119,7 +143,9 @@ export const detailsChromeTranslations = {
     },
     'zh-Hant': {
         closeUnsavedTabA11y: '關閉分頁，有未儲存的變更',
-        emptyTitle: '沒有開啟的內容',
+        emptyTitle: '檔案、變更和提交在這裡開啟',
+        browseFiles: '瀏覽檔案',
+        previewHint: '按一下開啟預覽分頁；再次開啟即可保留。',
         emptyReason: '你開啟的檔案、變更和提交會顯示在這裡，就在你開啟它們的位置旁邊。',
         reviewChanges: ({ count }) => `檢視 ${count} 處變更`,
         reviewChangesReason: ({ count }) => `此工作階段中有 ${count} 個檔案被變更。無需離開對話即可在這裡閱讀。`,

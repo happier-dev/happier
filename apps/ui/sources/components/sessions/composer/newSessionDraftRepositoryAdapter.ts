@@ -125,6 +125,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             ? { backendTarget }
             : {}),
         ...(authoring.access !== undefined ? { access: authoring.access } : {}),
+        ...(authoring.initialTriggers !== undefined ? { initialTriggers: authoring.initialTriggers } : {}),
         ...(authoring.primaryTeamId !== undefined ? { primaryTeamId: authoring.primaryTeamId } : {}),
         ...(authoring.organizationPlacement !== undefined
             ? { organizationPlacement: authoring.organizationPlacement }

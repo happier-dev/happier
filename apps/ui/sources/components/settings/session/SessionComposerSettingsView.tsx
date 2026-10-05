@@ -57,6 +57,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [newSessionPresentationMode, setNewSessionPresentationMode] = useSettingMutable('newSessionPresentationModeV1');
     const [newSessionDraftEntryMode, setNewSessionDraftEntryMode] = useSettingMutable('newSessionDraftEntryMode');
     const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
+    const [composerPromptLibraryButtonEnabled, setComposerPromptLibraryButtonEnabled] = useSettingMutable('composerPromptLibraryButtonEnabled');
     const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
     const [collapsedBannerKinds, setCollapsedBannerKinds] = useLocalSettingMutable('sessionComposerCollapsedBannerKinds');
     const hiddenBannerCount = Object.keys(normalizeComposerBannerCollapseRecord(collapsedBannerKinds)).length;
@@ -281,6 +282,9 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 title={t('settingsSessionPages.composer.layoutSection')}
                 description={t('settingsSession.input.footer')}
             >
+                <SettingRow setting={settings.promptLibraryButton} testID="settings-composer-prompt-library-button"
+                    rightElement={<Switch value={composerPromptLibraryButtonEnabled !== false} onValueChange={setComposerPromptLibraryButtonEnabled} />}
+                    showChevron={false} onPress={() => setComposerPromptLibraryButtonEnabled(composerPromptLibraryButtonEnabled === false)} />
                 <SettingAnchor setting={settings.actionBar}>
                     <Item
                         testID="settings-composer-action-bar"

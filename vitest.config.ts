@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 
 import { resolveVitestFeatureTestExcludeGlobs } from './scripts/testing/featureTestGating'
+import { resolveVitestWorkers } from './scripts/testing/vitestWorkers'
 
 // Root-level Vitest config is intentionally minimal.
 // It exists mainly to prevent accidental test discovery under local/ephemeral
@@ -8,6 +9,7 @@ import { resolveVitestFeatureTestExcludeGlobs } from './scripts/testing/featureT
 // the monorepo root.
 export default defineConfig({
     test: {
+        ...resolveVitestWorkers(),
         globals: false,
         environment: 'node',
         env: {

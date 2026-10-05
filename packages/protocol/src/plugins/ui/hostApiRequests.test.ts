@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { PluginUiHostMethodV1Schema } from './hostApiDefinition.js';
 
 import {
   PluginUiAcquireComposerInputLockRequestV1Schema,
@@ -45,6 +46,13 @@ const surface = {
   platform: 'web',
   channel: 'internal',
 } as const;
+
+describe('mounted entity drag host methods', () => {
+  it('negotiates hosted adapters through the canonical Host API vocabulary', () => {
+    expect(PluginUiHostMethodV1Schema.safeParse('readEntityDragItem').success).toBe(true);
+    expect(PluginUiHostMethodV1Schema.safeParse('updateEntityDragDrop').success).toBe(true);
+  });
+});
 
 const admittedPoint = {
   pointId: 'connection',
@@ -446,6 +454,73 @@ describe('plugin UI open and Action components', () => {
             draft: serverStartDraft,
             action: admittedOperation.action,
         }).success).toBe(false);
+    });
+
+    it('selects review launch inputs for one exact Session with canonical review draft validation', () => {
+        const request = {
+            hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
+            sessionId: 'session-1',
+            serverId: 'server-1',
+            draft: { engineIds: ['  reviewer  '], instructions: '  Review this change  ' },
+        };
+        expect(PluginUiSelectActionInputRequestV1Schema.parse(request)).toEqual({
+            ...request,
+            draft: { engineIds: ['reviewer'], instructions: 'Review this change' },
+        });
+        for (const invalid of [
+            { ...request, sessionId: undefined },
+            { ...request, sessionId: '' },
+            { ...request, serverId: '' },
+            { ...request, draft: undefined },
+            { ...request, draft: { engineIds: [], instructions: 'Review' } },
+            { ...request, draft: { engineIds: ['reviewer'], instructions: '  ' } },
+            { ...request, draft: { ...request.draft, outputs: ['walkthrough'] } },
+            { ...request, hostAction: { action: 'review.start', projection: 'serverStartDraft' } },
+            { ...request, operation: admittedOperation },
+            { hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' }, sessionId: 'session-1' },
+        ]) {
+            expect(PluginUiSelectActionInputRequestV1Schema.safeParse(invalid).success).toBe(false);
+        }
+    });
+
+    it('keeps execution launch settlements limited to canonical credential selection inputs', () => {
+        const result = {
+            kind: 'executionRunLaunch',
+            input: {
+                secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'secret-token' } } },
+                teamCredentialModel: {
+                    kind: 'team_credential_provider_model',
+                    teamId: 'team-1',
+                    resourceId: 'resource-1',
+                    expectedResourceRevision: 2,
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
+                    modelId: 'model-1',
+                    deliveryMode: 'brokered',
+                },
+                teamCredentialSessionBindingConsent: {
+                    v: 1,
+                    sessionId: 'session-1',
+                    teamId: 'team-1',
+                    resourceId: 'resource-1',
+                    expectedResourceRevision: 2,
+                },
+            },
+        };
+        expect(PluginUiSelectActionInputResultV1Schema.parse(result)).toEqual(result);
+        expect(PluginUiSelectActionInputResultV1Schema.parse({ kind: 'executionRunLaunch', input: {} }))
+            .toEqual({ kind: 'executionRunLaunch', input: {} });
+        for (const invalid of [
+            { ...result, input: { modelId: 'model-1' } },
+            { ...result, input: { profileId: 'profile-1' } },
+            { ...result, input: { outputs: ['walkthrough'] } },
+            { ...result, input: { narrator: {} } },
+            { ...result, input: { secretReferenceOverlay: { v: 1, bindings: {} } } },
+            { ...result, input: { teamCredentialModel: { ...result.input.teamCredentialModel, expectedResourceRevision: -1 } } },
+            { ...result, input: { teamCredentialSessionBindingConsent: { ...result.input.teamCredentialSessionBindingConsent, extra: true } } },
+            { ...result, sessionId: 'session-1' },
+        ]) {
+            expect(PluginUiSelectActionInputResultV1Schema.safeParse(invalid).success).toBe(false);
+        }
     });
 
     it('keeps New Session navigation separate from no-invoke input selection', () => {

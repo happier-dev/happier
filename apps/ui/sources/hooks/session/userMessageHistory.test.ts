@@ -7,7 +7,7 @@ import {
   createUserMessageHistoryNavigator,
 } from './userMessageHistory';
 
-function user(id: string, createdAt: number, text: string): Message {
+function user(id: string, createdAt: number, text: string): Extract<Message, { kind: 'user-text' }> {
   return { kind: 'user-text', id, localId: null, createdAt, text };
 }
 

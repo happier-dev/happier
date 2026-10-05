@@ -33,6 +33,8 @@ type EmptyStateProps = Readonly<{
     icon?: React.ReactNode;
     /** Already-translated title string. */
     title: string;
+    /** Optional glyph decoration; the original title remains available as semantic copy. */
+    titleContent?: React.ReactNode;
     /** Already-translated supporting copy: one line saying what would be here and why. */
     subtitle?: React.ReactNode;
     /**
@@ -80,6 +82,8 @@ type EmptyStateProps = Readonly<{
     subtitleTestID?: string;
     actionTestID?: string;
     paddingHorizontal?: number;
+    /** A containing sheet may already own the inline state's inset. */
+    paddingVertical?: number;
 }>;
 
 const EmptyStateLineLink = React.memo(function EmptyStateLineLink(props: Readonly<{ link: EmptyStatePrimaryAction }>) {
@@ -181,10 +185,10 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
 
     if (props.layout === 'inline') {
         return (
-            <View testID={props.testID} style={[stylesheet.inline, frame]}>
+            <View testID={props.testID} style={[stylesheet.inline, frame, !actionContent ? { flexWrap: 'nowrap' } : null, props.paddingHorizontal != null ? { paddingHorizontal: props.paddingHorizontal } : null, props.paddingVertical != null ? { paddingVertical: props.paddingVertical } : null]}>
                 {glyph ? <View style={stylesheet.inlineMark}>{glyph}</View> : null}
                 <View style={stylesheet.inlineCopy}>
-                    <Text testID={props.titleTestID} style={stylesheet.inlineTitle}>{props.title}</Text>
+                    <Text testID={props.titleTestID} style={stylesheet.inlineTitle}>{props.titleContent ?? props.title}</Text>
                     {props.subtitle ? (
                         <Text testID={props.subtitleTestID} style={stylesheet.inlineSubtitle}>{props.subtitle}</Text>
                     ) : null}
@@ -208,6 +212,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                 size={page ? undefined : props.size}
                 icon={glyph}
                 title={props.title}
+                titleContent={props.titleContent}
                 description={props.subtitle ?? null}
                 titleTestID={props.titleTestID}
                 descriptionTestID={props.subtitleTestID}

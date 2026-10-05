@@ -94,7 +94,7 @@ import {
     authorizeAutomationReplyHandoffRedelivery,
     retryBlockedAutomationReplyHandoff,
 } from "@/app/automations/automationReplyHandoffService";
-import type { AutomationListItem, AutomationRunItem } from "@/app/automations/automationTypes";
+import type { AutomationListItem, AutomationPatchInput, AutomationRunItem } from "@/app/automations/automationTypes";
 import { requirePresentUser } from "../../utils/requirePresentUser";
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
@@ -290,22 +290,23 @@ export function registerAutomationV3Routes(
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
             const body = AutomationDefinitionPatchRequestSchema.parse(request.body);
-            const input = {
+            const commonInput = {
                 ...(body.name !== undefined ? { name: body.name } : {}),
                 ...(body.description !== undefined ? { description: body.description } : {}),
                 ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
                 ...(body.workflowDefinitionId !== undefined ? { workflowDefinitionId: body.workflowDefinitionId } : {}),
                 ...(body.scopeSessionId !== undefined ? { scopeSessionId: body.scopeSessionId } : {}),
-                ...(body.executionRecipe !== undefined
-                    ? { executionRecipe: body.executionRecipe }
-                    : {}),
                 ...(body.assignments !== undefined ? { assignments: body.assignments } : {}),
             };
+            const input: AutomationPatchInput = body.executionRecipe !== undefined
+                ? { ...commonInput, executionRecipe: body.executionRecipe }
+                : { ...commonInput, ...(body.templateCiphertext !== undefined ? { templateCiphertext: body.templateCiphertext } : {}) };
             const automation = await updateAutomation({
                 accountId: request.userId,
                 automationId: request.params.id,
                 input,
                 expectedTemplateVersion: body.expectedTemplateVersion,
+                ...(body.templateCiphertext !== undefined ? { retainedLegacyTemplateRecovery: true } : {}),
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
             return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(

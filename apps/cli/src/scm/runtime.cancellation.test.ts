@@ -92,4 +92,63 @@ describe('runScmCommand cancellation', () => {
       expect.objectContaining({ success: false }),
     ]);
   });
+
+  it('responds once to a complete acknowledgement split across stdout chunks', async () => {
+    const child = createFakeChild(41003);
+    mocks.spawn.mockReset();
+    mocks.spawn.mockReturnValue(child);
+    const write = vi.spyOn(child.stdin, 'write');
+    const end = vi.spyOn(child.stdin, 'end');
+    const respond = vi.fn(async () => 'commit\n');
+    const command = runScmCommand({
+      bin: 'git', cwd: process.cwd(), args: ['update-ref', '--stdin'], stdin: 'prepare\n',
+      stdinInteraction: { readyLine: 'prepare: ok', respond },
+    });
+    expect(write.mock.calls).toEqual([['prepare\n']]);
+    expect(end).not.toHaveBeenCalled();
+    child.stdout.emit('data', Buffer.from('not prepare: ok\nprepa'));
+    child.stdout.emit('data', Buffer.from('re: ok'));
+    expect(respond).not.toHaveBeenCalled();
+    child.stdout.emit('data', Buffer.from('\nprepare: ok\n'));
+    await vi.waitFor(() => expect(end).toHaveBeenCalledOnce());
+    expect(respond).toHaveBeenCalledOnce();
+    expect(write.mock.calls).toEqual([['prepare\n'], ['commit\n']]);
+    child.emit('close', 0);
+    expect((await command).success).toBe(true);
+  });
+
+  it.each(['cancel', 'output_limit'] as const)('does not write a late response after %s and waits for owned process cleanup', async (reason) => {
+    const child = createFakeChild(41004);
+    mocks.spawn.mockReset();
+    mocks.spawn.mockReturnValue(child);
+    let settleCleanup!: () => void;
+    mocks.killProcessTree.mockReset();
+    mocks.killProcessTree.mockReturnValue(new Promise<void>((resolve) => { settleCleanup = resolve; }));
+    let respond!: (value: string) => void;
+    const response = new Promise<string>((resolve) => { respond = resolve; });
+    const write = vi.spyOn(child.stdin, 'write');
+    const controller = new AbortController();
+    const command = runScmCommand({
+      bin: 'git', cwd: process.cwd(), args: ['update-ref', '--stdin'], stdin: 'prepare\n',
+      signal: controller.signal,
+      ...(reason === 'output_limit' ? { maxOutputBytes: Buffer.byteLength('prepare: ok\n') } : {}),
+      stdinInteraction: { readyLine: 'prepare: ok', respond: () => response },
+    });
+    child.stdout.emit('data', Buffer.from('prepare: ok\n'));
+    await Promise.resolve();
+    if (reason === 'cancel') controller.abort();
+    else child.stdout.emit('data', Buffer.from('overflow\n'));
+    // A command can have published successfully just before the cancellation was observed.
+    child.emit('close', 0);
+    let settled = false;
+    void command.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    settleCleanup();
+    expect(await command).toEqual(expect.objectContaining({ success: false, exitCode: -1, outputLimitExceeded: reason === 'output_limit' }));
+    respond('commit\n');
+    await response;
+    await Promise.resolve();
+    expect(write.mock.calls).toEqual([['prepare\n']]);
+  });
 });

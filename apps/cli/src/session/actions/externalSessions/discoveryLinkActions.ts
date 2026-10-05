@@ -46,7 +46,7 @@ export async function executeExternalSessionCandidatesListAction(
         if (!validatedSource.ok) {
             return externalSessionsError(validatedSource.errorCode ?? 'invalid_request', validatedSource.error) satisfies ExternalSessionsCandidatesListResponse;
         }
-        const { agentId, cursor, searchTerm, searchMode, includeThreads } = parsed.data;
+        const { agentId, cursor, searchTerm, searchMode, searchTarget, includeThreads } = parsed.data;
         const source = validatedSource.source;
         const limit = parsed.data.limit
             ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxItems;
@@ -55,6 +55,9 @@ export async function executeExternalSessionCandidatesListAction(
         const providerOps = validatedSource.providerOps;
         if (!providerOps.listCandidates) {
             return externalSessionsError('agent_unavailable', 'candidates_list_not_supported') satisfies ExternalSessionsCandidatesListResponse;
+        }
+        if (searchTarget === 'content' && providerOps.contentSearch !== true) {
+            return { ok: true, candidates: [], nextCursor: null, contentCoverage: 'unsupported' };
         }
         const currentAgent = validatedSource.currentAgent;
         const runCandidateQuery = () => executeExternalSessionCandidateQuery({
@@ -66,6 +69,7 @@ export async function executeExternalSessionCandidatesListAction(
             limit,
             ...(searchTerm ? { searchTerm } : {}),
             ...(searchMode ? { searchMode } : {}),
+            ...(searchTarget ? { searchTarget } : {}),
             ...(includeThreads ? { includeThreads } : {}),
             ...(options.signal ? { signal: options.signal } : {}),
             listCandidates: async (request) => await providerOps.listCandidates!({
@@ -167,6 +171,7 @@ export async function executeExternalSessionCandidatesListAction(
             nextCursor: res.nextCursor,
             ...(capabilities ? { capabilities } : {}),
             ...(res.searchIncomplete ? { searchIncomplete: true } : {}),
+            ...(res.contentCoverage ? { contentCoverage: res.contentCoverage } : {}),
             ...(annotationResult.annotationsIncomplete ? { annotationsIncomplete: true } : {}),
             ...(res.preparation ? { preparation: res.preparation } : {}),
             autoLinkPolicyScopeV1,

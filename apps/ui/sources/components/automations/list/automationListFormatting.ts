@@ -8,6 +8,7 @@ import type {
     AutomationTriggerListItem,
 } from '@happier-dev/protocol';
 import { t, type TranslationKey } from '@/text';
+import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 
 export function formatAutomationSessionLifecycleEventLabel(
     event: AutomationSessionLifecycleEvent,
@@ -56,6 +57,10 @@ export function formatAutomationScheduleLabel(automation: {
 /** Public definition summaries expose trigger identity, never source configuration. */
 export function formatAutomationTriggerLabel(trigger: AutomationTriggerListItem): string {
     switch (trigger.kind) {
+        case 'prComment':
+        case 'ciFailed':
+        case 'runLifecycle':
+            return formatTriggerSummary(trigger);
         case 'schedule':
             return formatAutomationScheduleLabel({ schedule: trigger.schedule });
         case 'pluginEvent':
@@ -78,7 +83,7 @@ export function formatAutomationTriggerStatusLabel(
     trigger: AutomationTriggerListItem,
     automationEnabled = true,
 ): string {
-    if (trigger.kind === 'sessionLifecycle') {
+    if (trigger.kind === 'sessionLifecycle' || trigger.kind === 'runLifecycle') {
         return t(AUTOMATION_SESSION_LIFECYCLE_STATUS_KEYS[trigger.status.state]);
     }
     if (!automationEnabled) return t('automations.detail.status.paused');

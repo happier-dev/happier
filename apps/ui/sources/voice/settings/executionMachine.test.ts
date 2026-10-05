@@ -161,8 +161,10 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
         older: machine('older', true, { createdAt: 1 }),
         newer: machine('newer', true, { createdAt: 2 }),
       },
-      settings: {
+      authoringMemory: {
         recentMachinePaths: [{ machineId: 'older', path: '/repo' }],
+      },
+      settings: {
         voice: {
           executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
         },

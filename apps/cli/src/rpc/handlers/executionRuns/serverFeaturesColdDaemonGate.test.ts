@@ -32,6 +32,7 @@ function createUnusedExecutionRunBridge(): ExecutionRunHostBridgeContract {
     getStructuredMeta: () => null,
     getLatestToolResult: () => null,
     waitForTerminal: async () => unusedBridgeMethod(),
+    waitForOutput: async () => unusedBridgeMethod(),
     waitForRunStateChange: async () => unusedBridgeMethod(),
     waitForInputTurn: async () => unusedBridgeMethod(),
     getPublic: () => null,

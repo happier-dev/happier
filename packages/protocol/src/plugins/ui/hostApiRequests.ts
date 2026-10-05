@@ -51,6 +51,7 @@ import {
   PluginUiTargetedContributionOperationV1Schema,
 } from './targetedContributions.js';
 import { SessionServerStartSpawnDraftV1Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import { ReviewStartInputSchema } from '../../reviews/reviewStart.js';
 import {
   SessionAwarenessLifecycleV1Schema,
   SessionAwarenessOperationalPrimaryV1Schema,
@@ -254,15 +255,22 @@ export type PluginUiSessionPendingPermissionV1 =
 /**
  * The live state of one Session this Account's client can open. Lifecycle,
  * runtime, operational state, title and workspace are the canonical Session
- * awareness projection's own fields, never a second derivation. The object is
- * closed.
+ * awareness projection's own fields. Work presentation comes from the host's
+ * shared Work owner, including report-aware settlement. Both objects are closed.
  */
 export const PluginUiSessionStateV1Schema = z.object({
   sessionId: z.string().trim().min(1),
+  // Exact mounted Account scope, not the client's currently focused Home.
+  serverId: z.string().trim().min(1).optional(),
   title: z.string().min(1).optional(),
   lifecycle: SessionAwarenessLifecycleV1Schema,
   runtime: SessionAwarenessRuntimeV1Schema,
   operational: SessionAwarenessOperationalPrimaryV1Schema,
+  workStatus: z.object({
+    bucket: z.enum(['needs_you', 'working', 'finished', 'idle', 'offline']),
+    tone: z.enum(['neutral', 'attention', 'danger']),
+    word: z.string(),
+  }).strict(),
   workspace: SessionAwarenessWorkspaceV1Schema.optional(),
   pendingPermissions: z.array(PluginUiSessionPendingPermissionV1Schema),
 }).strict();
@@ -522,11 +530,19 @@ export const PluginUiSelectActionInputTargetedRequestV1Schema = z.object({
 export type PluginUiSelectActionInputTargetedRequestV1 =
   z.infer<typeof PluginUiSelectActionInputTargetedRequestV1Schema>;
 
-/** The only host-owned no-invoke selection literal. */
-export const PluginUiSelectActionInputHostActionV1Schema = z.object({
+/** Exact host-owned no-invoke selection literals. */
+const PluginUiSelectActionInputSessionHostActionV1Schema = z.object({
   action: z.literal('session.spawn_new'),
   projection: z.literal('serverStartDraft'),
 }).strict();
+const PluginUiSelectActionInputReviewHostActionV1Schema = z.object({
+  action: z.literal('review.start'),
+  projection: z.literal('executionRunLaunch'),
+}).strict();
+export const PluginUiSelectActionInputHostActionV1Schema = z.discriminatedUnion('action', [
+  PluginUiSelectActionInputSessionHostActionV1Schema,
+  PluginUiSelectActionInputReviewHostActionV1Schema,
+]);
 export type PluginUiSelectActionInputHostActionV1 =
   z.infer<typeof PluginUiSelectActionInputHostActionV1Schema>;
 
@@ -687,16 +703,27 @@ export type PluginUiPreparedReviewWorkspaceResultV1 = z.infer<
   typeof PluginUiPreparedReviewWorkspaceResultV1Schema
 >;
 
-export const PluginUiSelectActionInputHostRequestV1Schema = z.object({
-  hostAction: PluginUiSelectActionInputHostActionV1Schema,
-  draft: PluginUiJsonObjectV1Schema.optional(),
-}).strict();
+export const PluginUiSelectActionInputHostRequestV1Schema = z.union([
+  z.object({
+    hostAction: PluginUiSelectActionInputSessionHostActionV1Schema,
+    draft: PluginUiJsonObjectV1Schema.optional(),
+  }).strict(),
+  z.object({
+    hostAction: PluginUiSelectActionInputReviewHostActionV1Schema,
+    sessionId: z.string().min(1),
+    serverId: z.string().min(1).optional(),
+    draft: z.object({
+      engineIds: ReviewStartInputSchema.shape.engineIds,
+      instructions: ReviewStartInputSchema.shape.instructions,
+    }).strict(),
+  }).strict(),
+]);
 export type PluginUiSelectActionInputHostRequestV1 =
   z.infer<typeof PluginUiSelectActionInputHostRequestV1Schema>;
 
 /**
  * This two-arm request stays closed: an admitted targeted operation retains
- * its existing contract, while the literal Session arm has no Action handle
+ * its existing contract, while host-owned selections have no Action handle
  * and therefore cannot acquire execution authority.
  */
 export const PluginUiSelectActionInputRequestV1Schema = z.union([
@@ -739,10 +766,21 @@ export const PluginUiSelectActionInputServerStartDraftV1Schema = z.object({
 export type PluginUiSelectActionInputServerStartDraftV1 =
   z.infer<typeof PluginUiSelectActionInputServerStartDraftV1Schema>;
 
-/** The only successful settlements: targeted submission, Session draft, or cancellation. */
+/** Credential selection only; the host admits the complete review input before settlement. */
+const PluginUiSelectActionInputExecutionRunLaunchV1Schema = z.object({
+  kind: z.literal('executionRunLaunch'),
+  input: z.object({
+    secretReferenceOverlay: ReviewStartInputSchema.shape.secretReferenceOverlay,
+    teamCredentialModel: ReviewStartInputSchema.shape.teamCredentialModel,
+    teamCredentialSessionBindingConsent: ReviewStartInputSchema.shape.teamCredentialSessionBindingConsent,
+  }).strict(),
+}).strict();
+
+/** Exact no-invoke settlements, targeted submission, or cancellation. */
 export const PluginUiSelectActionInputResultV1Schema = z.discriminatedUnion('kind', [
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,
+  PluginUiSelectActionInputExecutionRunLaunchV1Schema,
   z.object({ kind: z.literal('cancelled') }).strict(),
 ]);
 export type PluginUiSelectActionInputResultV1 =

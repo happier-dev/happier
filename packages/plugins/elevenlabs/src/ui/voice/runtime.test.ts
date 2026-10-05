@@ -70,7 +70,11 @@ function createSdkHandleConnection(input: Readonly<{ driver: Readonly<{
   const close = async (): Promise<void> => {
     if (!closePromise) {
       state = 'closed';
-      closePromise = input.driver.close();
+      // The host media facade retains pending/successful cleanup, and retries rejection.
+      closePromise = input.driver.close().catch((error: unknown) => {
+        closePromise = null;
+        throw error;
+      });
     }
     await closePromise;
   };
@@ -95,7 +99,8 @@ function createSdkHandleConnection(input: Readonly<{ driver: Readonly<{
               providerSessionId = event.sessionId;
               observations?.onTransport?.(event);
             },
-            onRemoteClose() { void close(); },
+            // The real host observes automatic-close errors; explicit dispose still rejects.
+            onRemoteClose() { void close().catch(() => undefined); },
           }),
           abort,
         ]);
@@ -597,6 +602,11 @@ describe('ElevenLabs public Voice provider leaf', () => {
     const signal = new AbortController().signal;
     const prepared = await runtime.protocol.prepare({
       controlSessionId: 'control-1', attemptId: 1, reason: 'initial', request: {},
+      attemptPolicy: {
+        instructions: 'Reply in French using the admitted tools.',
+        assistantLanguage: 'fr-FR',
+        welcome: { enabled: true, mode: 'immediate', text: 'Bonjour, je vous écoute.' },
+      },
       platform: 'web', providerConfig: {
         billingMode: 'byo',
         agentId: 'agent-1',
@@ -625,7 +635,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
             platform_settings: {
               auth: { enable_auth: true },
               overrides: { conversation_config_override: {
-                agent: { language: true, prompt: { prompt: true } },
+                agent: { first_message: true, language: true, prompt: { prompt: true } },
                 conversation: { text_only: true },
               } },
             },
@@ -672,6 +682,11 @@ describe('ElevenLabs public Voice provider leaf', () => {
     });
     expect(publicSdkHandleConnection).toHaveBeenCalledTimes(1);
     await connection.connect(new AbortController().signal);
+    expect(sdk.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      overrides: expect.objectContaining({
+        agent: expect.objectContaining({ firstMessage: 'Bonjour, je vous écoute.', language: 'fr' }),
+      }),
+    }));
     const startOptions = sdk.startSession.mock.calls[0]?.[0] as Readonly<{
       clientTools?: Readonly<Record<string, (parameters: unknown) => Promise<unknown>>>;
       onIncomingEvent?: (event: unknown) => void;
@@ -698,6 +713,45 @@ describe('ElevenLabs public Voice provider leaf', () => {
     await connection.close({ code: 'user_stop' });
     expect(sdk.endSession).toHaveBeenCalledTimes(1);
     await runtime.dispose?.();
+  });
+
+  it('keeps an unresolved hosted settlement retryable after public runtime disposal fails', async () => {
+    sdk.startSession.mockResolvedValueOnce({
+      endSession: async () => {}, setMicMuted: () => {}, setVolume: () => {},
+      sendUserMessage: () => {}, sendContextualUpdate: () => {}, getId: () => 'conversation-retry',
+    });
+    const complete = vi.fn().mockRejectedValueOnce(new Error('processing'))
+      .mockRejectedValueOnce(new Error('processing')).mockResolvedValue(undefined);
+    const abort = vi.fn();
+    const runtime = createElevenLabsVoiceProviderRuntime();
+    const signal = new AbortController().signal;
+    const prepared = await runtime.protocol.prepare({
+      controlSessionId: 'control-retry', attemptId: 1, reason: 'initial', request: {},
+      platform: 'web', providerConfig: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+      credentials: { phase: 'prepare', mediated: null, raw: null }, providerConversation: null,
+      hostedConversation: {
+        start: async () => ({ allowed: true, token: 'token', leaseId: 'lease-retry', bindingNonce: 'nonce', expiresAtMs: null }),
+        complete, abort,
+      }, signal,
+    });
+    if (prepared.kind !== 'prepared') throw new Error('expected_prepared');
+    const connection = await runtime.createConnection({
+      session: prepared.session, attemptId: 1,
+      mic: { ensureActive: async () => {}, teardown: async () => {}, setMuted: () => {}, isMuted: () => false, getStream: () => null },
+      interruption: { duckGain: 0.18, retainedOutputMaxMs: 1_500 }, levels: { onOutputLevel: () => {} },
+      media: { createSdkHandleConnection, createWebRtcConnection: vi.fn(), createPcmConnection: vi.fn() },
+      tools: [], ui: {} as never, signal, execution: { kind: 'direct_media' },
+      credentials: { phase: 'connection', mediated: null, raw: null },
+    });
+    await connection.connect(signal);
+    await expect(runtime.dispose?.()).rejects.toThrow('processing');
+    await runtime.dispose?.();
+    expect(complete.mock.calls).toEqual([
+      [{ providerConversationId: 'conversation-retry' }],
+      [{ providerConversationId: 'conversation-retry' }],
+      [{ providerConversationId: 'conversation-retry' }],
+    ]);
+    expect(abort).not.toHaveBeenCalled();
   });
 
   it('aborts hosted bookkeeping and suppresses late SDK publication after End Voice', async () => {

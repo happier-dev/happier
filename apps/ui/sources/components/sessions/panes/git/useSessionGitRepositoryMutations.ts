@@ -1,9 +1,9 @@
 import * as React from 'react';
-import type { ScmOperationErrorCode, ScmOperationState } from '@happier-dev/protocol';
+import type { ScmOperationState } from '@happier-dev/protocol';
 
 type ScmRepositoryOperationKind = ScmOperationState['kind'];
 
-import { runSessionScmMutation } from '@/scm/operations/runSessionScmMutation';
+import { runSessionScmMutation, type ScmMutationResponse } from '@/scm/operations/runSessionScmMutation';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -19,8 +19,6 @@ import {
 } from '@/sync/ops/sessions';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
 import { t } from '@/text';
-
-type ScmMutationResponse = Readonly<{ success: boolean; error?: string; errorCode?: ScmOperationErrorCode | string }>;
 
 /**
  * The session's repository-level writes (remotes, merge/rebase and their continue/abort), each through the one
@@ -41,7 +39,7 @@ export function useSessionGitRepositoryMutations(input: Readonly<{
         operation: ScmProjectOperationKind;
         fallbackError: string;
         call: () => Promise<T>;
-        refreshAfterSuccess?: () => Promise<void>;
+        refreshAfterMutation?: () => Promise<void>;
     }): Promise<ScmMutationResponse> => {
         const result = await runSessionScmMutation({
             state: storage.getState(),
@@ -50,11 +48,15 @@ export function useSessionGitRepositoryMutations(input: Readonly<{
             cwd: sessionPath,
             run: mutation.call,
             fallbackError: mutation.fallbackError,
-            refreshAfterSuccess: mutation.refreshAfterSuccess,
+            refreshAfterMutation: async () => {
+                await (mutation.refreshAfterMutation ?? refresh)();
+                const error = storage.getState().getSessionProjectScmSnapshotError(sessionId, serverId);
+                if (error) throw new Error(error.message);
+            },
         });
         if (!result.started) return { success: false, error: result.message };
         return result.response === 'cancelled' ? { success: false } : result.response;
-    }, [serverId, sessionId, sessionPath]);
+    }, [refresh, serverId, sessionId, sessionPath]);
 
     return React.useMemo(() => ({
         refresh,
@@ -62,12 +64,7 @@ export function useSessionGitRepositoryMutations(input: Readonly<{
             operation: 'commit_undo',
             fallbackError: t('sessionGitPane.flow.undo.failed'),
             call: () => sessionScmCommitUndoLast(sessionId, { expectedHeadOid }, serverId),
-            refreshAfterSuccess: async () => {
-                await (input.refreshAfterUndo ?? refresh)();
-                // Status sync publishes failures to the store instead of rejecting its await.
-                const error = storage.getState().getSessionProjectScmSnapshotError(sessionId, serverId);
-                if (error) throw new Error(error.message);
-            },
+            refreshAfterMutation: input.refreshAfterUndo ?? refresh,
         }),
         addRemote: (request: Parameters<typeof sessionScmRemoteAdd>[1]) => run({
             operation: 'remote_add',

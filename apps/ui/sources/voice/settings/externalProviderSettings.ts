@@ -15,6 +15,7 @@ export type ExternalVoiceProviderSettingsDescriptor = Readonly<{
   schemaVersion: 1 | 2;
   fields: readonly PluginSettingFieldV2[];
   privacyDisclosure: string | Readonly<{ key: string; fallback: string }> | null;
+  privacyFacts?: VoiceProviderSettings['privacyFacts'] | null;
   presentation: VoiceProviderSettingsPresentation | null;
   connectedServicesBinding: Readonly<{
     id: string;
@@ -86,6 +87,9 @@ export function createExternalVoiceProviderSettingsDescriptor(
   const privacyDisclosure = settings?.privacyDisclosure
     ? deepFreeze(cloneJson(settings.privacyDisclosure)) as ExternalVoiceProviderSettingsDescriptor['privacyDisclosure']
     : null;
+  const privacyFacts = settings?.privacyFacts
+    ? deepFreeze(cloneJson(settings.privacyFacts)) as ExternalVoiceProviderSettingsDescriptor['privacyFacts']
+    : null;
   const presentation = settings?.presentation
     ? deepFreeze(cloneJson(settings.presentation)) as unknown as VoiceProviderSettingsPresentation
     : null;
@@ -127,6 +131,7 @@ export function createExternalVoiceProviderSettingsDescriptor(
     schemaVersion: settings?.schemaVersion ?? 1,
     fields,
     privacyDisclosure,
+    privacyFacts,
     presentation,
     connectedServicesBinding,
     defaultConfig,

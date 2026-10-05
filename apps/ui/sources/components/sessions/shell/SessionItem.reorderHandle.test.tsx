@@ -120,33 +120,43 @@ function triggerHoverEnter(node: ReactTestInstance) {
     node.props.onPointerEnter?.();
 }
 
-describe('SessionItem reorder handle', () => {
+const SESSION = {
+    seq: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    active: true,
+    activeAt: 1,
+    metadata: null,
+    metadataVersion: 1,
+    agentState: null,
+    agentStateVersion: 1,
+    thinking: false,
+    thinkingAt: 0,
+    presence: 'online',
+} as const;
+
+async function hoverAll(screen: Awaited<ReturnType<typeof renderScreen>>): Promise<void> {
+    const hoverTargets = screen.tree.root.findAll((node) => (
+        typeof node.props?.onPointerEnter === 'function'
+        || typeof node.props?.onMouseEnter === 'function'
+        || typeof node.props?.onHoverIn === 'function'
+    ));
+    await act(async () => {
+        for (const target of hoverTargets) triggerHoverEnter(target);
+    });
+}
+
+describe('SessionItem desktop carry (E1)', () => {
     afterEach(() => {
         navigateToSessionSpy.mockClear();
         standardCleanup();
     });
 
-    it('renders a GestureDetector-wrapped reorder handle when reorderHandleGesture is provided', async () => {
+    it('draws no separate drag handle or grip on a hovered desktop row: the whole row is the source', async () => {
         const SessionItem = await sessionItemModulePromise;
-        const session = {
-            id: 'sess_1',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
         const screen = await renderScreen(
             <SessionItem
-                session={session}
+                session={{ ...SESSION, id: 'sess_1' } as any}
                 serverId="server_a"
                 serverName="Server A"
                 showServerBadge={true}
@@ -156,182 +166,13 @@ describe('SessionItem reorder handle', () => {
                 isSingle={true}
                 variant="default"
                 compact={false}
-                reorderHandleGesture={mockGesture as any}
+                dragEnabled
             />,
         );
+        await hoverAll(screen);
 
-        // On web, actions are only rendered on hover. Trigger hover first.
-        const row = screen.findByTestId('session-list-item-sess_1');
-        expect(row).toBeTruthy();
-        const hoverTargets = screen.tree.root.findAll((node) => (
-            typeof node.props?.onPointerEnter === 'function'
-            || typeof node.props?.onMouseEnter === 'function'
-            || typeof node.props?.onHoverIn === 'function'
-        ));
-        expect(hoverTargets.length).toBeGreaterThan(0);
-        await act(async () => {
-            for (const target of hoverTargets) {
-                triggerHoverEnter(target);
-            }
-        });
-
-        const handles = screen.findAllByTestId('session-item-reorder-handle');
-        expect(handles).toHaveLength(1);
-
-        const handle = handles[0];
-        expect(handle.parent?.type).toBe('GestureDetector');
-        expect(handle.parent?.props.gesture).toBe(mockGesture);
+        expect(screen.findAllByTestId('session-item-reorder-handle')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-item-drag-grip-sess_1')).toHaveLength(0);
     });
 
-    it('renders the reorder handle without hover when isBeingDragged is true', async () => {
-        const SessionItem = await sessionItemModulePromise;
-        const session = {
-            id: 'sess_3',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                serverId="server_a"
-                serverName="Server A"
-                showServerBadge={true}
-                selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
-                variant="default"
-                compact={false}
-                reorderHandleGesture={mockGesture as any}
-                isBeingDragged={true}
-            />,
-        );
-
-        // Do NOT trigger hover — isBeingDragged should force the handle visible
-        const handles = screen.findAllByTestId('session-item-reorder-handle');
-        expect(handles).toHaveLength(1);
-    });
-
-    it('does not render a reorder handle when reorderHandleGesture is not provided', async () => {
-        const SessionItem = await sessionItemModulePromise;
-        const session = {
-            id: 'sess_2',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                serverId="server_a"
-                serverName="Server A"
-                showServerBadge={true}
-                selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
-                variant="default"
-                compact={false}
-            />,
-        );
-
-        const row = screen.findByTestId('session-list-item-sess_2');
-        expect(row).toBeTruthy();
-        await act(async () => {
-            triggerHoverEnter(row!);
-        });
-
-        const handles = screen.findAllByTestId('session-item-reorder-handle');
-        expect(handles).toHaveLength(0);
-    });
-
-    it('suppresses the next row press when the reorder handle receives a pointer gesture', async () => {
-        const SessionItem = await sessionItemModulePromise;
-        const session = {
-            id: 'sess_4',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                serverId="server_a"
-                serverName="Server A"
-                showServerBadge={true}
-                selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
-                variant="default"
-                compact={false}
-                reorderHandleGesture={mockGesture as any}
-            />,
-        );
-
-        const row = screen.findByTestId('session-list-item-sess_4');
-        expect(row).toBeTruthy();
-        const hoverTargets = screen.tree.root.findAll((node) => (
-            typeof node.props?.onPointerEnter === 'function'
-            || typeof node.props?.onMouseEnter === 'function'
-            || typeof node.props?.onHoverIn === 'function'
-        ));
-        expect(hoverTargets.length).toBeGreaterThan(0);
-        await act(async () => {
-            for (const target of hoverTargets) {
-                triggerHoverEnter(target);
-            }
-        });
-
-        const handle = screen.findByTestId('session-item-reorder-handle');
-        expect(handle).toBeTruthy();
-
-        await act(async () => {
-            handle?.props.onPointerDown?.({});
-            handle?.props.onPointerUp?.({});
-        });
-        await act(async () => {
-            await pressTestInstanceAsync(row, 'session list row after handle pointer gesture');
-        });
-
-        expect(navigateToSessionSpy).not.toHaveBeenCalled();
-
-        await act(async () => {
-            await pressTestInstanceAsync(row, 'session list row follow-up press');
-        });
-
-        expect(navigateToSessionSpy).toHaveBeenCalledTimes(1);
-        expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_a' });
-    });
 });

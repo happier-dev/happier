@@ -32,6 +32,8 @@ export function useSessionTerminalMode(sessionId: string, serverId?: string | nu
 }
 
 export type SessionTerminalIdentity = Readonly<{
+    available: boolean;
+    terminalId: string | null;
     serverId: string | null;
     terminalMode: SessionTerminalMode;
     terminalKey: string;
@@ -51,7 +53,7 @@ export function resolveSessionTerminalIdentity(params: Readonly<{
             ? `${scopeId}:attach:${params.terminal.id}`
             : serverId ? `${scopeId}:attach` : `session-attach:${params.sessionId}`
         : instanceId && instanceId !== 'embedded' ? `${scopeId}:terminal:${instanceId}` : `${scopeId}:terminal`;
-    return { serverId, terminalMode, terminalKey, terminalTarget: params.terminal?.target };
+    return { available: Boolean(params.terminal) || !params.terminalInstanceId, terminalId: params.terminal?.id ?? null, serverId, terminalMode, terminalKey, terminalTarget: params.terminal?.target };
 }
 
 export function useSessionTerminalIdentity(params: Readonly<{
@@ -61,7 +63,6 @@ export function useSessionTerminalIdentity(params: Readonly<{
     terminalInstanceId?: string;
     terminal?: SessionTerminalMemberV1;
 }>): SessionTerminalIdentity {
-    const serverId = parseSessionPaneScopeId(params.scopeId)?.address?.serverId ?? null;
     const storedWorkspace = React.useSyncExternalStore(
         subscribeSessionTerminalWorkspace,
         React.useCallback(() => readSessionTerminalWorkspaceForScope(params.scopeId), [params.scopeId]),

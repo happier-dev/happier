@@ -1,8 +1,12 @@
-import type { ReactNode } from 'react';
-import { View } from 'react-native';
+import { createContext, useContext, type ReactNode } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 
-import type { HappierStyleProp } from '../portableTypes.js';
+import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { HappierPressable } from '../interaction/Pressable.js';
+import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
+import { happierMaterialBackgroundColor, type HappierMaterialRole } from './material.js';
+
+const MaterialRoleContext = createContext<HappierMaterialRole | undefined>(undefined);
 
 /**
  * Shared structural surface behavior.
@@ -18,6 +22,8 @@ export type HappierSurfaceProps = Readonly<{
   onPress?: () => unknown;
   disabled?: boolean;
   accessibilityLabel?: string;
+  /** Semantic group; the host owns its effective material and preference. */
+  materialRole?: HappierMaterialRole;
   /** Resolved chrome supplied by the core or plugin adapter. */
   style?: HappierStyleProp;
   /** Hit area/chrome outside the card body for an actionable surface. */
@@ -34,12 +40,25 @@ export function HappierSurface({
   onPress,
   disabled,
   accessibilityLabel,
+  materialRole,
   style,
   pressableStyle,
   pressedStyle,
   frameStyle,
 }: HappierSurfaceProps) {
-  const content = <View style={style}>{children}</View>;
+  const host = useOptionalPluginUiPresentationHost();
+  const parentRole = useContext(MaterialRoleContext);
+  const nested = parentRole === materialRole;
+  const baseColor = Platform.OS === 'web' && materialRole && !host?.renderMaterialSurface
+    ? StyleSheet.flatten<HappierPortableStyle>(style)?.backgroundColor
+    : undefined;
+  const materialStyle = materialRole && typeof baseColor === 'string'
+    ? { backgroundColor: happierMaterialBackgroundColor(baseColor, materialRole, Platform.OS === 'web', nested) }
+    : undefined;
+  const body = materialRole && host?.renderMaterialSurface
+    ? host.renderMaterialSurface({ role: materialRole, nested, children, style })
+    : <View style={[style, materialStyle]}>{children}</View>;
+  const content = <MaterialRoleContext.Provider value={materialRole ?? parentRole}>{body}</MaterialRoleContext.Provider>;
 
   if (!onPress) {
     return <View testID={testID} style={frameStyle}>{content}</View>;

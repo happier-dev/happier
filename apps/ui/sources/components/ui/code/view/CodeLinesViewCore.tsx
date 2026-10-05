@@ -8,9 +8,10 @@ import {
     type CodeLineInteractionMode,
 } from '@/components/ui/code/interactions/resolveCodeLineRangeSelection';
 
-import { CodeLineRow, type CodeLinePressEvent } from './CodeLineRow';
+import { CodeLineRow, CODE_LINE_BASE_HEIGHT, type CodeLinePressEvent } from './CodeLineRow';
 import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHighlighting';
 import { CodeLinesReadingAnchor, type NativeCodeReadingAnchor } from './CodeLinesReadingAnchor';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 export type CodeLinesExternalScrollView = Readonly<{
     scrollRef: React.RefObject<{ scrollTo: (options: { y: number; animated: boolean }) => void } | null>;
@@ -61,6 +62,7 @@ export type CodeLinesViewProps = {
     externalScrollView?: CodeLinesExternalScrollView;
     highlightLineId?: string;
     highlightLineIds?: ReadonlySet<string>;
+    findRangesByLineId?: ReadonlyMap<string, readonly FindTextRange[]>;
     testID?: string;
     onLayout?: (e: any) => void;
     onContentSizeChange?: (width: number, height: number) => void;
@@ -242,6 +244,7 @@ export function CodeLinesViewCore(
                 line={item}
                 selected={selected.has(item.id)}
                 highlighted={isHighlighted(item.id)}
+                findRanges={props.findRangesByLineId?.get(item.id)}
                 onPressLine={handlePressLine}
                 onPressInLine={rangeGesturesEnabled && Platform.OS === 'web' ? handlePressInLine : undefined}
                 onHoverLine={rangeGesturesEnabled && Platform.OS === 'web' ? handleHoverLine : undefined}
@@ -262,6 +265,7 @@ export function CodeLinesViewCore(
         lineNativeIdPrefix,
         measureExternalRow,
         props.externalScrollView,
+        props.findRangesByLineId,
         effectiveSyntaxHighlighting,
         handleHoverLine,
         handlePressInLine,
@@ -300,7 +304,15 @@ export function CodeLinesViewCore(
         return props.lines.findIndex((l) => l.id === id);
     }, [props.lines, props.scrollToLineId]);
 
-    const estimatedRowHeight = 22;
+    const estimatedRowHeight = CODE_LINE_BASE_HEIGHT;
+    const currentFindRange = props.scrollToLineId
+        ? props.findRangesByLineId?.get(props.scrollToLineId)?.find((range) => range.current)
+        : undefined;
+    // Two occurrences can share a line. Their range is the navigation identity, while equivalent
+    // decoration refreshes retain the completed target and leave manual reading scroll untouched.
+    const scrollTargetKey = props.scrollToLineId
+        ? JSON.stringify([props.scrollToLineId, currentFindRange?.start ?? null, currentFindRange?.end ?? null])
+        : null;
 
     const getItemLayout = React.useCallback((_: unknown, index: number) => {
         // A best-effort constant-height layout to make scroll-to-index reliable on React Native Web.
@@ -318,7 +330,7 @@ export function CodeLinesViewCore(
             completedScrollTarget.current = null;
             return;
         }
-        if (scrollIndex < 0 || completedScrollTarget.current === targetId) return;
+        if (scrollIndex < 0 || completedScrollTarget.current === scrollTargetKey) return;
         const firstLineId = props.lines[0]?.id ?? null;
 
         let cancelled = false;
@@ -386,7 +398,7 @@ export function CodeLinesViewCore(
                     measureExternalLayout(owner, row, (_x, y) => {
                         if (cancelled) return;
                         const scrollY = Math.max(0, y);
-                        completedScrollTarget.current = targetId;
+                        completedScrollTarget.current = scrollTargetKey;
                         owner.offsetRef.current = scrollY;
                         owner.scrollRef.current?.scrollTo({ y: scrollY, animated: true });
                     });
@@ -395,7 +407,7 @@ export function CodeLinesViewCore(
                 if (!props.onScrollToLine) return;
                 row?.measureInWindow((_x, y) => {
                     if (cancelled) return;
-                    completedScrollTarget.current = targetId;
+                    completedScrollTarget.current = scrollTargetKey;
                     props.onScrollToLine?.(y);
                 });
                 return;
@@ -404,14 +416,14 @@ export function CodeLinesViewCore(
             try {
                 if (listRef.current) {
                     listRef.current.scrollToIndex({ index: scrollIndex, viewPosition: 0.25, animated: true });
-                    completedScrollTarget.current = targetId;
+                    completedScrollTarget.current = scrollTargetKey;
                 }
             } catch {
                 // ignore
             }
             // React Native Web sometimes fails to forward FlatList refs; fall back to DOM scrollTop.
             const offsetScrolled = tryScrollDomOffset();
-            if (tryScrollIntoView() || offsetScrolled) completedScrollTarget.current = targetId;
+            if (tryScrollIntoView() || offsetScrolled) completedScrollTarget.current = scrollTargetKey;
         };
 
         let attempts = 0;
@@ -431,7 +443,7 @@ export function CodeLinesViewCore(
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [estimatedRowHeight, lineNativeIdPrefix, props.lines, props.externalScrollView, props.onScrollToLine, props.scrollToLineId, scrollIndex, virtualized]);
+    }, [estimatedRowHeight, lineNativeIdPrefix, props.lines, props.externalScrollView, props.onScrollToLine, props.scrollToLineId, scrollTargetKey, scrollIndex, virtualized]);
 
     // FlatList is a PureComponent: when behavior depends on props outside `data`, we must provide `extraData`
     // to ensure rows get re-rendered. This matters for "selected" state and inline review-comment composers.
@@ -455,6 +467,7 @@ export function CodeLinesViewCore(
         syntaxHighlighting: effectiveSyntaxHighlighting,
         highlightLineId: props.highlightLineId,
         highlightLineIds: props.highlightLineIds,
+        findRangesByLineId: props.findRangesByLineId,
         advancedTokensRevision,
     } as const), [
         effectiveSyntaxHighlighting,
@@ -467,6 +480,7 @@ export function CodeLinesViewCore(
         rangeGesturesEnabled,
         props.highlightLineId,
         props.highlightLineIds,
+        props.findRangesByLineId,
         props.isCommentActive,
         props.onPressAddComment,
         props.onPressLineRange,

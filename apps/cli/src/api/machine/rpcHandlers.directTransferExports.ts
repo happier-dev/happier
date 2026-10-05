@@ -32,6 +32,7 @@ export type DirectTransferExportPrepareRequest =
         workingDirectory: string;
         path: string;
         asZip: boolean;
+        confinedToWorkingDirectory?: boolean;
     }>
     | Readonly<{
         t: 'workspace_sync_seed_v1';
@@ -68,6 +69,7 @@ const DirectTransferExportPrepareRequestSchema = z.union([
         workingDirectory: z.string().min(1),
         path: z.string().min(1),
         asZip: z.boolean(),
+        confinedToWorkingDirectory: z.boolean().optional(),
     }).strict(),
     z.object({
         t: z.literal('workspace_sync_seed_v1'),

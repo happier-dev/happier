@@ -10,13 +10,13 @@ import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPan
  * one opener, so the Jump always addresses the pane scope of the destination it was opened from.
  * Null when the palette runtime is not mounted (a surface hosted outside the app shell).
  */
-export function useOpenTerminalJump(): ((input: Readonly<{ sessionId: string; serverId: string | null }>) => void) | null {
+export function useOpenTerminalJump(): ((input: Readonly<{ sessionId: string; serverId: string | null; scopeId?: string }>) => void) | null {
     const runtime = useOptionalUniversalSearchRuntime();
     const instanceKey = useDestinationInstanceKey();
     return React.useMemo(() => {
         if (!runtime) return null;
         return (input) => {
-            const scopeId = createSessionPaneScopeId(input.sessionId, input.serverId, instanceKey);
+            const scopeId = input.scopeId ?? createSessionPaneScopeId(input.sessionId, input.serverId, instanceKey);
             runtime.open(undefined, undefined, { terminals: { scopeId } });
         };
     }, [instanceKey, runtime]);

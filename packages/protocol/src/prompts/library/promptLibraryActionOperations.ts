@@ -5,7 +5,7 @@ import {
   type PromptBundleBodyV1,
   type PromptBundleEntryV1,
 } from './promptBundleSchemas.js';
-import { PromptDocBodyV1Schema, type PromptDocBodyV1 } from './promptDocV2.js';
+import { PromptDocArtifactHeaderV1Schema, PromptDocBodyV1Schema, type PromptDocBodyV1 } from './promptDocV2.js';
 import { computePromptBundleDigestV1, computePromptDocDigestV1 } from './promptLibraryDigests.js';
 import type {
   PromptAssetInstallModeV1,
@@ -29,6 +29,12 @@ export type PromptLibraryStoredArtifact = Readonly<{
 }>;
 
 export type PromptLibraryArtifactStore = Readonly<{
+  /** Header inventory only. Unreadable ranges must not be reported as complete. */
+  list?(options?: Readonly<{ limit?: number; cursor?: string; signal?: AbortSignal }>): Promise<Readonly<{
+    items: readonly Readonly<{ id: string; header: Readonly<Record<string, unknown>> | null; updatedAtMs: number }>[];
+    coverage: 'complete' | 'partial' | 'unavailable';
+    nextCursor?: string;
+  }>>;
   read(artifactId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<PromptLibraryStoredArtifact | null>;
   update(input: Readonly<{
     artifactId: string;
@@ -57,7 +63,7 @@ function throwIfAborted(signal?: AbortSignal): void {
   signal?.throwIfAborted();
 }
 
-function normalizePromptTags(value: readonly string[] | null | undefined): string[] {
+export function normalizePromptTags(value: readonly string[] | null | undefined): string[] {
   const seen = new Set<string>();
   const tags: string[] = [];
   for (const raw of value ?? []) {
@@ -92,6 +98,92 @@ function upsertSkillMd(entries: readonly PromptBundleEntryV1[], markdown: string
     contentKind: 'utf8',
   };
   return [entry, ...entries.filter((candidate) => candidate.path !== 'SKILL.md')];
+}
+
+export async function createPromptDocInLibrary(params: Readonly<{
+  store: PromptLibraryArtifactStore;
+  request: Readonly<{ title: string; markdown: string; folderId?: string | null; tags?: readonly string[];
+    favorite?: boolean; origin?: 'built_in' | 'user' | 'imported' }>;
+  nowMs?: () => number;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ ok: true; artifactId: string }>> {
+  throwIfAborted(params.signal);
+  if (!params.store.create) throw new Error('prompt_library_artifact_create_unavailable');
+  const now = (params.nowMs ?? Date.now)();
+  const header = PromptDocArtifactHeaderV1Schema.parse({
+    v: 1, kind: 'prompt_doc.v2', title: params.request.title, folderId: params.request.folderId ?? null,
+    tags: normalizePromptTags(params.request.tags), origin: params.request.origin ?? 'user', locked: false,
+    ...(params.request.favorite !== undefined ? { favorite: params.request.favorite } : {}),
+  });
+  const body = PromptDocBodyV1Schema.parse({ v: 1, markdown: params.request.markdown, createdAtMs: now, updatedAtMs: now });
+  const artifactId = await params.store.create({ header, body: JSON.stringify(body), ...(params.signal ? { signal: params.signal } : {}) });
+  throwIfAborted(params.signal);
+  return { ok: true, artifactId };
+}
+
+export async function setPromptDocFavorite(params: Readonly<{
+  store: PromptLibraryArtifactStore;
+  request: Readonly<{ artifactId: string; favorite: boolean }>;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ ok: true; artifactId: string }>> {
+  throwIfAborted(params.signal);
+  const artifact = await params.store.read(params.request.artifactId, params.signal ? { signal: params.signal } : undefined);
+  throwIfAborted(params.signal);
+  if (!artifact) throw new Error('prompt_doc_not_found');
+  if (!PromptDocArtifactHeaderV1Schema.safeParse(artifact.header).success || typeof artifact.body !== 'string') {
+    throw new Error('prompt_doc_invalid_body');
+  }
+  // Patch the header through the existing full-revision CAS. The body bytes and
+  // timestamps remain untouched; a concurrent markdown edit refuses this write.
+  await params.store.update({ artifactId: artifact.id, expectedRevision: artifact.revision,
+    header: { ...artifact.header, favorite: params.request.favorite }, body: artifact.body,
+    ...(params.signal ? { signal: params.signal } : {}) });
+  throwIfAborted(params.signal);
+  return { ok: true, artifactId: artifact.id };
+}
+
+export type PromptLibraryListItem = Readonly<{
+  artifactId: string; title: string; folderId: string | null; tags: readonly string[]; favorite: boolean; updatedAtMs: number;
+}>;
+
+export async function listPromptLibrary(params: Readonly<{
+  store: PromptLibraryArtifactStore;
+  request: Readonly<{ query?: string; includeBundles?: false }>;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ items: readonly PromptLibraryListItem[]; coverage: 'complete' | 'partial' | 'unavailable' }>> {
+  throwIfAborted(params.signal);
+  if (!params.store.list) return { items: [], coverage: 'unavailable' };
+  const items: PromptLibraryListItem[] = [];
+  let coverage: 'complete' | 'partial' | 'unavailable' = 'complete';
+  const query = params.request.query?.trim().toLocaleLowerCase() ?? '';
+  let cursor: string | undefined;
+  do {
+    // The Artifact API admits pages of at most 500 rows. This is a transport
+    // page, never a limit on the user's library.
+    const inventory = await params.store.list({ limit: 500, ...(cursor ? { cursor } : {}),
+      ...(params.signal ? { signal: params.signal } : {}) });
+    throwIfAborted(params.signal);
+    if (inventory.coverage === 'partial') coverage = 'partial';
+    if (inventory.coverage === 'unavailable') coverage = items.length || inventory.items.length ? 'partial' : 'unavailable';
+    for (const artifact of inventory.items) {
+      if (!artifact.header) {
+        if (coverage === 'complete') coverage = 'partial';
+        continue;
+      }
+      if (artifact.header.kind !== 'prompt_doc.v2') continue;
+      const parsed = PromptDocArtifactHeaderV1Schema.safeParse(artifact.header);
+      if (!parsed.success) {
+        if (coverage === 'complete') coverage = 'partial';
+        continue;
+      }
+      const header = parsed.data;
+      if (query && ![header.title, ...(header.tags ?? [])].some((value) => value.toLocaleLowerCase().includes(query))) continue;
+      items.push({ artifactId: artifact.id, title: header.title, folderId: header.folderId ?? null,
+        tags: header.tags ?? [], favorite: header.favorite ?? false, updatedAtMs: artifact.updatedAtMs });
+    }
+    cursor = inventory.nextCursor;
+  } while (cursor);
+  return { items, coverage };
 }
 
 export async function updatePromptDocInLibrary(params: Readonly<{

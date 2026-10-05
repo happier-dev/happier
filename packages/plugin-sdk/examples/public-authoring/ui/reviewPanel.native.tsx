@@ -1,8 +1,10 @@
 import * as React from 'react';
 
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { actionInputOptionValueKey, readInputTypePickerLaunchInput } from '@happier-dev/plugin-sdk/actions';
 import {
     Action,
+    Button,
     Card,
     CodeBlock,
     defineUiSurface,
@@ -15,6 +17,7 @@ import {
     Status,
     Text,
     useLivePluginResource,
+    WidgetSurface,
 } from '@happier-dev/plugin-ui';
 
 import {
@@ -25,6 +28,7 @@ import {
 } from './reviewOpenableContent.js';
 import { PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT } from './reviewClientActions.js';
 
+const REVIEW_PANEL_VIEW_ID = 'review-panel';
 const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
 const PROJECT_COMPANION_ACTIVITY_VIEW_ID = 'project-companion-activity-log';
 const PROJECT_COMPANION_PROJECT_ACTIVITY_VIEW_ID = 'project-companion-project-activity-log';
@@ -85,9 +89,11 @@ function ReviewFrame({
     );
 }
 
-function ReviewOverview() {
+function ReviewOverview({ pinnedArea }: Readonly<{ pinnedArea: boolean }>) {
     return (
         <ReviewFrame>
+            {/* The page's declared `pinned` area: the host draws the widgets, gallery and layout. */}
+            {pinnedArea ? <WidgetSurface area="pinned" /> : null}
             <Card padding="large">
                 <Stack gap="small">
                     <Status tone="success" label="Review assistant ready" />
@@ -446,6 +452,21 @@ function ReviewStatusWidget({
 }
 
 function ReviewPanel(context: RenderContext) {
+    if (context.surface.mount.kind === 'embedded' && context.surface.mount.role === 'ephemeralInput') {
+        const input = readInputTypePickerLaunchInput(context.launchInput);
+        return (
+            <ReviewFrame accessibilityLabel="Choose repository">
+                <Text value="Choose repository" variant="title" />
+                {!input ? <ErrorState title="Repository choices are unavailable" /> : null}
+                {input?.options?.filter(option => !option.disabled).map((option) => (
+                    <Button key={actionInputOptionValueKey(option.value)} title={option.label}
+                        onPress={() => context.hostApi.settleEphemeralInput({ kind: 'completed', input: option.value }, { signal: context.signal })} />
+                ))}
+                <Button title="Cancel" variant="plain"
+                    onPress={() => context.hostApi.settleEphemeralInput({ kind: 'cancelled' }, { signal: context.signal })} />
+            </ReviewFrame>
+        );
+    }
     const widget = readSessionWidgetMount(context);
     if (widget) {
         return <ReviewStatusWidget context={context} presentation={widget.presentation} />;
@@ -503,7 +524,7 @@ function ReviewPanel(context: RenderContext) {
             : <ReviewOpenableContentPanel context={context} handle={reference.handle} />;
     }
 
-    return <ReviewOverview />;
+    return <ReviewOverview pinnedArea={destinationLocalId === REVIEW_PANEL_VIEW_ID} />;
 }
 
 export const renderSurface = defineUiSurface(ReviewPanel);

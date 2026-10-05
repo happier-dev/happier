@@ -343,7 +343,7 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
     scopeStorage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: 'server-a' });
     const upsertPendingMessageSpy = vi.spyOn(scopeStorage.getState(), 'upsertPendingMessage');
     const markSessionOptimisticThinkingSpy = vi.spyOn(scopeStorage.getState(), 'markSessionOptimisticThinking');
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     syncSingletonBridge.current = sync;
     const secret = new Uint8Array(32).fill(7);
     const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -1395,6 +1395,7 @@ describe('useCreateNewSession permission seeding', () => {
         const {
             useCreateNewSession,
             captured,
+            modalAlertSpy,
         } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;

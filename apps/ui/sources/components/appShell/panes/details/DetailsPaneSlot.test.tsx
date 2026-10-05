@@ -42,6 +42,9 @@ afterEach(() => {
     state.pageRenders = 0;
 });
 
+const { AppPaneProvider } = await import('../AppPaneProvider');
+const { DetailsPaneSlotHost, useDetailsPaneSlotBinding } = await import('./DetailsPaneSlot');
+
 async function mountPluginPage() {
     const { DetailsPane, Text, defineUiSurface, usePluginTheme } = await import('@happier-dev/plugin-ui');
     const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
@@ -106,6 +109,28 @@ async function mountPluginPage() {
 }
 
 describe('DetailsPaneSlotHost (the page details pane a plugin DetailsPane renders in)', () => {
+    it('transfers heading focus on an equal-title replacement with an unchanged body', async () => {
+        const body = <React.Fragment>Shared detail</React.Fragment>;
+        let focusedEntry: string | null = null;
+        const heading = (entry: string): NonNullable<import('@happier-dev/plugin-ui/advanced').PluginUiDetailsPanePresentation['headingRef']> =>
+            node => { if (node !== null) { node.focus(); focusedEntry = entry; } };
+        const first = heading('first');
+        const second = heading('second');
+        function Publisher(props: Readonly<{ headingRef: typeof first }>) {
+            const binding = useDetailsPaneSlotBinding();
+            return <>{binding?.renderDetailsPane({ open: true, title: 'Entry', children: body,
+                headingRef: props.headingRef, onClose() {} })}</>;
+        }
+        const tree = (headingRef: typeof first) => <AppPaneProvider><DetailsPaneSlotHost>
+            <Publisher headingRef={headingRef} />
+        </DetailsPaneSlotHost></AppPaneProvider>;
+        // Native host handles are an OS boundary; the real slot and PaneHeader still bind the heading.
+        const screen = await renderScreen(tree(first), { createNodeMock: () => ({ focus() {} }) });
+        expect(focusedEntry).toBe('first');
+        await screen.update(tree(second));
+        expect(focusedEntry).toBe('second');
+    });
+
     it('renders a plugin DetailsPane in the page details pane, beside the page, with the plugin context intact', async () => {
         const { screen, context } = await mountPluginPage();
 

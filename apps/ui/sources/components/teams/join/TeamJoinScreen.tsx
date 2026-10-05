@@ -19,7 +19,7 @@ import { projectTeamAuthSelection } from '@/components/teams/entry/teamAuthActio
 import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
 import { HomeAuthenticationFlow } from '@/components/account/auth/HomeAuthenticationFlow';
 import { useExactHomeDestination } from '@/components/account/auth/useExactHomeDestination';
-import { getCurrentAuth } from '@/auth/context/AuthContext';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';

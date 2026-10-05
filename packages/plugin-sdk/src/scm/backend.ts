@@ -19,6 +19,8 @@ import type {
     ScmCommitUndoLastResponse,
     ScmCommitCreateRequest,
     ScmCommitCreateResponse,
+    ScmCommitResolveOutcomeRequest,
+    ScmCommitResolveOutcomeResponse,
     ScmConflictAcceptSideRequest,
     ScmConflictMarkResolvedRequest,
     ScmDiffCommitRequest,
@@ -186,6 +188,9 @@ export type ScmBackendCapabilities = {
         undoLast?: ScmBackendCapabilityLeaf;
         amend?: ScmBackendCapabilityLeaf;
         signOff?: ScmBackendCapabilityLeaf;
+        expectedBase?: ScmBackendCapabilityLeaf;
+        safePlan?: ScmBackendCapabilityLeaf;
+        resolveOutcome?: ScmBackendCapabilityLeaf;
         pathSelection?: ScmBackendCapabilityLeaf;
         lineSelection?: ScmBackendCapabilityLeaf;
         backout?: ScmBackendCapabilityLeaf;
@@ -557,7 +562,16 @@ export type BackendRuntimeHandlers = Readonly<{
         discard?: (input: BackendRuntimeHandlerInput<ScmChangeDiscardRequest>) => Promise<ScmChangeDiscardResponse> | ScmChangeDiscardResponse;
     }>;
     commit?: Readonly<{
+        /** Commit admission witness supplied by the backend that owns publication. */
+        captureTarget?: (input: Readonly<{ context: BackendRuntimeContext }>) =>
+            | Promise<
+                | Readonly<{ success: true; target: Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string }> }>
+                | Readonly<{ success: false; errorCode?: ScmOperationErrorCode; error?: string }>
+            >
+            | Readonly<{ success: true; target: Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string }> }>
+            | Readonly<{ success: false; errorCode?: ScmOperationErrorCode; error?: string }>;
         create?: (input: BackendRuntimeHandlerInput<ScmCommitCreateRequest>) => Promise<ScmCommitCreateResponse> | ScmCommitCreateResponse;
+        resolveOutcome?: (input: BackendRuntimeHandlerInput<ScmCommitResolveOutcomeRequest>) => Promise<ScmCommitResolveOutcomeResponse> | ScmCommitResolveOutcomeResponse;
         backout?: (input: BackendRuntimeHandlerInput<ScmCommitBackoutRequest>) => Promise<ScmCommitBackoutResponse> | ScmCommitBackoutResponse;
         undoLast?: (input: BackendRuntimeHandlerInput<ScmCommitUndoLastRequest>) => Promise<ScmCommitUndoLastResponse> | ScmCommitUndoLastResponse;
     }>;
@@ -647,6 +661,11 @@ export type BackendCommandRunInput = Readonly<{
     args: readonly string[];
     timeoutMs?: number;
     stdin?: string;
+    /** Keep stdin open until this exact stdout line, then send the response and close it. */
+    stdinInteraction?: Readonly<{
+        readyLine: string;
+        respond(): string | Promise<string>;
+    }>;
     maxOutputBytes?: number;
     env?: Readonly<Record<string, string | undefined>>;
     signal?: AbortSignal;

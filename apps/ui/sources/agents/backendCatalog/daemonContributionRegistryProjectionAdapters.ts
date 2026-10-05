@@ -166,7 +166,8 @@ export type PluginProjectionAction = Readonly<{
 export type PluginProjectionResource = Readonly<{
     id: string;
     resourceKind: string;
-    path: string;
+    path?: string;
+    scope?: PluginProjectedResourceV2['scope'];
     digest: string | null;
     contentType: string | null;
 }>;
@@ -257,7 +258,8 @@ function mapV2Resource(resource: PluginProjectedResourceV2): PluginProjectionRes
     return {
         id: resource.id,
         resourceKind: resource.resourceKind,
-        path: resource.path,
+        ...(resource.path === undefined ? {} : { path: resource.path }),
+        ...(resource.scope === undefined ? {} : { scope: resource.scope }),
         digest: resource.digest ?? null,
         contentType: resource.contentType ?? null,
     };

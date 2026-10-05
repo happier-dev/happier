@@ -129,11 +129,11 @@ describe('CLI activity compatibility awareness', () => {
     });
     const socket = new EventEmitter();
     socketBoundary.socket = socket;
-    const owner = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null, serverId: 'home' });
+    const owner = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example' });
     const settled = vi.fn();
     const waiting = owner.sessionAwarenessWait!({ context,
       input: { target: { kind: 'session', serverId: 'home', sessionId }, condition: { kind } },
-      options: { deadlineMs: now + 10_000 },
+      options: { timeoutMs: 10_000, deadlineMs: now + 10_000 },
       readAwareness: () => owner.sessionActivityGet({ context, sessionId, view: 'awareness' }),
     }).then((result) => { settled(result); return result; });
     await vi.advanceTimersByTimeAsync(0);

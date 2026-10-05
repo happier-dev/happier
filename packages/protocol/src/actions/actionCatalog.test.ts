@@ -189,8 +189,8 @@ describe('actionCatalog action-definition adapter', () => {
     expect(definitions.every((definition) => definition.surfaces.cli === true)).toBe(true);
   });
 
-  it('projects every Agent-visible Action definition through the canonical schema boundary', () => {
-    const definitions = listActionDefinitionsForCatalogSurface({ surface: 'agent' });
+  it.each(['agent', 'voice'] as const)('projects every %s-visible Action definition through the canonical schema boundary', (surface) => {
+    const definitions = listActionDefinitionsForCatalogSurface({ surface });
 
     expect(definitions.length).toBeGreaterThan(0);
     for (const definition of definitions) {

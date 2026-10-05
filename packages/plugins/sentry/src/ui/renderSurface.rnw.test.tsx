@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
+import { defineUiSurface, Tabs, Text } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageDetailSurfaceInputV1Schema, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import {
   TriageEvidenceDisclosureProvider,
   type TriageEvidenceCandidateV1,
@@ -169,13 +170,16 @@ function createHarness(options: Readonly<{
   eventSequence?: readonly JsonValue[];
   events?: JsonValue;
   /** Successive answers to the occurrence walk, when a case needs them to differ. */
-  eventPageSequence?: readonly JsonValue[];
+  eventPageSequence?: readonly (JsonValue | ((signal: AbortSignal) => Promise<JsonValue>))[];
   tags?: JsonValue;
+  readEvent?: (signal: AbortSignal) => Promise<JsonValue>;
+  readSummary?: (signal: AbortSignal) => Promise<JsonValue>;
+  activity?: JsonValue;
 }> = {}) {
   const invocations: Invocation[] = [];
 
   async function executeAction(
-    { action, input }: Readonly<{ action: unknown; input: unknown }>,
+    { action, input, signal }: Readonly<{ action: unknown; input: unknown; signal: AbortSignal }>,
   ): Promise<JsonValue> {
     const ref = action as Readonly<{ localId?: string }>;
     const localId = ref.localId ?? '';
@@ -183,15 +187,16 @@ function createHarness(options: Readonly<{
     if (localId === SENTRY_ACTION_IDS.readIssue) {
       const projection = (input as Readonly<{ projection?: string }>).projection;
       if (projection === 'tags') return options.tags ?? TAGS_BODY;
-      if (projection === 'activity') return ACTIVITY_BODY;
-      return ISSUE_BODY;
+      if (projection === 'activity') return options.activity ?? ACTIVITY_BODY;
+      return options.readSummary === undefined ? ISSUE_BODY : await options.readSummary(signal);
     }
     if (localId === SENTRY_ACTION_IDS.listIssueEvents) {
       const pageIndex = invocations.filter(
         (entry) => entry.localId === SENTRY_ACTION_IDS.listIssueEvents,
       ).length - 1;
       const sequenced = options.eventPageSequence?.[pageIndex];
-      if (sequenced !== undefined) return sequenced;
+      if (sequenced !== undefined) return typeof sequenced === 'function'
+        ? await sequenced(signal) : sequenced;
       return options.events ?? {
         kind: 'events',
         rows: [
@@ -202,6 +207,7 @@ function createHarness(options: Readonly<{
       };
     }
     if (localId === SENTRY_ACTION_IDS.readEvent) {
+      if (options.readEvent !== undefined) return await options.readEvent(signal);
       const readIndex = invocations.filter(
         (entry) => entry.localId === SENTRY_ACTION_IDS.readEvent,
       ).length - 1;
@@ -230,6 +236,14 @@ function createHarness(options: Readonly<{
 
 const mounted: PluginUiTestkit[] = [];
 
+function SourceHostTabs({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [panel, setPanel] = React.useState('source');
+  return <Tabs value={panel} onValueChange={setPanel}>
+    <Tabs.Item value="source" title="Source" retention="retain">{children}</Tabs.Item>
+    <Tabs.Item value="session" title="Session"><Text value="Session content" /></Tabs.Item>
+  </Tabs>;
+}
+
 async function mountDetail(
   harness: ReturnType<typeof createHarness>,
   surfaceContext = createSurfaceContextFixture(),
@@ -238,14 +252,23 @@ async function mountDetail(
     disclose(resolve: (signal: AbortSignal) => Promise<TriageEvidenceCandidateV1 | null>): Promise<unknown>;
     confirm?: (input: Readonly<{ message: string; title?: string }>) => boolean | Promise<boolean>;
   }>,
+  panel?: string | (() => string),
+  ancestorTabs = false,
+  detailInput?: () => TriageDetailSurfaceInputV1,
 ): Promise<PluginUiTestkit> {
+  const sourceSurface = defineUiSurface((context) => {
+    const source = renderSurface(typeof panel === 'function'
+      ? { ...context, launchInput: { ...(detailInput?.() ?? DETAIL_INPUT), panel: panel() } as unknown as JsonValue }
+      : detailInput === undefined ? context : { ...context, launchInput: detailInput() as unknown as JsonValue });
+    return ancestorTabs ? <SourceHostTabs>{source}</SourceHostTabs> : source;
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-173', mountNonce: 'fixture-mount-173' },
       authorPlugin: { id: SENTRY_PLUGIN_ID, version: '0.0.0' },
       surface: disclosure === undefined
-        ? renderSurface
+        ? sourceSurface
         : (context) => (
           <TriageEvidenceDisclosureProvider disclosure={disclosure}>
             {renderSurface(context)}
@@ -253,9 +276,9 @@ async function mountDetail(
         ),
       surfaceContext,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      launchInput: DETAIL_INPUT as unknown as JsonValue,
+      launchInput: { ...DETAIL_INPUT, ...(typeof panel === 'string' ? { panel } : {}) } as unknown as JsonValue,
       handlers: {
-        executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+        executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
         ...(disclosure?.confirm === undefined ? {} : { confirm: disclosure.confirm }),
       },
     });
@@ -275,6 +298,178 @@ afterEach(async () => {
 });
 
 describe('the mounted Sentry issue detail body', () => {
+  it('replaces settled selected evidence when the exact account authority changes', async () => {
+    let input = TriageDetailSurfaceInputV1Schema.parse({ ...DETAIL_INPUT, panel: 'overview' });
+    const harness = createHarness({ eventSequence: [
+      eventProjection({ sections: [{ kind: 'exception', type: 'OldAccountError', value: 'old evidence', frames: [] }] }),
+      eventProjection({ sections: [{ kind: 'exception', type: 'NewAccountError', value: 'current evidence', frames: [] }] }),
+    ] });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview', false, () => input);
+    await expect(page.getByText('OldAccountError: old evidence')).resolves.toBeDefined();
+    input = TriageDetailSurfaceInputV1Schema.parse({
+      ...DETAIL_INPUT,
+      instance: { ...DETAIL_INPUT.instance, binding: {
+        ...DETAIL_INPUT.instance.binding,
+        account: { ...DETAIL_INPUT.instance.binding.account, accountId: 'account-2' },
+      } },
+      panel: 'overview',
+    });
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    await expect(page.getByText('NewAccountError: current evidence')).resolves.toBeDefined();
+    await expect(page.queryByText('OldAccountError: old evidence')).resolves.toBeUndefined();
+    expect(harness.invocations.filter((entry) => entry.localId === SENTRY_ACTION_IDS.readEvent)
+      .at(-1)?.input).toMatchObject({ instance: { binding: { account: { accountId: 'account-2' } } } });
+  });
+  it('pauses unfinished root reads while Session hides the source and resumes safely', async () => {
+    const summarySignals: AbortSignal[] = [];
+    const eventSignals: AbortSignal[] = [];
+    const summarySettlers: ((result: JsonValue) => void)[] = [];
+    const eventSettlers: ((result: JsonValue) => void)[] = [];
+    const harness = createHarness({
+      readSummary: async (signal) => {
+        summarySignals.push(signal);
+        return await new Promise<JsonValue>((resolve) => { summarySettlers.push(resolve); });
+      },
+      readEvent: async (signal) => {
+        eventSignals.push(signal);
+        return await new Promise<JsonValue>((resolve) => { eventSettlers.push(resolve); });
+      },
+    });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview', true);
+    await selectTab(page, 'Session');
+    expect(summarySignals[0]?.aborted).toBe(true);
+    expect(eventSignals[0]?.aborted).toBe(true);
+    await selectTab(page, 'Source');
+    expect(summarySignals[1]?.aborted).toBe(false);
+    expect(eventSignals[1]?.aborted).toBe(false);
+    await act(async () => {
+      summarySettlers[1]?.(ISSUE_BODY);
+      eventSettlers[1]?.(eventProjection({ sections: [{
+        kind: 'exception', type: 'ResumedError', value: 'current evidence', frames: [],
+      }] }));
+      summarySettlers[0]?.({ kind: 'overview', statePresentation: 'active', nativeStateLabel: 'Abandoned summary' });
+      eventSettlers[0]?.(eventProjection({ sections: [{
+        kind: 'exception', type: 'AbandonedError', value: 'stale evidence', frames: [],
+      }] }));
+    });
+    await expect(page.getByText('ResumedError: current evidence')).resolves.toBeDefined();
+    await expect(page.queryByText('AbandonedError: stale evidence')).resolves.toBeUndefined();
+    await expect(page.queryByText('Abandoned summary')).resolves.toBeUndefined();
+  });
+  it('composes host Activity as a story while keeping provider history records', async () => {
+    const harness = createHarness({ activity: {
+      kind: 'activity', activity: { status: 'available',
+        items: [{ id: 'record-1', type: 'set_resolved', actor: 'Mara' }],
+        malformedItemCount: 0, omittedItemCount: 0, projectionTruncated: false },
+    } });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'activity');
+    await expect(page.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+    await expect(page.getByText('set_resolved · Mara')).resolves.toBeDefined();
+    await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+  });
+  it('aborts hidden occurrence paging and resumes from its settled continuation', async () => {
+    let panel = 'occurrences';
+    let pendingSignal: AbortSignal | undefined;
+    let settle!: (result: JsonValue) => void;
+    const pending = new Promise<JsonValue>((resolve) => { settle = resolve; });
+    const pageResult = (id: string, headline: string, continuation?: string): JsonValue => ({
+      kind: 'events', rows: [{ eventId: id.repeat(32), headline }],
+      omittedRowCount: 0, projectionTruncated: false,
+      ...(continuation === undefined ? {} : { continuation }),
+    });
+    const harness = createHarness({ eventPageSequence: [
+      pageResult('b', 'Settled first page', 'next-page'),
+      async (signal) => { pendingSignal = signal; return await pending; },
+      pageResult('c', 'Resumed second page'),
+    ] });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, () => panel, true);
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Load more retained events' })); });
+    expect(pendingSignal?.aborted).toBe(false);
+    panel = 'activity';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    expect(pendingSignal?.aborted).toBe(true);
+    panel = 'occurrences';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    await expect(page.getByText('Settled first page')).resolves.toBeDefined();
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Load more retained events' })); });
+    await expect(page.getByText('Resumed second page')).resolves.toBeDefined();
+    await act(async () => { settle(pageResult('d', 'Late abandoned page')); await pending; });
+    await expect(page.queryByText('Late abandoned page')).resolves.toBeUndefined();
+    expect(harness.invocations.filter((entry) => entry.localId === SENTRY_ACTION_IDS.listIssueEvents)
+      .map((entry) => entry.input)).toMatchObject([
+      {}, { continuation: 'next-page' }, { continuation: 'next-page' },
+    ]);
+  });
+  it('aborts the selected-event read when the detail retires', async () => {
+    let panel = 'overview';
+    let pendingSignal: AbortSignal | undefined;
+    let settle!: (result: JsonValue) => void;
+    const pending = new Promise<JsonValue>((resolve) => { settle = resolve; });
+    const page = await mountDetail(createHarness({ readEvent: async (signal) => {
+      pendingSignal = signal;
+      return await pending;
+    } }), createSurfaceContextFixture(), undefined, () => panel);
+    expect(pendingSignal?.aborted).toBe(false);
+    const originalSignal = pendingSignal;
+    panel = 'activity';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    expect(originalSignal?.aborted).toBe(false);
+    expect(pendingSignal).toBe(originalSignal);
+    await act(async () => { await page.retire(); });
+    expect(originalSignal?.aborted).toBe(true);
+    await act(async () => { settle(eventProjection({ title: 'late retired event' })); await pending; });
+    expect(document.body.textContent).not.toContain('late retired event');
+  });
+  it('keeps the second selected event and settled pages when the host changes panels', async () => {
+    let panel = 'occurrences';
+    const secondId = 'c'.repeat(32);
+    const harness = createHarness({
+      eventPageSequence: [{
+        kind: 'events',
+        rows: [{ eventId: 'b'.repeat(32), headline: 'First event', atMs: 1_760_000_100_000 }],
+        omittedRowCount: 0,
+        projectionTruncated: false,
+        continuation: 'second-page',
+      }, {
+        kind: 'events',
+        rows: [{ eventId: secondId, headline: 'Second event', atMs: 1_760_000_200_000 }],
+        omittedRowCount: 0,
+        projectionTruncated: false,
+      }],
+      event: eventProjection({ eventId: secondId, title: 'Second selected event', sections: [{
+        kind: 'exception', type: 'SecondSelectedEvent', value: 'selected evidence', frames: [],
+      }], tags: [{ key: 'url', value: 'selected-event-tag' }] }),
+    });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, () => panel, true);
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Load more retained events' })); });
+    const row = (await page.getAllByRole('button')).find((candidate) => candidate.name?.startsWith('Second event'));
+    expect(row).toBeDefined();
+    if (row === undefined) throw new Error('second occurrence must be reachable');
+    await act(async () => { await page.press(row); });
+    await selectTab(page, 'Session');
+    await selectTab(page, 'Source');
+    expect(harness.invocations.find((entry) => entry.localId === SENTRY_ACTION_IDS.readEvent)?.input)
+      .toMatchObject({ selector: { kind: 'event', eventId: secondId } });
+    panel = 'activity';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    expect(document.body.textContent).not.toContain('selected-event-tag');
+    panel = 'overview';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    await expect(page.getByText('SecondSelectedEvent: selected evidence')).resolves.toBeDefined();
+    panel = 'occurrences';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    await expect(page.getByText('First event')).resolves.toBeDefined();
+    await expect(page.getByText('Second event')).resolves.toBeDefined();
+    expect(harness.countOf(SENTRY_ACTION_IDS.listIssueEvents)).toBe(2);
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
+  });
+  it('renders the host Overview as a report with the source-owned representative occurrence', async () => {
+    const harness = createHarness();
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview');
+    await expect(page.getByRole('heading', { name: 'The report' })).resolves.toBeDefined();
+    await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
+  });
   it('reads one occurrence because Overview asked, and reads it once', async () => {
     const harness = createHarness();
     const page = await mountDetail(harness);

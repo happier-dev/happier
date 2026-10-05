@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createPartialStorageModuleMock,
     createStorageStoreMock,
-    findGestureByKind,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -179,7 +178,9 @@ installSessionShellCommonModuleMocks({
                 React.createElement(
                     'FlatList',
                     { ...rest },
-                    ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
+                    React.isValidElement(ListHeaderComponent)
+                        ? ListHeaderComponent
+                        : ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
                     (data ?? []).map((item: any, index: number) => {
                         const key = keyExtractor ? keyExtractor(item, index) : String(index);
                         return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
@@ -518,7 +519,7 @@ describe('SessionsList (inline reorder)', () => {
         expect(requestReviewSpy).not.toHaveBeenCalled();
     });
 
-    it('advertises reorder only for rows whose effective group uses custom ordering', async () => {
+    it('keeps active and inactive rows available as carry sources across their ordering modes', async () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
@@ -527,26 +528,24 @@ describe('SessionsList (inline reorder)', () => {
 
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items.length).toBe(2);
-        // reorderHandleGesture is passed from SessionListRow.
-        // reorderDragStyle is no longer passed (Animated.View is in SessionListRow).
-        expect(items[0].props).toHaveProperty('reorderHandleGesture');
-        expect(findGestureByKind(items[0].props.reorderHandleGesture, 'pan')).toBeTruthy();
-        expect(items[1].props.reorderHandleGesture).toBeUndefined();
+        // The whole desktop row is the carry source (E1); SessionListRow tells the row whether it can move.
+        expect(items[0].props.dragEnabled).toBe(true);
+        expect(items[1].props.dragEnabled).toBe(true);
         // isBeingDragged is passed from SessionListRow
         expect(items[0].props.isBeingDragged).toBe(false);
     });
 
-    it('hides reorder drag props when ordering mode is created or updated', async () => {
+    it('keeps the carry source available when sibling ordering is date-based', async () => {
         sessionListOrderingModeV1 = 'created';
 
         const screen = await renderScreen(<SessionsList />);
 
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items.length).toBe(2);
-        expect(items[0].props.reorderHandleGesture).toBeUndefined();
+        expect(items[0].props.dragEnabled).toBe(true);
     });
 
-    it('disables row drag in Recent activity while preserving custom project ordering', async () => {
+    it('keeps Recent activity rows available for carry while preserving custom project ordering', async () => {
         sessionListSectionModeV1 = 'single';
         sessionListActiveGroupingV1 = 'date';
         sessionListOrderingModeV1 = 'custom';
@@ -560,7 +559,7 @@ describe('SessionsList (inline reorder)', () => {
             && Array.isArray(node.props?.items)
         ));
         expect(rowBoundaries).toHaveLength(2);
-        expect(rowBoundaries[0].props.dragEnabled).toBe(false);
+        expect(rowBoundaries[0].props.dragEnabled).toBe(true);
         expect(sessionListOrderingModeV1).toBe('custom');
     });
 
@@ -572,16 +571,16 @@ describe('SessionsList (inline reorder)', () => {
         const screen = await renderScreen(<SessionsList />);
 
         const firstRow = screen.findAll((node) => String(node.type) === 'SessionItem')[0];
-        expect(firstRow.props.reorderHandleGesture).toBeUndefined();
+        expect(firstRow.props.dragEnabled).toBe(true);
         expect(setSessionListGroupOrderV1).toHaveBeenCalledTimes(0);
     });
 
-    it('restores reorder drag props when ordering mode returns to custom', async () => {
+    it('preserves carry availability when ordering mode returns to custom', async () => {
         sessionListOrderingModeV1 = 'updated';
 
         const screen = await renderScreen(<SessionsList />);
         const disabledItems = screen.findAll((node) => String(node.type) === 'SessionItem');
-        expect(disabledItems[0].props.reorderHandleGesture).toBeUndefined();
+        expect(disabledItems[0].props.dragEnabled).toBe(true);
 
         setSessionListOrderingModeV1.mockClear();
         sessionListOrderingModeV1 = 'custom';
@@ -589,8 +588,7 @@ describe('SessionsList (inline reorder)', () => {
 
         const reorderedItems = updatedScreen.findAll((node) => String(node.type) === 'SessionItem');
         expect(reorderedItems.length).toBe(2);
-        expect(reorderedItems[0].props).toHaveProperty('reorderHandleGesture');
-        expect(findGestureByKind(reorderedItems[0].props.reorderHandleGesture, 'pan')).toBeTruthy();
+        expect(reorderedItems[0].props.dragEnabled).toBe(true);
     });
 
     it('exposes View options and writes canonical settings atomically on select', async () => {
@@ -749,7 +747,10 @@ describe('SessionsList (inline reorder)', () => {
         expect(menuProps?.triggerParams?.toggle).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the recovery banner mounted across SessionsList rerenders', async () => {
+    it('keeps the phone recovery banner mounted across SessionsList rerenders', async () => {
+        const responsive = await import('@/utils/platform/responsive');
+        // Wide layouts delegate this reminder to Home; its list placement is the phone contract.
+        vi.spyOn(responsive, 'useIsTablet').mockReturnValue(false);
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
 

@@ -6,6 +6,11 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { VoiceAdapterController } from '@/voice/session/types';
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));

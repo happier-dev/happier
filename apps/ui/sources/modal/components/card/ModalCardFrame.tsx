@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ModalCardBody } from './ModalCardBody';
 import { ModalCardHeader } from './ModalCardHeader';
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
@@ -41,14 +42,13 @@ const MODAL_CARD_BORDER_RADIUS = 14;
 
 const stylesheet = StyleSheet.create((theme) => ({
     shadowFrame: {
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: 'transparent',
         borderRadius: MODAL_CARD_BORDER_RADIUS,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignSelf: 'center',
         minHeight: 0,
     },
     clipSurface: {
-        backgroundColor: theme.colors.surface.base,
         borderRadius: MODAL_CARD_BORDER_RADIUS,
         ...resolveThemeSurfaceBorderStyle({
             borderColor: theme.colors.border.surface,
@@ -60,6 +60,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sheetFrame: {
         alignSelf: 'stretch',
+        flexShrink: 1,
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
     },
@@ -114,7 +115,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 props.style,
             ]}
         >
-            <View style={[
+            <GlassSurface surfaceGroup="floating" style={[
                 styles.clipSurface,
                 scrollHost === 'body' ? { flex: 1 } : null,
                 sheet ? [styles.sheetFrame, { paddingBottom: props.sheetBottomInset ?? 0 }] : null,
@@ -156,7 +157,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                         <RoundButtonSizeScope size="small">{props.footer}</RoundButtonSizeScope>
                     </View>
                 ) : null}
-            </View>
+            </GlassSurface>
         </View>
     );
 }

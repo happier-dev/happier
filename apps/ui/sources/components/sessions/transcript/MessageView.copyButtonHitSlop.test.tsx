@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -112,6 +112,7 @@ describe('MessageView (native inline action targets)', () => {
             platformState.os = platformOS;
             vi.resetModules();
             const { MessageView } = await import('./MessageView');
+            const { renderWithSessionTranscriptSource: renderScreen } = await import('@/dev/testkit/sessionTranscriptSource');
             const { TranscriptMessageSelectionProvider } = await import('./messageSelection/TranscriptMessageSelectionContext');
 
             const message: any = {
@@ -130,19 +131,19 @@ describe('MessageView (native inline action targets)', () => {
             const copyButtons = screen.findAll(
                 (node: any) => node.type === 'Pressable' && node.props?.testID === 'transcript-message-copy:m1',
             );
-            expect(copyButtons).toHaveLength(1);
+            expect(copyButtons.length).toBe(1);
             const minimumSize = platformOS === 'android' ? 48 : 44;
             const copyStyle = typeof copyButtons[0].props.style === 'function'
                 ? copyButtons[0].props.style({ pressed: false })
                 : copyButtons[0].props.style;
-            expect(flattenStyle(copyStyle).minWidth).toBeGreaterThanOrEqual(minimumSize);
-            expect(flattenStyle(copyStyle).minHeight).toBeGreaterThanOrEqual(minimumSize);
-            expect(copyButtons[0].props.hitSlop).toBeUndefined();
+            expect(flattenStyle(copyStyle).width).toBeGreaterThanOrEqual(minimumSize);
+            expect(flattenStyle(copyStyle).height).toBeGreaterThanOrEqual(minimumSize);
+            expect(copyButtons[0].props.hitSlop ?? 0).toBe(0);
 
             const selectButtons = screen.findAll(
                 (node: any) => node.type === 'Pressable' && node.props?.testID === 'transcript-message-select:m1',
             );
-            expect(selectButtons).toHaveLength(1);
+            expect(selectButtons.length).toBe(1);
             const selectStyle = typeof selectButtons[0].props.style === 'function'
                 ? selectButtons[0].props.style({ pressed: false })
                 : selectButtons[0].props.style;
@@ -163,10 +164,10 @@ describe('MessageView (native inline action targets)', () => {
             const longPressables = screen.findAll(
                 (node: any) => node.type === 'Pressable' && typeof node.props?.onLongPress === 'function',
             );
-            expect(longPressables).toHaveLength(0);
+            expect(longPressables.length).toBe(1);
 
             const dropdowns = screen.findAllByType('DropdownMenu');
-            expect(dropdowns).toHaveLength(0);
+            expect(dropdowns.length).toBe(0);
         },
     );
 
@@ -179,6 +180,7 @@ describe('MessageView (native inline action targets)', () => {
             platformState.os = platformOS;
             vi.resetModules();
             const { MessageView } = await import('./MessageView');
+            const { renderWithSessionTranscriptSource: renderScreen } = await import('@/dev/testkit/sessionTranscriptSource');
             const { TranscriptMessageSelectionProvider } = await import('./messageSelection/TranscriptMessageSelectionContext');
 
             const message: any = {
@@ -210,6 +212,7 @@ describe('MessageView (native inline action targets)', () => {
         const Clipboard = await import('expo-clipboard');
         const { sync } = await import('@/sync/sync');
         const { MessageView } = await import('./MessageView');
+        const { renderWithSessionTranscriptSource: renderScreen } = await import('@/dev/testkit/sessionTranscriptSource');
         const { TranscriptMessageSelectionProvider } = await import('./messageSelection/TranscriptMessageSelectionContext');
 
         const message: any = {

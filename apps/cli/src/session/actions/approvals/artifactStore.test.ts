@@ -15,6 +15,9 @@ import {
   decodePlainArtifactStoredContent,
   openEncryptedDataKeyEnvelopeV1,
   updatePromptDocInLibrary,
+  createPromptDocInLibrary,
+  setPromptDocFavorite,
+  listPromptLibrary,
 } from '@happier-dev/protocol';
 
 import { createCliApprovalsArtifactStore } from './artifactStore';
@@ -519,8 +522,8 @@ describe('createCliApprovalsArtifactStore', () => {
     expect(JSON.stringify(serializedBody)).not.toContain(invitationToken);
   });
 
-  it('uses the existing artifact route and codec for cancellable prompt-library storage', async () => {
-    const store = createStore(createCredentials(), 'e2ee');
+  it.each(['plain', 'e2ee'] as const)('creates and favourites prompts through the real %s Artifact adapter', async (mode) => {
+    const store = createStore(mode === 'plain' ? { token: 'token-only', encryption: null } : createCredentials(), mode);
     const signal = new AbortController().signal;
     let createdPayload: any = null;
     mockPost.mockImplementationOnce(async (_url: string, body: any, config: any) => {
@@ -529,10 +532,9 @@ describe('createCliApprovalsArtifactStore', () => {
       return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
     });
 
-    const artifactId = await store.promptLibraryStore.create!({
-      header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt' },
-      body: JSON.stringify({ v: 1, markdown: '# Prompt', createdAtMs: 1, updatedAtMs: 1 }),
-      signal,
+    const { artifactId } = await createPromptDocInLibrary({ store: store.promptLibraryStore,
+      request: { title: 'Prompt', markdown: '# Prompt', folderId: 'folder', tags: ['topic'] },
+      signal, nowMs: () => 1,
     });
     const record = {
       id: artifactId,
@@ -540,14 +542,14 @@ describe('createCliApprovalsArtifactStore', () => {
       headerVersion: 1,
       body: createdPayload.body,
       bodyVersion: 1,
-      ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'e2ee',
+      ownerAccountId: 'account-1', access: 'owner', encryptionMode: mode,
       dataEncryptionKey: createdPayload.dataEncryptionKey,
       seq: 1,
       createdAt: 1,
       updatedAt: 1,
     };
     mockGet.mockResolvedValueOnce({ status: 200, data: record });
-    await expect(store.promptLibraryStore.read(artifactId, { signal })).resolves.toEqual({
+    await expect(store.promptLibraryStore.read(artifactId, { signal })).resolves.toMatchObject({
       id: artifactId,
       revision: { headerVersion: 1, bodyVersion: 1 },
       header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt' },
@@ -558,15 +560,14 @@ describe('createCliApprovalsArtifactStore', () => {
       .mockResolvedValueOnce({ status: 200, data: record })
       .mockResolvedValueOnce({ status: 200, data: record });
     mockPost.mockResolvedValueOnce({ status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } });
-    await expect(store.promptLibraryStore.update({
-      artifactId,
-      expectedRevision: { headerVersion: 1, bodyVersion: 1 },
-      header: { v: 1, kind: 'prompt_doc.v2', title: 'Updated' },
-      body: JSON.stringify({ v: 1, markdown: '# Updated', createdAtMs: 1, updatedAtMs: 2 }),
-      signal,
-    })).resolves.toBeUndefined();
+    await expect(setPromptDocFavorite({ store: store.promptLibraryStore,
+      request: { artifactId, favorite: true }, signal })).resolves.toEqual({ ok: true, artifactId });
     expect(mockGet.mock.calls.at(-1)?.[1]?.signal).toBe(signal);
     expect(mockPost.mock.calls.at(-1)?.[2]?.signal).toBe(signal);
+    mockGet.mockResolvedValueOnce({ status: 200, data: [record] });
+    await expect(listPromptLibrary({ store: store.promptLibraryStore, request: {} })).resolves.toMatchObject({
+      coverage: 'complete', items: [{ artifactId, folderId: 'folder', tags: ['topic'] }],
+    });
   });
 
 

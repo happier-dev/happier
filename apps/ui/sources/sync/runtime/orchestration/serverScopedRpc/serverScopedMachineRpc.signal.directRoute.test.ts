@@ -23,7 +23,7 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
+    getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
 }));
 
 // Mock only the direct-route transport boundary so the peer-mediation DIRECT

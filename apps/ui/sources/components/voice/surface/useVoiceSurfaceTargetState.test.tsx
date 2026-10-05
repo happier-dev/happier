@@ -54,7 +54,6 @@ describe('useVoiceSurfaceTargetState', () => {
             },
         }));
 
-        expect(hook.getCurrent().locationAllowsVariant).toBe(true);
         expect(hook.getCurrent().bindingScope).toBe('session');
         expect(hook.getCurrent().startSessionId).toBe('exact-session');
         await hook.unmount();
@@ -168,7 +167,6 @@ describe('useVoiceSurfaceTargetState', () => {
             },
         }));
 
-        expect(hook.getCurrent().locationAllowsVariant).toBe(true);
         expect(hook.getCurrent().bindingScope).toBe('session');
         expect(hook.getCurrent().startSessionId).toBe('exact-session');
         await hook.unmount();

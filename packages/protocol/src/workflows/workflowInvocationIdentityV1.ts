@@ -1,5 +1,13 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import type { WorkflowDefinitionV1 } from './workflowV1.js';
+
+/** The first proposal keeps the hold identity; a changed proposal has its own semantic identity. */
+export function deriveWorkflowPlanRunIdV1(runId: string, invocationId: string, normalizedProposal?: WorkflowDefinitionV1): string {
+  return deriveWorkflowReplacementId(['workflow.review.plan_run', runId, invocationId,
+    ...(normalizedProposal === undefined ? [] : [createCanonicalJsonSigningInput(normalizedProposal)])]);
+}
 
 /** Stable request identity shared by admission, recovery and review rejoin. */
 export function deriveWorkflowReplacementId(parts: readonly unknown[]): string {

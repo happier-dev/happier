@@ -14,6 +14,12 @@ export type IntentStartActionInputById = {
         target?: {
             kind: 'detached';
         } | undefined;
+        outputs?: 'walkthrough'[] | undefined;
+        comparisonId?: string | undefined;
+        narrator?: {
+            engineId: string;
+            modelId?: string | undefined;
+        } | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         reviewCommentAuthorIntent?: 'open' | 'propose' | undefined;
         changeType?: 'all' | 'committed' | 'uncommitted' | undefined;
@@ -169,6 +175,29 @@ export type IntentStartActionInputById = {
             resourceId: string;
             expectedResourceRevision: number;
         } | undefined;
+    };
+    readonly "review.walkthrough": {
+        comparisonId: string;
+        runId: string;
+        narrator?: {
+            engineId: string;
+            modelId?: string | undefined;
+        } | undefined;
+        sessionId?: string | undefined;
+        reviewRunIds?: string[] | undefined;
+    };
+    readonly "review.explain_findings": {
+        cwd: string;
+        resultId: string;
+        expectedRevision: number;
+        findingIds: {
+            runId: string;
+            findingId: string;
+        }[];
+        runId: string;
+        instructions?: string | undefined;
+        sessionId?: string | undefined;
+        reviewRunIds?: string[] | undefined;
     };
     readonly "subagents.plan.start": {
         [x: string]: unknown;
@@ -326,6 +355,12 @@ export type IntentStartActionInputById = {
 };
 export type IntentStartActionResultById = {
     readonly "review.start": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "review.walkthrough": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "review.explain_findings": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
     readonly "subagents.plan.start": string | number | boolean | readonly JsonValue[] | {

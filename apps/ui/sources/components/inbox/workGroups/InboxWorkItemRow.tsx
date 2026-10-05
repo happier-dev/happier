@@ -32,6 +32,7 @@ import { workStatusWordStyle } from '@/components/work/status/workStatusTreatmen
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
 
 import { InboxSessionRowMenu } from './InboxSessionRowMenu';
+import { buildInboxSessionContextLine, joinFacts } from './inboxSessionContextLine';
 
 export function requiresInboxPromptCard(entry: InboxSessionAttentionEntry): boolean {
     return entry.candidate.personalAttention.reasons.some(
@@ -44,20 +45,7 @@ export function presentInboxSessionStatus(session: Session, nowMs: number): Work
     return resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(session, nowMs) });
 }
 
-/** What the row says under its title: a lead's working reports (ORC R-10), then where it runs. */
-export function buildInboxSessionContextLine(candidate: InboxSessionAttentionEntry['candidate']): string | undefined {
-    const reports = candidate.session.reports;
-    const outstandingReports = reports ? reports.working + reports.needsYou + reports.stalled : 0;
-    const context = (candidate.context?.contextLine ?? candidate.subtitle).trim();
-    return joinFacts(
-        outstandingReports > 0 ? t('sessionWork.strip.stillWorking', { count: outstandingReports }) : null,
-        context,
-    ) || undefined;
-}
 
-function joinFacts(...facts: ReadonlyArray<string | null | undefined>): string {
-    return facts.filter((fact): fact is string => typeof fact === 'string' && fact.length > 0).join(' · ');
-}
 
 function sessionServerId(session: Session): string | null {
     return session.serverId ?? null;

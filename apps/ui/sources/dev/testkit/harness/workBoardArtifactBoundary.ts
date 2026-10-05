@@ -36,7 +36,10 @@ export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
         },
     };
     return { transport, rows, reads, offline: (value: boolean) => { offline = value; },
-        acknowledged: () => WorkBoardsV1Schema.parse({ v: 1, boards: [...rows.values()].map(row => JSON.parse(row.body!)) }),
+        acknowledged: () => WorkBoardsV1Schema.parse({ v: 1, boards: [...rows.values()].map(row => {
+            if (typeof row.body !== 'string') throw new Error('Expected Work board text');
+            return JSON.parse(row.body);
+        }) }),
         hold() { let release!: () => void; gate = new Promise<void>(resolve => { release = resolve; }); return release; },
     };
 }

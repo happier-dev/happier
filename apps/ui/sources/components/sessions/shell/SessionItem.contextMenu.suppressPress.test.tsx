@@ -412,7 +412,7 @@ describe('SessionItem context menu press suppression', () => {
         expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_1', undefined);
     });
 
-    it('delegates iOS native inline drag context-menu opening to the outer row gesture', async () => {
+    it('keeps the iOS long-press for the row menu even when the row can be carried (K1)', async () => {
         vi.useFakeTimers();
 
         const SessionItem = await importSessionItem();
@@ -444,22 +444,19 @@ describe('SessionItem context menu press suppression', () => {
                 isSingle={true}
                 variant="default"
                 compact={false}
-                nativeInlineDragEnabled={true}
-                reorderHandleGesture={{ type: 'pan' } as any}
+                dragEnabled
                 nativeContextMenuOpen={false}
                 onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
             />,
         );
 
         const itemPressable = screen.findHostByTestId('session-list-item-sess_2');
-        if (!itemPressable) throw new Error('expected native inline-drag session pressable');
-        expect(itemPressable.props.onPressIn).toBeUndefined();
-        expect(itemPressable.props.onPressOut).toBeUndefined();
-        expect(itemPressable.props.onLongPress).toBeUndefined();
+        if (!itemPressable) throw new Error('expected carryable session pressable');
+        expect(itemPressable.props.onLongPress).toEqual(expect.any(Function));
         expect(onNativeContextMenuOpenChange).not.toHaveBeenCalled();
     });
 
-    it('suppresses the post-drag row press after a web reorder-handle drag', async () => {
+    it('suppresses the post-carry row press after a whole-row desktop carry', async () => {
         vi.useFakeTimers();
         platformState.os = 'web';
         const SessionItem = await importSessionItem();
@@ -480,7 +477,7 @@ describe('SessionItem context menu press suppression', () => {
                 isSingle={true}
                 variant="default"
                 compact={false}
-                reorderHandleGesture={{ type: 'pan' } as any}
+                dragEnabled
                 isBeingDragged={true}
             />,
         );
@@ -500,7 +497,7 @@ describe('SessionItem context menu press suppression', () => {
                     isSingle={true}
                     variant="default"
                     compact={false}
-                    reorderHandleGesture={{ type: 'pan' } as any}
+                    dragEnabled
                     isBeingDragged={false}
                 />,
             );
@@ -552,7 +549,7 @@ describe('SessionItem context menu press suppression', () => {
                 isSingle={true}
                 variant="default"
                 compact={false}
-                nativeInlineDragEnabled={false}
+                dragEnabled={false}
                 nativeContextMenuOpen={false}
                 onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
             />,
@@ -659,7 +656,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('does not show selection checkboxes merely on hover', async () => {
-        platformOs = 'web';
+        platformState.os = 'web';
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_hover',
@@ -741,7 +738,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('tracks keyboard focus independently from the selected row', async () => {
-        platformOs = 'web';
+        platformState.os = 'web';
         const SessionItem = await importSessionItem();
         const keys = ['server_a:first', 'server_a:second'] as const;
         const store = createSessionListSelectionStore({ scopeKey: 'scope-a', visibleOrderedKeys: keys });

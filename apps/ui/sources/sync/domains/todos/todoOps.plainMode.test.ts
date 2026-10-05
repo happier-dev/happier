@@ -601,7 +601,7 @@ describe('todoOps plaintext account storage', () => {
         mocks.todoState = priorState;
         mocks.kvGet.mockResolvedValue(malformedIndex);
         await expect(
-            reorderTodos({ token: 'token-only' }, 'existing', 0, 'undone'),
+            reorderTodos({ token: 'token-only' }, 'existing', { anchorId: null, placement: 'before' }),
         ).rejects.toMatchObject({
             code: 'todo_stored_content_unavailable',
             key: 'todo.index',

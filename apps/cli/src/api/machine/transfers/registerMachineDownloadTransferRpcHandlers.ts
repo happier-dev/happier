@@ -1,9 +1,9 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { registerDownloadTransferLifecycleHandlers } from '@/transfers/rpc/registerDownloadTransferLifecycleHandlers';
 import type { TransferLifecycleDiagnosticContext } from '@/transfers/rpc/transferLifecycleDiagnostics';
-import type { DownloadTransferSource } from '@/transfers/targets/downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 
 export type MachineDownloadTransferInitResponse =
   | Readonly<{ success: true; downloadId: string; chunkSizeBytes: number; sizeBytes: number; name: string }>

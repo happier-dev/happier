@@ -26,9 +26,9 @@ import {
 } from '../presentation/form/Fields.js';
 import {
   readHappierActionInputPath,
-  resolveHappierActionFieldPresentation,
   writeHappierActionInputPath,
 } from '../presentation/form/actionInputFields.js';
+import { HappierInputField } from '../presentation/form/InputField.js';
 import { HappierSegmentedChoice } from '../presentation/form/SegmentedChoice.js';
 import {
   resolveHappierFieldKeyboardType,
@@ -480,6 +480,7 @@ function FormRoot(props: FormProps): ReactElement {
   const formDisabled = props.disabled === true || submission.pending;
   const patch = (path: string, value: unknown) => props.onChange(writeHappierActionInputPath(props.value, path, value));
   const translate = usePluginTranslation();
+  const theme = usePluginTheme();
   const submitLabel = hints.submitLabel
     ?? translate(FORM_SUBMIT_TRANSLATION_KEY, 'Submit');
   const cancelLabel = props.cancelLabel
@@ -492,61 +493,25 @@ function FormRoot(props: FormProps): ReactElement {
       {hints.description ? <Text value={hints.description} tone="secondary" /> : null}
       {fields.map((field) => {
         const value = readHappierActionInputPath(props.value, field.path);
-        const presentation = resolveHappierActionFieldPresentation<FormOptionValue>(
-          field,
-          value,
-          readActionInputSelectionForPresentation(field, value),
-        );
-        const disabled = formDisabled || field.disabled;
-        const issue = props.issues?.[field.path];
-        let control: ReactNode;
-        if (presentation.kind === 'toggle') {
-          control = <Toggle label={field.title} value={presentation.value} disabled={disabled} onChange={(next) => patch(field.path, next)} />;
-        } else if (presentation.kind === 'select') {
-          control = (
-            <Select
-              label={field.title}
-              options={(field.options ?? []).map((option) => ({
-                value: option.value,
-                label: option.label,
-                ...(option.description === undefined ? {} : { description: option.description }),
-                ...(option.disabled === undefined ? {} : { disabled: option.disabled }),
-              }))}
-              value={presentation.value}
-              multiple={presentation.multiple}
-              maxSelections={field.maxSelections}
-              minimumSelections={field.required ? 1 : undefined}
-              required={field.required}
-              disabled={disabled}
-              onChange={(next) => patch(field.path, next)}
-            />
-          );
-        } else {
-          control = (
-            <TextField
-              label={field.title}
-              value={presentation.value}
-              placeholder={field.placeholder}
-              disabled={disabled}
-              required={field.required}
-              secure={presentation.secure}
-              multiline={presentation.multiline}
-              keyboardType={presentation.keyboardType}
-              onChange={(next) => patch(field.path, presentation.parseText(next))}
-            />
-          );
-        }
         return (
-          <Field
+          <HappierInputField<FormOptionValue>
             key={field.path}
-            label={field.title}
-            description={field.description}
-            required={field.required}
-            disabled={disabled}
-            issue={issue}
-          >
-            {control}
-          </Field>
+            field={field}
+            value={value}
+            selection={readActionInputSelectionForPresentation(field, value)}
+            options={(field.options ?? []).map((option) => ({
+              value: option.value,
+              label: option.label,
+              ...(option.description === undefined ? {} : { description: option.description }),
+              ...(option.disabled === undefined ? {} : { disabled: option.disabled }),
+            }))}
+            disabled={formDisabled}
+            issue={props.issues?.[field.path]}
+            isEqual={isSameActionInputOptionValue}
+            keyForOption={(option) => actionInputOptionValueKey(option.value)}
+            theme={theme}
+            onChange={(next) => patch(field.path, next)}
+          />
         );
       })}
       <FormActions>

@@ -6,7 +6,7 @@ import type { ActionCaller } from '../actions/executor/types.js';
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
-import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
+import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
@@ -203,6 +203,25 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, snapshot: { workDepth: 2,
       materializedLeaves: expect.arrayContaining([expect.objectContaining({ sourceKey: '$root', blockId: actionBlockId,
         kind: 'action', actionInput: expect.objectContaining({ [actionBlockId === 'review' ? 'engineIds' : 'backendTargetKeys']: [{ kind: 'unresolved' }] }) })]) } });
+    if (!result.ok) throw new Error(result.error.code);
+    const reread = await readWorkflowAcceptedAgentStartLeavesV1(result.snapshot);
+    expect(reread.filter((leaf) => leaf.blockId === actionBlockId)).toMatchObject([
+      { facts: { agentTarget }, engine: { agentTargetKey: 'agent:happier.agent.codex/codex' } },
+    ]);
+  });
+  it('checks every known item-loop Action engine against current Agent authority', async () => {
+    const result = await materialize({ definition: REVIEW_AND_CONVERGE_WORKFLOW_V1,
+      context: { ...context, inputs: { engines: ['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'] },
+        origin: { kind: 'direct', originSessionId: 'origin' } },
+      roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' },
+        availableAgentTargetKeys: ['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'] },
+      effects: { resolveTargetAvailability: available,
+        readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
+      admission: { kind: 'agent', admitLeaf: async (leaf, facts) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        { kind: 'workflow_run_leaf', leaf }, { ...policyContext, roles: facts.role ? { [facts.role.roleId]: facts.role } : {},
+          allowLists: { v: 1, allowedRoleIds: null, allowedAgentTargetKeys: ['agent:happier.agent.codex/codex'] } }) },
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'agentTarget', blockId: 'review' } });
   });
   it.each(['explicit', 'default', 'child'] as const)('refuses an originless %s origin-session leaf at admission', async (placement) => {
     const originLeaf = { ...definition.blocks[0], execution: { conversation: { kind: 'origin_session' } } };

@@ -4,26 +4,32 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveThemeMode, useApplyThemeSelection, useToggleThemeMode } from '@/components/settings/appearance/useApplyThemeSelection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon } from '@/components/ui/icons/Icon';
+import { Popover } from '@/components/ui/popover';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { Item } from '@/components/ui/lists/Item';
+import { GlassAppearanceControls } from '@/components/settings/appearance/GlassAppearanceControls';
+import { Text } from '@/components/ui/text/Text';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { motionTokens } from '@/components/ui/motion';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
 import { t } from '@/text';
-
-const MENU_HIDE_ID = 'hide';
+import { readHappierPointerModifiers, resolveHappierPointerPlatform } from '@happier-dev/plugin-ui/presentation';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 
 /**
- * Light ↔ dark from the title strip. The glyph is a circle with one half filled: it turns over as the
- * theme changes, so the filled half reads as "the other mode". A press switches through the theme
- * owner (`useToggleThemeMode`); a long press or a right click opens the mode choices and "Hide from
- * toolbar". Whether it shows is a device-local preference that Settings → Appearance turns back on.
+ * The same Appearance entry in the title strip and phone header. Ordinary, long and secondary
+ * presses open the shared popover; modifier-click switches through the canonical theme owner.
  */
 export const AppShellThemeToggle = React.memo(function AppShellThemeToggle(props: Readonly<{
     buttonSize: number;
     glyphSize: number;
     color: string;
+    interactiveTargetGapPx?: number;
 }>) {
     const [visible, setVisible] = useLocalSettingMutable('titleStripThemeToggleVisible');
     if (visible === false) return null;
@@ -34,76 +40,94 @@ function ThemeToggleButton(props: Readonly<{
     buttonSize: number;
     glyphSize: number;
     color: string;
+    interactiveTargetGapPx?: number;
     onHide: () => void;
 }>) {
     const { theme } = useUnistyles();
     const toggle = useToggleThemeMode();
-    const applyThemeSelection = useApplyThemeSelection();
-    const [themePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
     const [menuOpen, setMenuOpen] = React.useState(false);
+    const anchorRef = React.useRef<View>(null);
     const dark = theme.dark;
-    const label = dark ? t('settingsAppearance.switchToLightTheme') : t('settingsAppearance.switchToDarkTheme');
-    const mode = resolveThemeMode(themePreference);
-    const items = React.useMemo((): readonly DropdownMenuItem[] => {
-        const glyph = (name: IconName) => <Icon name={name} size={16} color={theme.colors.text.secondary} />;
-        const current = <Icon name="check" size={16} color={theme.colors.text.secondary} />;
-        const choice = (id: 'light' | 'dark' | 'adaptive', title: string, icon: IconName): DropdownMenuItem => ({
-            id, testID: `app-shell-theme-menu-${id}`, title, icon: glyph(icon),
-            checked: mode === id, ...(mode === id ? { rightElement: current } : {}),
-        });
-        return [
-            choice('light', t('settingsAppearance.themeOptions.light'), 'sun'),
-            choice('dark', t('settingsAppearance.themeOptions.dark'), 'moon'),
-            choice('adaptive', t('settingsAppearance.themeToggle.matchSystem'), 'desktop'),
-            { id: MENU_HIDE_ID, testID: 'app-shell-theme-menu-hide', title: t('settingsAppearance.themeToggle.hideFromToolbar'), icon: glyph('eye-slash') },
-        ];
-    }, [mode, theme.colors.text.secondary]);
-    const select = React.useCallback((id: string) => {
-        setMenuOpen(false);
-        if (id === MENU_HIDE_ID) {
-            props.onHide();
-            return;
-        }
-        if (id === 'light' || id === 'dark' || id === 'adaptive') {
-            applyThemeSelection(id, themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE);
-        }
-    }, [applyThemeSelection, props.onHide, themeProfiles]);
+    const label = t('settingsAppearance.glassControls.appearance');
     const openMenu = React.useCallback(() => setMenuOpen(true), []);
     const openMenuFromContext = React.useCallback((event: unknown) => {
         (event as { preventDefault?: () => void } | null)?.preventDefault?.();
         setMenuOpen((open) => !open);
     }, []);
     return (
-        <DropdownMenu
+      <>
+        <View ref={anchorRef} collapsable={false}>
+            <IconButton
+                testID="app-shell-theme-toggle"
+                variant="plain"
+                size={props.buttonSize}
+                minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
+                interactiveTargetGapPx={props.interactiveTargetGapPx}
+                accessibilityLabel={label}
+                tooltip={label}
+                tooltipPlacement="bottom"
+                tooltipHidden={menuOpen}
+                hasPopup="dialog"
+                expanded={menuOpen}
+                icon={<ThemeToggleGlyph dark={dark} size={props.glyphSize} color={props.color} />}
+                onPress={event => {
+                    const modifiers = readHappierPointerModifiers(event);
+                    const platform = resolveHappierPointerPlatform(Platform.OS);
+                    if (platform === 'macos' || platform === 'ios' ? modifiers.metaKey : modifiers.ctrlKey) return toggle();
+                    else setMenuOpen(open => !open);
+                }}
+                onLongPress={openMenu}
+                onContextMenu={openMenuFromContext}
+            />
+        </View>
+        <Popover
             open={menuOpen}
-            onOpenChange={setMenuOpen}
-            items={items}
-            onSelect={select}
-            search={false}
-            matchTriggerWidth={false}
-            maxWidthCap={240}
+            anchorRef={anchorRef}
+            onRequestClose={() => setMenuOpen(false)}
+            autoFocusOnOpen
+            maxWidthCap={320}
             placement="bottom"
-            popoverAnchorAlign="start"
-            trigger={() => (
-                <IconButton
-                    testID="app-shell-theme-toggle"
-                    variant="plain"
-                    size={props.buttonSize}
-                    accessibilityLabel={label}
-                    tooltip={label}
-                    tooltipPlacement="bottom"
-                    tooltipHidden={menuOpen}
-                    hasPopup="menu"
-                    expanded={menuOpen}
-                    icon={<ThemeToggleGlyph dark={dark} size={props.glyphSize} color={props.color} />}
-                    onPress={toggle}
-                    onLongPress={openMenu}
-                    onContextMenu={openMenuFromContext}
-                />
-            )}
-        />
+            portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'start' }}
+        >
+            {({ maxHeight }) => <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme">
+                <AppearancePopoverContent onClose={() => setMenuOpen(false)} onHide={props.onHide} />
+            </FloatingOverlay>}
+        </Popover>
+      </>
     );
+}
+
+/** Detailed settings subscribe only while the Appearance surface is open. */
+function AppearancePopoverContent(props: Readonly<{ onClose: () => void; onHide: () => void }>) {
+    const { theme } = useUnistyles();
+    const router = useRouter();
+    const applyThemeSelection = useApplyThemeSelection();
+    const [themePreference] = useLocalSettingMutable('themePreference');
+    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
+    const openAppearance = (customize: boolean) => {
+        props.onClose();
+        router.push({ pathname: '/settings/appearance', params: customize ? { setting: 'appearance.glassCustomize' } : {} });
+    };
+    const pointerPlatform = resolveHappierPointerPlatform(Platform.OS);
+    const modifier = pointerPlatform === 'macos' || pointerPlatform === 'ios' ? '⌘' : 'Ctrl';
+    return <View style={{ width: 320, maxWidth: '100%' }}>
+        <SegmentedChoiceItem
+            title={t('settingsAppearance.theme')}
+            testIDPrefix="app-shell-theme-menu"
+            options={[
+                { id: 'light', label: t('settingsAppearance.themeOptions.light') },
+                { id: 'dark', label: t('settingsAppearance.themeOptions.dark') },
+                { id: 'adaptive', label: t('settingsAppearance.themeToggle.matchSystem') },
+            ]}
+            value={resolveThemeMode(themePreference)}
+            onChange={mode => applyThemeSelection(mode, themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE)}
+        />
+        <GlassAppearanceControls presentation="compact" />
+        <Item testID="appearance-customize-link" title={t('settingsAppearance.glassControls.customizeLink')} onPress={() => openAppearance(true)} />
+        <Item testID="appearance-more-settings" title={t('settingsAppearance.glassControls.moreSettings')} onPress={() => openAppearance(false)} />
+        <Item testID="app-shell-theme-menu-hide" title={t('settingsAppearance.themeToggle.hideFromToolbar')} onPress={() => { props.onClose(); props.onHide(); }} showChevron={false} />
+        <SectionContentRow showDivider={false}><Text style={{ color: theme.colors.text.secondary, fontSize: 12, lineHeight: 16 }}>{t('settingsAppearance.glassControls.shortcutHint', { modifier })}</Text></SectionContentRow>
+    </View>;
 }
 
 /** The half-filled circle turns half a turn between the modes; it starts settled (nothing animates on arrival). */

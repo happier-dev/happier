@@ -7,6 +7,7 @@ import { signAccountContentKeyBindingV1 } from '../../crypto/accountContentKeyBi
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
+import { sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definition = { version: 1 as const, defaults: {
@@ -59,9 +60,11 @@ describe('Workflow per-run key admission', () => {
     expect(JSON.parse(String(admitted?.acceptedEnvelope)).t).toBe('plain');
   });
 
-  it('admits one fresh transferable key for the owner and authorized audience', async () => {
+  it('admits a sessionless UI Wait with one transferable key and exposes its held detail and public invocation page', async () => {
     const owner = recipient('owner');
     const viewer = recipient('viewer');
+    const waitDefinition = { ...definition, blocks: [{ kind: 'wait' as const, id: 'wait-1',
+      document: { text: 'Approve the value', references: [], attachments: [] }, result: { kind: 'text' as const } }] };
     let admitted: Readonly<Record<string, unknown>> | undefined;
     const run = { sourceArtifactId: null, visibleTeamId: null, id: runId, ownerAccountId: 'owner',
       origin: { kind: 'direct' }, state: 'queued', revision: 0, machineId: 'machine',
@@ -89,8 +92,8 @@ describe('Workflow per-run key admission', () => {
       prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine',
         directory: '/repo', checkoutRootPath: '/repo' } } }), randomBytes,
     });
-    await actionOwner.execute({ actionId: 'workflow.run.start', input: { runId, source: { kind: 'inline', definition } },
-      context: { callerPermissionMode: 'default', externalActionTarget: { kind: 'machine', machineId: 'machine',
+    await actionOwner.execute({ actionId: 'workflow.run.start', input: { runId, source: { kind: 'inline', definition: waitDefinition } },
+      context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default', externalActionTarget: { kind: 'machine', machineId: 'machine',
         project: { machineId: 'machine', directory: '/repo' } } } });
     expect(admitted?.recipientKeyEnvelopes).toEqual(expect.arrayContaining([
       expect.objectContaining({ recipientAccountId: 'owner' }), expect.objectContaining({ recipientAccountId: 'viewer' }),
@@ -104,6 +107,23 @@ describe('Workflow per-run key admission', () => {
     expect(key).toHaveLength(32);
     expect(key).not.toEqual(owner.machineKey);
     expect(open('viewer', viewer.machineKey)).toEqual(key);
+    if (!key) throw new Error('admitted_run_key_unavailable');
+    const rootId = '22222222-2222-4222-8222-222222222222';
+    const heldId = '33333333-3333-4333-8333-333333333333';
+    const index = { id: heldId, runId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0',
+      attempt: '0', contentRevision: '4', lifecycle: 'waiting_for_review', createdAt: run.createdAt, updatedAt: run.updatedAt };
+    const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'e2ee', runDataKey: key, randomBytes,
+      binding: { v: 1, purpose: 'invocation_progress', accountId: 'owner', runId, recordId: heldId,
+        sequence: index.sequence, parentRecordId: rootId, memberOrdinal: index.memberOrdinal, attempt: index.attempt },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'wait', invocationPath: { blockId: 'wait-1', scope: [] },
+        attempt: '0', logicalInvocationRecordId: heldId },
+    }));
+    const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
+      mode: 'e2ee', runDataKey: key, randomBytes, binding: { v: 1, purpose: 'checkpoint', accountId: 'owner', runId },
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: rootId, nextSequence: '2',
+        frontier: { nextBlockOrdinal: 0, paused: false } },
+    }));
     const ownerEnvelope = envelopes.find(entry => entry.recipientAccountId === 'owner')!.encryptedDataKey;
     const viewerEnvelope = envelopes.find(entry => entry.recipientAccountId === 'viewer')!.encryptedDataKey;
     const census = { runId, ownerAccountId: 'owner', access: 'view', encryptionMode: 'e2ee', visibleTeamId: null,
@@ -119,10 +139,14 @@ describe('Workflow per-run key admission', () => {
         : { kind: 'available', witness: { mode: 'e2ee', version: 1,
           contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(viewer.material.contentPublicKeyFingerprint) }, material: viewer.material },
       storage: { execute: async operation => {
-        if (operation.operation === 'get') return { run, acceptedEnvelope: admitted?.acceptedEnvelope,
-          checkpointEnvelope: null, resultEnvelope: null, keyCensus: census };
+        if (operation.operation === 'get') return { run: { ...run, state: 'waiting_for_review', revision: 6 }, acceptedEnvelope: admitted?.acceptedEnvelope,
+          checkpointEnvelope, resultEnvelope: null, keyCensus: census };
         if (operation.operation === 'run-key.census') return census;
-        if (operation.operation === 'invocations.list') return { invocations: [] };
+        // Mirror the server's opaque storage shape, including its private key census.
+        if (operation.operation === 'invocations.list') return { invocations: operation.cursor ? [] : [index], parentRevision: 6, keyCensus: census,
+          ...(operation.parentRecordId && !operation.cursor ? { nextCursor: 'next-page' } : {}),
+          ...(operation.progressEnvelopes ? { progressEnvelopesByInvocationId: { [heldId]: contentEnvelope } } : {}) };
+        if (operation.operation === 'invocations.get') return { invocation: { index, contentEnvelope, parentRevision: 6 }, keyCensus: census };
         throw new Error(`Unexpected reader operation ${String(operation.operation)}`);
       } },
       definitions: { get: async () => { throw new Error('reader does not rematerialize'); } },
@@ -130,7 +154,18 @@ describe('Workflow per-run key admission', () => {
     });
     const request = { actionId: 'workflow.run.get' as const, input: { runId }, context: { callerPermissionMode: 'default' as const } };
     const opened = await readAs(false).execute(request);
-    expect(opened).toHaveProperty('acceptedContext.source.kind', 'inline');
+    expect(opened).toMatchObject({ definition: { blocks: [{ kind: 'wait' }] }, acceptedContext: { source: { kind: 'inline' },
+      origin: { kind: 'direct' } }, checkpoint: { rootRecordId: rootId, nextSequence: '2' } });
+    expect(opened).not.toHaveProperty('acceptedContext.origin.originSessionId');
+    expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: heldId }, context: {} }))
+      .toMatchObject({ invocation: { index: { id: heldId, contentRevision: '4', lifecycle: 'waiting_for_review' },
+        parentRevision: 6, progress: { blockKind: 'wait', invocationPath: { blockId: 'wait-1' } } } });
+    expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId }, context: {} }))
+      .toEqual({ invocations: [index], parentRevision: 6 });
+    expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId, parentRecordId: rootId, limit: 1 }, context: {} }))
+      .toEqual({ invocations: [index], parentRevision: 6, nextCursor: 'next-page' });
+    expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId, parentRecordId: rootId, cursor: 'next-page' }, context: {} }))
+      .toEqual({ invocations: [], parentRevision: 6 });
     await expect(readAs(true).execute(request)).rejects.toMatchObject({ code: 'content_unavailable' });
   });
 });

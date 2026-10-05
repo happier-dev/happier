@@ -1,4 +1,5 @@
 import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
+import { selectOldestPendingRequest, type SessionPendingRequest } from '@happier-dev/session-core/pending';
 
 import {
     presentSessionAwarenessV1,
@@ -94,6 +95,8 @@ export type SessionSummaryInput = Readonly<{
     recap?: SessionRecap | null;
     /** The shared pending-permission projection (`listSessionPendingPermissions`). */
     pendingPermissions?: readonly SessionPendingPermission[];
+    /** Canonical pending questions and Action confirmations, with their native answer controls. */
+    pendingUserActions?: readonly SessionPendingRequest[];
     /** The agent's Plan (`projectSessionAgentPlan`), for "step N of M". */
     plan?: SessionAgentPlan | null;
     /** When the running turn was observed to start; `null` when not known. */
@@ -102,7 +105,7 @@ export type SessionSummaryInput = Readonly<{
 
 /** The one ask the hero shows with its answers; the rest are counted. */
 export type SessionSummaryNeedsYou = Readonly<{
-    request: SessionPendingPermission;
+    request: SessionPendingPermission | SessionPendingRequest;
     moreCount: number;
 }>;
 
@@ -231,12 +234,14 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
         }));
     }
 
-    const needsYou = resolveNeedsYou(input.pendingPermissions ?? []);
+    const needsYou = resolveNeedsYou(input.pendingPermissions ?? [], input.pendingUserActions ?? []);
     const plan = input.plan ?? null;
     const step = plan ? (plan.currentStep ?? plan.nextStep) : null;
     return Object.freeze({
         needsYou,
-        sinceMs: needsYou?.request.createdAtMs ?? input.turnStartedAtMs ?? null,
+        sinceMs: needsYou
+            ? ('requestId' in needsYou.request ? needsYou.request.createdAtMs ?? null : needsYou.request.createdAt)
+            : input.turnStartedAtMs ?? null,
         progress: plan && step !== null ? Object.freeze({ step, total: plan.total }) : null,
         plan,
         facts: resolveFacts(rows),
@@ -253,15 +258,16 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
     });
 }
 
-function resolveNeedsYou(pending: readonly SessionPendingPermission[]): SessionSummaryNeedsYou | null {
-    if (pending.length === 0) return null;
-    // The oldest ask is the one the agent is blocked on; unknown times sort last.
-    const oldest = pending.reduce((first, candidate) => (
-        (candidate.createdAtMs ?? Number.POSITIVE_INFINITY) < (first.createdAtMs ?? Number.POSITIVE_INFINITY)
-            ? candidate
-            : first
-    ));
-    return Object.freeze({ request: oldest, moreCount: pending.length - 1 });
+function resolveNeedsYou(
+    permissions: readonly SessionPendingPermission[],
+    userActions: readonly SessionPendingRequest[],
+): SessionSummaryNeedsYou | null {
+    const pending = [
+        ...permissions.map((request) => ({ id: request.requestId, createdAt: request.createdAtMs ?? null, request })),
+        ...userActions.map((request) => ({ id: request.id, createdAt: request.createdAt, request })),
+    ];
+    const oldest = selectOldestPendingRequest(pending);
+    return oldest ? Object.freeze({ request: oldest.request, moreCount: pending.length - 1 }) : null;
 }
 
 /** The fact cells are the compact form of the activity, workspace and usage rows. */

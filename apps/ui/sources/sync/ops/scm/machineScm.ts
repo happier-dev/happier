@@ -24,6 +24,7 @@ import type {
     ScmDiffCommitResponse,
     ScmDiffFileRequest,
     ScmDiffFileResponse,
+    ScmDiffSummaryResultClearInput,
     ScmLogListRequest,
     ScmLogListResponse,
     ScmPullRequestGetRequest,
@@ -94,6 +95,12 @@ export type MachineScmCallOptions = Readonly<{
     signal?: AbortSignal;
 }>;
 
+type MachineScmRpcRequest = Readonly<{
+    cwd?: string;
+    backendPreference?: unknown;
+    results?: ScmDiffSummaryResultClearInput['results'];
+}>;
+
 function resolveScmRpcTimeoutMs(method: string): number | undefined {
     if (method === RPC_METHODS.SCM_DIFF_COMMIT) {
         return SCM_DIFF_COMMIT_TIMEOUT_MS;
@@ -125,14 +132,14 @@ export function withScmBackendPreference<T extends { backendPreference?: unknown
 
 export async function runMachineScmRpc<
     T extends { success: boolean; error?: string; errorCode?: string },
-    R extends { cwd?: string; backendPreference?: unknown }
+    R extends MachineScmRpcRequest
 >(
     machineId: string,
     method: string,
     request: R,
     options?: MachineScmCallOptions,
 ): Promise<T | ScmRpcFailure> {
-    const payload = withScmBackendPreference({
+    const payload = method.startsWith('scm.diffSummary.') ? request : withScmBackendPreference({
         ...request,
         outcomeVersion: 1 as const,
         ...(method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { operationStateVersion: 1 as const } : {}),
@@ -153,7 +160,7 @@ export async function runMachineScmRpc<
 
 async function callMachineScm<
     T extends { success: boolean; error?: string; errorCode?: string },
-    R extends { cwd?: string; backendPreference?: unknown }
+    R extends MachineScmRpcRequest
 >(
     machineId: string,
     method: string,

@@ -127,12 +127,16 @@ function createFixtureHostApi(context: SurfaceContext, state: FixtureState): Plu
             methods: ['context', 'readResource', 'executeAction', 'openSurface', 'openExternalLink'],
         }),
         context: async () => context,
+        widgetArea: unsupported,
         watchContext: async () => ({ dispose() {} }),
         executeAction: (async () => {
             await new Promise((resolve) => setTimeout(resolve, 900));
             return {};
         }) as PluginUiHostApi['executeAction'],
         selectActionInput: unsupported,
+        readEntityDragItem: unsupported,
+        updateEntityDragDrop: unsupported,
+        watchEntityDragDrop: unsupported,
         openNewSession: unsupported,
         openConnectedAccounts: unsupported,
         settleEphemeralInput: unsupported,

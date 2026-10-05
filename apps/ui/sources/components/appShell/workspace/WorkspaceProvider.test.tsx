@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
-import { createStorageModuleMock, createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { DestinationInstanceHost, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
@@ -12,14 +12,34 @@ import { WorkspaceShell } from './WorkspaceShell';
 import { captureMountedWorkspaceAction, invokeWorkspaceAction } from './workspaceActionRuntime';
 import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import { KeyboardShortcutProvider, useKeyboardCommand, type KeyboardCommandId } from '@/keyboard';
-import { createWorkspaceState } from './workspaceState';
+import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { serializeWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
+import { AppShellTitleStrip } from '@/components/navigation/shell/appRail/AppShellTitleStrip';
+import { reconcileWorkspaceSyncedTabs } from './workspaceSyncedTabs';
+import { registerWorkspaceRouteContext } from './workspaceRouteContext';
+import { Stack } from './destinationRoute';
+import { WorkspaceRouteEntry } from './createWorkspaceRouteEntry';
 
-const boundary = vi.hoisted(() => ({ layouts: {} as Record<string, unknown>, mirrors: [] as string[], scope: { serverId: 'home-a', accountId: 'alice' } }));
+const boundary = vi.hoisted(() => ({ layouts: {} as Record<string, unknown>, mirrors: [] as string[], scope: { serverId: 'home-a', accountId: 'alice' }, dataReady: true,
+    platform: 'ios', pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' } as Record<string, string> }));
+// Socket transport is a genuine boundary; this layout-owner suite has no authenticated RPCs.
+vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {} }));
+// This navigation journey never renders Markdown; the vendor/native SDK remains a boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in workspace navigation test'); },
+}));
+// This harness has no recipient-envelope HTTP/process authority; reaching that API is a setup bug.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace navigation test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
+// Authentication is a boundary of this no-network layout harness.
+vi.mock('@/auth/context/AuthContext', () => ({ useOptionalAuth: () => null }));
 // Native has no browser History; Expo is the genuine platform URL boundary here.
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default } });
+    return createReactNativeWebMock({ Platform: { get OS() { return boundary.platform; }, select: (values: Record<string, unknown>) => values[boundary.platform] ?? values.default } });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -31,17 +51,24 @@ vi.mock('@expo/vector-icons', async () => {
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' },
+    return createExpoRouterMock({ pathname: () => boundary.pathname, params: () => boundary.params,
         router: { replace: (href: unknown) => { boundary.mirrors.push(String(href)); } } }).module;
 });
-vi.mock('@/sync/domains/state/storage', importOriginal => createStorageModuleMock({ importOriginal, overrides: {
-    useIsDataReady: () => true,
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { create } = await import('zustand');
+    const baseline = createStorageModuleStub({});
+    const store = create<ReturnType<typeof baseline.storage.getState>>(() => ({ ...baseline.storage.getState(), settings: baseline.useSettings() }));
+    return createStorageModuleStub({
+    storage: store, getStorage: () => store,
+    useIsDataReady: () => boundary.dataReady,
     useActiveServerAccountScope: () => boundary.scope,
     useLocalSettingMutable: createStorageModuleStub({ useLocalSettingMutable: (key: string) => {
+        if (key === 'titleStripThemeToggleVisible') return [false, () => {}] as const;
         if (key !== 'workspaceLayoutV1') throw new Error(`Unexpected setting ${key}`);
         return [boundary.layouts, (next: Record<string, unknown>) => { boundary.layouts = next; }] as const;
     } }).useLocalSettingMutable,
-} }));
+});
+});
 
 function HostedProbe() {
     const params = useDestinationParams<{ id?: string; serverId?: string }>();
@@ -60,8 +87,175 @@ function NavigationProbe(props: Readonly<{ navigation: WorkspaceNavigationContex
     </>;
 }
 
+function ResizeLayout() { return <Stack />; }
+function ResizeEditor() {
+    const [draft, setDraft] = React.useState('');
+    const params = useDestinationParams();
+    return React.createElement('ResizeEditor', { draft, setDraft, params });
+}
+
 describe('consumed workspace navigation owner', () => {
-    afterEach(() => { boundary.layouts = {}; boundary.mirrors = []; boundary.scope = { serverId: 'home-a', accountId: 'alice' }; clearActiveUnsavedChangesGuard(); standardCleanup(); });
+    afterEach(() => { boundary.layouts = {}; boundary.mirrors = []; boundary.scope = { serverId: 'home-a', accountId: 'alice' }; boundary.dataReady = true;
+        boundary.platform = 'ios'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        clearActiveUnsavedChangesGuard(); standardCleanup(); vi.unstubAllGlobals(); });
+    it.each([
+        ['/settings/no-body', '', false],
+        ['/settings/plugins/acme.review/policy', '?subPath=bindings%2F1&subPath=bindings%2F2', false],
+        ['/settings/no-body', '', true],
+        ['/settings/plugins/acme.review/policy', '?subPath=bindings%2F1&subPath=bindings%2F2', true],
+    ] as const)('retains Expo ownership for the unadmitted web location %s%s (desktop=%s)', async (pathname, search, desktop) => {
+        boundary.platform = 'web'; boundary.pathname = pathname; boundary.params = {};
+        vi.stubGlobal('window', { location: { pathname, search, hash: '' },
+            history: { state: null, replaceState: () => { throw new Error('Unadmitted route must not be projected'); } },
+            sessionStorage: { getItem: () => 'main' }, addEventListener: () => {}, removeEventListener: () => {} });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const Body = () => React.createElement('ExpoOwnedBody');
+        const screen = await renderScreen(<WorkspaceProvider enabled={desktop} phone={!desktop} catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<WorkspaceRouteEntry Body={Body} /></>}
+        </WorkspaceProvider>);
+        const navigation = screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        expect(navigation.active).toBe(false);
+        expect(screen.root.findAllByType('ExpoOwnedBody')).toHaveLength(1);
+        expect(boundary.mirrors).toEqual([]);
+    });
+    it.each(['agents/custom', 'connected-services/connect', 'embeds/new', 'account/api-tokens/token-a', 'voice/service', 'personalize'])('retains the %s editor across mobile-web/desktop hosting changes', async pageId => {
+        const pathname = pageId === 'personalize' ? '/personalize' : `/settings/${pageId}`;
+        const search = pageId === 'personalize' ? '?page=conversation' : '';
+        boundary.platform = 'web'; boundary.pathname = pathname; boundary.params = {};
+        const location = { pathname, search, hash: '' };
+        const browserHistory = { state: null as unknown,
+            replaceState: (state: unknown, _unused: string, href: string) => { browserHistory.state = state;
+                const url = new URL(href, 'https://happier.invalid'); location.pathname = url.pathname; location.search = url.search; location.hash = url.hash; },
+            pushState: (state: unknown, unused: string, href: string) => browserHistory.replaceState(state, unused, href), go: () => {},
+        };
+        vi.stubGlobal('window', { location, history: browserHistory, sessionStorage: { getItem: () => 'main' }, addEventListener: () => {}, removeEventListener: () => {} });
+        const moduleName = pageId === 'agents/custom' ? 'agents/custom/index'
+            : pageId === 'account/api-tokens/token-a' ? 'account/api-tokens/[tokenId]' : pageId;
+        const moduleKey = pageId === 'personalize' ? './(app)/personalize.tsx' : `./(app)/settings/${moduleName}.tsx`;
+        const modules: Record<string, unknown> = {
+            './(app)/settings/_layout.tsx': { default: ResizeLayout },
+            './(app)/index.tsx': { WorkspaceRouteBody: () => null },
+            [moduleKey]: { WorkspaceRouteBody: ResizeEditor },
+        };
+        registerWorkspaceRouteContext(Object.assign((key: string) => modules[key], { keys: () => Object.keys(modules) }));
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        let desktop = false;
+        const element = () => <WorkspaceProvider enabled={desktop} phone={!desktop} catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<WorkspaceShell catalog={catalog} /></>}
+        </WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        expect(navigation().active).toBe(true);
+        await act(async () => { screen.root.findByType('ResizeEditor').props.setDraft('unsaved draft'); });
+        const tabId = navigation().state.groups[navigation().state.focusedGroupId].activeTabId;
+        for (const next of [true, false, true]) {
+            desktop = next;
+            await act(async () => { screen.update(element()); });
+            expect(navigation().active).toBe(true);
+            expect(navigation().state.groups[navigation().state.focusedGroupId].activeTabId).toBe(tabId);
+            expect(screen.root.findByType('ResizeEditor').props.draft).toBe('unsaved draft');
+            expect(location.pathname).toBe(pathname);
+            expect(location.search).toBe(search);
+            if (pageId === 'personalize') expect(screen.root.findByType('ResizeEditor').props.params.page).toBe('conversation');
+        }
+    });
+    it.each(['disabled', 'unready'] as const)('retires a held desktop open when its workspace becomes %s', async transition => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        let enabled = true;
+        const element = () => <WorkspaceProvider enabled={enabled} catalog={catalog}>{navigation => React.createElement('WorkspaceOwner', { navigation })}</WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        let settleDecision!: (value: 'discard') => void;
+        setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, tag: 'desktop-retirement-test',
+            requestDecision: () => new Promise(resolve => { settleDecision = resolve; }) });
+        await act(async () => { navigation().openHref('/session/A4?serverId=home-a', { mode: 'newTab' }); });
+        await act(async () => { if (transition === 'disabled') enabled = false; else boundary.dataReady = false; screen.update(element()); });
+        const before = navigation().state;
+        const layouts = boundary.layouts;
+        boundary.mirrors = [];
+        await act(async () => { settleDecision('discard'); });
+        expect(navigation().state).toBe(before);
+        expect(boundary.layouts).toBe(layouts);
+        expect(boundary.mirrors).toEqual([]);
+    });
+    it.each(['open', 'activate', 'close', 'bulk-close', 'dispatch', 'back', 'forward'] as const)(
+        'retires a held desktop %s continuation before the replacement Account layout is touched', async (operation) => {
+            const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+            const tab = (id: string) => ({ id, target: { kind: 'session', params: { id: id.toUpperCase(), serverId: 'home-a' } }, pinned: false, preview: false });
+            let saved = createWorkspaceState(tab('a1'));
+            for (const id of ['a2', 'a3']) saved = reduceWorkspaceState(saved, { type: 'openTab', groupId: 'group:1', tab: tab(id) });
+            saved = reduceWorkspaceState(saved, { type: 'activateTab', groupId: 'group:1', tabId: 'a1' });
+            boundary.layouts = Object.fromEntries(['alice', 'bob'].map(accountId => [workspaceLayoutScopeKey({ serverId: 'home-a', accountId, windowId: 'main' }), serializeWorkspaceLayout(saved)]));
+            const element = () => <WorkspaceProvider enabled catalog={catalog}>{navigation => React.createElement('WorkspaceOwner', { navigation })}</WorkspaceProvider>;
+            const screen = await renderScreen(element());
+            const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+            await act(async () => { navigation().activateTab('group:1', 'a2'); navigation().activateTab('group:1', 'a3'); });
+            if (operation === 'forward') await act(async () => { navigation().back(); });
+            let settleDecision!: (value: 'discard') => void;
+            setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, tag: 'desktop-account-custody-test',
+                requestDecision: () => new Promise(resolve => { settleDecision = resolve; }) });
+            const source = navigation();
+            await act(async () => {
+                switch (operation) {
+                    case 'open': source.openHref('/session/A4?serverId=home-a', { mode: 'newTab' }); break;
+                    case 'activate': source.activateTab('group:1', 'a2'); break;
+                    case 'close': source.closeTab('group:1', 'a1'); break;
+                    case 'bulk-close': source.closeTabs('group:1', ['a1', 'a2']); break;
+                    case 'dispatch': source.dispatch({ type: 'openTab', groupId: 'group:1', tab: tab('a4') }); break;
+                    case 'back': source.back(); break;
+                    case 'forward': source.forward(); break;
+                }
+            });
+            await act(async () => { boundary.scope = { serverId: 'home-a', accountId: 'bob' }; screen.update(element()); });
+            const before = navigation().state;
+            const layouts = boundary.layouts;
+            boundary.mirrors = [];
+            await act(async () => { settleDecision('discard'); });
+            expect(navigation().state).toBe(before);
+            expect(boundary.layouts).toBe(layouts);
+            expect(boundary.mirrors).toEqual([]);
+        });
+    it.each(['home', 'back', 'forward'] as const)('continues the title strip %s through the real workspace after one discard decision', async (operation) => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{navigation => <>
+            {React.createElement('WorkspaceOwner', { navigation })}
+            <AppShellTitleStrip columnVisible columnToggleAvailable onToggleColumn={() => {}} navigation={navigation} />
+        </>}</WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        await act(async () => { navigation().openHref('/session/A2?serverId=home-a'); navigation().openHref('/session/A3?serverId=home-a'); });
+        if (operation === 'forward') await act(async () => { navigation().back(); });
+        boundary.mirrors = [];
+        const requestDecision = vi.fn(async () => 'discard' as const);
+        setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision, tag: 'title-strip-owner-test' });
+        await screen.pressByTestIdAsync(operation === 'home' ? 'app-shell-logo' : `app-shell-${operation}`);
+        expect(requestDecision).toHaveBeenCalledOnce();
+        expect(boundary.mirrors).toEqual([operation === 'home' ? '/' : `/session/${operation === 'back' ? 'A2' : 'A3'}?serverId=home-a`]);
+    });
+    it('closes a batch under one discard decision and preserves pinned tabs', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{navigation => React.createElement('WorkspaceOwner', { navigation })}</WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        await act(async () => {
+            for (const id of ['A2', 'A3', 'A4']) navigation().openHref(`/session/${id}?serverId=home-a`, { mode: 'newTab' });
+        });
+        const state = navigation().state;
+        const group = state.groups[state.focusedGroupId];
+        const pinnedId = group.tabIds[1];
+        await act(async () => { navigation().dispatch({ type: 'setPinned', tabId: pinnedId, pinned: true }); });
+        let decision: 'keepEditing' | 'discard' = 'keepEditing';
+        const requestDecision = vi.fn(async () => decision);
+        setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision, tag: 'batch-close-test' });
+        const before = navigation().state;
+        await act(async () => { navigation().closeTabs(group.id, group.tabIds); });
+        expect(navigation().state).toBe(before);
+        decision = 'discard';
+        await act(async () => { navigation().closeTabs(group.id, group.tabIds); });
+        expect(requestDecision).toHaveBeenCalledTimes(2);
+        expect(navigation().state.groups[group.id].tabIds).toEqual([pinnedId]);
+        expect(navigation().state.recentlyClosed).toHaveLength(3);
+    });
     it('admits the initial route over a restored layout without persisting until an explicit navigation', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,
@@ -79,6 +273,20 @@ describe('consumed workspace navigation owner', () => {
         expect(boundary.layouts).not.toBe(layouts);
         expect(Object.values(boundary.layouts)[0]).toEqual(serializeWorkspaceLayout(navigation().state));
         await screen.unmount();
+    });
+    it('keeps an initial deep link selected when shared tabs hydrate afterwards', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const state = (screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue).state;
+        const initialId = state.groups[state.focusedGroupId].activeTabId;
+        const remote = { id: 'saved-machine', target: { kind: 'settings', params: { pageId: 'machines/machine-a', id: 'machine-a' } }, pinned: false };
+        const hydrated = reconcileWorkspaceSyncedTabs(state, { v: 1, tabsById: { [remote.id]: remote }, order: [remote.id], pairs: [] }, () => 'blank');
+        expect(hydrated.groups[hydrated.focusedGroupId].activeTabId).toBe(initialId);
+        expect(hydrated.tabs[initialId].target.params.id).toBe('A1');
     });
     it('binds tab commands only while active and uses the current focused group through mounted Actions', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {

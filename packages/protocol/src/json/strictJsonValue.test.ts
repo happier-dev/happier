@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { normalizeStrictJsonValue, sameStrictJsonValue } from './strictJsonValue.js';
+import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue } from './strictJsonValue.js';
 
 function nested(depth: number): unknown {
   let value: unknown = 'leaf';
@@ -36,6 +36,19 @@ describe('normalizeStrictJsonValue', () => {
     const value = 'x'.repeat(1_024 * 1_024);
 
     expect(normalizeStrictJsonValue(value)).toBe(value);
+  });
+});
+
+describe('native JSON transport projection', () => {
+  it('omits optional native object members without weakening strict JSON admission', () => {
+    const native = { absent: undefined, nested: { present: null, optional: undefined }, items: ['value'] };
+    expect(projectNativeJsonValueForTransport(native)).toEqual({ nested: { present: null }, items: ['value'] });
+    expect(() => normalizeStrictJsonValue(native)).toThrow();
+    for (const value of [undefined, [undefined], { value: () => 1 }, { value: Symbol('value') }, { value: Number.NaN }, new Date()]) {
+      expect(() => projectNativeJsonValueForTransport(value)).toThrow();
+    }
+    const withAccessor = { get value() { throw new Error('Accessor invoked'); } };
+    expect(() => projectNativeJsonValueForTransport(withAccessor)).toThrow('enumerable data property');
   });
 });
 

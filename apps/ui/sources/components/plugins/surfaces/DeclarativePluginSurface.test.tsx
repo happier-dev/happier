@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import type { BoundPluginSurfaceController } from './boundPluginSurfaceController';
 import type {
@@ -90,12 +92,14 @@ function createAccountLifetime(): ActiveServerAccountScopeLifetime {
 
 const accountSecretInventorySetting = Object.freeze({
     id: 'token',
+    contributionId: 'token',
     qualifiedId: 'acme.account-secret/token',
-    descriptor: Object.freeze({ scope: 'account', secret: true, schema: Object.freeze({ type: 'string' }) }),
+    descriptor: Object.freeze({ id: 'token', title: 'API token', target: { kind: 'plugin' }, scope: 'account', secret: true, schema: Object.freeze({ type: 'string' }) }),
 });
 
 const model = Object.freeze({
     visible: true,
+    requiredHostMethods: [],
     identity: Object.freeze({
         pluginId: 'acme.account-secret',
         localId: 'settings',
@@ -118,9 +122,11 @@ const model = Object.freeze({
     root: Object.freeze({
         kind: 'group',
         path: 'root',
+        order: 0,
         children: Object.freeze([Object.freeze({
             kind: 'field',
             path: 'root.children[0]',
+            order: 0,
             label: 'Account token',
             control: Object.freeze({ kind: 'secret', settingId: 'token' }),
             setting: accountSecretInventorySetting,
@@ -172,7 +178,7 @@ describe('DeclarativePluginSurface Account secrets', () => {
         const screen = await renderScreen(
             <DeclarativePluginSurface
                 pluginId="acme.account-secret"
-                model={model}
+                model={PluginDeclarativeProjectedModelV1Schema.parse(model)}
                 interactionEnabled={true}
                 daemonInteractionEnabled={false}
                 settingsScopesEnabled={{ account: true, daemon: false }}
@@ -196,8 +202,8 @@ describe('DeclarativePluginSurface Account secrets', () => {
         expect(screen.findByTestId('plugin-declarative-field:root.children[0]')?.props.value).toBe('');
         expect(screen.findByTestId(saveTestId)?.props.disabled).toBe(true);
         expect(screen.findByTestId(deleteTestId)?.props.disabled).toBe(false);
-        expect(screen.findByTestId(saveTestId)?.props.accessibilityLabel).toBe('common.save: API token');
-        expect(screen.findByTestId(deleteTestId)?.props.accessibilityLabel).toBe('settingsPlugins.secretFieldActions.delete: API token');
+        expect(screen.findByTestId(saveTestId)?.props.accessibilityLabel).toBe(`${t('common.save')}: Account token`);
+        expect(screen.findByTestId(deleteTestId)?.props.accessibilityLabel).toBe(`${t('settingsPlugins.secretFieldActions.delete')}: Account token`);
 
         await act(async () => {
             screen.pressByTestId(saveTestId);
@@ -255,6 +261,7 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
 
         const ordinaryInventorySetting = Object.freeze({
             id: 'endpoint',
+            contributionId: 'endpoint',
             qualifiedId: 'acme.ordinary-settings/endpoint',
             descriptor: Object.freeze({
                 id: 'endpoint',
@@ -266,6 +273,7 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
         });
         const modelForOccurrence = (occurrenceId: string) => Object.freeze({
             visible: true,
+            requiredHostMethods: [],
             identity: Object.freeze({
                 pluginId: 'acme.ordinary-settings',
                 localId: 'settings',
@@ -288,9 +296,11 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
             root: Object.freeze({
                 kind: 'group',
                 path: 'root',
+                order: 0,
                 children: Object.freeze([Object.freeze({
                     kind: 'field',
                     path: 'root.children[0]',
+                    order: 0,
                     label: 'Endpoint',
                     control: Object.freeze({ kind: 'text', settingId: 'endpoint' }),
                     setting: ordinaryInventorySetting,
@@ -301,7 +311,7 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
         const renderModel = (occurrenceId: string) => (
             <DeclarativePluginSurface
                 pluginId="acme.ordinary-settings"
-                model={modelForOccurrence(occurrenceId)}
+                model={PluginDeclarativeProjectedModelV1Schema.parse(modelForOccurrence(occurrenceId))}
                 interactionEnabled={true}
                 daemonInteractionEnabled={false}
                 settingsScopesEnabled={{ account: true, daemon: false }}

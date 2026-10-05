@@ -540,6 +540,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
             : {}),
     }, {
         surface: 'voice',
+        serverId: params.serverId,
         actionRequestId: params.creationKey,
     });
     if (!action.ok) {

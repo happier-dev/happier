@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+
 import type {
     DetailsSurfaceRendererV1,
     DetailsSurfaceRenderInputV1,
@@ -18,7 +20,7 @@ import {
     type BrowserSurfaceProductModels,
 } from '@/components/browser/surfaces';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
-import type { SessionFileDeepLinkAnchor } from '@/components/sessions/files/views/SessionFileDetailsView';
+import { readFileTargetAnchorResource } from '@/utils/url/sessionFileDeepLink';
 import { SessionInteractiveExecutionRunDraftView } from '@/components/sessions/runs/launcher/SessionInteractiveExecutionRunDraftView';
 import { isSessionPeekDetailsResource } from '@/components/sessions/work/createSessionPeekDetailsTab';
 import { SessionPeekDetailsView } from '@/components/sessions/work/SessionPeekDetailsView';
@@ -237,15 +239,6 @@ function isSimulatorPreviewResource(value: unknown): boolean {
     return (value as { kind?: unknown }).kind === 'simulatorPreview';
 }
 
-function readDeepLinkAnchor(resource: unknown): SessionFileDeepLinkAnchor | null {
-    if (resource == null || typeof resource !== 'object') return null;
-    if (!('deepLinkAnchor' in resource)) return null;
-    const value = (resource as { deepLinkAnchor?: unknown }).deepLinkAnchor;
-    if (value == null || typeof value !== 'object') return null;
-    if (!('source' in value) || !('anchor' in value)) return null;
-    return value as SessionFileDeepLinkAnchor;
-}
-
 export function createSessionDetailsSurfaceRenderers(
     options: SessionDetailsSurfaceRendererOptions,
 ): readonly DetailsSurfaceRendererV1[] {
@@ -390,10 +383,11 @@ export function createSessionDetailsSurfaceRenderers(
                 if (!isFileResource(input.tab.resource)) return null;
                 return (
                     <SessionFileDetailsViewForPanel
+                        active={input.active}
                         sessionId={options.sessionId}
                         serverId={options.serverId}
                         filePath={input.tab.resource.path}
-                        deepLinkAnchor={readDeepLinkAnchor(input.tab.resource)}
+                        deepLinkAnchor={readFileTargetAnchorResource(input.tab.resource)}
                         presentation="panel"
                         scopeId={options.scopeId}
                         openableContentViewer={{
@@ -484,6 +478,7 @@ export function createSessionDetailsSurfaceRenderers(
                     serverId={options.serverId}
                     scopeId={options.scopeId}
                     active={input.active}
+                    target={readSessionScmReviewTarget(input.tab.resource)}
                 />
             ),
         },

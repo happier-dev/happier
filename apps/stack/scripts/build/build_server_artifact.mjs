@@ -1,7 +1,7 @@
 import { access, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
-import { artifactPayloadDir, readArtifactManifest, readReusableArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { artifactPayloadDir, readArtifactManifest, readReusableArtifactManifest, validateArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import {
   buildServerBinaryArtifactPayload,
@@ -170,7 +170,7 @@ export async function linkServerRuntimeSupportPayload({
     const linkPath = join(codePayloadDir, name);
     await rmImpl(linkPath, { recursive: true, force: true });
     await symlinkImpl(
-      join(supportPayloadDir, name),
+      platform === 'win32' ? join(supportPayloadDir, name) : relative(dirname(linkPath), join(supportPayloadDir, name)),
       linkPath,
       platform === 'win32' ? 'junction' : 'dir',
     );
@@ -253,6 +253,7 @@ async function publishServerRuntimeSupportArtifact({
         manifest: {
           version: 1,
           component: 'server-support',
+          target: { platform: process.platform, arch: process.arch },
           artifactFingerprint: supportArtifactFingerprint,
           sourceFingerprint: supportArtifactFingerprint,
           createdAt: sourceMetadata.builtAt,
@@ -281,6 +282,7 @@ export async function buildServerArtifact({
   artifactDir,
   artifactFingerprint,
   sourceMetadata,
+  stalePackages = [],
   forceRebuild = false,
   env = process.env,
   supportArtifactFingerprint,
@@ -328,6 +330,14 @@ export async function buildServerArtifact({
     throw new Error(
       '[build] immutable server artifact fingerprint is already bound to a different support artifact.',
     );
+  }
+
+  // Payload damage does not release an immutable artifact's recorded binding.
+  const recorded = validateArtifactManifest(await readArtifactManifest({ artifactDir })).manifest;
+  if (recorded?.artifactFingerprint === artifactFingerprint
+    && recorded.serverSupportArtifactFingerprint != null
+    && recorded.serverSupportArtifactFingerprint !== resolvedSupportArtifactFingerprint) {
+    throw new Error('[build] immutable server artifact fingerprint is already bound to a different support artifact.');
   }
 
   const supportArtifactDir = resolveServerSupportArtifactDir({
@@ -397,11 +407,13 @@ export async function buildServerArtifact({
       manifest: {
         version: 1,
         component: 'server',
+        target: { platform: process.platform, arch: process.arch },
         artifactFingerprint,
         serverSupportArtifactFingerprint: resolvedSupportArtifactFingerprint,
         sourceFingerprint: sourceMetadata.sourceFingerprint,
         createdAt: sourceMetadata.builtAt,
         source: sourceMetadata,
+        ...(stalePackages.length ? { stalePackages } : {}),
         payloadDir: 'payload',
         entrypoint: built.entrypoint,
       },

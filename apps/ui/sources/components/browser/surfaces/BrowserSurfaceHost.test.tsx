@@ -587,7 +587,7 @@ beforeEach(async () => {
         '@/sync/api/account/apiAccountEncryptionMode'
     );
     invalidateAccountEncryptionModeCache();
-    const credentialBoundary = vi.spyOn((await import('@/sync/sync')).sync, 'getCredentials')
+    const credentialBoundary = vi.spyOn((await import('@/sync/syncEngine')).sync, 'getCredentials')
         .mockImplementation(() => {
             const credentials = accountEncryptionModeCredentials.value;
             if (!credentials) throw new Error('Account credentials unavailable in test boundary');

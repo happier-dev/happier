@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GlassSurfaceMaterialsSchema } from './glassSurfaceMaterials.js';
 
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -458,6 +459,7 @@ export const RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS = Object.freeze([
   'sessionMruOrderV1',
   'transcriptMessageTimestampsEnabled',
   'showEnvironmentBadge',
+  'homeHubLayoutV1',
 ] as const);
 
 const RETIRED_ACCOUNT_SETTINGS_ROOT_KEY_SET = new Set<string>(RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS);
@@ -881,14 +883,6 @@ export const DEFAULT_SESSION_HANDOFF_DEFAULTS_V1: SessionHandoffDefaultsV1 = Obj
   directTargetMode: 'keep_direct',
 });
 
-const HOME_HUB_LAYOUT_MAX_SECTION_ID_LENGTH = 'widget:'.length + 2 * MAX_PLUGIN_IDENTIFIER_BYTES + '/'.length;
-/** Present layout value; Account recovery/defaulting wraps this same canonical shape below. */
-export const HomeHubLayoutV1Schema = z.object({
-  order: z.array(z.string().min(1).max(HOME_HUB_LAYOUT_MAX_SECTION_ID_LENGTH)).max(32),
-  hidden: z.array(z.string().min(1).max(HOME_HUB_LAYOUT_MAX_SECTION_ID_LENGTH)).max(32),
-  sections: z.record(z.string().min(1).max(HOME_HUB_LAYOUT_MAX_SECTION_ID_LENGTH), z.object({ frameStyle: z.enum(['card', 'plain']).optional() }).strict()).optional(),
-});
-
 const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
   analyticsOptOut: accountPreference(z.boolean(), false, 'privacy'),
   crashReportsOptOut: accountPreference(z.boolean(), false, 'privacy'),
@@ -980,13 +974,6 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
   sessionListActiveGroupingV1: accountPreference(z.enum(['project', 'date']), 'project', 'session list presentation'),
   sessionListInactiveGroupingV1: accountPreference(z.enum(['project', 'date']), 'date', 'session list presentation'),
   sessionListSectionModeV1: accountPreference(z.enum(['activity', 'single']), 'single', 'session list presentation'),
-  // The app home's sections: ids in the person's order and the ones they hid. Ids are open strings
-  // so a section added by a newer app survives this one's writes; the UI layout owner resolves them.
-  homeHubLayoutV1: accountPreference(
-    HomeHubLayoutV1Schema,
-    { order: [], hidden: [] },
-    'home presentation',
-  ),
   sessionListActiveColorModeV1: accountPreference(
     z.enum(['activityAndAttention', 'attentionOnly', 'allActive']),
     'activityAndAttention',
@@ -1061,6 +1048,7 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
   tabBarSize: accountPreference(z.enum(['compact', 'regular', 'large']), 'regular', 'application chrome'),
   glassBlurEnabled: accountPreference(z.boolean(), true, 'application chrome'),
   glassBlurIntensity: accountPreference(z.enum(['light', 'regular', 'strong']), 'regular', 'application chrome'),
+  glassSurfaceMaterials: accountPreference(GlassSurfaceMaterialsSchema.nullable(), null, 'application chrome'),
   composerSurfaceStyle: accountPreference(z.enum(['standard', 'glass']), 'glass', 'composer presentation'),
 } as const;
 
@@ -1577,6 +1565,14 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     'transcript presentation',
   ),
   transcriptMessageSelectionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessageCopyActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessageForkActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessageRollbackActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessagePinActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessageSavePromptActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessageMakeRepeatableActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  transcriptMessagePluginActionsEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
+  composerPromptLibraryButtonEnabled: accountPreference(z.boolean(), true, 'composer presentation'),
   transcriptMessageSendToSessionEnabled: accountPreference(z.boolean(), false, 'transcript presentation'),
   transcriptMessageSendToSessionTemplate: accountPreference(
     accountBoundedString(2_000),
@@ -2021,6 +2017,14 @@ export function assertAccountWorkspaceSettingsTransition(
   }
 }
 
+function readAccountSettingTargetKey(target: BackendTargetRefV2Input): string {
+  // Preferences address identities, not executable routes. An external Agent
+  // key must remain readable without a host catalog that can route it.
+  if (typeof target === 'string') return BackendTargetKeyV2InputSchema.parse(target);
+  if (target.kind === 'agent') return buildBackendTargetKeyV2(target);
+  return buildBackendTargetKeyV2(readBackendTargetRefV2(target));
+}
+
 /**
  * Reads one entry out of a target-keyed Account setting map.
  *
@@ -2045,7 +2049,7 @@ export function readAccountSettingValueForBackendTarget(
 
   let canonicalKey: string;
   try {
-    canonicalKey = buildBackendTargetKeyV2(readBackendTargetRefV2(target));
+    canonicalKey = readAccountSettingTargetKey(target);
   } catch {
     return undefined;
   }
@@ -2055,7 +2059,7 @@ export function readAccountSettingValueForBackendTarget(
   // rewrite on its next read.
   for (const [key, value] of Object.entries(byKey)) {
     try {
-      if (buildBackendTargetKeyV2(readBackendTargetRefV2(key as BackendTargetRefV2Input)) === canonicalKey) {
+      if (readAccountSettingTargetKey(key as BackendTargetRefV2Input) === canonicalKey) {
         return value;
       }
     } catch {

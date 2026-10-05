@@ -9,6 +9,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 const platformState = vi.hoisted(() => ({ os: 'web' }));
 const springCalls = vi.hoisted(() => [] as unknown[]);
 const timingCalls = vi.hoisted(() => [] as unknown[]);
+const cancelled = vi.hoisted(() => [] as unknown[]);
 
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<typeof import('react-native')>();
@@ -29,6 +30,7 @@ vi.mock('react-native-reanimated', async () => {
     return {
         ...base,
         default: (base as { default?: unknown }).default,
+        cancelAnimation: (value: unknown) => { cancelled.push(value); },
         withSpring: <T,>(value: T, config?: unknown): T => {
             springCalls.push(config);
             return value;
@@ -40,7 +42,7 @@ vi.mock('react-native-reanimated', async () => {
     };
 });
 
-import { useVoiceOrbDrag } from './useVoiceOrbDrag';
+import { useVoicePresenceDrag } from '@/components/voice/presence/useVoicePresenceDrag';
 
 function pointerEvent(type: string, x: number, y: number, timeStamp: number): MouseEvent {
     const event = new MouseEvent(type, {
@@ -56,15 +58,48 @@ function pointerEvent(type: string, x: number, y: number, timeStamp: number): Mo
     return event;
 }
 
-describe('useVoiceOrbDrag reduced motion', () => {
+describe('useVoicePresenceDrag reduced motion', () => {
     beforeEach(() => {
         platformState.os = 'web';
         springCalls.length = 0;
         timingCalls.length = 0;
+        cancelled.length = 0;
+    });
+
+    it('re-grabs a settling spring from both displayed coordinates rather than its destination', async () => {
+        const initialPoint = { x: 120, y: 200 };
+        const hook = await renderHook(() => useVoicePresenceDrag({
+            bounds: { minX: 12, maxX: 282, minY: 71, maxY: 394 },
+            initialPoint, noDragRegions: [], onDragRelease: vi.fn(),
+        }));
+        const handle = document.createElement('div');
+        handle.setAttribute('data-voice-orb', 'true');
+        document.body.appendChild(handle);
+        hook.getCurrent().dragTargetRef(handle as never);
+        await act(async () => {
+            handle.dispatchEvent(pointerEvent('pointerdown', 120, 200, 0));
+            window.dispatchEvent(pointerEvent('pointermove', 150, 170, 20));
+            window.dispatchEvent(pointerEvent('pointerup', 150, 170, 40));
+        });
+        // The OS animation is midway to a different destination on both axes.
+        hook.getCurrent().translateX.value = 180;
+        hook.getCurrent().translateY.value = 160;
+        cancelled.length = 0;
+        await act(async () => {
+            handle.dispatchEvent(pointerEvent('pointerdown', 180, 160, 100));
+            window.dispatchEvent(pointerEvent('pointermove', 185, 166, 120));
+        });
+        expect(hook.getCurrent().translateX.value).toBe(185);
+        expect(hook.getCurrent().translateY.value).toBe(166);
+        expect(cancelled).toContain(hook.getCurrent().translateX);
+        expect(cancelled).toContain(hook.getCurrent().translateY);
+        hook.getCurrent().dragTargetRef(null);
+        handle.remove();
+        await hook.unmount();
     });
 
     it('snaps web lift and release while keeping pointer movement direct', async () => {
-        const hook = await renderHook(() => useVoiceOrbDrag({
+        const hook = await renderHook(() => useVoicePresenceDrag({
             bounds: { minX: 12, maxX: 282, minY: 71, maxY: 394 },
             initialPoint: { x: 120, y: 200 },
             noDragRegions: [],
@@ -99,7 +134,7 @@ describe('useVoiceOrbDrag reduced motion', () => {
 
     it('does not attach or start the web pointer session while drag is disabled', async () => {
         const onDragRelease = vi.fn();
-        const hook = await renderHook((enabled: boolean) => useVoiceOrbDrag({
+        const hook = await renderHook((enabled: boolean) => useVoicePresenceDrag({
             bounds: { minX: 12, maxX: 282, minY: 71, maxY: 394 },
             initialPoint: { x: 120, y: 200 },
             noDragRegions: [],
@@ -132,6 +167,34 @@ describe('useVoiceOrbDrag reduced motion', () => {
         expect(hook.getCurrent().shouldSuppressPress()).toBe(false);
         expect(onDragRelease).not.toHaveBeenCalled();
 
+        hook.getCurrent().dragTargetRef(null);
+        handle.remove();
+        await hook.unmount();
+    });
+
+    it('releases the Island onto centre/top with the existing per-axis Companion springs', async () => {
+        const onDragRelease = vi.fn();
+        const hook = await renderHook(() => useVoicePresenceDrag({
+            bounds: { minX: 12, maxX: 282, minY: 71, maxY: 394 },
+            initialPoint: { x: 140, y: 150 },
+            noDragRegions: [], onDragRelease, anchors: 'island',
+        }));
+        const handle = document.createElement('div');
+        handle.setAttribute('data-voice-orb', 'true');
+        document.body.appendChild(handle);
+        hook.getCurrent().dragTargetRef(handle as never);
+        await act(async () => {
+            handle.dispatchEvent(pointerEvent('pointerdown', 140, 150, 0));
+            window.dispatchEvent(pointerEvent('pointermove', 147, 90, 100));
+            window.dispatchEvent(pointerEvent('pointerup', 147, 90, 500));
+        });
+        expect(hook.getCurrent().translateX.value).toBe(147);
+        expect(hook.getCurrent().translateY.value).toBe(71);
+        expect(onDragRelease).toHaveBeenCalledWith(expect.objectContaining({ point: { x: 147, y: 71 } }));
+        expect(springCalls).toEqual([
+            expect.objectContaining({ dampingRatio: 1, velocity: expect.any(Number) }),
+            expect.objectContaining({ dampingRatio: 1, velocity: expect.any(Number) }),
+        ]);
         hook.getCurrent().dragTargetRef(null);
         handle.remove();
         await hook.unmount();

@@ -5,6 +5,7 @@ import {
     createKeyboardShortcutDispatcher,
     isKeybindingRuleAvailable,
     normalizeKeyboardEvent,
+    normalizeNativeHardwareKeyboardEvent,
     resolveNativeHardwareKeyboardConsumableEventSignatures,
 } from './runtime';
 import type { KeyboardContext, NormalizedKeyboardEvent } from './types';
@@ -29,12 +30,147 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('createKeyboardShortcutDispatcher', () => {
+    it('admits literal Ctrl+R for prompt picking on macOS web and every desktop/native host', () => {
+        for (const platform of ['macos', 'windows', 'linux', 'ios', 'android'] as const) {
+            const options = { enabled: true, platform, singleKeyShortcutsEnabled: false,
+                disabledCommandIds: [], overrides: {}, handlers: { 'composer.prompts.open': () => 'handled' as const },
+                getContext: () => ({ ...context, isEditableTarget: true }) };
+            const chord = keyEvent({ key: 'r', code: 'KeyR', ctrlKey: true });
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'web', webHost: 'browser' })(chord)).toBe(platform === 'macos');
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'web', webHost: 'desktop' })(chord)).toBe(true);
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'native' })(chord)).toBe(true);
+            expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ ...options, surface: 'native' }))
+                .toContain('r|shift=false|ctrl=true|meta=false|alt=false');
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'native', disabledCommandIds: ['composer.prompts.open'] })(chord)).toBe(false);
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'native' })({ ...chord, isComposing: true })).toBe(false);
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'native', handlers: { 'composer.prompts.open': () => 'pass' } })(chord)).toBe(false);
+            expect(createKeyboardShortcutDispatcher({ ...options, surface: 'web', webHost: 'browser' })(keyEvent({ key: 'r', code: 'KeyR', metaKey: true }))).toBe(false);
+        }
+    });
+    it('opens Find from the composer on Windows, Linux and macOS and respects overrides, disabling and IME', () => {
+        for (const platform of ['macos', 'windows', 'linux'] as const) {
+            let opened = false;
+            const options = { enabled: true, platform, surface: 'web' as const, singleKeyShortcutsEnabled: false,
+                disabledCommandIds: [], overrides: {}, handlers: { 'find.open': () => { opened = true; } },
+                getContext: () => ({ ...context, isEditableTarget: true }) };
+            const chord = keyEvent({ key: 'f', code: 'KeyF', metaKey: platform === 'macos', ctrlKey: platform !== 'macos' });
+            expect(createKeyboardShortcutDispatcher(options)(chord)).toBe(true);
+            expect(opened).toBe(true);
+            expect(createKeyboardShortcutDispatcher({ ...options, disabledCommandIds: ['find.open'] })(chord)).toBe(false);
+            expect(createKeyboardShortcutDispatcher(options)({ ...chord, isComposing: true })).toBe(false);
+            const rebound = { ...options, overrides: { 'find.open': [{ binding: 'Alt+F' }] } };
+            expect(createKeyboardShortcutDispatcher(rebound)(chord)).toBe(false);
+            expect(createKeyboardShortcutDispatcher(rebound)(keyEvent({ key: 'f', code: 'KeyF', altKey: true }))).toBe(true);
+        }
+    });
+    it('leaves browser defaults and PTY input untouched when the matching handler passes', () => {
+        const dispatch = createKeyboardShortcutDispatcher({
+            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            disabledCommandIds: [], overrides: {}, handlers: { 'voice.toggle': () => 'pass' }, getContext: () => context,
+        });
+        expect(dispatch(keyEvent({ key: 'v', code: 'KeyV', metaKey: true, altKey: true }))).toBe(false);
+    });
+    it.each(['macos', 'windows', 'linux', 'ios', 'android'] as const)('opens text in files from editable app focus on %s while respecting disablement', (platform) => {
+        const open = vi.fn();
+        const options = { enabled: true, platform, surface: platform === 'ios' || platform === 'android' ? 'native' as const : 'web' as const, singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {}, handlers: { 'search.textInFiles': open }, getContext: () => ({ ...context, isEditableTarget: true }) };
+        const chord = keyEvent({ key: 'f', code: 'KeyF', shiftKey: true, metaKey: platform === 'macos' || platform === 'ios', ctrlKey: platform !== 'macos' && platform !== 'ios' });
+        const dispatch = createKeyboardShortcutDispatcher(options);
+        expect(dispatch(chord)).toBe(true);
+        expect(open).toHaveBeenCalledOnce();
+        expect(dispatch({ ...chord, isComposing: true })).toBe(false);
+        expect(createKeyboardShortcutDispatcher({ ...options, disabledCommandIds: ['search.textInFiles'] })(chord)).toBe(false);
+    });
+    it.each(['macos', 'windows', 'linux'] as const)('invokes Next from editable app-shell focus on %s with surface-appropriate keys', (platform) => {
+        let navigations = 0;
+        const options = {
+            enabled: true, platform, singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
+            handlers: { 'session.pending.next': () => { navigations += 1; } },
+            getContext: () => ({ ...context, isEditableTarget: true }),
+        };
+        const desktopChord = keyEvent({ key: 'j', code: 'KeyJ', shiftKey: true,
+            metaKey: platform === 'macos', ctrlKey: platform !== 'macos' });
+        const webChord = keyEvent({ key: 'j', code: 'KeyJ', shiftKey: true, altKey: true });
+        const web = createKeyboardShortcutDispatcher({ ...options, surface: 'web' });
+        expect(web(webChord)).toBe(true);
+        expect(web(desktopChord)).toBe(false);
+        const desktop = createKeyboardShortcutDispatcher({ ...options, surface: 'web', webHost: 'desktop' });
+        expect(desktop(desktopChord)).toBe(true);
+        expect(desktop(webChord)).toBe(false);
+        expect(desktop({ ...desktopChord, shiftKey: false })).toBe(false);
+        expect(web({ ...webChord, isComposing: true })).toBe(false);
+        expect(createKeyboardShortcutDispatcher({ ...options, surface: 'web', disabledCommandIds: ['session.pending.next'] })(webChord)).toBe(false);
+        expect(navigations).toBe(2);
+    });
+    it.each(['macos', 'windows', 'linux', 'ios', 'android'] as const)('toggles Voice while editing on %s without consuming paste, repeat or composition', (platform) => {
+        let attempts = 0;
+        const options = {
+            enabled: true,
+            platform,
+            surface: platform === 'ios' || platform === 'android' ? 'native' as const : 'web' as const,
+            singleKeyShortcutsEnabled: false,
+            disabledCommandIds: [],
+            overrides: {},
+            handlers: { 'voice.toggle': () => { attempts += 1; } },
+            getContext: () => ({ ...context, isEditableTarget: true }),
+        };
+        const dispatcher = createKeyboardShortcutDispatcher(options);
+        const chord = keyEvent({
+            key: 'v', code: 'KeyV', altKey: true,
+            metaKey: platform === 'macos' || platform === 'ios',
+            ctrlKey: platform !== 'macos' && platform !== 'ios',
+        });
+        expect(dispatcher({ ...chord, repeat: true })).toBe(false);
+        expect(dispatcher({ ...chord, isComposing: true })).toBe(false);
+        expect(dispatcher({ ...chord, altKey: false, shiftKey: true })).toBe(false);
+        expect(dispatcher(chord)).toBe(true);
+        expect(attempts).toBe(1);
+        expect(createKeyboardShortcutDispatcher({ ...options, enabled: false })(chord)).toBe(false);
+        expect(createKeyboardShortcutDispatcher({ ...options, disabledCommandIds: ['voice.toggle'] })(chord)).toBe(false);
+        if (options.surface === 'native') {
+            expect(resolveNativeHardwareKeyboardConsumableEventSignatures(options)).toContain(
+                `v|shift=false|ctrl=${chord.ctrlKey}|meta=${chord.metaKey}|alt=true`,
+            );
+            expect(dispatcher(normalizeNativeHardwareKeyboardEvent({
+                key: 'v', code: 'KeyV', repeat: false, isEditableTarget: true,
+                modifiers: { shift: false, ctrl: chord.ctrlKey, meta: chord.metaKey, alt: true },
+            }))).toBe(true);
+        }
+    });
+
+    it('uses the rebound Voice chord and its label with editable admission preserved', () => {
+        let attempts = 0;
+        const options = {
+            enabled: true, platform: 'macos' as const, surface: 'web' as const,
+            singleKeyShortcutsEnabled: false, disabledCommandIds: [],
+            overrides: { 'voice.toggle': [{ binding: 'Mod+Alt+B' }] },
+            handlers: { 'voice.toggle': () => { attempts += 1; } },
+            getContext: () => ({ ...context, isEditableTarget: true }),
+        };
+        const dispatcher = createKeyboardShortcutDispatcher(options);
+        expect(dispatcher(keyEvent({ key: 'v', code: 'KeyV', metaKey: true, altKey: true }))).toBe(false);
+        expect(dispatcher(keyEvent({ key: 'b', code: 'KeyB', metaKey: true, altKey: true }))).toBe(true);
+        expect(attempts).toBe(1);
+        expect(buildKeyboardShortcutLabels('macos', 'web', options)['voice.toggle']).toBe('Cmd+Option+B');
+    });
+
     it('does not classify Shift+Arrow selection bindings as disabled single-key shortcuts', () => {
         expect(isKeybindingRuleAvailable({ binding: 'Shift+ArrowDown' }, {
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: false,
         })).toBe(true);
+    });
+
+    it('preserves the legacy zero-argument command callback rather than using the event as a palette query', () => {
+        let query = 'not opened';
+        const open = (initialQuery?: string) => { query = initialQuery ?? ''; };
+        const dispatcher = createKeyboardShortcutDispatcher({
+            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [], overrides: {}, handlers: { 'commandPalette.open': open },
+            getContext: () => context,
+        });
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(true);
+        expect(query).toBe('');
     });
 
     it('does not dispatch registry commands when the kill switch is disabled', () => {

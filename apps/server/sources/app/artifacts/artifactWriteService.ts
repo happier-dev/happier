@@ -1,8 +1,9 @@
 import { inTx, type Tx } from "@/storage/inTx";
+import { artifactConversionBlobKey, artifactConversionBlobCustody, type PreparedArtifactAccountEncryptionConversionBlob, type PreparedArtifactAccountEncryptionConversionBlobs } from './artifactEncryptionConversionBlobService';
 import { db } from '@/storage/db';
 import { deletePrivateFile } from '@/storage/blob/files';
 import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol';
-import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, type PreparedArtifactBlobWrite } from './artifactBlobService';
+import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
     deriveAccountEncryptionCurrentnessFromRow,
@@ -10,7 +11,7 @@ import {
 import type {
     AccountEncryptionMigrateArtifactsDirective,
 } from "@happier-dev/protocol";
-import { ArtifactRecipientKeyEnvelopesV1Schema, parseEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
+import { ArtifactRecipientKeyEnvelopesV1Schema, ArtifactBlobReferenceV1Schema, decodePlainArtifactStoredContent, parseEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
 import { buildPluginDomainAccountChangeEntityId } from "@happier-dev/protocol/changes";
 import { checkArtifactStorageBudgetInTx, retainArtifactBodyRevisionInTx, type ArtifactQuotaExceeded } from "./artifactStorageService";
 import {
@@ -61,7 +62,7 @@ export type ArtifactAccountEncryptionMigrationPostStateResult =
     | Readonly<{ status: "mismatch" }>
     | Readonly<{ status: "migration_incomplete" }>;
 
-type ArtifactAccountEncryptionMigrationRow = Readonly<{
+export type ArtifactAccountEncryptionMigrationRow = Readonly<{
     id: string;
     header: Uint8Array;
     headerVersion: number;
@@ -69,26 +70,31 @@ type ArtifactAccountEncryptionMigrationRow = Readonly<{
     bodyVersion: number;
     dataEncryptionKey: Uint8Array;
     seq: number;
-    revisions: readonly Readonly<{ bodyVersion: number; body: Uint8Array }>[];
+    currentBlobId: string | null;
+    revisions: readonly Readonly<{ bodyVersion: number; body: Uint8Array; blobId: string | null }>[];
     blobs: readonly Readonly<{ id: string; storageKey: string; encryptionMode: string; storedSizeBytes: bigint }>[];
     pluginUiArtifact: Readonly<{
         release: Readonly<{
             accountId: string;
             pluginId: string;
+            version: string;
         }>;
     }> | null;
     packageAssetRelease: Readonly<{
         accountId: string;
         pluginId: string;
+        version: string;
     }> | null;
 }>;
 
-async function readArtifactAccountEncryptionMigrationRowsInTx(
+export async function readArtifactAccountEncryptionMigrationRowsInTx(
     tx: Tx,
     accountId: string,
+    page?: Readonly<{ afterId?: string; take: number }>,
 ): Promise<readonly ArtifactAccountEncryptionMigrationRow[]> {
     return await tx.artifact.findMany({
-        where: { accountId },
+        where: { accountId, ...(page?.afterId ? { id: { gt: page.afterId } } : {}) },
+        ...(page ? { orderBy: { id: 'asc' as const }, take: page.take } : {}),
         select: {
             id: true,
             header: true,
@@ -97,7 +103,8 @@ async function readArtifactAccountEncryptionMigrationRowsInTx(
             bodyVersion: true,
             dataEncryptionKey: true,
             seq: true,
-            revisions: { select: { bodyVersion: true, body: true } },
+            currentBlobId: true,
+            revisions: { select: { bodyVersion: true, body: true, blobId: true } },
             blobs: { select: { id: true, storageKey: true, encryptionMode: true, storedSizeBytes: true } },
             pluginUiArtifact: {
                 select: {
@@ -105,6 +112,7 @@ async function readArtifactAccountEncryptionMigrationRowsInTx(
                         select: {
                             accountId: true,
                             pluginId: true,
+                            version: true,
                         },
                     },
                 },
@@ -113,6 +121,7 @@ async function readArtifactAccountEncryptionMigrationRowsInTx(
                 select: {
                     accountId: true,
                     pluginId: true,
+                    version: true,
                 },
             },
         },
@@ -136,6 +145,7 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
         accountId: string;
         toMode: "plain" | "e2ee";
         directive: AccountEncryptionMigrateArtifactsDirective;
+        preparedBlobs?: PreparedArtifactAccountEncryptionConversionBlobs;
     }>,
 ): Promise<ArtifactAccountEncryptionMigrationPostStateResult> {
     const rows =
@@ -173,7 +183,16 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
     for (const row of rows) {
         const item = itemsById.get(row.id);
         if (!item) return { status: "mismatch" };
-        if (row.blobs.length > 0 || item.blobs.length > 0) return { status: 'mismatch' };
+        const retainedIds = new Set([row.currentBlobId, ...row.revisions.map(revision => revision.blobId)].filter((id): id is string => Boolean(id)));
+        if (retainedIds.size !== item.blobs.length) return { status: 'mismatch' };
+        for (const blob of item.blobs) {
+            const actual = row.blobs.find(value => value.id === blob.blobId);
+            const verified = params.preparedBlobs?.get(`${row.id}/${blob.blobId}`);
+            if (!retainedIds.has(blob.blobId) || !actual || actual.encryptionMode !== params.toMode
+                || actual.storageKey !== artifactConversionBlobKey(row.id, blob.blobId, blob.content.uploadId)
+                || !verified || verified.target.row.storageKey !== actual.storageKey
+                || verified.target.contentSha256 !== blob.content.contentSha256) return { status: 'mismatch' };
+        }
         const revisionsByVersion = new Map(item.revisions.map(revision => [revision.bodyVersion, revision]));
         if (revisionsByVersion.size !== item.revisions.length || revisionsByVersion.size !== row.revisions.length) {
             return { status: "mismatch" };
@@ -239,6 +258,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
     fromMode: "plain" | "e2ee";
     toMode: "plain" | "e2ee";
     directive: AccountEncryptionMigrateArtifactsDirective;
+    preparedBlobs?: PreparedArtifactAccountEncryptionConversionBlobs;
     markChanged?: (artifactId: string) => Promise<unknown>;
 }>): Promise<ArtifactAccountEncryptionMigrationResult> {
     const rows =
@@ -275,6 +295,8 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         seq: number;
         currentHeaderBytes: number;
         currentBodyBytes: number;
+        currentBlobId: string | null;
+        blobs: readonly PreparedArtifactAccountEncryptionConversionBlob[];
         ordinary: boolean;
         revisions: readonly Readonly<{ bodyVersion: number; expectedStoredBody: Uint8Array; body: Uint8Array }>[];
     }>>();
@@ -290,9 +312,26 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         ) {
             return { status: "migration_incomplete" };
         }
-        // A document key transition must never reinterpret unconverted private bytes.
-        // Complete binary conversion is admitted only by the private-storage lifecycle preparation.
-        if (row.blobs.length > 0 || item.blobs.length > 0) return { status: 'migration_incomplete' };
+        const retainedIds = new Set([row.currentBlobId, ...row.revisions.map(revision => revision.blobId)].filter((id): id is string => Boolean(id)));
+        if (retainedIds.size !== item.blobs.length || new Set(item.blobs.map(blob => blob.blobId)).size !== item.blobs.length) {
+            return { status: 'migration_incomplete' };
+        }
+        const blobs: PreparedArtifactAccountEncryptionConversionBlob[] = [];
+        for (const blob of item.blobs) {
+            const source = row.blobs.find(value => value.id === blob.blobId);
+            const candidate = params.preparedBlobs?.get(`${row.id}/${blob.blobId}`);
+            if (!retainedIds.has(blob.blobId) || !source || !candidate || source.encryptionMode !== params.fromMode
+                || candidate.source.storageKey !== source.storageKey || candidate.source.encryptionMode !== source.encryptionMode
+                || candidate.source.storedSizeBytes !== source.storedSizeBytes || candidate.expectedContentSha256 !== blob.expectedContentSha256
+                || candidate.target.accountId !== params.accountId || candidate.target.row.id !== blob.blobId
+                || !candidate.target.candidate || blob.content.t !== (params.toMode === 'plain' ? 'plain' : 'encrypted')
+                || candidate.target.row.artifactId !== row.id || candidate.target.row.encryptionMode !== params.toMode
+                || candidate.target.row.storageKey !== artifactConversionBlobKey(row.id, blob.blobId, blob.content.uploadId)
+                || candidate.target.contentSha256 !== blob.content.contentSha256
+                || !await params.tx.uploadedFile.findFirst({ where: { accountId: params.accountId, path: candidate.target.row.storageKey,
+                    reuseKey: artifactConversionBlobCustody(candidate.target.row) } })) return { status: 'migration_incomplete' };
+            blobs.push(candidate);
+        }
         if (!artifactDataKeyMatchesAccountMode({ mode: params.fromMode, dataEncryptionKey: row.dataEncryptionKey })) {
             return { status: "invalid_content" };
         }
@@ -335,6 +374,17 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         if (!storedHeader || !storedBody) {
             return { status: "invalid_content" };
         }
+        const plainBodyMatchesBlob = (body: Uint8Array, blobId: string | null | undefined) => {
+            if (params.toMode !== 'plain') return true;
+            const decoded = decodePlainArtifactStoredContent(Buffer.from(body).toString('base64'));
+            const reference = ArtifactBlobReferenceV1Schema.safeParse(decoded && typeof decoded === 'object' && 'body' in decoded ? decoded.body : null);
+            if (!blobId) return !reference.success;
+            const blob = blobs.find(value => value.target.row.id === blobId);
+            return reference.success && reference.data.blobId === blobId && Boolean(blob)
+                && reference.data.sizeBytes === blob!.target.sizeBytes
+                && reference.data.sha256 === blob!.target.contentSha256;
+        };
+        if (!plainBodyMatchesBlob(body, row.currentBlobId)) return { status: 'invalid_content' };
         const revisionsByVersion = new Map(item.revisions.map(revision => [revision.bodyVersion, revision]));
         if (revisionsByVersion.size !== item.revisions.length || revisionsByVersion.size !== row.revisions.length) {
             return { status: "migration_incomplete" };
@@ -349,6 +399,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 return { status: "migration_incomplete" };
             }
             const body = Buffer.from(target.body, "base64");
+            if (!plainBodyMatchesBlob(body, revision.blobId)) return { status: 'invalid_content' };
             if (!artifactUpdateMatchesStoredMode({ dataEncryptionKey, body })) return { status: "invalid_content" };
             const stored = params.toMode === "plain" ? storePlainArtifactDbBytes({
                 accountId: params.accountId, artifactId: row.id, field: "body", content: body,
@@ -363,6 +414,8 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
             seq: row.seq,
             currentHeaderBytes: row.header.byteLength,
             currentBodyBytes: row.body.byteLength,
+            currentBlobId: row.currentBlobId,
+            blobs,
             ordinary: artifactClassificationFromRelations({ pluginUiArtifact: row.pluginUiArtifact,
                 packageAssetRelease: row.packageAssetRelease }, params.accountId).kind === "ordinary",
             revisions,
@@ -410,6 +463,8 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 nextHeaderBytes: replacement.header.byteLength, nextBodyBytes: replacement.body.byteLength,
                 currentHeaderBytes: replacement.currentHeaderBytes, currentBodyBytes: replacement.currentBodyBytes,
                 revisionBytesDelta: replacement.revisions.reduce((sum, revision) => sum + revision.body.byteLength - revision.expectedStoredBody.byteLength, 0),
+                currentBlobId: replacement.currentBlobId,
+                blobBytesDelta: replacement.blobs.reduce((sum, blob) => sum + Number(blob.target.row.storedSizeBytes - blob.source.storedSizeBytes), 0),
             });
             if (quota) throw new ArtifactAccountEncryptionMigrationQuotaExceededError(quota);
         }
@@ -447,6 +502,19 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 data: { body: Buffer.from(revision.body) },
             });
             if (migrated.count !== 1) throw new ArtifactAccountEncryptionMigrationConflictError();
+        }
+        for (const blob of replacement.blobs) {
+            // The displaced physical file keeps durable retry custody in this same atomic commit.
+            await params.tx.uploadedFile.upsert({ where: { accountId_path: { accountId: params.accountId, path: blob.source.storageKey } },
+                create: { accountId: params.accountId, path: blob.source.storageKey, reuseKey: artifactBlobRejectedUploadReuseKey(item.artifactId) },
+                update: { reuseKey: artifactBlobRejectedUploadReuseKey(item.artifactId) } });
+            const migrated = await params.tx.artifactBlob.updateMany({ where: { id: blob.source.id, artifactId: item.artifactId,
+                storageKey: blob.source.storageKey, encryptionMode: params.fromMode, storedSizeBytes: blob.source.storedSizeBytes },
+                data: { storageKey: blob.target.row.storageKey, encryptionMode: params.toMode, storedSizeBytes: blob.target.row.storedSizeBytes } });
+            if (migrated.count !== 1) throw new ArtifactAccountEncryptionMigrationConflictError();
+            const consumed = await params.tx.uploadedFile.deleteMany({ where: { accountId: params.accountId, path: blob.target.row.storageKey,
+                reuseKey: artifactConversionBlobCustody(blob.target.row) } });
+            if (consumed.count !== 1) throw new ArtifactAccountEncryptionMigrationConflictError();
         }
         // A replacement resource key invalidates every previously wrapped key.
         await params.tx.artifactKeyEnvelope.deleteMany({ where: { artifactId: item.artifactId } });
@@ -515,6 +583,7 @@ export async function createArtifact(params: {
     try {
         if (params.blob) {
             if (!params.blob.content) return { ok: false, error: 'invalid-params' };
+            await cleanupRejectedArtifactBlobUploads(actorUserId);
             preparedBlob = await prepareArtifactBlobWrite({ accountId: actorUserId, artifactId, blob: params.blob }) ?? undefined;
         }
         const result = await inTx(async (tx) => await createArtifactTx(tx, {
@@ -711,7 +780,10 @@ export async function createArtifactTx(
         },
     });
 
-    if (params.preparedBlob?.candidate) await tx.artifactBlob.create({ data: params.preparedBlob.row });
+    if (params.preparedBlob?.candidate) {
+        await tx.artifactBlob.create({ data: params.preparedBlob.row });
+        await completeArtifactBlobCandidateCustodyInTx(tx, params.preparedBlob);
+    }
 
     const cursor = await (
         params.markChanged
@@ -749,6 +821,7 @@ export type UpdateArtifactResult =
             | "invalid-params"
             | "not-found"
             | "version-mismatch"
+            | "artifact_binary_content_requires_explicit_update"
             | "internal";
         current?: {
             headerVersion: number;
@@ -763,7 +836,7 @@ export async function updateArtifact(params: {
     artifactId: string;
     header?: { bytes: Uint8Array; expectedVersion: number };
     body?: { bytes: Uint8Array; expectedVersion: number };
-    blob?: ArtifactBlobWriteV1;
+    blob?: ArtifactBlobWriteV1 | null;
 }): Promise<UpdateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const artifactId = typeof params.artifactId === "string" ? params.artifactId : "";
@@ -776,6 +849,7 @@ export async function updateArtifact(params: {
     if (!header && !body) {
         return { ok: false, error: "invalid-params" };
     }
+    if (params.blob !== undefined && !body) return { ok: false, error: "invalid-params" };
     if (header && (!(header.bytes instanceof Uint8Array) || typeof header.expectedVersion !== "number")) {
         return { ok: false, error: "invalid-params" };
     }
@@ -793,6 +867,7 @@ export async function updateArtifact(params: {
             if (!body) return { ok: false, error: 'invalid-params' };
             const owner = await db.artifact.findUnique({ where: { id: artifactId }, select: { accountId: true } });
             if (!owner) return { ok: false, error: 'not-found' };
+            await cleanupRejectedArtifactBlobUploads(owner.accountId);
             preparedBlob = await prepareArtifactBlobWrite({ accountId: owner.accountId, artifactId, blob: params.blob }) ?? undefined;
         }
         const result = await inTx(async (tx) => await updateArtifactTx(tx, {
@@ -820,7 +895,7 @@ export async function updateArtifactTx(
         header?: { bytes: Uint8Array; expectedVersion: number };
         body?: { bytes: Uint8Array; expectedVersion: number };
         expectedRevision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
-        blob?: ArtifactBlobWriteV1;
+        blob?: ArtifactBlobWriteV1 | null;
         preparedBlob?: PreparedArtifactBlobWrite;
         restoredBlobId?: string | null;
     },
@@ -911,6 +986,12 @@ export async function updateArtifactTx(
         };
     }
 
+    // Opaque older-client body writes cannot prove whether the file is retained
+    // or intentionally replaced. Binary-aware writers declare the replacement.
+    if (params.body && current.currentBlobId && params.blob === undefined && params.restoredBlobId === undefined) {
+        return { ok: false, error: "artifact_binary_content_requires_explicit_update" };
+    }
+
     const updateData: {
         updatedAt: Date;
         seq: number;
@@ -944,7 +1025,7 @@ export async function updateArtifactTx(
     if (params.body) {
         if (params.restoredBlobId === undefined && !await admitArtifactBlobWriteInTx(tx, {
             artifactId: current.id, mode: currentness.currentness.encryptionMode, body: params.body.bytes,
-            blob: params.blob, prepared: params.preparedBlob, currentBlobId: current.currentBlobId,
+            blob: params.blob ?? undefined, prepared: params.preparedBlob, currentBlobId: current.currentBlobId,
         })) return { ok: false, error: 'invalid-params' };
         if (params.restoredBlobId && !await tx.artifactBlob.findFirst({ where: { id: params.restoredBlobId,
             artifactId: current.id, encryptionMode: currentness.currentness.encryptionMode } })) return { ok: false, error: 'invalid-params' };
@@ -1026,7 +1107,10 @@ export async function updateArtifactTx(
         };
     }
 
-    if (params.preparedBlob?.candidate) await tx.artifactBlob.create({ data: params.preparedBlob.row });
+    if (params.preparedBlob?.candidate) {
+        await tx.artifactBlob.create({ data: params.preparedBlob.row });
+        await completeArtifactBlobCandidateCustodyInTx(tx, params.preparedBlob);
+    }
     if (params.body) await retainArtifactBodyRevisionInTx(tx, {
         artifactId: current.id, bodyVersion: current.bodyVersion, body: current.body, blobId: current.currentBlobId,
     });
@@ -1138,15 +1222,23 @@ export async function deleteArtifact(params: {
         });
         if (!retirement.ok) return retirement;
         // Retired rows keep exact custody until every idempotent physical delete succeeds.
-        for (const blob of retirement.artifact.blobs) await deletePrivateFile(blob.storageKey);
+        for (const blob of retirement.artifact.blobs) {
+            await deletePrivateFile(blob.storageKey);
+            await inTx(async tx => {
+                const current = await tx.artifact.findFirst({ where: {
+                    id: artifactId, accountId: actorUserId, deletedAt: retirement.deletedAt,
+                    headerVersion: retirement.artifact.headerVersion, bodyVersion: retirement.artifact.bodyVersion,
+                }, select: { id: true } });
+                if (!current) throw new Error('Artifact retirement changed during private cleanup');
+                await tx.artifactBlob.deleteMany({ where: { id: blob.id, artifactId, storageKey: blob.storageKey } });
+            });
+        }
         return await inTx(async tx => {
             const current = await tx.artifact.findFirst({ where: {
                 id: artifactId, accountId: actorUserId, deletedAt: retirement.deletedAt, ...artifactOrdinaryWhere,
                 headerVersion: retirement.artifact.headerVersion, bodyVersion: retirement.artifact.bodyVersion,
             }, select: { blobs: { select: { id: true, storageKey: true }, orderBy: { id: 'asc' } } } });
-            if (!current || current.blobs.length !== retirement.artifact.blobs.length
-                || current.blobs.some((blob, index) => blob.id !== retirement.artifact.blobs[index]?.id
-                    || blob.storageKey !== retirement.artifact.blobs[index]?.storageKey)) {
+            if (!current || current.blobs.length !== 0) {
                 return { ok: false as const, error: 'internal' as const };
             }
             const removed = await tx.artifact.deleteMany({ where: {

@@ -1,6 +1,7 @@
 import { ResourceTemplate, type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ErrorCode, McpError, SubscribeRequestSchema, UnsubscribeRequestSchema, type ServerRequest, type ServerNotification } from '@modelcontextprotocol/sdk/types.js';
+import type { AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { ErrorCode, McpError, SubscribeRequestSchema, UnsubscribeRequestSchema, type CallToolResult, type ServerRequest, type ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 import { getActionSpec, WaitActionInputV1Schema, type WaitActionInputV1 } from '@happier-dev/protocol';
 import type { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import type { ToolRegistrar } from '@/mcp/server/registerHappierMcpBuiltInTools';
@@ -96,9 +97,10 @@ export function registerMcpWatchSubscriptions(options: McpWatchOptions): void {
   tools.registerTool('watch', {
     title: 'Watch work',
     description: `${spec.description} Returns a readable resource URI for passive observation. Resource updates are change hints; the MCP host decides whether to wake an agent.`,
-    inputSchema: WaitActionInputV1Schema,
+    // MCP detects Zod 4 through _zod; its nested Zod copy has different internal types.
+    inputSchema: WaitActionInputV1Schema as unknown as AnySchema,
     annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async (args, extra) => {
+  }, async (args: unknown, extra: RequestHandlerExtra<ServerRequest, ServerNotification>): Promise<CallToolResult> => {
     try {
       const input = WaitActionInputV1Schema.parse(args);
       const snapshot = await read(input, extra?.signal);

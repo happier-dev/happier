@@ -46,10 +46,6 @@ export function workflowDefinitionPromptTitle(definition: WorkflowDefinitionV1):
 
 /** Exact ids remain the fallback for reference pickers, where identity matters. */
 export function workflowBlockReferenceLabel(block: WorkflowBlock): string {
-  if (block.kind === 'step') return workflowStepPromptLabel(block) ?? block.id;
-  if (block.kind === 'wait') {
-    const firstLine = block.document.text.split(/\r?\n/u).map((line) => line.trim()).find((line) => line.length > 0);
-    return firstLine === undefined ? block.id : firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
-  }
+  if (block.kind === 'step' || block.kind === 'wait') return workflowStepPromptLabel(block) ?? block.id;
   return block.id;
 }

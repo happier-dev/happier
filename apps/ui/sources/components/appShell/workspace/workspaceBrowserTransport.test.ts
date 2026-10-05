@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createWorkspaceBrowserTransport } from './workspaceBrowserTransport';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
@@ -6,6 +6,16 @@ import { resolveCompactAppDestinations } from '../destinations/compactAppDestina
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 
 installPanelCommonModuleMocks();
+// Browser navigation never renders Markdown; fail on use of this vendor/native SDK boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in workspace browser test'); },
+}));
+// Recipient-envelope HTTP/process APIs are outside this deterministic browser owner harness.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace browser test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
 
 describe('workspace browser URL transport', () => {
     it('restores the current browser entry before a guard decision, then resumes the same traversal', () => {

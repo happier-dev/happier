@@ -235,78 +235,25 @@ export async function prepareManagedHost(profile, dependencies = {}) {
   return { serviceTunnelRuntimeStartedAt };
 }
 
-export async function runDelegatedHstackCommand({
-  profile,
-  argv,
-  cwd = process.cwd(),
-  env = process.env,
-  prepare = prepareManagedHost,
-  reconcileAfterStart = null,
-  boundary = defaultBoundary(),
-  guestInvocation = null,
+export async function runExecutionHostGuestCommand({
+  profile, guestCwd, command, args = [], cwd = process.cwd(), env = process.env,
+  boundary = defaultBoundary(), onStarted,
 }) {
-  const mapping = profile.version === 2 ? resolveHostWorkspaceMapping(profile, cwd) : null;
-  const stackName = resolveDelegatedStackName(argv, env, mapping?.workspace);
-  const preparation = {
-    workspaceId: mapping?.workspace.id ?? '',
-    stackName,
-    requiresServiceTunnel: startsGuestStackServices(argv),
-  };
-  if (typeof boundary.reportWarning === 'function') preparation.reportWarning = boundary.reportWarning;
-  const prepared = await prepare(profile, preparation);
-  const guestCwd = mapping?.guestCwd ?? mapHostCwdToGuest(profile, cwd);
-  const invocation = guestInvocation ?? (mapping
-    ? {
-        command: 'node',
-        args: [posix.join(mapping.workspace.guestDir, 'apps', 'stack', 'scripts', 'repo_local.mjs')],
-      }
-    : { command: 'hstack', args: [] });
-  const command = argv.find((arg) => !String(arg).startsWith('-'));
-  const delegatedArgv = command === 'tui' && !argv.includes('--rescue')
-    ? [...argv, '--rescue']
-    : argv;
   delegatedCommandSequence += 1;
   const delegatedUnit = [
-    'happier-execution-host',
-    process.pid.toString(36),
-    Date.now().toString(36),
-    delegatedCommandSequence.toString(36),
+    'happier-execution-host', process.pid.toString(36),
+    Date.now().toString(36), delegatedCommandSequence.toString(36),
   ].join('-') + '.scope';
   const child = boundary.spawn('limactl', [
     'shell', '--workdir', guestCwd, profile.instance, '--',
     'systemd-run', '--user', '--scope', '--quiet', `--unit=${delegatedUnit}`, '--',
-    'env',
-    'HAPPIER_STACK_EXECUTION_HOST_REENTRY=1',
-    `HAPPIER_STACK_INVOKED_CWD=${guestCwd}`,
-    ...(stackName ? [`HAPPIER_STACK_STACK=${stackName}`] : []),
-    invocation.command, ...(invocation.args ?? []), ...delegatedArgv,
-  ], {
-    cwd,
-    env: { ...env, LIMA_HOME: profile.limaHome },
-    stdio: 'inherit',
-    shell: false,
-  });
-  const reconciliationController = new AbortController();
-  const postStartReconciler = reconcileAfterStart
-    ?? (prepare === prepareManagedHost ? reconcileManagedHostAfterStart : null);
-  const reconciliation = startsGuestStackServices(argv) && postStartReconciler
-    ? Promise.resolve(postStartReconciler({
-        profile,
-        workspaceId: mapping?.workspace.id ?? '',
-        stackName,
-        signal: reconciliationController.signal,
-        env,
-        previousRuntimeStartedAt: String(prepared?.serviceTunnelRuntimeStartedAt ?? '').trim(),
-      })).catch((error) => {
-        boundary.reportWarning?.(
-          `[dev-vm] delegated Stack started, but its host service tunnel could not be reconciled: ${error?.message ?? error}`,
-        );
-        return { status: 'failed', error };
-      })
-    : Promise.resolve({ status: 'not_requested' });
+    command, ...args,
+  ], { cwd, env: { ...env, LIMA_HOME: profile.limaHome }, stdio: 'inherit', shell: false });
   let guestCancellation = null;
+  let interruptionSignal = null;
   const removeSignalHandlers = boundary.onSignal((signal) => {
     if (!guestCancellation) {
+      interruptionSignal = signal;
       const cancellationScript = [
         `systemctl --user kill --kill-whom=all --signal=SIGTERM ${delegatedUnit} >/dev/null 2>&1 || true`,
         `grace_attempt=0; while [ "$grace_attempt" -lt 150 ]; do state=$(systemctl --user show --property=ActiveState --value ${delegatedUnit} 2>/dev/null || true); case "$state" in active|activating|deactivating) ;; *) break ;; esac; sleep 0.1; grace_attempt=$((grace_attempt + 1)); done`,
@@ -340,15 +287,79 @@ export async function runDelegatedHstackCommand({
     }
   });
   try {
+    onStarted?.();
     const result = await new Promise((resolvePromise, rejectPromise) => {
       child.once('error', rejectPromise);
       child.once('close', (exitCode, signal) => resolvePromise({ exitCode, signal }));
     });
     if (guestCancellation) await guestCancellation;
-    return result;
+    return interruptionSignal ? { exitCode: null, signal: interruptionSignal } : result;
+  } finally { removeSignalHandlers(); }
+}
+
+export async function runDelegatedHstackCommand({
+  profile,
+  argv,
+  cwd = process.cwd(),
+  env = process.env,
+  prepare = prepareManagedHost,
+  reconcileAfterStart = null,
+  boundary = defaultBoundary(),
+  guestInvocation = null,
+}) {
+  const mapping = profile.version === 2 ? resolveHostWorkspaceMapping(profile, cwd) : null;
+  const stackName = resolveDelegatedStackName(argv, env, mapping?.workspace);
+  const preparation = {
+    workspaceId: mapping?.workspace.id ?? '',
+    stackName,
+    requiresServiceTunnel: startsGuestStackServices(argv),
+  };
+  if (typeof boundary.reportWarning === 'function') preparation.reportWarning = boundary.reportWarning;
+  const prepared = await prepare(profile, preparation);
+  const guestCwd = mapping?.guestCwd ?? mapHostCwdToGuest(profile, cwd);
+  const invocation = guestInvocation ?? (mapping
+    ? {
+        command: 'node',
+        args: [posix.join(mapping.workspace.guestDir, 'apps', 'stack', 'scripts', 'repo_local.mjs')],
+      }
+    : { command: 'hstack', args: [] });
+  const command = argv.find((arg) => !String(arg).startsWith('-'));
+  const delegatedArgv = command === 'tui' && !argv.includes('--rescue')
+    ? [...argv, '--rescue']
+    : argv;
+  const reconciliationController = new AbortController();
+  const postStartReconciler = reconcileAfterStart
+    ?? (prepare === prepareManagedHost ? reconcileManagedHostAfterStart : null);
+  const startReconciliation = () => startsGuestStackServices(argv) && postStartReconciler
+    ? Promise.resolve(postStartReconciler({
+        profile,
+        workspaceId: mapping?.workspace.id ?? '',
+        stackName,
+        signal: reconciliationController.signal,
+        env,
+        previousRuntimeStartedAt: String(prepared?.serviceTunnelRuntimeStartedAt ?? '').trim(),
+      })).catch((error) => {
+        boundary.reportWarning?.(
+          `[dev-vm] delegated Stack started, but its host service tunnel could not be reconciled: ${error?.message ?? error}`,
+        );
+        return { status: 'failed', error };
+      })
+    : Promise.resolve({ status: 'not_requested' });
+  let reconciliation = Promise.resolve({ status: 'not_requested' });
+  try {
+    return await runExecutionHostGuestCommand({
+      profile, guestCwd, command: 'env',
+      args: [
+        'HAPPIER_STACK_EXECUTION_HOST_REENTRY=1',
+        `HAPPIER_STACK_INVOKED_CWD=${guestCwd}`,
+        ...(stackName ? [`HAPPIER_STACK_STACK=${stackName}`] : []),
+        invocation.command, ...(invocation.args ?? []), ...delegatedArgv,
+      ],
+      cwd, env, boundary,
+      onStarted: () => { reconciliation = startReconciliation(); },
+    });
   } finally {
     reconciliationController.abort();
     await reconciliation;
-    removeSignalHandlers();
   }
 }

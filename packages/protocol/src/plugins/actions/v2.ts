@@ -7,7 +7,7 @@ import {
   type PluginActionSurfaceV2,
 } from './vocabulary.js';
 import type { ActionDefinitionSlashV1 } from '../../actions/actionDefinitionV1.js';
-import { ActionSafetySchema } from '../../actions/safety.js';
+import { ActionSafetySchema } from '../../actions/safetyVocabulary.js';
 import { ActionContextualDefaultsSchema } from '../../actions/contextualDefaults.js';
 import { ActionOperationDeclarationV1Schema } from '../../actions/operations/v1.js';
 import {
@@ -18,7 +18,8 @@ import {
   type ActionInputWidget,
   type ActionInputHints,
 } from '../../actions/actionInputHints.js';
-import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposes.js';
+import { PluginActionConnectedAccountPurposeBindingV2Schema, type PluginActionConnectedAccountPurposeBindingV2 } from './connectedAccountPurposeBindingV2.js';
+export { PluginActionConnectedAccountPurposeBindingV2Schema, type PluginActionConnectedAccountPurposeBindingV2 } from './connectedAccountPurposeBindingV2.js';
 import { PluginOptionalStringSchema } from '../_shared.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
@@ -243,14 +244,6 @@ export type PluginActionInputHintsV2 = z.infer<typeof PluginActionInputHintsV2Sc
  * purpose. Host adapters consume this mapping; field names and request order
  * are never authorization inputs.
  */
-export const PluginActionConnectedAccountPurposeBindingV2Schema = z.object({
-  path: ActionInputPathSchema,
-  purpose: ConnectedAccountPurposeIdSchema,
-}).strict();
-export type PluginActionConnectedAccountPurposeBindingV2 = z.infer<
-  typeof PluginActionConnectedAccountPurposeBindingV2Schema
->;
-
 /** Tools cannot request host-resolved Action-form options. */
 export const PluginToolInputHintsV2Schema = PluginToolInputHintsSchemasV2.hintsSchema;
 export type PluginToolInputHintsV2 = z.infer<typeof PluginToolInputHintsV2Schema>;
@@ -413,12 +406,15 @@ export function hasValidPluginConnectedAccountPurposeBindingsV2(
 }
 
 function widgetMatchesInputLeaf(
-  field: Readonly<{ widget: ActionInputWidget; connectedAccountOptions?: true }>,
+  field: Readonly<{ widget: ActionInputWidget; connectedAccountOptions?: true; inputType?: unknown }>,
   inputLeaf: PluginJsonSchemaV2,
 ): boolean {
   if (field.connectedAccountOptions === true) {
     return field.widget === 'select' && isExactQualifiedConnectedAccountRefInputLeaf(inputLeaf);
   }
+  // Typed choices carry schema-admitted JSON, not only the incumbent string dialect.
+  // The target's pre-dispatch input admission also enforces the resolved type schema.
+  if (field.inputType && field.widget === 'select') return true;
   switch (field.widget) {
     case 'text':
     case 'url':

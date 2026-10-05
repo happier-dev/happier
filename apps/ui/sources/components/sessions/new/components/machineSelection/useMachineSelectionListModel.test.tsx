@@ -166,6 +166,23 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it('keeps the selected unavailable machine visible without allowing activation', async () => {
+        const machine = { ...createMachine('retired'), revokedAt: Date.now() };
+        const onSelectMachine = vi.fn();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            groups: [{ serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false, machines: [createScopedMachine(machine)] }],
+            selectedMachine: machine, selectedServerId: 'server-a', recentMachines: [], favoriteMachines: [],
+            onSelectMachine, onSelectScopedMachine: vi.fn(), includeSelectedUnavailableMachineId: machine.id,
+            showFavorites: true, showRecent: true, showSearch: true, showCliGlyphs: false, autoDetectCliGlyphs: false,
+        }));
+        const section = rendered.getCurrent().rootStep.sections[0];
+        expect(section?.kind).toBe('static');
+        if (section?.kind !== 'static') throw new Error('expected unavailable machine section');
+        expect(section.options[0]?.disabled).toBe(true);
+        section.options[0]?.onSelect?.();
+        expect(onSelectMachine).not.toHaveBeenCalled();
+    });
+
     it('shows the resolved Temporary computer target even when no machine is available', async () => {
         const onSelectTemporaryComputer = vi.fn();
         const rendered = await renderHook(() => useMachineSelectionListModel({

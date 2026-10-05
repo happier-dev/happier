@@ -29,7 +29,7 @@ if (false) {
     id: 'home', renderer: 'native', container: 'widget', target: { kind: 'app' },
     home: { default: 'shown' },
   };
-  // @ts-expect-error Home defaults belong only to App-target widgets.
+  // @ts-expect-error Session widget declarations require an exact typed Session input.
   const rejectedSessionHomeWidget: PluginUiViewV2Input = {
     id: 'board', renderer: 'native', container: 'widget', target: { kind: 'session' },
     home: { default: 'shown' },
@@ -706,19 +706,23 @@ describe('embedded widget role', () => {
     id: 'review-status-widget',
     container: 'widget',
     target: { kind: 'session' },
+    inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
+    inputSchema: { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false },
+    sessionInputPath: 'session',
     renderer: 'review-native',
     fallbackRenderers: ['review-web'],
     title: 'Review status',
   });
 
-  it('admits one widget role for Session and App, with an App-only Home default', () => {
+  it('admits one widget role for Session and App with physical-host-neutral defaults', () => {
     const session = { ...widgetView, container: 'widget' };
-    const app = { ...session, target: { kind: 'app' }, home: { default: 'shown' } };
+    const { sessionInputPath: _sessionInputPath, ...appInput } = session;
+    const app = { ...appInput, target: { kind: 'app' }, home: { default: 'shown' } };
     expect(PluginUiViewV2Schema.safeParse(session).success).toBe(true);
     expect(PluginUiViewV2Schema.safeParse(app).success).toBe(true);
     expect(PluginUiViewV2Schema.safeParse({ ...app, home: { default: 'available' } }).success).toBe(true);
     expect(PluginUiViewV2Schema.safeParse({ ...app, home: { default: 'unknown' } }).success).toBe(false);
-    expect(PluginUiViewV2Schema.safeParse({ ...session, home: { default: 'shown' } }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...session, home: { default: 'shown' } }).success).toBe(true);
     expect(PluginUiViewV2Schema.safeParse({ ...widgetView, container: 'unsupportedWidget' }).success).toBe(false);
     expect(surfaceRegistry.normalizePluginUiInlineSurfaceBindingV1({
       pluginId: 'acme.widgets', surfaceId: 'home', rendererId: 'native',

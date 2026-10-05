@@ -7,6 +7,12 @@ describe('Session surface items', () => {
   it('accepts an explicitly saved blank native note', () => {
     expect(SessionSurfaceItemV1Schema.parse(note)).toEqual(note);
   });
+  it('persists only the walkthrough comparison selector, never frozen progress or result authority', () => {
+    const item = { ...note, source: { kind: 'walkthrough', comparison: 'session' } };
+    expect(SessionSurfaceItemV1Schema.parse(item)).toEqual(item);
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...item, source: { ...item.source, reviewedCount: 2 } }).success).toBe(false);
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...item, source: { kind: 'walkthrough', comparison: 'latest' } }).success).toBe(false);
+  });
   it('accepts canonical host Action requests as data without plugin or caller authority', () => {
     const root = { kind: 'action', hostAction: 'session.message.send', label: 'Send', input: { text: 'Hello' } };
     const item = { ...note, source: { kind: 'declarative', document: { version: 1, root } } };
@@ -33,12 +39,27 @@ describe('Session surface items', () => {
   it('reuses declarative preflight and rejects excess UTF-8 bytes before recursion', () => {
     expect(SessionSurfaceItemV1Schema.safeParse({ ...note, source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'x'.repeat(512 * 1024) } } } }).success).toBe(false);
   });
-  it('keeps source class and exact installed surface immutable while permitting content edits', () => {
+  it('stores configured shared widgets without admitting private definition references', () => {
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } }, bindings: { connection: { kind: 'viewer', purpose: 'metrics' }, session: { kind: 'context', slot: 'session' } } };
+    const item = { ...note, source: { kind: 'widget', instance } };
+    expect(SessionSurfaceItemV1Schema.safeParse(item).success).toBe(true);
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...item, source: { kind: 'widget', instance: { ...instance, definition: { kind: 'artifact', artifactId: 'private-definition' } } } }).success).toBe(false);
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...item, source: { kind: 'widget', instance: { ...instance, token: 'private-token' } } }).success).toBe(false);
+  });
+  it('requires viewer intent instead of pinning an author connection into shared content', () => {
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } }, bindings: { connection: { kind: 'value', value: { service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'author-connection' } } } };
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...note, source: { kind: 'widget', instance } }).success).toBe(false);
+  });
+  it('keeps source class and exact widget definition immutable while permitting instance input edits', () => {
     const previous = SessionSurfaceItemV1Schema.parse(note);
-    const installed = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'installedSurface', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } } });
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } }, bindings: {} };
+    const installed = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'widget', instance } });
     expect(isSessionSurfaceItemSourceCompatible(previous, { ...previous, title: 'Changed' })).toBe(true);
     expect(isSessionSurfaceItemSourceCompatible(previous, installed)).toBe(false);
-    expect(isSessionSurfaceItemSourceCompatible(installed, { ...installed, source: { kind: 'installedSurface', surface: { pluginId: 'com.acme.test', localId: 'other' } } })).toBe(false);
+    const changed = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'widget', instance: { ...instance, bindings: { session: { kind: 'value', value: 'session-b' } } } } });
+    expect(isSessionSurfaceItemSourceCompatible(installed, changed)).toBe(true);
+    const replaced = SessionSurfaceItemV1Schema.parse({ ...note, source: { kind: 'widget', instance: { ...instance, definition: { ...instance.definition, surface: { pluginId: 'com.acme.test', localId: 'other' } } } } });
+    expect(isSessionSurfaceItemSourceCompatible(installed, replaced)).toBe(false);
   });
   it('accepts the canonical hosted HTML source and keeps its authority class immutable', () => {
     const hosted = SessionSurfaceItemV1Schema.parse({

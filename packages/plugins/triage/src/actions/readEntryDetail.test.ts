@@ -33,6 +33,7 @@ import {
     TriageReadEntryDetailResultV1Schema,
 } from './entryDetailProtocol.js';
 import { createTriageReadEntryDetailActionHandler } from './readEntryDetail.js';
+import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
 /**
  * The durable half of one mounted detail input.
@@ -108,12 +109,23 @@ function caller(pluginId: string): PluginInvocationCaller {
 function createContext(input: Readonly<{
     collections: CorpusCollectionsV1;
     callerPluginId?: string;
+    hostAgent?: boolean;
     sessionSummary?: Readonly<{ title?: string; updatedAtMs?: number }> | null;
 }>): PluginInvocationContext {
     return {
         signal: new AbortController().signal,
-        caller: caller(input.callerPluginId ?? TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1),
+        surface: input.hostAgent ? 'agent' : 'plugin',
+        ...(input.hostAgent ? {} : { caller: caller(input.callerPluginId ?? TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1) }),
         services: {
+            targetedContributions: {
+                observeForSelf: () => ({
+                    readCurrent: async () => ({ contributions: [{
+                        contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId },
+                        descriptor: { purpose: 'triage-source', kinds: [{ id: 'pull-request' }] },
+                    } as unknown as TriageAdmittedSourceV1] }),
+                    dispose: () => {},
+                }),
+            },
             storage: {
                 account: {
                     collection: (definition: PluginAccountCollectionDefinition) => (
@@ -156,6 +168,17 @@ async function seedTwoConnections(): Promise<Readonly<{ collections: CorpusColle
 }
 
 describe('the entry detail read', () => {
+    it('returns the exact admitted configured connection to a host agent', async () => {
+        const { collections } = await seedTwoConnections();
+        const handler = createTriageReadEntryDetailActionHandler();
+        const result = await handler(detailInput(INSTANCE_A), createContext({ collections, hostAgent: true }));
+        expect(result.kind).toBe('read');
+        if (result.kind !== 'read') return;
+        expect(result.instance.instance).toEqual({ source: SOURCE, sourceInstanceId: INSTANCE_A });
+        expect(await handler({ ...detailInput(INSTANCE_A), entryRef: { ...ENTRY_REF, kindId: 'undeclared' } },
+            createContext({ collections, hostAgent: true }))).toEqual({ kind: 'unavailable' });
+    });
+
     it('reports when the bounded linked-Session page has more rows', async () => {
         const { collections } = await seedTwoConnections();
         expect(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1)

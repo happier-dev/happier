@@ -34,6 +34,16 @@ and rejects an identity mismatch or equal-revision conflict instead of creating 
 authority. The server persists one outer `{ revision, contentKey }` continuity fact so an
 Iroh-to-HTTPS-only transition cannot regress across restart.
 
+In 0.3 development, the canonical server publisher
+`homeConnectionDescriptorPublication.ts#httpsEndpointFromIngress` publishes an explicit
+ingress as a `kind: 'https'` endpoint when it uses HTTPS or loopback HTTP. The Protocol
+`HomeApplicationOriginV1Schema` and shared `isLoopbackHostname` own endpoint validation
+and loopback classification. LAN/public HTTP and URLs with credentials, queries, or
+fragments are rejected. Canonical identity alone never supplies an ingress endpoint.
+Loopback HTTP is a same-computer route without TLS confidentiality; it does not establish
+cross-device reachability. CLI first-contact trust still requires its exact selected
+HTTPS/loopback origin, and public projection never supplies exact descriptor authority.
+
 Transport selection defaults to automatic. The 0.3 client-local Standard-only setting in the UI,
 or `HAPPIER_HOME_CARRIER_POLICY=standard_only` in the CLI/daemon process environment, prevents
 new Home and finite Machine Iroh acquisitions; descriptor-declared HTTPS remains usable, as do

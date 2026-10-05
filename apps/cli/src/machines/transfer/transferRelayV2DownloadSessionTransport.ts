@@ -5,8 +5,8 @@ import {
     finalizeDownloadTransferSession,
     readDownloadTransferChunk,
     type TransferSessionLifecycle,
-} from '@/transfers/core/transferSessionLifecycle';
-import { type TransferSessionStore } from '@/transfers/core/transferSessionStore';
+} from '@happier-dev/transfers/node';
+import { type TransferSessionStore } from '@happier-dev/transfers/node';
 
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from './transferPayloadSource';
 

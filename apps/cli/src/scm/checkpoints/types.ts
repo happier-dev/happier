@@ -134,7 +134,7 @@ export type RepositoryCheckpointDiffResult =
         baseRef: RepositoryCheckpointRef;
         finalRef: RepositoryCheckpointRef;
         baseRefSource: Exclude<RepositoryCheckpointDiffBaseRefSource, 'unavailable'>;
-        contentConfidence: 'exact';
+        contentConfidence: 'exact' | 'unavailable';
         attributionScope: RepositoryCheckpointAttributionScope;
         files: readonly FileChangeEvidence[];
         receipts: readonly RepositoryCheckpointReceipt[];

@@ -1,5 +1,6 @@
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useQualifiedConnectedAccountGroups } from './useQualifiedConnectedAccountGroups';
 
 import {
     createDeferred,
@@ -9,6 +10,25 @@ import {
 } from '@/dev/testkit';
 
 const createClientMock = vi.hoisted(() => vi.fn());
+const serverFetchMock = vi.hoisted(() => vi.fn());
+// HTTP is the external boundary; the race regression uses the real client below it.
+vi.mock('@/sync/http/client', () => ({ serverFetch: serverFetchMock }));
+// Pool hooks render no Markdown; fail if this unavailable third-party export is used.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected Markdown in pool hook'); },
+}));
+// Pool hooks do not invoke Session/Team envelope HTTP APIs. Keep unrelated
+// transport imports isolated without replacing any encryption/domain logic.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Unexpected Session envelope API in pool hook'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
+vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Unexpected Team envelope API in pool hook'); };
+    return { createMembershipSessionDataKeyEnvelopeClient: unused, prepareMembershipHistoryEnvelopesForScope: unused,
+        prepareMembershipHistoryEnvelopesDetached: unused, membershipHistoryPreparationScopeKey: unused };
+});
 const authState = vi.hoisted(() => ({
     credentials: {
         token: 'token-a',
@@ -72,10 +92,25 @@ function groupFor(
     };
 }
 
+function wireGroupFor(group: ReturnType<typeof groupFor>) {
+    return { v: 1, ref: group.ref, displayName: group.displayName, policy: group.policy,
+        incarnation: group.revision.incarnation, generation: group.revision.generation,
+        runtimeStateRevision: group.revision.runtimeStateRevision, activeConnectedAccountId: group.activeAccountId,
+        state: group.state, createdAt: 0, updatedAt: 0, members: [] };
+}
+
+async function useRealHttpClient() {
+    const { createQualifiedConnectedAccountGroupsClient } = await vi.importActual<
+        typeof import('@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource')
+    >('@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource');
+    createClientMock.mockImplementation(createQualifiedConnectedAccountGroupsClient);
+}
+
 describe('useQualifiedConnectedAccountGroups', () => {
     beforeEach(() => {
         standardCleanup();
         createClientMock.mockReset();
+        serverFetchMock.mockReset();
     });
 
     it('does not expose service A groups while a changed server/service/auth basis loads or fails', async () => {
@@ -277,10 +312,19 @@ describe('useQualifiedConnectedAccountGroups', () => {
             errorCode: null,
         };
         const createdGroup = groupFor(service, 'group-created');
-        const olderList = createDeferred<unknown[]>();
-        const list = vi.fn(() => olderList.promise);
-        const create = vi.fn().mockResolvedValue(createdGroup);
-        createClientMock.mockReturnValue({ list, create });
+        const olderList = createDeferred<Response>();
+        let firstList = true;
+        const wireCreatedGroup = wireGroupFor(createdGroup);
+        let currentGroups: typeof wireCreatedGroup[] = [];
+        await useRealHttpClient();
+        serverFetchMock.mockImplementation(async (_path: string, init?: RequestInit) => {
+            if (init?.method === 'POST') {
+                currentGroups = [wireCreatedGroup];
+                return new Response(JSON.stringify({ group: wireCreatedGroup }), { status: 200 });
+            }
+            if (firstList) { firstList = false; return olderList.promise; }
+            return new Response(JSON.stringify({ groups: currentGroups }), { status: 200 });
+        });
 
         const { useQualifiedConnectedAccountGroups } = await import(
             './useQualifiedConnectedAccountGroups'
@@ -291,7 +335,6 @@ describe('useQualifiedConnectedAccountGroups', () => {
             peer,
         }));
         await flushHookEffects();
-        expect(list).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             await hook.getCurrent().create({
@@ -299,16 +342,16 @@ describe('useQualifiedConnectedAccountGroups', () => {
                 displayName: createdGroup.displayName,
             });
         });
-        expect(hook.getCurrent().groups).toEqual([createdGroup]);
+        expect(hook.getCurrent().groups.map(({ ref }) => ref)).toEqual([createdGroup.ref]);
 
         await act(async () => {
-            olderList.resolve([]);
+            olderList.resolve(new Response(JSON.stringify({ groups: [] }), { status: 200 }));
             await olderList.promise;
         });
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
             status: 'loaded',
             source: { protocol: 'v4' },
-            groups: [createdGroup],
+            groups: [expect.objectContaining({ ref: createdGroup.ref })],
             error: null,
         }));
     });
@@ -321,12 +364,19 @@ describe('useQualifiedConnectedAccountGroups', () => {
             errorCode: null,
         };
         const group = groupFor(service, 'group-a');
-        const olderRefresh = createDeferred<unknown[]>();
-        const list = vi.fn()
-            .mockResolvedValueOnce([group])
-            .mockReturnValueOnce(olderRefresh.promise);
-        const deleteGroup = vi.fn().mockResolvedValue(undefined);
-        createClientMock.mockReturnValue({ list, delete: deleteGroup });
+        const olderRefresh = createDeferred<Response>();
+        const wireGroup = wireGroupFor(group);
+        let currentGroups = [wireGroup];
+        let listNumber = 0;
+        await useRealHttpClient();
+        serverFetchMock.mockImplementation(async (_path: string, init?: RequestInit) => {
+            if (init?.method === 'DELETE') {
+                currentGroups = [];
+                return new Response(JSON.stringify({ success: true }), { status: 200 });
+            }
+            if (++listNumber === 2) return olderRefresh.promise;
+            return new Response(JSON.stringify({ groups: currentGroups }), { status: 200 });
+        });
 
         const { useQualifiedConnectedAccountGroups } = await import(
             './useQualifiedConnectedAccountGroups'
@@ -337,13 +387,12 @@ describe('useQualifiedConnectedAccountGroups', () => {
             peer,
         }));
         await flushHookEffects();
-        expect(hook.getCurrent().groups).toEqual([group]);
+        expect(hook.getCurrent().groups.map(({ ref }) => ref)).toEqual([group.ref]);
 
         let refreshed!: Promise<void>;
         await act(async () => {
             refreshed = hook.getCurrent().refresh();
         });
-        expect(list).toHaveBeenCalledTimes(2);
 
         await act(async () => {
             await hook.getCurrent().delete(group);
@@ -354,7 +403,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         }));
 
         await act(async () => {
-            olderRefresh.resolve([group]);
+            olderRefresh.resolve(new Response(JSON.stringify({ groups: [wireGroup] }), { status: 200 }));
             await refreshed;
         });
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
@@ -490,6 +539,41 @@ describe('useQualifiedConnectedAccountGroups', () => {
 
         expect(deleted!).toBe(false);
         expect(hook.getCurrent().groups).toEqual([recreated]);
+    });
+
+    it('accepts deletion when a same-Account refresh already confirms the pool is absent', async () => {
+        const service = { pluginId: 'acme.accounts', localId: 'a' };
+        const peer = { status: 'ready' as const, transport: { protocol: 'v4' as const }, errorCode: null };
+        // Keep the real client, its wire parsing and revision normalization; substitute HTTP only.
+        await useRealHttpClient();
+        const deleted = createDeferred<Response>();
+        const wireGroup = { v: 1, ref: { service, groupId: 'group-a' }, displayName: 'Team', policy,
+            incarnation: 'group-row:group-a', generation: 1, runtimeStateRevision: 1,
+            activeConnectedAccountId: null, state: {}, createdAt: 0, updatedAt: 0, members: [] };
+        let groups = [wireGroup];
+        serverFetchMock.mockImplementation(async (_path: string, init?: RequestInit) => {
+            if (init?.method === 'DELETE') return deleted.promise;
+            return new Response(JSON.stringify({ groups }), { status: 200 });
+        });
+        try {
+            const hook = await renderHook(() => useQualifiedConnectedAccountGroups({ serverId: 'server-a', service, peer }));
+            await flushHookEffects();
+            const group = hook.getCurrent().groups[0]!;
+            let pending: Promise<boolean> = Promise.resolve(false);
+            await act(async () => { pending = hook.getCurrent().delete(group); });
+            groups = [];
+            await act(async () => { await hook.getCurrent().refresh(); });
+            expect(hook.getCurrent().groups).toEqual([]);
+            let result = false;
+            await act(async () => {
+                deleted.resolve(new Response(JSON.stringify({ success: true }), { status: 200 }));
+                result = await pending;
+            });
+            expect(result).toBe(true);
+            expect(hook.getCurrent().groups).toEqual([]);
+        } finally {
+            serverFetchMock.mockReset();
+        }
     });
 
     it('does not let a late active-account result replace a newer pool revision', async () => {

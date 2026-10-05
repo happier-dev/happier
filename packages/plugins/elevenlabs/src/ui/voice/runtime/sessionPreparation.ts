@@ -199,6 +199,8 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
         conversation: { textOnly },
         agent: {
           ...(language ? { language } : {}),
+          ...(policy ? { firstMessage: policy.welcome.enabled && policy.welcome.mode === 'immediate'
+            ? policy.welcome.text ?? '' : '' } : {}),
           ...(policy ? { prompt: { prompt: [policy.instructions, ELEVENLABS_INITIAL_CONVERSATION_CONTEXT_VARIABLE].join('\n\n') } } : {}),
         },
       },

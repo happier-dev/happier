@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 import {
   initializeRuntimeOverridesSynchronizer,
@@ -7,6 +8,24 @@ import {
 } from './runtimeOverridesSynchronizer';
 
 describe('initializeRuntimeOverridesSynchronizer', () => {
+  it('adopts the saved mode at startup even when its timestamp was already captured', async () => {
+    const sync = await initializeRuntimeOverridesSynchronizer({
+      agentTargetKey: 'agent:happier.agent.codex/codex',
+      explicitPermissionMode: undefined,
+      sessionKind: 'resume',
+      session: {
+        getMetadataSnapshot: () => createTestMetadata({ permissionMode: 'read-only', permissionModeUpdatedAt: 77 }),
+        fetchLatestUserPermissionIntentFromTranscript: async () => null,
+      },
+      permissionMode: { current: 'yolo', updatedAt: 77 },
+      modelOverride: { current: null, updatedAt: 0 },
+    });
+
+    await sync.seedFromSession();
+
+    expect(sync.getSnapshot().permissionMode).toEqual({ current: 'read-only', updatedAt: 77 });
+  });
+
   it('prefers newer transcript intent over older metadata when seeding attach sessions', async () => {
     const fetchLatestUserPermissionIntentFromTranscript = vi.fn(async () => ({ intent: 'safe-yolo' as any, updatedAt: 20 }));
 

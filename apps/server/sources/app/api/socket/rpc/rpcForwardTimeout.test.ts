@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { resolveRpcForwardTimeoutMs } from './rpcForwardTimeout';
 
@@ -48,5 +48,12 @@ describe('resolveRpcForwardTimeoutMs', () => {
     it('keeps unrelated RPC calls on the generic forward timeout', () => {
         expect(resolveRpcForwardTimeoutMs('machine-one:unrelated.method')).toBe(30_000);
         expect(resolveRpcForwardTimeoutMs('machine-one:unrelated.method', 30_001)).toBe(30_001);
+    });
+
+    it('keeps answering UI Action approvals under caller and lifecycle cancellation', () => {
+        const method = `machine-one:${RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE}`;
+        for (const requestedTimeoutMs of [undefined, 1, 30_001, 300_000]) {
+            expect(resolveRpcForwardTimeoutMs(method, requestedTimeoutMs)).toBe(2_147_483_647);
+        }
     });
 });

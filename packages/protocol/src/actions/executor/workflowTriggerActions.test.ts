@@ -46,7 +46,7 @@ function fixture() {
   };
   const definitions = createWorkflowDefinitionActions({ artifactStore,
     encodeListCursor: (row) => row.artifactId, assertDefinitionWriteAllowed: () => { throw new Error('Unexpected fixture definition policy write'); } });
-  const toTrigger = (id: string): AutomationTriggerDetail => ({ ...trigger, id: AutomationTriggerIdSchema.parse(id),
+  const toTrigger = (id: string, enabled = trigger.enabled): AutomationTriggerDetail => ({ ...trigger, enabled, id: AutomationTriggerIdSchema.parse(id),
     revision: 0, createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null });
   const deps: WorkflowTriggerActionsDependencies = {
     newId: (kind) => `${kind}-${++nextId}`,
@@ -86,7 +86,7 @@ function fixture() {
             : value.trigger.kind === 'sessionLifecycle' || value.trigger.kind === 'runLifecycle'
             ? AutomationTriggerDetailSchema.parse({ ...value.trigger, id: value.triggerId,
               revision: 0, createdAt: 1, updatedAt: 1, remainingOccurrences: 1,
-              status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }) : toTrigger(value.triggerId)), executionRecipe: input.executionRecipe };
+              status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }) : toTrigger(value.triggerId, value.trigger.enabled)), executionRecipe: input.executionRecipe };
         rows.set(row.id, row); return row;
       },
       reconcile: async (id, input) => {
@@ -102,7 +102,7 @@ function fixture() {
                   binding: { v: 1, automationId: id, triggerId: AutomationTriggerIdSchema.parse(item.triggerId), triggerRevision: 0, triggerKind: value.kind },
                   definition: { kind: value.kind, pullRequest: value.pullRequest } })) });
           }
-          if (item.kind === 'new') return toTrigger(item.triggerId);
+          if (item.kind === 'new') return toTrigger(item.triggerId, item.trigger.enabled);
           const old = current.triggers.find((value) => value.id === item.triggerId)!;
           if ((old.kind === 'prComment' || old.kind === 'ciFailed') && (item.enabled !== undefined || item.trigger !== undefined)) {
             const revision = old.revision + 1;
@@ -130,6 +130,91 @@ function fixture() {
 }
 
 describe('workflow trigger Automation composition', () => {
+  it('prepares Session birth triggers without writing or choosing the source Session', async () => {
+    const { rows, deps } = fixture();
+    const actions = createWorkflowTriggerActions({ ...deps,
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
+    const prepared = await actions.prepareSessionInitialTriggers({ project, initialTriggers: [{
+      target: { kind: 'workflow', ref: workflow },
+      trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } },
+    }] });
+    expect(rows.size).toBe(0);
+    expect(prepared).toMatchObject([{ workflowDefinitionId: workflow, assignments: [{ machineId: project.machineId }],
+      executionRecipe: { v: 2, workflow: { t: 'plain', v: { workspace: { directory: project.directory } } } },
+      triggers: [{ trigger: { events: ['sessionStarted'] } }] }]);
+    expect(prepared[0]).not.toHaveProperty('scopeSessionId');
+    expect(prepared[0]?.triggers[0]?.trigger).not.toHaveProperty('sourceSessionId');
+    await expect(actions.prepareSessionInitialTriggers({ project, initialTriggers: [{
+      target: { kind: 'workflow', ref: workflow }, trigger,
+    }], caller: { ...ownCaller, agentStartContext: { ...ownCaller.agentStartContext, workDepthLimit: 0 } } }))
+      .rejects.toMatchObject({ code: 'work_depth_exceeded' });
+    expect(rows.size).toBe(0);
+  });
+  it('enables only the selected trigger of a disabled plural set in one revision transition', async () => {
+    const { rows, actions } = fixture();
+    const first = await actions.add({ workflow, project, trigger });
+    const second = await actions.add({ workflow, project, trigger });
+    const disabled = await actions.update({ automationId: first.set.automationId,
+      expectedRevision: second.set.revision, patch: { enabled: false } });
+    const enabled = await actions.update({ automationId: first.set.automationId, triggerId: second.triggerId,
+      expectedRevision: disabled.set.revision, patch: { enabled: true } });
+    expect(enabled.set).toMatchObject({ enabled: true, revision: disabled.set.revision + 1,
+      triggers: [{ id: first.triggerId, enabled: false }, { id: second.triggerId, enabled: true }] });
+    expect(rows.get(first.set.automationId)?.enabled).toBe(true);
+  });
+  it('summarizes attached disabled triggers from the public list without opening private context or session-scoped sets', async () => {
+    const { deps, rows, actions } = fixture();
+    const saved = await actions.add({ workflow, project, trigger: { ...trigger, enabled: false } });
+    const row = rows.get(saved.set.automationId)!;
+    rows.set('session-only', { ...row, id: 'session-only', scopeSessionId: 'session-one' });
+    const read = createWorkflowTriggerActions({ ...deps, automations: { ...deps.automations,
+      get: async () => { throw new Error('summary_must_not_open_private_detail'); } },
+      openContext: async () => { throw new Error('summary_must_not_open_private_context'); } });
+    expect(await read.readWorkflowSummaries()).toEqual(new Map([[workflow, {
+      triggers: [{ kind: 'schedule', schedule: trigger.schedule }], nextRunAt: null,
+    }]]));
+  });
+  it('uses the earliest enabled scheduler occurrence across attached sets without recomputing schedules', async () => {
+    const { rows, actions } = fixture();
+    const saved = await actions.add({ workflow, project, trigger });
+    const row = rows.get(saved.set.automationId)!;
+    const scheduled = row.triggers[0]!;
+    if (scheduled.kind !== 'schedule') throw new Error('Expected schedule');
+    rows.set(row.id, { ...row, triggers: [
+      { ...scheduled, nextRunAt: 900 }, { ...scheduled, id: AutomationTriggerIdSchema.parse('earlier'), nextRunAt: 400 },
+      { ...scheduled, id: AutomationTriggerIdSchema.parse('disabled'), enabled: false, nextRunAt: 100 },
+    ] });
+    rows.set('disabled-set', { ...row, id: 'disabled-set', enabled: false, triggers: [{ ...scheduled, nextRunAt: 50 }] });
+    rows.set('session-set', { ...row, id: 'session-set', scopeSessionId: 'session', triggers: [{ ...scheduled, nextRunAt: 10 }] });
+    expect((await actions.readWorkflowSummaries()).get(workflow)).toMatchObject({ nextRunAt: 400 });
+    rows.set(row.id, { ...row, triggers: [{ ...scheduled, nextRunAt: null }] });
+    expect((await actions.readWorkflowSummaries()).get(workflow)).toMatchObject({ nextRunAt: null });
+  });
+  it('preserves cancellation instead of turning it into link unavailability', async () => {
+    const { deps } = fixture();
+    const controller = new AbortController();
+    const actions = createWorkflowTriggerActions({ ...deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      pullRequests: { listLinks: async () => { controller.abort(new Error('cancelled')); controller.signal.throwIfAborted(); return []; },
+        attach: async () => undefined, removeTrigger: async () => undefined },
+    });
+    await expect(actions.sessionList({ sessionId: 'session-one' }, { signal: controller.signal })).rejects.toThrow('cancelled');
+  });
+  it.each(['rejected', 'unavailable', 'not-configured'] as const)('lists ordinary Session triggers when PR links are %s', async (failure) => {
+    const { deps } = fixture();
+    const actions = createWorkflowTriggerActions({ ...deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      ...(failure === 'not-configured' ? {} : { pullRequests: {
+        listLinks: async () => { throw Object.assign(new Error(failure), { code: failure === 'rejected' ? 'denied' : 'target_unavailable' }); },
+        attach: async () => undefined, removeTrigger: async () => undefined,
+      } }),
+    });
+    const added = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'workflow', ref: workflow }, trigger });
+    await expect(actions.sessionList({ sessionId: 'session-one' })).resolves.toMatchObject({
+      sessionId: 'session-one', sets: [added.set], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' },
+    });
+  });
+
   it.each(['prComment', 'ciFailed'] as const)('attaches %s through the PR binding owner and returns its link', async (triggerKind) => {
     const { deps } = fixture();
     const bindings = new Map<string, { provider: 'github'; repository: string; number: number }>();

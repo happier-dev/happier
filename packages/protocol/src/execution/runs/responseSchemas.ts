@@ -9,6 +9,7 @@ import {
   ExecutionRunLaunchOriginSchema,
   ExecutionRunResumeHandleSchema,
   ExecutionRunRetentionPolicySchema,
+  ExecutionRunVoiceAgentIntentInputV1Schema,
   type ExecutionRunClass,
   type ExecutionRunDisplay,
   type ExecutionRunIntent,
@@ -35,6 +36,7 @@ import {
   type ExecutionRunLifecycleV1,
 } from './executionRunLifecycleV1.js';
 import { OperationUpdateRequiredV1Schema } from '../../compat/operationUpdateRequiredV1.js';
+import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarration.js';
 
 // Canonical, stable error code vocabulary for RPC `errorCode` and MCP `error.code`.
 // Keep this pinned and deterministic; clients should branch on these strings.
@@ -176,6 +178,8 @@ export const ExecutionRunPublicStateSchema = z.object({
   availableActionIds: z.array(z.string().min(1)).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.optional(),
   transcript: ExecutionRunTranscriptSchema.optional(),
+  /** Retained admission policy; reconnecting clients must not replace it with current preferences. */
+  voicePolicy: ExecutionRunVoiceAgentIntentInputV1Schema.shape.voicePolicy,
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
@@ -192,6 +196,7 @@ export const ExecutionRunGetRequestSchema = z.object({
   includeStructured: z.boolean().optional(),
   /** Await this exact current/last input turn before returning the Run snapshot. */
   waitForInputId: z.string().trim().min(1).optional(),
+  waitForOutput: ReviewWalkthroughObservationSchema.optional(),
 }).passthrough();
 export type ExecutionRunGetRequest = z.infer<typeof ExecutionRunGetRequestSchema>;
 

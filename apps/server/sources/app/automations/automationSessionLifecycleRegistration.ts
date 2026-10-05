@@ -22,6 +22,13 @@ export class AutomationSessionLifecycleRegistrationValidationError
 
 export type ValidatedSessionLifecycleTriggerRegistration = AutomationSessionLifecycleTrigger;
 
+/** Server-private context supplied only by the canonical Session row birth writer. */
+export type AutomationSessionBirthContext = Readonly<{
+    id: string;
+    accountId: string;
+    createdAt: Date;
+}>;
+
 export function validateSessionLifecycleExecutionTargetInequality(params: Readonly<{
     automationTargetType: "new_session" | "existing_session" | "execution_run" | null;
     automationExistingSessionId?: string | null;
@@ -50,10 +57,14 @@ export async function validateSessionLifecycleTriggerRegistrationTx(params: Read
     automationTargetType: "new_session" | "existing_session" | "execution_run" | null;
     automationExistingSessionId?: string | null;
     input: AutomationSessionLifecycleTriggerInput;
+    newbornSession?: AutomationSessionBirthContext;
 }>): Promise<ValidatedSessionLifecycleTriggerRegistration> {
-    // No creation transaction consumer is installed yet. Ordinary CRUD must
-    // not register an already-missed creation occurrence or backfill one.
-    if (params.input.events.includes("sessionStarted")) {
+    const onSessionStart = params.input.events.includes("sessionStarted");
+    // Ordinary CRUD cannot register a missed creation occurrence. Only the
+    // row returned by Session birth supplies this private transaction context.
+    if (onSessionStart && (!params.newbornSession
+        || params.newbornSession.id !== params.input.sourceSessionId
+        || params.newbornSession.accountId !== params.accountId)) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
             "session_already_started", "Session-start triggers require the Session creation transaction",
         );
@@ -61,12 +72,17 @@ export async function validateSessionLifecycleTriggerRegistrationTx(params: Read
     const sourceSessionId = params.input.sourceSessionId;
     const sourceSession = await params.tx.session.findFirst({
         where: { id: sourceSessionId, accountId: params.accountId },
-        select: { latestTurnId: true },
+        select: { latestTurnId: true, createdAt: true },
     });
     if (!sourceSession) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
             "sourceSessionUnavailable",
             "Session lifecycle source Session is unavailable",
+        );
+    }
+    if (onSessionStart && sourceSession.createdAt.getTime() !== params.newbornSession!.createdAt.getTime()) {
+        throw new AutomationSessionLifecycleRegistrationValidationError(
+            "session_already_started", "Session-start registration does not match the newborn Session",
         );
     }
     validateSessionLifecycleExecutionTargetInequality({

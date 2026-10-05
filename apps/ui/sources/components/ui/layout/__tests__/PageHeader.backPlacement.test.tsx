@@ -74,6 +74,16 @@ function gutterBacks(screen: Awaited<ReturnType<typeof renderHeader>>): number {
 }
 
 describe('PageHeader back control placement', () => {
+    it('keeps entity controls reachable after compact recomposition and column details outside the identity', async () => {
+        let presses = 0;
+        const screen = await renderScreen(<NavigationBackChromeProvider control={BackArrow}><PageHeader testID="page-header" title="Personal" compactPresentation="centered" detailsPlacement="column" details={React.createElement('Summary')} actions={React.createElement('Pressable', { testID: 'refresh', onPress: () => { presses += 1; } })} /></NavigationBackChromeProvider>);
+        layoutPane(screen, 390);
+        await screen.pressByTestIdAsync('refresh');
+        expect(presses).toBe(1);
+        const titleRow = screen.findHostByTestId('page-header-title-row');
+        expect(titleRow?.findAllByType('Summary' as never)).toHaveLength(0);
+        expect(screen.root.findAllByType('Summary' as never)).toHaveLength(1);
+    });
     it('keeps back mounted (unseen) until the pane is measured, so no fallback arrow flashes', async () => {
         const screen = await renderHeader();
         expect(screen.root.findAllByType('BackArrow' as never)).toHaveLength(1);

@@ -1,9 +1,9 @@
 import { z } from 'zod';
+import { ArtifactBlobAccountEncryptionStageV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { classifyAccountJsonKvKey } from './accountJsonKv.js';
 import { AuthoringMemoryContentV1Schema, AuthoringMemoryKeyV1Schema, AuthoringMemoryRowV1Schema } from './authoringMemory.js';
 import { ArtifactRecipientKeyEnvelopesV1Schema } from '../artifacts/artifactAccessV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
-import { ArtifactBlobStoredContentV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { utf8ToBytes } from '@noble/hashes/utils';
 
@@ -487,7 +487,7 @@ const AccountEncryptionMigrateArtifactItemSchema = z
     recipientKeyEnvelopes: ArtifactRecipientKeyEnvelopesV1Schema,
     blobs: z.array(z.object({
       blobId: z.string().uuid(), expectedContentSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      content: ArtifactBlobStoredContentV1Schema,
+      content: ArtifactBlobAccountEncryptionStageV1Schema,
     }).strict()).superRefine((blobs, ctx) => {
       if (new Set(blobs.map(blob => blob.blobId)).size !== blobs.length) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Artifact blob ids must be unique' });
@@ -511,7 +511,8 @@ export const AccountEncryptionMigrateArtifactsDirectiveSchema =
     z
       .object({
         action: z.literal('migrate'),
-        items: z.array(AccountEncryptionMigrateArtifactItemSchema).max(500),
+        // Complete owner census is governed by the signed whole-request byte budget, not a list page.
+        items: z.array(AccountEncryptionMigrateArtifactItemSchema),
       })
       .strict(),
   ]);

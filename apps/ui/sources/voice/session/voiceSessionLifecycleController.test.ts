@@ -2425,7 +2425,16 @@ describe('createVoiceSessionLifecycleController', () => {
                 await Promise.resolve();
                 await Promise.resolve();
             });
-            await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('disconnected'));
+            // Media is terminal, but the configured provider is still absent:
+            // retain the exact recovery target and publish its typed prerequisite.
+            await vi.waitFor(() => expect(controller.getSnapshot()).toMatchObject({
+                adapterId: adapter.id,
+                sessionId: 'voice-global',
+                status: 'error',
+                canStop: false,
+                errorCode: 'service_temporarily_unavailable',
+                errorRecoveryAction: 'retry',
+            }));
             expect(stop).toHaveBeenCalledTimes(1);
             const afterTerminal = captureAdmission.acquire('dictation');
             expect(afterTerminal).toMatchObject({ status: 'acquired' });

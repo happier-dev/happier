@@ -374,7 +374,13 @@ describe('pending acknowledgement boundaries', () => {
             let release!: () => void;
             const gate = new Promise<void>((resolve) => { release = resolve; });
             const sharedRead = (async () => { await gate; return queuedRowsResponse([SEED_LOCAL_ID]); })();
-            const dedupedRequest = async () => (await sharedRead).clone();
+            let reads = 0;
+            const dedupedRequest = async (_path: string, init?: RequestInit) => {
+                expect(init?.cache).toBe('no-store');
+                return ++reads === 1
+                    ? (await sharedRead).clone()
+                    : queuedRowsResponse([SEED_LOCAL_ID, ACKNOWLEDGED_LOCAL_ID]);
+            };
 
             const first = fetchAndApplyPendingMessagesV2({
                 sessionId: SESSION_ID,
@@ -435,7 +441,13 @@ describe('pending acknowledgement boundaries', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowsResponse([SEED_LOCAL_ID]); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const dedupedRequest = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1
+                ? (await sharedRead).clone()
+                : queuedRowsResponse([SEED_LOCAL_ID, ACKNOWLEDGED_LOCAL_ID]);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
@@ -564,10 +576,12 @@ describe('pending acknowledgement boundaries', () => {
         let trailingGetIssued!: () => void;
         const trailingGetIssuedGate = new Promise<void>((resolve) => { trailingGetIssued = resolve; });
         let issuedGets = 0;
-        const dedupedRequest = async () => {
+        const request = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
             issuedGets += 1;
-            if (issuedGets === 2) trailingGetIssued();
-            return (await sharedRead).clone();
+            if (issuedGets === 1) return (await sharedRead).clone();
+            trailingGetIssued();
+            return queuedRowsResponse([SEED_LOCAL_ID, REPLACEMENT_LOCAL_ID]);
         };
 
         const first = fetchAndApplyPendingMessagesV2({
@@ -575,7 +589,7 @@ describe('pending acknowledgement boundaries', () => {
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
 
         const sendAsNew = sendPendingDeliveryAsNewV2({
@@ -586,13 +600,14 @@ describe('pending acknowledgement boundaries', () => {
             isOutboxScopeCurrent: () => true,
             request: async (path, init) => (init?.method === 'POST' && path.endsWith('/delivery/send-as-new')
                 ? Response.json({ ok: true, newLocalId: REPLACEMENT_LOCAL_ID })
-                : dedupedRequest()),
+                : request(path, init)),
         });
         await trailingGetIssuedGate;
         release();
         await expect(Promise.all([first, sendAsNew])).resolves.toBeDefined();
 
-        expect(publishedLocalIds()).toContain(WITNESS_LOCAL_ID);
+        expect(publishedLocalIds()).toContain(REPLACEMENT_LOCAL_ID);
+        expect(publishedLocalIds()).not.toContain(ACKNOWLEDGED_LOCAL_ID);
 
         // …and the refusal is bounded: the accepted set dies with the in-flight chain, so the next
         // refresh — which does list the replacement — applies.
@@ -782,7 +797,13 @@ describe('pending acknowledgement boundaries', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowsResponse([SEED_LOCAL_ID]); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const dedupedRequest = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1
+                ? (await sharedRead).clone()
+                : queuedRowsResponse([SEED_LOCAL_ID, ACKNOWLEDGED_LOCAL_ID]);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,

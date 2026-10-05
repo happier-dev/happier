@@ -10,8 +10,14 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
   launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol';
 import { ArtifactBlobWriteV1Schema, type ArtifactBlobReadResponseV1 } from '@happier-dev/protocol';
 import { encryptWithDataKey } from '@/api/encryption';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createAccountArtifactStore, createCredentialedAccountArtifactStore, encodeAccountArtifactListCursor } from './accountArtifactStore';
+import { readCarrierMutation } from './accountArtifactStore.testkit';
+import { buildHomeHubArtifactIdV1, createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
+import { createWidgetDefinitionArtifactPortV1, createWidgetSurfaceArtifactPortV1 } from '@happier-dev/protocol/widgets';
+import { createActionExecutor } from '@happier-dev/protocol';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 const { mockDelete, mockGet, mockPost } = vi.hoisted(() => ({
   mockDelete: vi.fn(),
@@ -29,7 +35,297 @@ describe('createAccountArtifactStore', () => {
     mockPost.mockReset();
   });
 
-  it.each(['plain', 'e2ee'] as const)('round trips binary content under the same Artifact key in %s mode and rejects corrupted bytes', async (mode) => {
+  it.each(['plain', 'e2ee'] as const)('runs widget definition Actions through the real %s Account Artifact transport and refuses mode mismatch before writing', async mode => {
+    const secret = randomBytes(32);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } }, getAccountEncryptionMode: async () => mode });
+    const rows = new Map<string, Record<string, unknown>>();
+    mockPost.mockImplementation(async (url: string, wire: unknown) => {
+      const input = readCarrierMutation(wire);
+      const artifactId = typeof input.id === 'string' ? input.id : new URL(url).pathname.split('/')[3]!;
+      const before = rows.get(artifactId);
+      const version = Number(before?.bodyVersion ?? 0) + 1;
+      const row = { ...before, ...input, id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
+      rows.set(artifactId, row);
+      return { status: 200, data: { ...row, success: true } };
+    });
+    mockGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: [...rows.values()] };
+      const artifactId = path.split('/')[3]!;
+      const row = rows.get(artifactId);
+      if (!row) return { status: 404, data: { error: 'not_found' } };
+      return { status: 200, data: path.endsWith('/recipients') ? {
+        artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [],
+      } : row };
+    });
+    const port = createWidgetDefinitionArtifactPortV1(store, { accountId: 'owner' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'owner' }), widgetDefinitionArtifacts: port });
+    const account = { serverId: 'home', accountId: 'owner' };
+    const definition = { name: 'Private count', body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Private data' } } },
+      inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } };
+    const id = '11111111-1111-4111-8111-111111111111';
+    const created = await executor.execute('widgets.definition.create', { account, artifactId: id, definition }, { surface: 'ui', serverId: 'home' });
+    expect(created).toMatchObject({ ok: true, result: { definition: { id, name: 'Private count' } } });
+    // Transport contract runs the host's approved replay; policy itself is covered at its owner.
+    const updated = await executor.execute('widgets.definition.update', { account, artifactId: id, patch: { name: 'Current count' } }, { surface: 'ui', serverId: 'home', bypassApprovals: true });
+    if (!updated.ok) throw new Error(JSON.stringify(updated));
+    expect(updated)
+      .toMatchObject({ ok: true, result: { definition: { name: 'Current count' } } });
+    expect((await port.get(id))?.name).toBe('Current count');
+    if (mode === 'e2ee') expect(JSON.stringify(mockPost.mock.calls)).not.toContain('Private data');
+    else expect(rows.get(id)?.dataEncryptionKey).toBe(ARTIFACT_PLAIN_DATA_KEY_MARKER);
+    const before = mockPost.mock.calls.length;
+    // The authenticated owner Account-mode projection, not key presence, must match its stored envelope.
+    const originalDefinitionRow = rows.get(id)!;
+    rows.set(id, { ...originalDefinitionRow, encryptionMode: mode === 'plain' ? 'e2ee' : 'plain' });
+    await expect(port.update(id, { name: 'Wrong mode' })).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
+    expect(mockPost.mock.calls.length).toBe(before);
+    rows.set(id, originalDefinitionRow);
+    const surface = { ...account, owner: { kind: 'pluginArea' as const, pluginId: 'example', pageId: 'overview', area: 'pinned' } };
+    const area = createWidgetSurfaceArtifactPortV1(store, { surface, isCurrent: () => true });
+    const instance = { v: 1 as const, id: 'private-copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+    await area.apply({ kind: 'add', instance });
+    await area.apply({ kind: 'width', instanceId: instance.id, width: 'full' });
+    expect((await createWidgetSurfaceArtifactPortV1(store, { surface, isCurrent: () => true }).read()).instances)
+      .toEqual([{ instance, width: 'full' }]);
+    if (mode === 'e2ee') expect(JSON.stringify(mockPost.mock.calls)).not.toContain('private-copy');
+    const calls = mockPost.mock.calls.length;
+    const wrongModeStore = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => mode === 'plain' ? 'e2ee' : 'plain' });
+    const wrongMode = createWidgetSurfaceArtifactPortV1(wrongModeStore, { surface, isCurrent: () => true });
+    await expect(wrongMode.apply({ kind: 'remove', instanceId: instance.id })).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
+    await expect(wrongModeStore.list()).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
+    expect(mockPost.mock.calls.length).toBe(calls);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('round-trips the Home layout and setup through the incumbent %s Account Artifact codec', async mode => {
+    const secret = randomBytes(32);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } }, getAccountEncryptionMode: async () => mode });
+    let stored: Record<string, unknown> | null = null;
+    mockPost.mockImplementation(async (_url: string, wire: unknown) => {
+      const input = readCarrierMutation(wire);
+      const version = Number(stored?.bodyVersion ?? 0) + 1;
+      stored = { ...stored, ...input, id: buildHomeHubArtifactIdV1('owner'), ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
+      return { status: 200, data: { ...stored, success: true } };
+    });
+    mockGet.mockImplementation(async (url: string) => stored ? { status: 200, data: url.endsWith('/recipients') ? {
+      artifactId: stored.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+      dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [],
+    } : stored } : { status: 404, data: { error: 'not_found' } });
+    const port = createHomeHubArtifactPortV1(store, { accountId: 'owner' });
+    const instance = { v: 1 as const, id: 'configured', definition: { kind: 'builtin' as const, id: 'count' }, bindings: {} };
+    await port.apply({ kind: 'widget_add', instance });
+    await port.apply({ kind: 'setup_visibility', stepId: 'addPhone', hidden: true });
+    const reloaded = createHomeHubArtifactPortV1(store, { accountId: 'owner' });
+    expect(await reloaded.read()).toMatchObject({ instances: [instance], hidden: expect.arrayContaining(['setup:addPhone']) });
+    if (mode === 'e2ee') expect(JSON.stringify(mockPost.mock.calls)).not.toContain('setup:addPhone');
+    else await expect(mockPost.mock.results.at(-1)?.value).resolves.toMatchObject({ data: { dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER } });
+  });
+
+  it('retains truthful coverage through a logical header inventory when a transport row is unreadable', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 200, data: [{ id: 'doc',
+      header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_doc.v2', title: 'Prompt' }),
+      headerVersion: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: 1, createdAt: 1, updatedAt: 1,
+      ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+    }, { id: 'unreadable' }] });
+    expect(await store.list({ sort: 'title_asc' })).toMatchObject({ coverage: 'partial', items: [{ artifactId: 'doc' }] });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('opens opt-in batched list bodies with the existing %s Artifact codec', async (mode) => {
+    const secret = randomBytes(32);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } }, getAccountEncryptionMode: async () => mode });
+    let stored: Record<string, unknown> = {};
+    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => {
+      stored = { ...input, id: 'workflow-list', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+      return { status: 200, data: stored };
+    });
+    await store.create({ artifactId: 'workflow-list', header: { kind: 'workflow-definition.v1' }, body: 'authored workflow' });
+    mockGet.mockResolvedValue({ status: 200, data: [stored,
+      { ...stored, id: 'missing-body', body: undefined, bodyVersion: undefined },
+      { ...stored, id: 'bad-body', body: 'not encoded content' },
+    ] });
+    const result = await store.list({ ...{ includeBody: true }, limit: 4 });
+    expect(result.items[0]).toMatchObject({ body: 'authored workflow', bodyVersion: 1 });
+    expect(result.items.slice(1).map(row => ({ id: row.artifactId, kind: row.header.kind, body: row.body })))
+      .toEqual([{ id: 'missing-body', kind: 'workflow-definition.v1', body: undefined },
+        { id: 'bad-body', kind: 'workflow-definition.v1', body: undefined }]);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(new URL(mockGet.mock.calls[0]![0]).searchParams.get('includeBody')).toBe('true');
+    if (mode === 'e2ee') {
+      mockGet.mockResolvedValueOnce({ status: 200, data: [stored, { ...stored, id: 'bad-key', dataEncryptionKey: 'not-an-envelope' }] });
+      expect(await store.list({ includeBody: true })).toMatchObject({ coverage: 'partial', items: [{ artifactId: 'workflow-list', body: 'authored workflow' }] });
+    }
+  });
+
+  it.each(['plain', 'e2ee'] as const)('returns private HTML create/update previews assembled locally in %s mode', async (mode) => {
+    const secret = randomBytes(32);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } }, getAccountEncryptionMode: async () => mode });
+    let stored: Record<string, unknown> = {};
+    let version = 0;
+    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => {
+      version += 1;
+      stored = { ...stored, ...input, id: 'html-document', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
+      return { status: 200, data: { ...stored, success: true } };
+    });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/html-preview')
+      ? { url: 'https://artifact-isolated.example/a/html-document' } : stored }));
+    const body = '<!doctype html><h1>Private HTML</h1><script>document.title="Ready"</script>';
+    const created = await store.create({ artifactId: 'html-document', header: { kind: 'html' }, body });
+    expect(created).toMatchObject({ artifactId: 'html-document', previewUrl: expect.stringMatching(/^https:\/\/artifact-isolated.example\/a\/html-document#d=.+$/) });
+    const previewUrl = Reflect.get(created, 'previewUrl') as string;
+    const bundle = JSON.parse(Buffer.from(new URL(previewUrl).hash.slice(3), 'base64url').toString('utf8'));
+    expect(Buffer.from(bundle.files[bundle.entrypoint].contentBase64, 'base64').toString('utf8')).toBe(body);
+    const updated = await store.update({ artifactId: 'html-document', expectedRevision: created.revision,
+      header: { kind: 'html' }, body: '<h1>Changed</h1>' });
+    expect(updated).toMatchObject({ ok: true, revision: { bodyVersion: 2 }, previewUrl: expect.any(String) });
+    expect(mockPost.mock.calls).toHaveLength(2);
+    expect(JSON.stringify(mockGet.mock.calls)).not.toContain('#d=');
+    expect(JSON.stringify(mockPost.mock.calls)).not.toContain('#d=');
+  });
+
+  it('keeps a committed HTML mutation truthful when the isolated preview origin is unavailable', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => ({ status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
+    mockGet.mockResolvedValue({ status: 503, data: { error: 'artifact_html_preview_unavailable' } });
+    await expect(store.create({ artifactId: 'html-document', header: { kind: 'html' }, body: '<p>Saved</p>' })).resolves.toEqual({
+      artifactId: 'html-document', revision: { headerVersion: 1, bodyVersion: 1 }, previewError: 'artifact_html_preview_unavailable',
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('never substitutes an origin for another Artifact after a committed HTML update', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const stored = { id: 'html-document', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind: 'html' }),
+      body: encodePlainArtifactStoredContent({ body: '<p>Before</p>' }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/html-preview')
+      ? { url: 'https://isolated.example/a/another-artifact' } : stored }));
+    mockPost.mockResolvedValue({ status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } });
+    await expect(store.update({ artifactId: 'html-document', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      header: { kind: 'html' }, body: '<p>After</p>' })).resolves.toEqual({ ok: true,
+      revision: { headerVersion: 2, bodyVersion: 2 }, previewError: 'artifact_html_preview_unavailable' });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies a text body as one HTML document rather than a bundle from header metadata', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => ({ status: 200,
+      data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
+    mockGet.mockResolvedValue({ status: 200, data: { url: 'https://isolated.example/a/html-document' } });
+    const result = await store.create({ artifactId: 'html-document', header: { kind: 'html', mime: 'application/vnd.happier.html-bundle+json' }, body: '<p>Single HTML</p>' });
+    expect(result).toMatchObject({ previewUrl: expect.any(String) });
+    const bundle = JSON.parse(Buffer.from(new URL(Reflect.get(result, 'previewUrl') as string).hash.slice(3), 'base64url').toString('utf8'));
+    expect(bundle.entrypoint).toBe('index.html');
+    expect(Buffer.from(bundle.files['index.html'].contentBase64, 'base64').toString('utf8')).toBe('<p>Single HTML</p>');
+    expect(mockPost.mock.calls[0]?.[1]).not.toHaveProperty('blob');
+  });
+
+  it('does not issue an HTML preview on the captured application origin', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => ({ status: 200,
+      data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
+    mockGet.mockResolvedValue({ status: 200, data: { url: 'https://app.example/a/html-document' } });
+    const result = await runWithServerHttpBaseUrl('https://app.example', () => store.create({ artifactId: 'html-document', header: { kind: 'html' }, body: '<p>HTML</p>' }));
+    expect(result).toEqual({ artifactId: 'html-document', revision: { headerVersion: 1, bodyVersion: 1 },
+      previewError: 'artifact_html_preview_unavailable' });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+it.each(['plain', 'e2ee'] as const)('retains every HTML bundle asset in one private blob and its %s preview', async (mode) => {
+    const secret = randomBytes(32);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
+      type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+    } }, getAccountEncryptionMode: async () => mode });
+    const bundle = { v: 1, entrypoint: 'pages/index.html', files: {
+      'pages/index.html': { mime: 'text/html', contentBase64: Buffer.from('<script src="../assets/main.js"></script>').toString('base64') },
+      'assets/main.js': { mime: 'application/javascript', contentBase64: Buffer.from('document.title="Ready"').toString('base64') },
+      'assets/icon.png': { mime: 'image/png', contentBase64: Buffer.from([0, 255, 128]).toString('base64') },
+    } };
+    const bytes = Buffer.from(JSON.stringify(bundle));
+    let stored: Record<string, unknown> = {};
+    let blob: ArtifactBlobReadResponseV1 | undefined;
+    mockPost.mockImplementation(async (_url: string, wire: Record<string, unknown> | Buffer) => {
+      const input = readCarrierMutation(wire);
+      const write = ArtifactBlobWriteV1Schema.parse(input.blob);
+      if (!write.content) throw new Error('Expected new blob');
+      blob = { blobId: write.blobId, content: write.content };
+      stored = { ...input, id: '00000000-0000-4000-8000-000000000011', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+      return { status: 200, data: stored };
+    });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/html-preview')
+      ? { url: 'https://isolated.example/a/00000000-0000-4000-8000-000000000011' } : url.includes('/blobs/') ? blob
+      : url.endsWith('/recipients') ? { artifactId: '00000000-0000-4000-8000-000000000011', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] } : stored }));
+    const result = await store.create({ artifactId: '00000000-0000-4000-8000-000000000011', header: { kind: 'html' },
+      binary: { bytes, mime: 'application/vnd.happier.html-bundle+json' } });
+    expect(result).toMatchObject({ previewUrl: expect.any(String) });
+    const previewUrl = Reflect.get(result, 'previewUrl') as string;
+    expect(JSON.parse(Buffer.from(new URL(previewUrl).hash.slice(3), 'base64url').toString('utf8'))).toEqual(bundle);
+    const artifact = await store.read('00000000-0000-4000-8000-000000000011');
+    expect(Buffer.from(await store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000011', body: artifact!.body! }))).toEqual(bytes);
+    expect(mockPost.mock.calls).toHaveLength(1);
+    if (mode === 'e2ee') expect(JSON.stringify(mockPost.mock.calls)).not.toContain(bundle.files['assets/main.js'].contentBase64);
+  });
+
+  it('rejects an unsafe HTML bundle before storing any mutation', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockImplementation(async (_url: string, input: Record<string, unknown>) => ({ status: 200,
+      data: { id: input.id, headerVersion: 1, bodyVersion: 1 } }));
+    await expect(store.create({ header: { kind: 'html' }, binary: { mime: 'application/vnd.happier.html-bundle+json',
+      bytes: Buffer.from(JSON.stringify({ v: 1, entrypoint: '../escape.html', files: { '../escape.html': { mime: 'text/html', contentBase64: 'PGgxLz4=' } } })) } }))
+      .rejects.toMatchObject({ code: 'artifact_html_content_invalid' });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('returns committed self-revocation without attempting to prepare keys after access was removed', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const revoked = { artifactId: 'artifact', ownerAccountId: 'owner', access: null, grants: [], changed: true };
+    mockDelete.mockResolvedValue({ status: 200, data: revoked });
+    mockGet.mockResolvedValue({ status: 404, data: { error: 'Artifact not found' } });
+    await expect(store.accessGrants.remove({ artifactId: 'artifact', principal: { kind: 'account', accountId: 'admin' } }))
+      .resolves.toEqual(revoked);
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it('uploads bytes beyond the JSON body boundary through the request-bound carrier', async () => {
+    const artifactId = '00000000-0000-4000-8000-000000000001';
+    const bytes = new Uint8Array(1_100_000).fill(255);
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    let received: Uint8Array | undefined;
+    mockPost.mockImplementation(async (url: string, input: unknown, options: { headers: Record<string, string> }) => {
+      if (!url.endsWith('/v1/artifacts/content/upload')) return { status: 413, data: { error: 'request_too_large' } };
+      expect(options.headers['Content-Type']).toBe('application/vnd.happier.artifact-upload-v1');
+      if (!Buffer.isBuffer(input)) throw new Error('Expected binary HTTP body');
+      const separator = input.indexOf(10);
+      const metadata = JSON.parse(input.subarray(0, separator).toString('utf8'));
+      expect(metadata).toMatchObject({ kind: 'create', artifactId, t: 'plain', sizeBytes: bytes.length });
+      received = new Uint8Array(input.subarray(separator + 1));
+      return { status: 200, data: { id: artifactId, headerVersion: 1, bodyVersion: 1 } };
+    });
+    await expect(store.create({ artifactId, header: { title: 'Large file' }, binary: { bytes, mime: 'application/octet-stream' } }))
+      .resolves.toMatchObject({ artifactId, revision: { bodyVersion: 1 } });
+    expect(received).toEqual(bytes);
+  });
+
+it.each(['plain', 'e2ee'] as const)('round trips binary content under the same Artifact key in %s mode and rejects corrupted bytes', async (mode) => {
     const secret = randomBytes(32);
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
       type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
@@ -39,46 +335,66 @@ describe('createAccountArtifactStore', () => {
     let blob: ArtifactBlobReadResponseV1 | undefined;
     const blobs = new Map<string, ArtifactBlobReadResponseV1>();
     let version = 0;
-    mockPost.mockImplementation(async (url: string, input: Record<string, unknown>) => {
-      if (!url.endsWith('/v1/artifacts/content/binary') && !url.endsWith('/v1/artifacts/binary/content/binary')) {
+    mockPost.mockImplementation(async (url: string, wire: Record<string, unknown> | Buffer) => {
+      const input = readCarrierMutation(wire);
+      const binaryRoute = url.endsWith('/v1/artifacts/content/upload') || url.endsWith('/v1/artifacts/content/binary') || url.endsWith('/v1/artifacts/00000000-0000-4000-8000-000000000012/content/binary');
+      if (!binaryRoute && !url.endsWith('/v1/artifacts/00000000-0000-4000-8000-000000000012')) {
         return { status: 404, data: { error: 'Not Found' } };
       }
+      // The authenticated server refuses unaware body writes against a binary head.
+      if (!binaryRoute && blob) return { status: 409, data: { error: 'artifact_binary_write_required' } };
+      if (binaryRoute && input.blob === null && !blob) return { status: 400, data: { error: 'artifact_invalid_body' } };
+      if (binaryRoute && input.blob === null) {
+        expect(input.expectedBodyVersion).toBe(version);
+        expect(typeof input.body).toBe('string');
+        blob = undefined;
+      } else if (binaryRoute) {
+        const write = ArtifactBlobWriteV1Schema.parse(input.blob);
+        if (write.content) {
+          blob = { blobId: write.blobId, content: write.content };
+          blobs.set(blob.blobId, blob);
+        } else blob = blobs.get(write.blobId);
+        if (!blob) return { status: 404, data: { error: 'Artifact blob not found' } };
+      }
       version += 1;
-      stored = { ...stored, ...input, id: 'binary', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+      stored = { ...stored, ...input, id: '00000000-0000-4000-8000-000000000012', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
         headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
-      const write = ArtifactBlobWriteV1Schema.parse(input.blob);
-      if (write.content) {
-        blob = { blobId: write.blobId, content: write.content };
-        blobs.set(blob.blobId, blob);
-      } else blob = blobs.get(write.blobId);
-      if (!blob) return { status: 404, data: { error: 'Artifact blob not found' } };
       return { status: 200, data: { ...stored, success: true } };
     });
     mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.includes('/blobs/') ? blobs.get(url.split('/blobs/')[1])
-      : url.endsWith('/recipients') ? { artifactId: 'binary', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+      : url.endsWith('/recipients') ? { artifactId: '00000000-0000-4000-8000-000000000012', ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
         dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] }
       : stored }));
-    await store.create({ artifactId: 'binary', header: { title: 'Image', excerpt: 'stale preview' }, binary: { bytes, mime: 'image/png' } });
-    const document = await store.read('binary');
+    await store.create({ artifactId: '00000000-0000-4000-8000-000000000012', header: { title: 'Image', excerpt: 'stale preview' }, binary: { bytes, mime: 'image/png' } });
+    const document = await store.read('00000000-0000-4000-8000-000000000012');
     expect(document?.body).toEqual({ blobId: blob?.blobId, mime: 'image/png', sizeBytes: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex') });
     expect(document?.header).toEqual({ title: 'Image' });
     expect(blob?.content).toMatchObject({ t: mode === 'plain' ? 'plain' : 'encrypted' });
-    await expect(store.readBinary({ artifactId: 'binary', body: document!.body! })).resolves.toEqual(bytes);
+    await expect(store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000012', body: document!.body! })).resolves.toEqual(bytes);
     const nextBytes = Uint8Array.from([42, 0, 128, 255]);
-    await expect(store.update({ artifactId: 'binary', expectedRevision: document!.revision, header: document!.header,
+    await expect(store.update({ artifactId: '00000000-0000-4000-8000-000000000012', expectedRevision: document!.revision, header: document!.header,
       binary: { bytes: nextBytes, mime: 'application/pdf' } })).resolves.toMatchObject({ ok: true, revision: { bodyVersion: 2 } });
-    const updated = await store.read('binary');
+    const updated = await store.read('00000000-0000-4000-8000-000000000012');
     expect(updated?.body).toMatchObject({ mime: 'application/pdf', sizeBytes: nextBytes.length,
       sha256: createHash('sha256').update(nextBytes).digest('hex') });
-    await expect(store.readBinary({ artifactId: 'binary', body: updated!.body! })).resolves.toEqual(nextBytes);
-    await expect(store.update({ artifactId: 'binary', expectedRevision: updated!.revision, header: { title: 'Renamed file' },
+    await expect(store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000012', body: updated!.body! })).resolves.toEqual(nextBytes);
+    await expect(store.update({ artifactId: '00000000-0000-4000-8000-000000000012', expectedRevision: updated!.revision, header: { title: 'Renamed file' },
       body: updated!.body! })).resolves.toMatchObject({ ok: true, revision: { bodyVersion: 3 } });
-    await expect(store.readBinary({ artifactId: 'binary', body: document!.body! })).resolves.toEqual(bytes);
-    await expect(store.readBinary({ artifactId: 'binary', body: updated!.body! })).resolves.toEqual(nextBytes);
+    await expect(store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000012', body: document!.body! })).resolves.toEqual(bytes);
+    await expect(store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000012', body: updated!.body! })).resolves.toEqual(nextBytes);
     blob = { blobId: blob!.blobId, content: { t: 'plain', v: Buffer.from([1, 2]).toString('base64') } };
     blobs.set(blob.blobId, blob);
-    await expect(store.readBinary({ artifactId: 'binary', body: updated!.body! })).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+    await expect(store.readBinary({ artifactId: '00000000-0000-4000-8000-000000000012', body: updated!.body! })).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+    const reused = await store.read('00000000-0000-4000-8000-000000000012');
+    await expect(store.update({ artifactId: '00000000-0000-4000-8000-000000000012', expectedRevision: reused!.revision,
+      header: { title: 'Text replacement' }, body: 'intentional text' })).resolves.toMatchObject({ ok: true, revision: { bodyVersion: 4 } });
+    const text = await store.read('00000000-0000-4000-8000-000000000012');
+    expect(text?.body).toBe('intentional text');
+    expect(blob).toBeUndefined();
+    await expect(store.update({ artifactId: '00000000-0000-4000-8000-000000000012', expectedRevision: text!.revision,
+      header: text!.header, body: 'normal text edit' })).resolves.toMatchObject({ ok: true, revision: { bodyVersion: 5 } });
+    await expect(store.read('00000000-0000-4000-8000-000000000012')).resolves.toMatchObject({ body: 'normal text edit' });
   });
 
   it.each(['role.v1', 'approval_request.v1'])('refuses binary writes to specialized text document %s before committing content', async (kind) => {

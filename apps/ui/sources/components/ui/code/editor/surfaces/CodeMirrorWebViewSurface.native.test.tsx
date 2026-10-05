@@ -61,6 +61,7 @@ vi.mock('@/sync/store/hooks', () => ({
 
 import { CodeMirrorWebViewSurface } from './CodeMirrorWebViewSurface.native';
 import { renderScreen } from '@/dev/testkit';
+import type { CodeEditorHandle } from '../codeEditorTypes';
 
 
 function emitEnvelope(envelope: any) {
@@ -103,6 +104,38 @@ function findPostedInitPayload(callStartIndex: number): any {
 }
 
 describe('CodeMirrorWebViewSurface (native)', () => {
+    it('queues a travelling query until ready and publishes engine status through the existing handle', async () => {
+        postMessageSpy.mockClear();
+        const ref = React.createRef<CodeEditorHandle>();
+        await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
+            ref, resetKey: 'find', value: 'one\r\ntwo\\n', language: 'plaintext', onChange: vi.fn(),
+        }));
+        ref.current?.find?.seed('\\n', { matchCase: true, regex: false }, { line: 2, column: 4 });
+        emitEnvelope({ v: 1, type: 'ready', payload: { ok: true } });
+        const posted = postMessageSpy.mock.calls.map(([raw]) => JSON.parse(String(raw)));
+        expect(posted.at(-1)).toEqual({ v: 1, type: 'find.set', payload: {
+            query: '\\n', options: { matchCase: true, regex: false }, target: { line: 2, column: 4 },
+        } });
+        const listener = vi.fn();
+        const unsubscribe = ref.current!.find!.subscribe(listener);
+        emitEnvelope({ v: 1, type: 'find.status', payload: {
+            query: '\\n', options: { matchCase: true, regex: false },
+            status: { kind: 'results', current: 1, total: 1, coverage: 'complete' },
+        } });
+        expect(ref.current!.find!.getSnapshot()).toEqual({ query: '\\n', options: { matchCase: true, regex: false },
+            status: { kind: 'results', current: 1, total: 1, coverage: 'complete' },
+        });
+        expect(listener).toHaveBeenCalled();
+        ref.current!.find!.set('two', { matchCase: false, regex: false });
+        emitEnvelope({ v: 1, type: 'find.status', payload: {
+            query: '\\n', options: { matchCase: true, regex: false },
+            status: { kind: 'results', current: 1, total: 1, coverage: 'complete' },
+        } });
+        expect(ref.current!.find!.getSnapshot().status).toEqual({ kind: 'searching', total: 0 });
+        unsubscribe();
+        ref.current!.find!.close();
+        expect(ref.current!.find!.isOpen()).toBe(false);
+    });
     beforeEach(() => {
         unistylesState.themeOverride = {
             dark: true,

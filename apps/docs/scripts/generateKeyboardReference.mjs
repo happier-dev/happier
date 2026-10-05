@@ -59,6 +59,7 @@ const GROUPS = [
       'composer.sendImmediate': 'Send now',
       'composer.sendPending': 'Queue without opening the composer',
       'composer.abortConfirm': 'Stop the current turn',
+      'voice.toggle': 'Start or end Voice',
       'mode.cycle': 'Cycle session mode',
       'permission.cycle': 'Cycle permission mode',
     },
@@ -101,9 +102,13 @@ export function parseKeyboardCommands(source) {
       if (!key) continue;
       const platforms = /platforms:\s*\[([^\]]*)\]/.exec(entry);
       const blocked = /blockedSurfaces:\s*\[([^\]]*)\]/.exec(entry);
+      const webHost = /webHost:\s*'(browser|desktop)'/.exec(entry);
       let scope = null;
       if (platforms && platforms[1].includes('web')) scope = 'web';
       else if (blocked && blocked[1].includes('web')) scope = 'everywhere else';
+      if (webHost && scope !== 'everywhere else') {
+        scope = scope === 'web' ? webHost[1] : `${webHost[1]} and native`;
+      }
       bindings.push({ key: key[1], scope });
     }
     commands.set(id[1], bindings);

@@ -40,7 +40,7 @@ describe('AutomationRunCauseSchema', () => {
       anyOf?: Array<{ additionalProperties?: boolean }>;
     };
 
-    expect(jsonSchema.anyOf).toHaveLength(5);
+    expect(jsonSchema.anyOf).toHaveLength(6);
     expect(jsonSchema.anyOf?.every((arm) => arm.additionalProperties === false)).toBe(true);
   });
 

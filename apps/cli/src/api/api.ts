@@ -1,6 +1,7 @@
 import { resolvePublishedMachineEncryptionContext } from './machine/machineDataEncryptionKey';
 import { createMachineContentCodec } from './machine/machineStoredContent';
 import axios from 'axios'
+import { readSessionCreationInitialTriggerError } from './session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import {
   SESSION_CREATION_AUTHORIZATION_HEADER_V1,
@@ -111,6 +112,7 @@ import { SessionCreationPlacementError } from './session/sessionCreationPlacemen
 import {
   buildSessionInitialAccessCreateFields,
   materializeSessionInitialAccessCreateFields,
+  prepareSessionInitialAccessDataKeyEnvelopes,
   readSessionInitialAccessServerError,
 } from './session/sessionCreationInitialAccess';
 import {
@@ -469,6 +471,7 @@ export class ApiClient {
     state: AgentState | null,
     organizationPlacement?: import('@happier-dev/protocol').SessionOrganizationPlacementV1,
     initialAccess?: import('@happier-dev/protocol').SessionInitialAccessDraftV1,
+    initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[],
     reportsTo?: import('@happier-dev/protocol').SessionReportsToV1,
     primaryTeamId?: string | null,
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1,
@@ -633,6 +636,7 @@ export class ApiClient {
             ...pickSessionCreateOriginFields(opts),
             ...(opts.reportsTo !== undefined ? { reportsTo: opts.reportsTo } : {}),
             ...materializedInitialAccessCreateFields,
+            ...(opts.initialTriggers !== undefined ? { initialTriggers: opts.initialTriggers } : {}),
             ...metadataEnvelopeFields,
             dataEncryptionKey:
               desiredSessionEncryptionMode === 'plain'
@@ -787,6 +791,15 @@ export class ApiClient {
           opts.metadata.sessionCreationCorrespondenceV1,
           ownerMetadata,
         );
+        await prepareSessionInitialAccessDataKeyEnvelopes({
+          fields: initialAccessCreateFields,
+          sessionId: raw.id,
+          sessionEncryptionMode,
+          resolveSessionDataKey: () => responseEncryptionContext.encryptionVariant === 'dataKey' ? sessionEncryptionKey : null,
+          token: this.credential.token,
+          serverHttpBaseUrl: serverBaseUrl,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        });
         await ensureLocalMachineAccess();
         const agentState = raw.agentState
           ? decrypt(
@@ -845,6 +858,10 @@ export class ApiClient {
           );
         }
         const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        const initialTriggerError = axios.isAxiosError(error) && typeof status === 'number'
+          ? readSessionCreationInitialTriggerError(error.response?.data, status)
+          : null;
+        if (initialTriggerError) throw initialTriggerError;
         const initialAccessServerError = axios.isAxiosError(error) && typeof status === 'number'
           ? readSessionInitialAccessServerError(error.response?.data, status)
           : null;

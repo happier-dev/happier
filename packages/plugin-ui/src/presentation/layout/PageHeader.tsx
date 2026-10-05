@@ -1,8 +1,8 @@
-import { isValidElement, useCallback, useState, type ReactNode } from 'react';
+import { createContext, isValidElement, useCallback, useContext, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
-import type { HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
+import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_PAGE_METRICS, resolveHappierPageBackPlacement } from './pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
@@ -31,12 +31,18 @@ export type HappierPageHeaderProps = Readonly<{
   title: ReactNode;
   /** Whether the title is drawn. `false` when navigation chrome already shows it (the purpose line stays). */
   showTitle?: boolean;
+  /** A surface's one greeting or display heading, above the regular page-title step. */
+  titleProminence?: 'page' | 'hero';
   /** An inline mark after the title, such as a release-channel badge. */
   titleAccessory?: ReactNode;
   /** One sentence saying what the page is for (string or element, as for `title`). */
   description?: ReactNode;
   /** Identity details under the description (an identifier to copy, a version and machine). */
   details?: ReactNode;
+  /** Identity details stay with the title by default; page-wide summaries follow the whole title row. */
+  detailsPlacement?: 'identity' | 'column';
+  /** Entity headers on a compact measured pane: mark, centered identity, then wrapping controls. */
+  compactPresentation?: 'centered';
   /**
    * The distinguishing facts of the thing the page is about, on one quiet line
    * (wrapping when narrow), after `details`. An empty list keeps the line's
@@ -71,22 +77,28 @@ export type HappierPageHeaderTextRender = (input: Readonly<{
   header: boolean;
 }>) => ReactNode;
 
+/** Package-private binding from the public PageHeader adapter; not an author physical-ref prop. */
+export const HappierPageHeadingBindingContext = createContext<((target: HappierFocusable | null) => void) | undefined>(undefined);
+
 function useDefaultPageTextRender(): HappierPageHeaderTextRender {
+  const headingRef = useContext(HappierPageHeadingBindingContext);
   const theme = useOptionalHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
   return useCallback((input) => {
     const color = theme === null
       ? undefined
-      : input.role === 'pageTitle' ? theme.colors.text : theme.colors.secondaryText;
+      : input.header ? theme.colors.text : theme.colors.secondaryText;
     return (
       <HappierText
+        ref={input.header ? headingRef : undefined}
+        tabIndex={input.header && headingRef ? -1 : undefined}
         accessibilityRole={input.header ? 'header' : undefined}
         style={[resolveHappierPageTextStyle(input.role, typography), color === undefined ? null : { color }]}
       >
         {input.text}
       </HappierText>
     );
-  }, [theme, typography]);
+  }, [headingRef, theme, typography]);
 }
 
 function renderPageText(
@@ -126,6 +138,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   if (!showTitle && !props.description && !props.actions && !props.details && !props.meta) return null;
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
+  const centered = props.compactPresentation === 'centered' && paneWidthPx !== null && paneWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
   const backPlacement = showsBack ? resolveHappierPageBackPlacement({ paneWidthPx, columnMaxWidthPx }) : null;
 
   // In the gutter the arrow is outside the flow, anchored to what sits on the
@@ -133,7 +146,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // the arrow sits level with it. Until the pane is measured it is mounted
   // there unseen, so nothing moves on arrival.
   const measuring = showsBack && backPlacement === null;
-  const titleLineHeight = HAPPIER_PAGE_TEXT.pageTitle.lineHeight;
+  const titleRole = props.titleProminence === 'hero' ? 'heroTitle' : 'pageTitle';
+  const titleLineHeight = HAPPIER_PAGE_TEXT[titleRole].lineHeight;
   const gutterBack = renderBack && (backPlacement === 'gutter' || measuring) ? (
     <View
       testID={props.testID ? `${props.testID}-back-gutter` : undefined}
@@ -152,12 +166,12 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     </View>
   ) : null;
 
-  const title = showTitle ? renderPageText(props.title, 'pageTitle', renderText, true) : null;
+  const title = showTitle ? renderPageText(props.title, titleRole, renderText, true) : null;
 
   return (
     <View
       testID={props.testID}
-      onLayout={showsBack ? handleLayout : undefined}
+      onLayout={showsBack || props.compactPresentation ? handleLayout : undefined}
       style={{ alignItems: 'center' }}
     >
       <View
@@ -173,13 +187,13 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
       >
         <View
           testID={props.testID ? `${props.testID}-title-row` : undefined}
-          style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 12 }}
+          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: 'center', columnGap: 14, rowGap: 12 }}
         >
           {renderBack && backPlacement === 'title-row'
             // On the title-row fallback the back control is centred on the
             // title's first line at the page's text edge; its trailing margin
             // pulls the title closer than the row gap, so the pair reads as one.
-            ? renderBack(props.leading
+            ? centered ? <View style={{ position: 'absolute', left: 0, top: 0 }}>{renderBack({})}</View> : renderBack(props.leading
               ? { alignSelf: 'center', marginRight: -6 }
               : { alignSelf: 'flex-start', height: titleLineHeight, marginRight: -6 })
             : null}
@@ -189,7 +203,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
               {gutterBack}
             </View>
           ) : null}
-          <View style={{ position: 'relative', flexGrow: 1, flexShrink: 1, flexBasis: 200, minWidth: 0 }}>
+          <View style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: centered ? 'auto' : 200, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}) }}>
             {props.leading ? null : gutterBack}
             {title && props.titleAccessory ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -202,14 +216,14 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                 {renderPageText(props.description, 'pageDescription', renderText)}
               </View>
             ) : null}
-            {props.details ? (
+            {props.details && props.detailsPlacement !== 'column' ? (
               <View style={{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }}>{props.details}</View>
             ) : null}
             {props.meta ? (
               <View
                 testID={props.testID ? `${props.testID}-meta` : undefined}
                 style={[
-                  { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, minHeight: 18 },
+                  { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: centered ? 'center' : 'flex-start', columnGap: 6, minHeight: 18 },
                   // Directly under the details line (an identifier row is already padded by its button).
                   !props.details && (showTitle || props.description)
                     ? { marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }
@@ -231,11 +245,12 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
             ) : null}
           </View>
           {props.actions ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, maxWidth: '100%' }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: centered ? 'center' : 'flex-start', gap: 8, flexShrink: 1, maxWidth: '100%' }}>
               {props.actions}
             </View>
           ) : null}
         </View>
+        {props.details && props.detailsPlacement === 'column' ? <View style={{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }}>{props.details}</View> : null}
       </View>
     </View>
   );

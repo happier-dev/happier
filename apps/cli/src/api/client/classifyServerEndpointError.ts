@@ -48,6 +48,19 @@ export function isProvenPreDispatchConnectionFailure(error: unknown): boolean {
   return code !== null && preDispatchConnectionErrorCodes.has(code);
 }
 
+/** A lost acknowledgement cannot establish whether a dispatched mutation committed. */
+export function classifyActionTransportFailure(error: unknown, input: Readonly<{
+  mutation: boolean;
+  requestIssued: boolean;
+  cancelled: boolean;
+}>): 'cancelled' | 'outcome_unknown' | 'timeout' | 'network' | null {
+  if (input.cancelled) return input.mutation && input.requestIssued ? 'outcome_unknown' : 'cancelled';
+  const { kind } = classifyServerEndpointError(error);
+  if (kind !== 'network' && kind !== 'timeout') return null;
+  return input.mutation && input.requestIssued && !isProvenPreDispatchConnectionFailure(error)
+    ? 'outcome_unknown' : kind;
+}
+
 export function readNormalizedConnectionErrorCode(error: unknown): string | null {
   const code = readErrorCode(error).trim().toUpperCase();
   return code.length > 0 ? code : null;

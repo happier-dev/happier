@@ -1,10 +1,12 @@
 import { useEffectiveDiffPresentation } from '../diffPresentationStyle';
+import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
 import * as React from 'react';
 import { PierreDiffScrollAnchor } from './PierreDiffScrollAnchor.web';
 import { useUnistyles } from 'react-native-unistyles';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { createTwoFilesPatch } from 'diff';
 
-import { getSingularPatch } from '@pierre/diffs';
+import { getSingularPatch, parseDiffFromFile } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffMetadata, FileDiffOptions, OnDiffLineClickProps } from '@pierre/diffs';
 import { FileDiff, Virtualizer, WorkerPoolContext, useVirtualizer } from '@pierre/diffs/react';
 
@@ -35,6 +37,28 @@ import {
 
 const HAPPIER_PIERRE_LINE_CLICK_HANDLED_KEY = '__happierPierreLineClickHandled';
 
+// Pierre supplies its pre/code backing from the syntax theme. Its public CSS adapter
+// keeps that backing under the same content coat as the app's other code renderer.
+const PIERRE_MATERIAL_UNSAFE_CSS = `
+pre, code, [data-diffs-header], [data-diff], [data-file], [data-error-wrapper], [data-virtualizer-buffer] {
+  --diffs-bg: var(--happier-diff-material-background);
+}
+`;
+
+// The patched library retains its original number/dataset for interactions. Desktop exposes both
+// source coordinates; the compact phone gutter keeps the library's useful single coordinate.
+const PIERRE_UNIFIED_GUTTER_UNSAFE_CSS = `
+[data-line-number-side] { display: none; }
+[data-separator-content] { display: flex; align-items: center; gap: 1ch; }
+[data-hunk-context] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+@media (min-width: 521px) {
+  [data-unified] [data-gutter] { min-width: 8ch; }
+  [data-column-number]:has([data-line-number-side]) { display: flex; gap: 1ch; justify-content: flex-end; }
+  [data-column-number]:has([data-line-number-side]) [data-line-number-content] { display: none; }
+  [data-line-number-side] { display: inline-block; width: 3ch; text-align: right; }
+}
+`;
+
 const PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS = `
 [data-column-number] {
   --happier-review-comment-affordance-width: 28px;
@@ -46,6 +70,12 @@ const PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS = `
   right: auto;
   width: var(--happier-review-comment-affordance-width);
   justify-content: flex-start;
+}
+@media (max-width: 520px) {
+  [data-column-number] {
+    --happier-review-comment-affordance-width: 20px;
+    padding-left: calc(var(--happier-review-comment-affordance-width) + .5ch);
+  }
 }
 `;
 
@@ -298,7 +328,7 @@ function extractFirstDiffSegment(patch: string): string {
     if (indices.length >= 2) {
         const first = indices[0]!;
         const second = indices[1]!;
-        return text.slice(first, second).trimEnd() + '\n';
+        return text.slice(first, second).replace(/\n+$/, '') + '\n';
     }
 
     // Some SCMs emit unified diffs without `diff ...` headers. Fall back to splitting on `---` preludes.
@@ -313,7 +343,7 @@ function extractFirstDiffSegment(patch: string): string {
     if (preludeIndices.length >= 2) {
         const first = preludeIndices[0]!;
         const second = preludeIndices[1]!;
-        return text.slice(first, second).trimEnd() + '\n';
+        return text.slice(first, second).replace(/\n+$/, '') + '\n';
     }
 
     return patch;
@@ -327,13 +357,13 @@ function sanitizeUnifiedPatchForPierre(patch: string): string {
     // Preserve git-style `diff --git` headers when present. Some upstream logic (language inference,
     // selection id stability) relies on the canonical git prelude.
     if (/^diff --git[ \t]/m.test(firstSegment)) {
-        return firstSegment.trimEnd() + '\n';
+        return firstSegment.replace(/\n+$/, '') + '\n';
     }
 
     // For non-git diff headers (e.g. `diff -r ...`), strip to the unified `---/+++` prelude.
     const preludeIndex = firstSegment.search(/^---[ \t]/m);
     const withoutHeaders = preludeIndex > 0 ? firstSegment.slice(preludeIndex) : firstSegment;
-    return withoutHeaders.trimEnd() + '\n';
+    return withoutHeaders.replace(/\n+$/, '') + '\n';
 }
 
 function normalizeDiffPath(value: string): string {
@@ -375,7 +405,7 @@ function extractUnifiedPreludeDiffForSingleFile(params: Readonly<{ patch: string
 export function resolvePierreTypographyStyle(): React.CSSProperties {
     return {
         ['--diffs-font-size' as any]: `calc(12px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
-        ['--diffs-line-height' as any]: `calc(22px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+        ['--diffs-line-height' as any]: `calc(${CODE_LINE_BASE_HEIGHT}px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
     };
 }
 
@@ -393,10 +423,36 @@ export function resolvePierreSelectionStyle(theme: { colors?: Record<string, any
             ? textColors.link
             : surfaceInset;
 
+    // Pierre's default red/green bases are deliberately vivid. The app's diff palette owns row,
+    // gutter and word-emphasis colors so the same change reads alike in either renderer.
+    const diff = colors.diff;
+    const materialPaint = (color: string | undefined, nested = false) => color ? glassSurfaceBackgroundColor(color, 'content', nested) : undefined;
+    const diffPalette: Record<string, string | undefined> = {
+        '--happier-diff-material-background': materialPaint(diff?.context?.background ?? surface, true),
+        '--diffs-bg-buffer-override': materialPaint(diff?.context?.background ?? surface, true),
+        '--diffs-bg-hover-override': materialPaint(typeof surfaceColors.elevated === 'string' ? surfaceColors.elevated : surface),
+        '--diffs-bg-context-override': materialPaint(diff?.context?.background, true),
+        '--diffs-bg-separator-override': materialPaint(diff?.context?.background, true),
+        '--diffs-fg-number-override': diff?.lineNumber?.foreground,
+        '--diffs-fg-number-addition-override': diff?.success,
+        '--diffs-fg-number-deletion-override': diff?.error,
+        '--diffs-addition-color-override': diff?.success,
+        '--diffs-deletion-color-override': diff?.error,
+        '--diffs-bg-addition-override': materialPaint(diff?.added?.background),
+        '--diffs-bg-addition-number-override': materialPaint(diff?.added?.background),
+        '--diffs-bg-addition-hover-override': materialPaint(diff?.added?.background),
+        '--diffs-bg-addition-emphasis-override': materialPaint(diff?.inlineAdded?.background),
+        '--diffs-bg-deletion-override': materialPaint(diff?.removed?.background),
+        '--diffs-bg-deletion-number-override': materialPaint(diff?.removed?.background),
+        '--diffs-bg-deletion-hover-override': materialPaint(diff?.removed?.background),
+        '--diffs-bg-deletion-emphasis-override': materialPaint(diff?.inlineRemoved?.background),
+    };
+
     return {
-        ['--diffs-bg-selection' as any]: surfaceInset,
+        ...diffPalette,
+        ['--diffs-bg-selection' as any]: materialPaint(surfaceInset),
         ['--diffs-selection-number-fg' as any]: surface,
-        ['--diffs-bg-selection-number' as any]: selectionBase,
+        ['--diffs-bg-selection-number' as any]: materialPaint(selectionBase),
         ['--diffs-selection-base' as any]: selectionBase,
     };
 }
@@ -474,11 +530,15 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         // and for empty diff strings. Some versions log diagnostics before throwing.
         if (!looksLikeUnifiedDiff(sanitizedPatch)) return null;
         try {
+            if (props.mode === 'text') {
+                const name = props.filePath ?? 'diff';
+                return parseDiffFromFile({ name, contents: props.oldText }, { name, contents: props.newText }, { context: props.contextLines ?? 3 });
+            }
             return getSingularPatch(sanitizedPatch);
         } catch {
             return null;
         }
-    }, [sanitizedPatch]);
+    }, [sanitizedPatch, props.mode, props.filePath, props.mode === 'text' ? props.oldText : null, props.mode === 'text' ? props.newText : null, props.mode === 'text' ? props.contextLines : null]);
 
     const needsCodeLines = Boolean(
         props.onPressLine
@@ -694,32 +754,15 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         : '';
 
     const composedUnsafeCSS = React.useMemo(() => {
-        return [reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS, highlightLineUnsafeCSS].filter(Boolean).join('\n');
+        return [PIERRE_MATERIAL_UNSAFE_CSS, PIERRE_UNIFIED_GUTTER_UNSAFE_CSS, reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS, highlightLineUnsafeCSS].filter(Boolean).join('\n');
     }, [highlightLineUnsafeCSS, reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS]);
-
-    const lastInjectedUnsafeCSSRef = React.useRef<string>('');
-
-    const unsafeCSSForPierre = React.useMemo(() => {
-        if (composedUnsafeCSS.length > 0) return composedUnsafeCSS;
-        if (lastInjectedUnsafeCSSRef.current.length > 0) return '/* happier:pierre:clear */';
-        return '';
-    }, [composedUnsafeCSS]);
-
-    React.useEffect(() => {
-        if (composedUnsafeCSS.length > 0) {
-            lastInjectedUnsafeCSSRef.current = composedUnsafeCSS;
-        } else if (unsafeCSSForPierre.includes('happier:pierre:clear')) {
-            // Selection/highlight cleared; do not keep forcing the clear marker.
-            lastInjectedUnsafeCSSRef.current = '';
-        }
-    }, [composedUnsafeCSS, unsafeCSSForPierre]);
 
     const options = React.useMemo<FileDiffOptions<React.ReactNode>>(() => {
         return {
             ...baseOptions,
-            unsafeCSS: unsafeCSSForPierre.length > 0 ? unsafeCSSForPierre : undefined,
+            unsafeCSS: composedUnsafeCSS,
         };
-    }, [baseOptions, unsafeCSSForPierre]);
+    }, [baseOptions, composedUnsafeCSS]);
 
     const pressAddCommentForPierreLine = React.useCallback((event: Pick<OnDiffLineClickProps, 'annotationSide' | 'lineNumber'> & Partial<Pick<OnDiffLineClickProps, 'lineType' | 'numberElement'>>): CodeLine | null => {
         const mapped = mapPierreDiffLineToCodeLine(event);
@@ -835,6 +878,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     }, [codeLines, props.filePath, props.scrollToLineId]);
 
     if (!parsedPatch) {
+        if (props.errorFallback !== undefined) return <>{props.errorFallback}</>;
         const raw = typeof patch === 'string' ? patch.trim() : '';
         const message = raw.length > 0 ? raw : t('files.noChanges');
         return (
@@ -858,6 +902,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     }
 
     const fallbackNode = (() => {
+        if (props.errorFallback !== undefined) return props.errorFallback;
         const raw = typeof sanitizedPatch === 'string' ? sanitizedPatch.trim() : '';
         const message = raw.length > 0 ? raw : t('files.noChanges');
         return (

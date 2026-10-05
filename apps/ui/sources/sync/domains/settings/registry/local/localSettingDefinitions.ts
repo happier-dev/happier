@@ -123,6 +123,18 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Homes whose "Your Homes are connected" choice this device has settled (Keep both / Use …)',
         storageScope: 'local',
     },
+    personalizeProgressV1: {
+        // Visit memory for Home's "Personalize Happier" card: the steps saved on this device and where
+        // to pick up. Ids are normalized by the Personalize owner; the choices themselves live in
+        // their own settings. Never Account-synced.
+        schema: z.object({
+            savedSteps: z.array(z.string()).catch([]),
+            resumeAt: z.string().nullable().catch(null),
+        }).catch({ savedSteps: [], resumeAt: null }),
+        default: { savedSteps: [], resumeAt: null },
+        description: 'Where this device left off in Personalize Happier (steps saved, page to resume at)',
+        storageScope: 'local',
+    },
     brandHeroSeenAt: {
         schema: z.number().nullable().catch(null),
         default: null,

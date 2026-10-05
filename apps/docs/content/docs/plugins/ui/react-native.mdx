@@ -78,6 +78,39 @@ permit an admitted surface to construct a host provider, access internal mount
 state, or import app, host, or protocol internals. Keep
 `defineUiSurface` as the sole provider installation boundary.
 
+## Personal widget areas in development
+
+In **0.3 development / Developer Preview authoring**, an app-page View can
+declare named `widgetAreas`, each with a `name` and a readable `contextSchema`.
+Embed the host's personal area using the public component:
+
+```tsx
+import { WidgetSurface } from '@happier-dev/plugin-ui';
+
+function PinnedWidgets() {
+  return <WidgetSurface area="pinned" />;
+}
+```
+
+The name must match an area declared by this page. Optional `context` supplies
+readable values conforming to that area's schema. Widgets can follow those
+values as **This page** or retain their own pinned inputs. The host derives
+Home, Account, plugin/page/area identity and rights; context does not supply
+machine routing, persistence callbacks or access authority.
+
+The area uses the same Gallery, Set up, Edit inputs and frames as Home. Its
+personal layout is an Account Artifact, separate from widget definitions and
+from a shared Session Board. Copies keep independent inputs, order and
+half/full width; changing the page context keeps that layout identity. A
+declarative plugin page can use a `widgetArea` node against the same host port.
+Such nodes are page composition, not Session Board or transcript content.
+
+The component renders its `fallback` where no host presentation bridge exists.
+Hosted HTML pages do not embed host widget areas; they manage widgets through
+ordinary [widget Actions](/plugins/api/host-actions). This is a development contract, not a released
+or loaded-platform support claim; consult the generated
+[SDK surface](/plugins/api/surface) and [availability](/plugins/manifest/availability).
+
 ## Code-defined UI declaration
 
 Declare each executable surface with `@happier-dev/plugin-sdk`'s
@@ -166,6 +199,59 @@ function OpenReviewDetails({ reviewId }: { reviewId: string }) {
 for a `rightSidebarTab`. Do not build a host URL, router, or a first-available
 fallback destination.
 
+## Entity drag and drop (development)
+
+In **0.3 development / Developer Preview authoring**, mount a declared source
+and target with the public components inside your ordinary `defineUiSurface`
+surface:
+
+```tsx
+import { DragSource, DropTarget, Text } from '@happier-dev/plugin-ui';
+
+function ReviewQueue() {
+  return (
+    <DropTarget targetId="review" input={{ queueId: 'review' }}>
+      <DragSource sourceId="issue" reference="issue-42">
+        <Text value="Issue #42" />
+      </DragSource>
+    </DropTarget>
+  );
+}
+```
+
+The local ids must match your [source and target
+declarations](/plugins/manifest/contributions#entity-drag-sources-and-drop-targets).
+The source's `reference` must satisfy its declared JSON schema. Its registered
+`PluginDragSourceRuntime.describe` returns the carried item's readable title
+and optional subtitle. The registered `PluginDropTargetRuntime.resolve`
+receives the current item, semantic destination, input mode and target-local
+input. Return `{ status: 'allowed', effect: { actionId, input, preview } }`,
+where `preview` names the verb, target and optional consequence, or
+`{ status: 'refused', reason: { code, message } }` with an optional preview.
+Keep this resolver free of writes: the host resolves again on release and
+dispatches the admitted Action through its existing approval policy.
+
+Declare permitted host Actions with `{ kind: 'host', actionId }`, or a
+contributed Action with `{ kind: 'plugin', action: 'local-action-id' }`.
+Accepted kinds and permitted Actions constrain admission; they grant no
+credentials or present-user authority. Return an explanation when the current
+item cannot be used. Do not execute an Action carried inside reference data.
+
+The host supplies current scope, geometry, release feedback and retirement.
+Desktop uses the primary row while preserving secondary controls and text
+selection. Set `organizing` on `DragSource` only while the surrounding touch
+list is intentionally in Organize mode; normal long press remains available
+to its menu. Staged keyboard movement and the destination chooser use the same
+target resolver. Hidden or retired mounts cannot commit an unissued effect.
+OS file handles and file bytes are not custom JSON references.
+
+Declarative documents can use the closed `dragSource` and `dropTarget` nodes;
+immutable document/snapshot profiles refuse these live nodes. Hosted documents
+use the [public DOM bindings](/plugins/ui/hosted-web#entity-drag-bindings-development)
+through their admitted host methods. All presentations join the same mounted
+interaction owner. Generated APIs and source tests establish the author
+contract; loaded browser/native and publication evidence remain separate.
+
 ## Lists, Resources, and Account data
 
 Use `List`, `List.Section`, and `List.Item` from `@happier-dev/plugin-ui` for
@@ -215,6 +301,116 @@ deleted key. It needs no daemon. Keep growing or queryable records in a
 Collection and declared preferences in Plugin Settings; one value never has both
 Settings and KV authority. Account KV is not available inside a hosted-web
 surface, whose host bridge carries Collection UI queries only.
+
+## A Collection with one detail body
+
+In the **0.3 development / Developer Preview** source contract, `Collection`
+uses one model and item anatomy for list, table, board and grid presentations.
+Its `detail="auto"` adapts the same detail body to the available pane or pushed
+phone layout. The caller supplies the route's `openKey` and updates that route
+from `onOpenChange`; presentation switches do not create another selection.
+
+This complete composition uses only public imports. `ItemsPage` receives the
+route binding and the already-read items from your surface's own data owner:
+
+```tsx
+import * as React from 'react';
+import { Button, Collection, Icon, Row, Stack, Step, Tabs, Text } from '@happier-dev/plugin-ui';
+import {
+  HappierDisclosure, HappierPressable, HAPPIER_INSTANT_DISCLOSURE_MOTION,
+  useHappierCollection, type HappierCollectionPresentation,
+} from '@happier-dev/plugin-ui/presentation';
+import { useHappierUiAccessibility } from '@happier-dev/plugin-ui/environment';
+
+type Item = { id: string; title: string; summary: string };
+const keyOf = (item: Item) => item.id;
+
+function ItemDetail({ item, headerHosted, close }: {
+  item: Item; headerHosted: boolean; close(): void;
+}) {
+  const [tab, setTab] = React.useState('overview');
+  const [expanded, setExpanded] = React.useState(false);
+  const { reducedMotion } = useHappierUiAccessibility();
+  return (
+    <Stack>
+      {!headerHosted && <Row><Text value={item.title} variant="title" /><Button title="Close" onPress={close} /></Row>}
+      <Tabs value={tab} onValueChange={setTab} ariaLabel="Item detail">
+        <Tabs.Item value="overview" title="Overview">
+          <Step marker={{ kind: 'number', value: 1 }} title="The request">
+            <Text value={item.summary} selectable />
+          </Step>
+          <HappierDisclosure
+            expanded={expanded} onExpandedChange={setExpanded}
+            reducedMotion={reducedMotion} motion={HAPPIER_INSTANT_DISCLOSURE_MOTION}
+            showDivider={false}
+            header={({ headerProps }) => (
+              <HappierPressable {...headerProps}><Text value="More context" /></HappierPressable>
+            )}
+          >
+            <Text value="Additional facts from this item's data owner." selectable />
+          </HappierDisclosure>
+        </Tabs.Item>
+        <Tabs.Item value="activity" title="Activity">
+          <Text value="The source's activity belongs here." />
+        </Tabs.Item>
+      </Tabs>
+    </Stack>
+  );
+}
+
+export function ItemsPage({ items, openKey, onOpenChange }: {
+  items: readonly Item[]; openKey: string | null;
+  onOpenChange(key: string | null): void;
+}) {
+  const [presentation, setPresentation] = React.useState<HappierCollectionPresentation>('table');
+  const model = useHappierCollection({ items, keyOf, openKey, onOpenChange, expandable: true });
+  return (
+    <Stack style={{ flex: 1 }}>
+      <Row>
+        <Button title="Table" onPress={() => setPresentation('table')} />
+        <Button title="Board" onPress={() => setPresentation('board')} />
+      </Row>
+      <Collection
+        model={model} presentation={presentation} detail="auto" accessibilityLabel="Items"
+        minListWidth={280} minDetailWidth={420} preferredListRatio={0.4}
+        anatomy={{
+          glyph: () => <Icon name="document-text-outline" />,
+          title: (item) => item.title, accessibilityLabel: (item) => item.title,
+          columnTitles: { title: 'Item' }, peek: (item) => <Text value={item.summary} />,
+        }}
+        detailHeader={(key) => ({ title: items.find((item) => item.id === key)?.title ?? 'Item' })}
+        renderDetail={(key, { headerHosted }) => {
+          const item = items.find((candidate) => candidate.id === key);
+          return item ? <ItemDetail item={item} headerHosted={headerHosted} close={model.actions.close} /> : null;
+        }}
+      />
+    </Stack>
+  );
+}
+```
+
+The measurements above are this example's readable pane sizes, not platform
+breakpoints. The disclosure intentionally uses the public instant motion driver;
+a custom animated composition may supply a public `HappierDisclosureMotionDriver`
+while honoring `reducedMotion`. Its header receives the toggle and expanded
+accessibility state together. Keep `defineUiSurface` as the provider boundary.
+
+Use `Tabs tabList="host"` when an enclosing detail frame already draws the tab
+strip and requests one panel. Use `layout="fill"` inside a bounded region for a
+self-scrolling view. A retained `Tabs.Item retention="retain"` mounts only after
+its first visit; its asynchronous work must consume `useTabPanelActivity()` and
+stop when `activeSignal` aborts. Retention ends with the Tabs mount.
+
+When several tabs present one stateful renderer, provide it once as
+`Tabs sharedPanel={...}` and update its panel input from the controlled tab value.
+The renderer stays mounted and the visible panel remains labelled by the selected
+tab. Inside that renderer, host-mode Tabs still own each panel's retention and
+active interval. For a persistent outer `ScrollArea`, `scrollEnabled={false}` lets
+a bounded child panel own scrolling without remounting the renderer.
+
+For a PRs & Issues source, declare the panels on the source descriptor and render
+only the requested panel. The [source detail and fix-link recipe](/plugins/ui#source-detail-panels-and-fix-pull-requests)
+uses the public Triage feature protocol.
 
 ## Session tabs
 

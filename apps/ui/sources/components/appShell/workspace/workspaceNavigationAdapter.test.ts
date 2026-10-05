@@ -1,27 +1,87 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 
 installPanelCommonModuleMocks();
+// Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace owner test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
 
-function harness(pages: Parameters<typeof resolveCompactAppDestinations>[0]['pages'] = []) {
+function harness(pages: Parameters<typeof resolveCompactAppDestinations>[0]['pages'] = [], scope?: Readonly<{ serverId: string; accountId: string }>) {
     let state = createWorkspaceState({ id: 'A', target: { kind: 'session', params: { id: 'A1', serverId: 'home-a' } }, pinned: false, preview: false });
     const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages });
     const commits: Array<{ href: string; entry: { tabId: string; groupId: string; target: typeof state.tabs.A.target }; replace: boolean }> = [];
+    const publications: Array<typeof state> = [];
     let id = 0;
     const adapter = createWorkspaceNavigationAdapter({
         getState: () => state, getCatalog: () => catalog,
-        dispatch: (action) => { state = reduceWorkspaceState(state, action); },
+        dispatch: (action) => { state = reduceWorkspaceState(state, action); publications.push(state); },
         transport: { commit: (href, entry, replace) => { commits.push({ href, entry, replace }); } },
         createId: () => `generated:${++id}`, onChange: () => {},
+        ...(scope ? { getScope: () => scope } : {}),
     });
     const active = () => state.tabs[state.groups[state.focusedGroupId].activeTabId];
-    return { adapter, commits, active, state: () => state };
+    return { adapter, commits, publications, active, state: () => state };
 }
 
 describe('workspace navigation adapter', () => {
+    it('qualifies implicit current-realm Session destinations without conflating another Account or Home', () => {
+        const h = harness([], { serverId: 'home-a', accountId: 'account-a' });
+        h.adapter.dispatch({ type: 'setTarget', tabId: 'A', target: { kind: 'session', params: { id: 'A1' } } });
+        expect(h.adapter.findOpenHref('/session/A1?serverId=home-a&accountId=account-a')).toEqual({ tabId: 'A', groupId: 'group:1' });
+        expect(h.adapter.findOpenHref('/session/A1?serverId=home-a&accountId=account-b')).toBeNull();
+        expect(h.adapter.findOpenHref('/session/A1?serverId=home-b&accountId=account-a')).toBeNull();
+        h.adapter.openHref('/session/A1?serverId=home-a&accountId=account-a', { mode: 'newTab', reuseExisting: true });
+        expect(Object.keys(h.state().tabs)).toEqual(['A']);
+    });
+    it('publishes a destination edge as one admitted layout without exposing an intermediate centre tab', () => {
+        const h = harness();
+        h.adapter.initialize('/session/A1?serverId=home-a');
+        h.adapter.openHref('/session/edge?serverId=home-a', { mode: 'splitRight',
+            availableSizePx: 1200, minimumFirstSizePx: 420, minimumSecondSizePx: 420 });
+        const edge = h.active().id;
+        const publishedWithEdge = h.publications.filter(state => state.tabs[edge]);
+        expect(publishedWithEdge.length).toBeGreaterThan(0);
+        expect(publishedWithEdge.every(state => !state.groups['group:1'].tabIds.includes(edge))).toBe(true);
+    });
+
+    it('preserves explicit preview disposition when reusing its qualified destination', () => {
+        const h = harness();
+        h.adapter.openHref('/session/preview?serverId=home-a');
+        const id = h.active().id;
+        h.adapter.openHref('/session/preview?serverId=home-a', { mode: 'preview', reuseExisting: true });
+        expect(h.active()).toMatchObject({ id, preview: true });
+    });
+
+    it('keeps destination drops before a live tab anchor and focuses qualified already-open destinations across groups', () => {
+        const h = harness();
+        h.adapter.initialize('/session/A1?serverId=home-a');
+        h.adapter.openHref('/session/B1?serverId=home-b', { mode: 'splitRight',
+            availableSizePx: 1000, minimumFirstSizePx: 320, minimumSecondSizePx: 320 });
+        const secondGroup = h.state().focusedGroupId;
+        const b = h.active().id;
+        h.adapter.setParams(b, { right: 'files', anchor: 'saved-position' });
+        h.adapter.openHref('/session/C1?serverId=home-a', { groupId: secondGroup, mode: 'newTab', beforeTabId: b, reuseExisting: true });
+        const c = h.active().id;
+        expect(h.state().groups[secondGroup].tabIds).toEqual([c, b]);
+        h.adapter.openHref('/session/B1?serverId=home-b', { groupId: 'group:1', mode: 'newTab', reuseExisting: true });
+        expect(h.active().id).toBe(b);
+        expect(h.active().target.params.right).toBe('files');
+        expect(h.adapter.findOpenHref('/session/%42%31?serverId=home-b')).toEqual({ tabId: b, groupId: secondGroup });
+        expect(h.adapter.findOpenHref('/session/B1?serverId=home-c')).toBeNull();
+        expect(h.state().focusedGroupId).toBe(secondGroup);
+        expect(h.state().groups[secondGroup].tabIds).toEqual([c, b]);
+        h.adapter.openHref('/session/B1?serverId=home-a', { groupId: 'group:1', mode: 'newTab', reuseExisting: true });
+        expect(h.active().id).not.toBe(b);
+        expect(h.state().tabs.A).toBeDefined();
+        expect(h.state().tabs[c]).toBeDefined();
+    });
+
     it('reopens through URL history and reuses an already open catalog singleton', () => {
         const h = harness([{
             id: 'plugin:acme.notes:notes', pluginId: 'acme.notes', descriptorId: 'notes', localId: 'notes',

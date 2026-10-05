@@ -32,7 +32,14 @@ import type { PluginErrorData } from '@happier-dev/plugin-sdk';
  * must not report the withdrawal as a user decision.
  */
 export type PluginSurfaceHostApiRequestOptions = Readonly<{
+    /** The existing subscription carrier owns delivery and release, never author JSON. */
+    entityDragDropSubscription?: Readonly<{
+        publish: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => void;
+        retain: (release: () => void) => void;
+    }>;
     signal?: AbortSignal;
+    /** Physical iframe/WebView embedding, measured by its host rather than authored JSON. */
+    getHostedFrameBounds?: () => Promise<import('@/components/ui/treeDragDrop/treeDragDropTypes').WindowBounds | null>;
     /** Host-private one-use proof minted by the exact physical frame. */
     consumeHostTransientActivation?: () => boolean;
     /**
@@ -155,7 +162,7 @@ export function createPluginSurfaceHostApiPluginErrorData(
 }
 
 export function readPluginSurfaceHostApiErrorPayload(
-    value: PluginUiJsonValueV1,
+    value: unknown,
 ): PluginUiHostApiErrorPayloadV1 | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return pluginSurfaceHostApiErrorPayloads.get(value) ?? null;

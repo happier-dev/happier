@@ -4,12 +4,15 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { CodeEditorProps } from '../codeEditorTypes';
 import { resolveMonacoLanguageId } from '../codeEditorTypes';
-import type { CodeEditorHandle } from '../codeEditorTypes';
+import type { CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHandle } from '../codeEditorTypes';
+import type { CodeEditorFindSet } from '../bridge/codeEditorFindBridge';
+import type { editor as MonacoEditorApi } from 'monaco-editor';
 import { TextInput } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
 import { buildMonacoEditorThemeData, resolveCodeEditorTheme } from '../editorTheme';
 import type { CodeEditorTheme } from '../editorTheme';
+import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 
 
 type MonacoType = any;
@@ -205,9 +208,15 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         () => resolveCodeEditorFontMetrics({ uiFontScale }),
         [uiFontScale],
     );
+    const backgroundColor = useGlassSurfaceColor(theme.colors.surface.inset, 'content');
+    const activeLineColor = useGlassSurfaceColor(theme.colors.surface.elevated, 'content', false);
+    const selectionColor = useGlassSurfaceColor(theme.colors.accent.blue, 'content', false);
     const editorTheme = React.useMemo(
-        () => resolveCodeEditorTheme(theme),
+        () => resolveCodeEditorTheme(theme, { backgroundColor, activeLineColor, selectionColor }),
         [
+            backgroundColor,
+            activeLineColor,
+            selectionColor,
             theme.dark,
             theme.colors.accent.blue,
             theme.colors.border.default,
@@ -239,6 +248,55 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const pendingChangeRef = React.useRef<string | null>(null);
     const changeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const disposablesRef = React.useRef<Array<{ dispose?: () => void }> | null>(null);
+    const pendingFindRef = React.useRef<CodeEditorFindSet | 'open' | null>(null);
+    const findSnapshotRef = React.useRef<CodeEditorFindSnapshot>({
+        query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' },
+    });
+    const findListenersRef = React.useRef(new Set<() => void>());
+    const applyFind = React.useCallback((request?: CodeEditorFindSet) => {
+        const editor = editorRef.current as MonacoEditorApi.IStandaloneCodeEditor | null;
+        if (!editor) { pendingFindRef.current = request ?? 'open'; return; }
+        pendingFindRef.current = null;
+        if (!request) {
+            // No arguments preserve a nonempty native query/options. actions.find would reseed
+            // the editor selection, and the host's last explicit seed is not the widget's state.
+            editor.trigger('happier.find', 'editor.actions.findWithArgs', undefined);
+            return;
+        }
+        if (request.target) {
+            const position = { lineNumber: request.target.line, column: request.target.column ?? 1 };
+            editor.setPosition(position);
+            editor.revealPositionInCenter(position);
+        }
+        editor.trigger('happier.find', 'editor.actions.findWithArgs', {
+            searchString: request.query,
+            isRegex: request.options.regex,
+            isCaseSensitive: request.options.matchCase,
+            matchWholeWord: false,
+            findInSelection: false,
+        });
+    }, []);
+    const find = React.useMemo<CodeEditorFindHandle>(() => {
+        const editor = () => editorRef.current as MonacoEditorApi.IStandaloneCodeEditor | null;
+        const widget = () => editor()?.getDomNode?.()?.querySelector<HTMLElement>('.find-widget');
+        const seed: CodeEditorFindHandle['seed'] = (query, options, target) => {
+            findSnapshotRef.current = { query, options, status: { kind: 'idle' } };
+            applyFind({ query, options, ...(target ? { target } : {}) });
+            for (const listener of findListenersRef.current) listener();
+        };
+        return {
+            presentation: 'native', open: () => applyFind(), seed, set: (query, options) => seed(query, options),
+            step: (direction) => editor()?.trigger('happier.find', direction === 1 ? 'editor.action.nextMatchFindAction' : 'editor.action.previousMatchFindAction', null),
+            close: () => { pendingFindRef.current = null; editor()?.trigger('happier.find', 'closeFindWidget', null); },
+            // Monaco's public API exposes actions, not its current query/options or counters.
+            // This snapshot records explicit host seeds; native widget state remains engine-owned.
+            getSnapshot: () => findSnapshotRef.current,
+            subscribe: (listener) => { findListenersRef.current.add(listener); return () => { findListenersRef.current.delete(listener); }; },
+            containsFocus: () => editor()?.hasWidgetFocus?.() === true,
+            isOpen: () => widget()?.classList.contains('visible') === true,
+            isInputFocused: () => Boolean(widget()?.contains(typeof document === 'undefined' ? null : document.activeElement)),
+        };
+    }, [applyFind]);
 
     React.useEffect(() => {
         changeDebounceMsRef.current = typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : 250;
@@ -337,8 +395,9 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                 flushPendingChange();
             },
             focus: () => editorRef.current?.focus?.(),
+            find,
         }),
-        [flushPendingChange],
+        [find, flushPendingChange],
     );
 
     React.useEffect(() => {
@@ -380,6 +439,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                     renderWhitespace: 'selection',
                 });
                 editorRef.current = editor;
+                if (pendingFindRef.current) applyFind(pendingFindRef.current === 'open' ? undefined : pendingFindRef.current);
 
                 disposablesRef.current = [
                     editor.onDidChangeModelContent(() => {

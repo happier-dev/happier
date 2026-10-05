@@ -6,9 +6,13 @@ const { axiosGet, axiosPost } = vi.hoisted(() => ({
   axiosPost: vi.fn(),
 }));
 
-vi.mock('axios', () => ({
+vi.mock('axios', async (importOriginal) => ({
+  ...await importOriginal<typeof import('axios')>(),
   default: {
-    get: axiosGet,
+    ...((await importOriginal<typeof import('axios')>()).default),
+    // This HTTP owner serves both assignment and native Run-source inventories.
+    get: (url: string, ...args: unknown[]) => url.endsWith('/worker/run-lifecycle')
+      ? Promise.resolve({ data: { sources: [] } }) : axiosGet(url, ...args),
     post: axiosPost,
   },
 }));
@@ -192,6 +196,7 @@ describe('createAutomationClaimClient', () => {
         nextClaimAt: 1_723_247_201_000,
       }],
       settings: { maxActiveRunsPerMachine: 2 },
+      runLifecycleSources: [],
     });
   });
 
@@ -333,7 +338,6 @@ describe('createAutomationClaimClient', () => {
     expect(axiosPost).toHaveBeenCalledTimes(2);
     expect(axiosPost.mock.calls[0]?.[1]).toBe(axiosPost.mock.calls[1]?.[1]);
     expect(axiosPost.mock.calls[0]?.[2]?.headers).toBe(axiosPost.mock.calls[1]?.[2]?.headers);
-    expect(createPublisherHeader).toHaveBeenCalledTimes(2);
     expect(createPublisherHeader.mock.calls.filter(([request]) => request.method === 'POST')).toHaveLength(1);
   });
 

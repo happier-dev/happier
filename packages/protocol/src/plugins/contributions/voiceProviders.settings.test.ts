@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PluginContributesV2Schema } from './v2.js';
+import { VoiceProviderSettingsPresentationSchema, VoiceProviderSettingsSchema } from './voiceProviders.js';
 
 const baseContribution = Object.freeze({
   id: 'conversation',
@@ -26,6 +27,44 @@ function nestedJson(depth: number): unknown {
 }
 
 describe('Voice provider structured settings declarations', () => {
+  it('admits compact localized privacy facts while rejecting incomplete facts and unknown policy fields', () => {
+    const facts = {
+      audioDestination: { key: 'voice.audio', fallback: 'Your endpoint' },
+      processor: 'The selected service',
+      retention: 'Your service policy',
+      details: 'Read your account settings for more.',
+    };
+    const settings = { schemaVersion: 1, fields: [], privacyDisclosure: 'Full disclosure', privacyFacts: facts };
+    expect(VoiceProviderSettingsSchema.parse(settings).privacyFacts).toEqual(facts);
+    expect(VoiceProviderSettingsSchema.safeParse({ ...settings, privacyFacts: { processor: 'Service' } }).success).toBe(false);
+    expect(VoiceProviderSettingsSchema.safeParse({ ...settings, privacyFacts: { ...facts, noTraining: true } }).success).toBe(false);
+  });
+  it('admits strict service language facts without making unspecified behavior automatic', () => {
+    const presentation = {
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
+      credential: { kind: 'none', catalog: null }, links: {}, fields: [],
+    };
+    for (const language of [{ kind: 'automatic_recognition' }, { kind: 'independent_reply' }, { kind: 'single_language', supportedLanguageCodes: ['fr', 'pt-br'] }]) {
+      expect(VoiceProviderSettingsPresentationSchema.safeParse({ ...presentation, language }).success).toBe(true);
+    }
+    expect(VoiceProviderSettingsPresentationSchema.parse(presentation)).not.toHaveProperty('language');
+    expect(VoiceProviderSettingsPresentationSchema.safeParse({ ...presentation, language: { kind: 'invented' } }).success).toBe(false);
+    expect(VoiceProviderSettingsPresentationSchema.safeParse({ ...presentation, language: { kind: 'single_language', independentReply: true } }).success).toBe(false);
+    expect(VoiceProviderSettingsPresentationSchema.safeParse({ ...presentation, language: { kind: 'single_language', supportedLanguageCodes: ['fr', 'fr'] } }).success).toBe(false);
+  });
+  it('rejects grouping that drops, duplicates, or invents a control or duplicates credential custody', () => {
+    const presentation = {
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
+      credential: { kind: 'api_key', catalog: null }, links: {},
+      fields: [{ kind: 'text', path: 'agentId' }],
+    };
+    for (const groups of [
+      [{ id: 'account', titleKey: 'account', fieldPaths: [] }],
+      [{ id: 'account', titleKey: 'account', fieldPaths: ['unknown'] }],
+      [{ id: 'account', titleKey: 'account', fieldPaths: ['agentId', 'agentId'] }],
+      [{ id: 'account', titleKey: 'account', fieldPaths: ['agentId'], includeCredentials: true }, { id: 'other', titleKey: 'other', fieldPaths: [], includeCredentials: true }],
+    ]) expect(VoiceProviderSettingsPresentationSchema.safeParse({ ...presentation, groups }).success).toBe(false);
+  });
   it('accepts one canonical rich settings presentation for nested provider fields', () => {
     const parsed = PluginContributesV2Schema.parse({
       voiceProviders: [{
@@ -46,8 +85,10 @@ describe('Voice provider structured settings declarations', () => {
             links: { privacy: 'https://example.com/privacy' },
             fields: [{
               kind: 'range', path: 'config.speed', min: 0.7, max: 1.5, step: 0.05, reset: 1,
+              valueSuffix: '×', fractionDigits: 1,
               titleKey: { key: 'voice.speed', fallback: 'Speed' },
             }],
+            groups: [{ id: 'voice', titleKey: 'voice.output', fieldPaths: ['config.speed'] }],
           },
         },
       }],
@@ -57,7 +98,11 @@ describe('Voice provider structured settings declarations', () => {
       kind: 'range',
       path: 'config.speed',
       reset: 1,
+      valueSuffix: '×', fractionDigits: 1,
     });
+    expect(parsed.voiceProviders[0]?.settings?.presentation?.groups).toEqual([
+      { id: 'voice', titleKey: 'voice.output', fieldPaths: ['config.speed'] },
+    ]);
   });
 
   it('rejects duplicate and unsafe rich presentation paths', () => {

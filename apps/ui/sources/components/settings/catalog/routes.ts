@@ -47,6 +47,7 @@ export const SETTINGS_ROUTES = {
     voice: '/settings/voice',
     voiceDictation: '/settings/voice/dictation',
     voiceConversations: '/settings/voice/conversations',
+    voiceService: '/settings/voice/service',
     voicePrivacy: '/settings/voice/privacy',
     voiceAdvanced: '/settings/voice/advanced',
     voiceHistory: '/settings/voice-history',

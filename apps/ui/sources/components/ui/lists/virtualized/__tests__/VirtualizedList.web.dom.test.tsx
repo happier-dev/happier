@@ -4,6 +4,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { StyleSheet } from 'react-native';
 
 import { VirtualizedList } from '../VirtualizedList';
 import { CollectionList } from '../../collection/CollectionList';
@@ -54,7 +55,12 @@ function measuredRect(element: Element): DOMRectReadOnly {
     }
     const row = htmlElement.querySelector<HTMLElement>('[data-row-height]');
     if (row) {
-        return rect(800, Number(row.dataset.rowHeight ?? 56));
+        // Legend implements row gaps as cell padding. Include that real box
+        // geometry when its ResizeObserver measures the rendered row wrapper.
+        const style = window.getComputedStyle(htmlElement);
+        const padding = (Number.parseFloat(style.paddingTop) || 0)
+            + (Number.parseFloat(style.paddingBottom) || 0);
+        return rect(800, Number(row.dataset.rowHeight ?? 56) + padding);
     }
     return rect(800, Number.parseFloat(htmlElement.style.height || '0') || 0);
 }
@@ -164,6 +170,51 @@ describe('VirtualizedList web DOM integration', () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         vi.useRealTimers();
+    });
+
+    it('applies content padding with React Native array order and explicit-side precedence', async () => {
+        const listRef = React.createRef<import('../virtualizedListTypes').VirtualizedListRef>();
+        const styles = StyleSheet.create({
+            content: { padding: 4, paddingHorizontal: 12, paddingVertical: 18, paddingLeft: 7, paddingBottom: 0 },
+        });
+        await act(async () => {
+            root.render(
+                <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}>
+                    <VirtualizedList
+                        ref={listRef}
+                        backendPreference="legend"
+                        data={[{ id: 'padded' }]}
+                        estimatedItemSize={56}
+                        getFixedItemSize={() => 56}
+                        contentContainerStyle={[
+                            styles.content,
+                            false,
+                            [{ paddingHorizontal: 24, paddingVertical: 30, paddingRight: 9, gap: 6 }],
+                        ]}
+                        keyExtractor={(item) => item.id}
+                        recycleItems={false}
+                        renderItem={({ item }) => <div data-row-height="56">{item.id}</div>}
+                    />
+                </div>,
+            );
+        });
+        await flushLegendWork();
+
+        const content = container.querySelector<HTMLElement>('.legend-list-content-container');
+        expect(content).not.toBeNull();
+        const style = window.getComputedStyle(content!);
+        expect(style.paddingTop).toBe('30px');
+        expect(style.paddingRight).toBe('9px');
+        expect(style.paddingBottom).toBe('0px');
+        expect(style.paddingLeft).toBe('7px');
+        const state = listRef.current?.getState?.() as Readonly<{
+            contentLength: number;
+            sizeAtIndex: (index: number) => number | undefined;
+        }>;
+        expect(state).toMatchObject({ contentLength: expect.any(Number) });
+        expect(Number.isFinite(state.contentLength)).toBe(true);
+        // Legend includes its numeric row gap in fixed-item geometry.
+        expect(state.sizeAtIndex(0)).toBe(62);
     });
 
     it.each(['standalone', 'collection-rail'] as const)('fills a bounded %s host and mounts only a virtualized window', async (surface) => {

@@ -4,9 +4,9 @@ import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
-import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
+import { TRANSFER_CHUNK_HARD_MAX_BYTES } from '@happier-dev/transfers/node';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';

@@ -20,6 +20,22 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('keeps HTML documents and bundles static in the grid, using only the exact stored kind', () => {
+        const document = artifact('html', { kind: 'html', title: 'Interactive report', excerpt: '<script>fetch("/api")</script>' }, {
+            body: '<h1>Report</h1><script>window.executed = true</script>',
+        });
+        const bundle = artifact('bundle', { kind: 'html', title: 'Bundled report' }, {
+            body: { blobId: '00000000-0000-4000-8000-000000000001', mime: 'text/html', sizeBytes: 42, sha256: 'a'.repeat(64) },
+        });
+        expect(readArtifactPreview(document)).toEqual({ kind: 'html', name: 'Interactive report' });
+        expect(readArtifactPreview(bundle)).toEqual({ kind: 'html', name: 'Bundled report' });
+        expect(classifyArtifactBrowserKind(document)).toBe('document');
+        expect(resolveArtifactOpenRoute(document)).toBe('/artifacts/html');
+        const displayOnly = { ...document, rawHeader: { kind: 'html ', title: 'Interactive report' } };
+        expect(readArtifactPreview(displayOnly).kind).toBe('markdown');
+        expect(readArtifactPreview(artifact('file', { title: 'page.html', mime: 'text/html' }, { body: bundle.body })))
+            .toEqual({ kind: 'file', name: 'page.html', mime: 'text/html', sizeBytes: 42 });
+    });
     it('treats a binary reference as a typed file, never a stale text excerpt', () => {
         const reference = { blobId: '00000000-0000-4000-8000-000000000001', mime: 'application/pdf', sizeBytes: 42, sha256: 'a'.repeat(64) };
         expect(readArtifactPreview(artifact('pdf', { title: 'Report.pdf', excerpt: 'stale text' }, { body: reference })))

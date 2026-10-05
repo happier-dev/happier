@@ -162,6 +162,11 @@ export async function validateExistingSessionAutomationTargetTx(params: {
             envelopeKind: null,
         };
     if (!template.existingSessionId) {
+        if (params.accountMode === "plain") {
+            throw new AutomationValidationError(
+                "encrypted templates in a plain account require an explicit retained existing session",
+            );
+        }
         // Existing-session identity stays in the authenticated E2EE payload.
         // The server must neither disclose nor validate that private content.
         return;

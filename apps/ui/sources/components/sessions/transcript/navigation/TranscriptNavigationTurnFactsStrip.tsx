@@ -108,10 +108,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     factText: {
         color: theme.colors.text.tertiary,
+        fontSize: 11,
+        lineHeight: 15,
         fontVariant: ['tabular-nums'],
     },
     factTextStrong: {
         color: theme.colors.text.secondary,
+        fontSize: 11,
+        lineHeight: 15,
         fontVariant: ['tabular-nums'],
     },
 }));

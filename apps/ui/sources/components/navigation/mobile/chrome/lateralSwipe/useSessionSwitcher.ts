@@ -16,6 +16,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursorStore';
 import {
     buildServerScopedSessionKey,
+    moveSessionMruEntryToFront,
     type SessionNavigationDirection,
 } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import {
@@ -48,6 +49,8 @@ export type SessionSwitcherPrepared = Readonly<{
     current: SessionSwitcherRow | null;
     /** Open tabs lead the recent order (two or more open). */
     tabsSynced: boolean;
+    /** Frozen vertical order; independent of the sideways preference. */
+    flickOrder: Readonly<{ rows: readonly SessionSwitcherRow[]; index: number; cycle: boolean }>;
 }>;
 
 /** Flicks within this window walk one frozen order (the iOS quick-switch rule). */
@@ -112,33 +115,42 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
         const mru = Array.isArray(state.localSettings?.sessionMruOrderV1)
             ? (state.localSettings?.sessionMruOrderV1 as unknown[]).filter((key): key is string => typeof key === 'string')
             : [];
-        const pool = resolveSessionSwitcherRecentPool({ currentKey, mruSessionKeys: mru, openTabs });
+        const normalizedMru = moveSessionMruEntryToFront({ order: mru, activeSessionKey: null, maxEntries: mru.length,
+            knownSessionEntries: Array.from(addressByKey, ([sessionKey, address], index) => ({ index, sessionKey, ...address })) });
+        const pool = resolveSessionSwitcherRecentPool({ currentKey, mruSessionKeys: normalizedMru, openTabs });
         const listSessionKeys = cursorEntries.map((entry) => entry.sessionKey);
         const read = (entries: Parameters<typeof readSessionSwitcherRows>[0]['entries']) => readSessionSwitcherRows({
             entries, state, addressByKey, tabsById, draftScope: scope, nowMs: Date.now(),
         });
         const { upSource: up, sideSource: side } = latest.current;
-        const directional = (direction: SessionNavigationDirection) => read(resolveSessionSwitcherDirectionalEntries({
-            source: side, direction, currentKey, listSessionKeys, pool,
+        const directional = (direction: SessionNavigationDirection, source = side) => read(resolveSessionSwitcherDirectionalEntries({
+            source, direction, currentKey, listSessionKeys, pool,
         }));
         const current = currentKey
             ? read([{ key: currentKey, section: 'recent', sessionKey: currentKey, tabId: null }])[0] ?? null
             : null;
+        const vertical = read(resolveSessionSwitcherVerticalEntries({ source: up, currentKey, listSessionKeys, pool }));
+        const previous = up === 'list' ? directional('previous', up) : [];
+        const flickRows = up === 'list'
+            ? [...previous.slice().reverse(), ...(current ? [current] : []), ...directional('next', up)]
+            : [...(current ? [current] : []), ...vertical];
         return {
             rows: {
-                up: read(resolveSessionSwitcherVerticalEntries({ source: up, currentKey, listSessionKeys, pool })),
+                up: vertical,
                 next: directional('next'),
                 previous: directional('previous'),
             },
             sources: { up, next: side, previous: side },
             current,
             tabsSynced: openTabs.length >= 2,
+            flickOrder: { rows: flickRows, index: current ? previous.length : -1, cycle: up === 'recent' && openTabs.length >= 2 },
         };
     }, []);
 
     const open = React.useCallback((row: SessionSwitcherRow) => {
         const { navigateToSession: navigate, phoneTabs: tabs } = latest.current;
         if (row.target.kind === 'tab') tabs.activate(row.target.tabId);
+        else if (row.target.tabId) tabs.activate(row.target.tabId);
         else fireAndForget(navigate(row.target.sessionId, row.target.serverId ? { serverId: row.target.serverId } : undefined));
         announceAccessibilityMessage(t('phoneNav.switcher.switchedTo', { name: row.title }));
     }, []);
@@ -148,12 +160,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
         if (!current) {
             // Freeze the order the flicks walk: the vertical source, with where you are in it.
             const prepared = prepare();
-            const self = prepared.current;
-            const rows = prepared.sources.up === 'list'
-                ? [...prepared.rows.previous.slice().reverse(), ...(self ? [self] : []), ...prepared.rows.next]
-                : [...(self ? [self] : []), ...prepared.rows.up];
-            const fallbackIndex = prepared.sources.up === 'list' ? prepared.rows.previous.length : 0;
-            current = { rows, index: self ? fallbackIndex : -1, cycle: prepared.sources.up === 'recent' && prepared.tabsSynced, timer: null };
+            current = { ...prepared.flickOrder, timer: null };
         }
         const target = resolveSessionSwitcherFlickTarget({
             length: current.rows.length, fromIndex: current.index, direction, cycle: current.cycle,

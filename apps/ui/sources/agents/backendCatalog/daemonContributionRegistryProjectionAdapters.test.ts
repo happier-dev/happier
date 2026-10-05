@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginProjectedSettingsV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema, type PluginProjectedSettingsV2, type PluginProjectionV2 } from '@happier-dev/protocol';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
 
 import {
@@ -10,6 +10,18 @@ import {
 } from './daemonContributionRegistryProjectionAdapters';
 
 describe('daemon contribution registry projection adapters', () => {
+    it('retains pathless contextual Resources without turning their ids into filenames', () => {
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { 'acme.review': { id: 'acme.review', displayName: 'Review', enabled: true,
+                source: { kind: 'local', locator: '/plugins/review' } } }, resourcesById: {
+            'acme.review/live-status': { id: 'live-status', pluginId: 'acme.review', resourceKind: 'config',
+                scope: 'session', contentType: 'application/json' },
+        } });
+        const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+        expect(adapted.pluginProjectionById['acme.review']?.resources).toEqual([
+            { id: 'live-status', resourceKind: 'config', scope: 'session', digest: null, contentType: 'application/json' },
+        ]);
+    });
     it('resolves every localized Settings label through the shared plugin text owner', () => {
         const settings: PluginProjectedSettingsV2 = {
             id: 'acme.review.settings',
@@ -213,6 +225,10 @@ describe('daemon contribution registry projection adapters', () => {
                     digest: 'sha256:prompt',
                     contentType: 'text/markdown',
                 },
+                'acme.review/live-status': {
+                    id: 'live-status', pluginId: 'acme.review', resourceKind: 'config',
+                    scope: 'session', contentType: 'application/json',
+                },
             },
             settingsById: {
                 'acme.review.settings': {
@@ -356,6 +372,7 @@ describe('daemon contribution registry projection adapters', () => {
                     resourceKind: 'prompt',
                     path: 'resources/review.md',
                 }),
+                expect.objectContaining({ id: 'live-status', resourceKind: 'config', scope: 'session' }),
             ],
             editableSettingsGroups: [
                 expect.objectContaining({
@@ -365,6 +382,7 @@ describe('daemon contribution registry projection adapters', () => {
             ],
         }));
         expect(adapted.registryDiagnostics).toEqual([]);
+        expect(adapted.pluginProjectionById['acme.review']?.resources.find(resource => resource.id === 'live-status')).not.toHaveProperty('path');
     });
 
     it('gives a bundled Agent plugin the mark of the Agent it is, as the Agent picker does', () => {

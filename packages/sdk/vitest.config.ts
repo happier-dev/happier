@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 import { createWorkspacePackageSourcesPlugin } from '../../scripts/testing/vitestWorkspacePackageResolution.ts';
@@ -14,6 +15,7 @@ export default defineConfig({
   plugins: [createWorkspacePackageSourcesPlugin(workspacePackages, 'happier-sdk-workspace-package-sources')],
   optimizeDeps: { exclude: workspacePackages.map(({ packageName }) => packageName) },
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: ['src/**/*.test.ts'],
   },

@@ -283,3 +283,20 @@ test('force capacity recreating an absent managed worker provisions the guest an
   assert.equal(events[1]?.[2].at(-1), publicKey);
   assert.equal(events[2]?.[0], 'publication');
 });
+
+
+test('managed WSL startup uses the Windows boundary and propagates guest readiness failure', async () => {
+  const target = { name: 'win-linux', managedRuntime: {
+    kind: 'wsl', instance: 'HappierWorker', user: 'happier',
+    host: { kind: 'ssh', ssh: 'win-host', sshConfigFile: '/tmp/win.ssh.config' },
+    capacity: { mode: 'dedicated', shared: { cpus: 8, memoryGiB: 8 }, dedicated: { cpus: 12, memoryGiB: 12 } },
+  } };
+  const healthy = { exists: true, status: 'Running', ok: true, guestToolchain: { ok: true }, resources: { cpus: 12, memoryGiB: 12 } };
+  const runCaptureResult = async () => ({ ok: true, exitCode: 0, out: '__HAPPIER_WSL__=' + JSON.stringify(healthy) });
+  const result = await startManagedDevTargetRuntime({ target, env: {} }, { runCaptureResult });
+  assert.equal(result.status, 'Running');
+  assert.equal(result.guestToolchain.ok, true);
+  await assert.rejects(startManagedDevTargetRuntime({ target, env: {} }, {
+    runCaptureResult: async () => ({ ok: false, exitCode: 1, err: 'sshd failed to start' }),
+  }), /sshd failed to start/);
+});

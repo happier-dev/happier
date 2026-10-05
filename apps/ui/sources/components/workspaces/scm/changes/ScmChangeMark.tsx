@@ -3,6 +3,8 @@ import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 
 export type ScmChangeMarkSize = 'regular' | 'compact';
 
@@ -20,6 +22,7 @@ export const ScmChangeMark = React.memo(function ScmChangeMark(props: Readonly<{
     size: ScmChangeMarkSize;
     accessibilityLabel?: string;
     testID?: string;
+    findRanges?: readonly FindTextRange[];
 }>) {
     const box = MARK_BOX_PX[props.size];
     return (
@@ -29,7 +32,7 @@ export const ScmChangeMark = React.memo(function ScmChangeMark(props: Readonly<{
                 accessibilityLabel={props.accessibilityLabel}
                 style={{ fontSize: MARK_FONT_PX[props.size], color: props.color, ...Typography.mono('semiBold') }}
             >
-                {props.code}
+                {props.findRanges?.length ? <FindHighlightedText text={props.code} ranges={props.findRanges} /> : props.code}
             </Text>
         </View>
     );

@@ -1,16 +1,45 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDaemonPluginActionExecutor, createPluginActionExecutor, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor, type ActionCaller, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 describe('createDaemonPluginActionExecutor', () => {
+  it('retains the host read-only constraint across the private daemon transport', async () => {
+    const transport = createDaemonPluginActionExecutor({
+      base: { execute: async () => { throw new Error('Unexpected fallback'); } },
+      requestPluginActionExecution: async request => ({ matched: true,
+        result: request.requiredDangerLevel === 'safe'
+          ? { ok: false, errorCode: 'plugin_action_read_only_required', error: 'write rejected' }
+          : { ok: true, result: 'write ran' } }),
+    });
+    const executor = createActionExecutor({ invokeContributedAction: transport.invokeContributedAction } as unknown as ActionExecutorDeps);
+    await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.source', localId: 'read' }, input: {} }, {
+      surface: 'api', requiredContributedActionDangerLevel: 'safe',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_read_only_required' });
+  });
+  it('reads the host caller per invocation and refuses unavailable provenance', async () => {
+    let caller: ActionCaller | null = { kind: 'session', sessionId: 'host-session', starterDepth: 2, turnDepth: 3 };
+    const executor = createDaemonPluginActionExecutor({
+      base: { execute: async () => { throw new Error('Unexpected fallback'); } },
+      getInitiatingActionCaller: () => caller,
+      requestPluginActionExecution: async (request) => ({ matched: true,
+        result: { ok: true, result: { startedBy: request.startedBy ?? null } } }),
+    });
+    expect(await executor.execute('action.spec.get', {}, { surface: 'mcp' })).toMatchObject({
+      ok: true, result: { startedBy: 'agent' },
+    });
+    caller = null;
+    expect(await executor.execute('action.spec.get', {}, { surface: 'mcp' })).toMatchObject({
+      ok: false, errorCode: 'target_unavailable',
+    });
+  });
   it('exposes nested wait invocation without falling back recursively for an unavailable plugin', async () => {
     const transport = createDaemonPluginActionExecutor({
       base: { execute: async () => { throw new Error('Nested invocation must not re-enter the base'); } },
       requestPluginActionExecution: async () => ({ matched: false }),
     });
     const executor = createActionExecutor({
-      invokeContributedAction: async (request) => transport.invokeContributedAction(request),
+      invokeContributedAction: async (request: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0]) => transport.invokeContributedAction(request),
     } as unknown as ActionExecutorDeps);
     expect(await executor.execute('wait', {
       target: { kind: 'plugin_source', serverId: 'home', pluginId: 'acme.checks', sourceId: 'checkpoint' },

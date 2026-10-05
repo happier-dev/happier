@@ -9,8 +9,6 @@ import { BoardsColumn } from '@/components/boards/BoardsColumn';
 import { PluginsNavigationColumn } from '@/components/settings/plugins/PluginsNavigationColumn';
 import { SettingsSidebar } from '@/components/settings/shell/SettingsSidebar';
 import { PopoverScope } from '@/components/ui/popover';
-import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import type { BuiltinAppShellColumnId } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 
@@ -41,15 +39,9 @@ export const AppShellColumn = React.memo(function AppShellColumn(props: Readonly
     );
 });
 
-/** Sessions: voice, then the column's own entries (Browse external sessions, plugin session views) and the list. */
+/** Sessions: the column's own entries (Browse external sessions, plugin session views) and the list. */
 const SessionsColumn = React.memo(function SessionsColumn() {
-    const voiceEnabled = useFeatureEnabled('voice');
-    return (
-        <>
-            {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
-            <MainView variant="sidebar" />
-        </>
-    );
+    return <MainView variant="sidebar" />;
 });
 
 /** The only built-in column table: a column id the catalog knows without an entry here is a type error. */

@@ -5,7 +5,7 @@ import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeaderMarkTile } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 
 /** The glyph of a plugin that has no logo of its own. */
 export const PLUGIN_GLYPH = 'puzzle-piece' as const;
@@ -17,8 +17,7 @@ export const PLUGIN_GLYPH = 'puzzle-piece' as const;
  * records carry no admitted logo, so there is no letter or tint to invent.
  *
  * `row` (lists, cards, the column) is the bare mark in the Collection's mark box: no tile behind a
- * logo or a glyph. `page` heads the plugin's detail: a logo sits on the borderless mark fill, the
- * glyph stands alone on the paper.
+ * logo or a glyph. `page` heads the plugin's detail through the same bare header-mark slot.
  */
 export const PluginMark = React.memo(function PluginMark(props: Readonly<{
     title: string;
@@ -33,13 +32,13 @@ export const PluginMark = React.memo(function PluginMark(props: Readonly<{
     const logo = props.iconAgentId && hasAgentIconMark(props.iconAgentId, theme) ? props.iconAgentId : null;
     if (page) {
         return logo ? (
-            <PageHeaderMarkTile testID={props.testID} size="page">
+            <PageHeaderMarkSlot testID={props.testID} size="page">
                 <AgentIcon agentId={logo} size={28} />
-            </PageHeaderMarkTile>
+            </PageHeaderMarkSlot>
         ) : (
-            <PageHeaderMarkTile testID={props.testID} size="page" appearance="glyph">
+            <PageHeaderMarkSlot testID={props.testID} size="page">
                 <Icon name={PLUGIN_GLYPH} size={24} color={theme.colors.text.secondary} />
-            </PageHeaderMarkTile>
+            </PageHeaderMarkSlot>
         );
     }
     return (

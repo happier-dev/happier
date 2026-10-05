@@ -8,6 +8,66 @@ import { resolveHappierRovingSelection } from './semantics.js';
  */
 export type HappierCollectionKey = string;
 
+/** Spatial movement belongs to the keyed model, not to mounted columns or card cells. */
+export function resolveHappierCollectionSpatialFocus(input: Readonly<{
+  key: string;
+  from: string;
+  sections: readonly (readonly string[])[];
+  presentation: 'table' | 'list' | 'board' | 'grid';
+  columns?: number;
+  eligibleKeys?: ReadonlySet<string>;
+  rtl: boolean;
+}>): string | null {
+  const keys = input.sections.flat();
+  const enabled = (key: string) => input.eligibleKeys === undefined || input.eligibleKeys.has(key);
+  const index = keys.indexOf(input.from);
+  if (index < 0) return null;
+  if (input.presentation === 'board') {
+    const column = input.sections.findIndex(section => section.includes(input.from));
+    const row = input.sections[column]!.indexOf(input.from);
+    if (input.key === 'ArrowLeft' || input.key === 'ArrowRight') {
+      const direction = (input.key === 'ArrowRight') !== input.rtl ? 1 : -1;
+      for (let nextColumn = column + direction; nextColumn >= 0 && nextColumn < input.sections.length; nextColumn += direction) {
+        const next = input.sections[nextColumn]!;
+        let candidate: string | null = null;
+        let distance = Infinity;
+        next.forEach((key, index) => {
+          const nextDistance = Math.abs(row - index);
+          if (enabled(key) && nextDistance < distance) { candidate = key; distance = nextDistance; }
+        });
+        if (candidate !== null) return candidate;
+      }
+      return input.from;
+    }
+    const section = input.sections[column]!;
+    const next = resolveHappierRovingSelection({ entries: section.map(key => ({ disabled: !enabled(key) })), currentIndex: row,
+      key: input.key, rtl: input.rtl, listNavigationKeys: true });
+    return next === null ? null : section[next] ?? input.from;
+  }
+  if (input.presentation === 'grid' && (input.key === 'ArrowUp' || input.key === 'ArrowDown')) {
+    const rows: string[][] = [];
+    const columns = input.columns ?? 1;
+    for (const section of input.sections) {
+      section.forEach((key, offset) => {
+        if (offset % columns === 0) rows.push([]);
+        rows[rows.length - 1]!.push(key);
+      });
+    }
+    const row = rows.findIndex(candidate => candidate.includes(input.from));
+    const column = rows[row]!.indexOf(input.from);
+    const direction = input.key === 'ArrowDown' ? 1 : -1;
+    for (let nextRow = row + direction; nextRow >= 0 && nextRow < rows.length; nextRow += direction) {
+      const next = rows[nextRow]!;
+      const candidate = next[Math.min(column, next.length - 1)];
+      if (candidate !== undefined && enabled(candidate)) return candidate;
+    }
+    return input.from;
+  }
+  const next = resolveHappierRovingSelection({ entries: keys.map(key => ({ disabled: !enabled(key) })), currentIndex: index,
+    key: input.key, rtl: input.rtl, listNavigationKeys: true });
+  return next === null ? null : keys[next] ?? input.from;
+}
+
 export type HappierCollectionGroup = Readonly<{
   key: string;
   /** The group's visible and semantic name. An empty title groups the rows without a label. */
@@ -38,6 +98,8 @@ export type HappierCollectionSection<Item> = Readonly<{
 export type HappierCollectionGrouping<Item> = Readonly<{
   axis: readonly HappierCollectionGroup[];
   groupOf: (item: Item) => string;
+  /** Status boards retain empty columns so each status keeps its position. */
+  retainEmpty?: boolean;
 }>;
 
 export type HappierCollectionSectionsInput<Item> = Readonly<{
@@ -106,8 +168,10 @@ export function deriveHappierCollectionSections<Item>(
     if (!bucket) throw new Error(`Collection item "${input.keyOf(item)}" names undeclared group "${groupKey}".`);
     bucket.push(item);
   }
+  const sections = input.groups.axis.map((group): HappierCollectionSection<Item> => ({ group, items: byGroup.get(group.key) ?? [] }));
+  if (input.groups.retainEmpty) return sections;
   return narrowHappierCollectionGroups(
-    input.groups.axis.map((group): HappierCollectionSection<Item> => ({ group, items: byGroup.get(group.key) ?? [] })),
+    sections,
     (section) => section.items,
     (section, items) => ({ ...section, items }),
   );

@@ -86,7 +86,8 @@
           },
           "turn": {
             "bargeIn": true,
-            "cancelResponse": true
+            "cancelResponse": true,
+            "clearInput": true
           }
         },
         "client": {
@@ -379,6 +380,98 @@
               "title": "Input transcription model"
             }
           ],
+          "presentation": {
+            "credential": {
+              "catalog": "voices",
+              "credentialPurpose": "voice.client-auth",
+              "kind": "api_key",
+              "promptBodyKey": "settingsVoice.realtimeProviders.credential.promptBody",
+              "promptTitleKey": "settingsVoice.realtimeProviders.credential.promptTitle",
+              "titleKey": "settingsVoice.realtimeProviders.credential.title"
+            },
+            "fields": [
+              {
+                "customIdAllowed": true,
+                "kind": "model",
+                "movingAliasRequiresOptIn": true,
+                "options": [
+                  {
+                    "id": "gpt-realtime-2.1",
+                    "kind": "pinned"
+                  },
+                  {
+                    "id": "gpt-realtime",
+                    "kind": "moving_alias"
+                  }
+                ],
+                "path": "model",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.model.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.model.title"
+              },
+              {
+                "customIdAllowed": true,
+                "kind": "voice_catalog",
+                "path": "voice",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.voice.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.voice.title",
+                "valueShape": "string"
+              },
+              {
+                "kind": "instructions",
+                "maxLength": 10000,
+                "path": "instructions",
+                "promptBodyKey": "settingsVoice.realtimeProviders.fields.instructions.promptBody",
+                "promptTitleKey": "settingsVoice.realtimeProviders.fields.instructions.promptTitle",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.instructions.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.instructions.title"
+              },
+              {
+                "kind": "select",
+                "options": [
+                  "server_vad",
+                  "semantic_vad",
+                  "manual"
+                ],
+                "path": "turnDetection",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.title"
+              },
+              {
+                "kind": "select",
+                "options": [
+                  {
+                    "id": "",
+                    "titleKey": "settingsVoice.realtimeProviders.options.automatic"
+                  },
+                  {
+                    "id": "gpt-4o-mini-transcribe",
+                    "title": "gpt-4o-mini-transcribe"
+                  },
+                  {
+                    "id": "custom",
+                    "titleKey": "settingsVoice.realtimeProviders.options.custom"
+                  }
+                ],
+                "path": "inputTranscriptionModel",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.transcriptionModel.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.transcriptionModel.title"
+              }
+            ],
+            "footerKey": "settingsVoice.realtimeProviders.authentication.footer",
+            "kind": "voice.provider-settings.v1",
+            "language": {
+              "kind": "automatic_recognition"
+            },
+            "links": {
+              "account": "https://platform.openai.com",
+              "apiKeys": "https://platform.openai.com/api-keys",
+              "privacy": "https://openai.com/policies/privacy-policy/"
+            },
+            "modes": [
+              "byo"
+            ],
+            "titleKey": "settingsVoice.realtimeProviders.setup.title"
+          },
           "privacyDisclosure": {
             "fallback": "Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.openai.privacyDisclosure"

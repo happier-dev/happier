@@ -7,6 +7,7 @@ export const VOICE_PROVIDER_PRESENTATIONS = Object.freeze([
       modeId: 'experimental',
       order: 24,
       titleKey: 'settingsVoice.mode.codexRealtime',
+      badgeKey: 'settingsProviders.models.experimental',
       subtitleKey: 'settingsVoice.mode.codexRealtimeSubtitle',
     }],
   }),

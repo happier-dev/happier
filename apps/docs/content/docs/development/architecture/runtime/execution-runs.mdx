@@ -123,6 +123,29 @@ input, steer, resume, use attachments, or expose a durable composer. Bounded
 jobs remain bounded; reconstructing a transcript does not grant live runtime
 authority.
 
+### Workflow finalization uses the frozen result contract
+
+The Workflow adapter observes the exact accepted input turn of a retained Run,
+not the Run's eventual terminal state. Its frozen result contract reaches the
+same host prompt/send path as initial bounded work. Protocol's
+`execution/runs/resultContract.ts` decodes raw text once or validates an already
+typed value; JSON/schema failures keep their typed reason and path issues.
+Human review can hold a valid result before the Workflow commits it, without
+changing the Execution Run's own lifecycle authority.
+
+An Action leaf with an execution-run completion declaration instead awaits the
+launched Runs' terminal outcomes through the shared Action completion owner.
+The immediate Action response and launched identities are retained before
+observation. Recovery observes that correspondence and never repeats the
+one-shot Action; an unacknowledged invocation stays uncertain.
+
+The exact-machine materialization host also reads qualified plugin Action
+schemas from the current merged contribution occurrence. This implemented
+schema preparation is separate from executable leaf support and from a host
+Action's completion declaration. Missing schemas fail preparation rather than
+being treated as an unconstrained result. These are current development
+mechanics, not a composed live or release acceptance claim.
+
 ## Related
 
 - [Session loop](/development/architecture/runtime/session-loop) — the same seam, for conversations.

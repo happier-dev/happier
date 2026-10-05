@@ -57,5 +57,17 @@ export type CommandMenuProps = Readonly<{
     containerStyle?: StyleProp<ViewStyle>;
     /** Optional copy when items is empty (only rendered when open && items.length === 0). */
     emptyStateLabel?: string;
+    /** Optional richer empty state (an inline action such as Clear); takes precedence over `emptyStateLabel`. */
+    emptyState?: React.ReactNode;
+    /** Optional editable search and supplemental content, inside the same menu surface. */
+    header?: React.ReactNode;
+    preview?: React.ReactNode;
+    footer?: React.ReactNode;
+    /** Searchable menus allow their field/buttons to receive pointer focus. */
+    preserveHostFocus?: boolean;
+    /** Take the anchor's (composer's) width rather than the compact menu width. */
+    matchAnchorWidth?: boolean;
+    /** Hold the full available height so the surface never resizes while its query narrows the rows. */
+    fillHeight?: boolean;
     testID?: string;
 }>;

@@ -318,7 +318,7 @@ function buildSmokePackage(opts, { absPkgDir, workspaceName, repoRoot }) {
     return;
   }
   for (const step of resolveCliPublicationBuildSteps({ packageRoot: absPkgDir })) {
-    run(opts, step.command, step.args, { cwd: step.cwd, timeoutMs: 30 * 60_000 });
+    run(opts, step.command, step.args, { cwd: step.cwd, env: step.env, timeoutMs: 30 * 60_000 });
   }
 }
 

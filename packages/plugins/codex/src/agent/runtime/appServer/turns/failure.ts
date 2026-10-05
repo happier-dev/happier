@@ -24,6 +24,10 @@ export type CodexAppServerTurnFailureSourceAccountIdentity = Readonly<{
 
 const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
     'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
+const CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS = [
+    'codex ran out of room',
+    'context window',
+] as const;
 const CODEX_APP_SERVER_TURN_FAILURE_MESSAGE = 'Codex app-server turn failed.';
 const CODEX_APP_SERVER_RUNTIME_AUTH_KINDS = new Set([
     'usage_limit',
@@ -73,14 +77,14 @@ type CodexAppServerErrorPayload = Readonly<{
 
 class CodexAppServerTurnFailure extends Error {
     readonly isAuthAccountChanged: boolean;
-    readonly isContextWindowExhausted: boolean;
+    readonly contextWindowExhaustionEvidence: 'structured' | 'message' | null;
     readonly isTemporaryRecoverableTurnFailure: boolean;
     readonly runtimeAuthClassification: unknown | null;
     readonly isWorkspaceRoutingUnauthorized: boolean;
 
     constructor(message: string, options: Readonly<{
         isAuthAccountChanged: boolean;
-        isContextWindowExhausted: boolean;
+        contextWindowExhaustionEvidence: 'structured' | 'message' | null;
         isTemporaryRecoverableTurnFailure: boolean;
         runtimeAuthClassification: unknown | null;
         isWorkspaceRoutingUnauthorized: boolean;
@@ -88,7 +92,7 @@ class CodexAppServerTurnFailure extends Error {
         super(message);
         this.name = 'CodexAppServerTurnFailure';
         this.isAuthAccountChanged = options.isAuthAccountChanged;
-        this.isContextWindowExhausted = options.isContextWindowExhausted;
+        this.contextWindowExhaustionEvidence = options.contextWindowExhaustionEvidence;
         this.isTemporaryRecoverableTurnFailure = options.isTemporaryRecoverableTurnFailure;
         this.runtimeAuthClassification = options.runtimeAuthClassification;
         this.isWorkspaceRoutingUnauthorized = options.isWorkspaceRoutingUnauthorized;
@@ -209,15 +213,31 @@ function normalizeCodexErrorInfo(value: string | null): string | null {
     return value ? value.replace(/[_\-\s]/g, '').toLowerCase() : null;
 }
 
-function isCodexAppServerContextWindowExhaustedPayload(payload: CodexAppServerErrorPayload): boolean {
-    return normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded';
+function textMatchesCodexContextWindowExhaustedMessage(value: string | null): boolean {
+    const normalized = value?.toLowerCase() ?? '';
+    return CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS.every((marker) => normalized.includes(marker));
 }
 
-export function isCodexAppServerContextWindowExhaustedError(error: unknown): boolean {
+function readCodexAppServerContextWindowExhaustionEvidence(
+    payload: CodexAppServerErrorPayload,
+): 'structured' | 'message' | null {
+    if (normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded') return 'structured';
+    return [payload.message, payload.additionalDetails].some(textMatchesCodexContextWindowExhaustedMessage)
+        ? 'message'
+        : null;
+}
+
+export function isCodexAppServerContextWindowExhaustedError(
+    error: unknown,
+    options?: Readonly<{ structuredOnly: boolean }>,
+): boolean {
     if (error instanceof CodexAppServerTurnFailure) {
-        return error.isContextWindowExhausted;
+        return options?.structuredOnly
+            ? error.contextWindowExhaustionEvidence === 'structured'
+            : error.contextWindowExhaustionEvidence !== null;
     }
-    return false;
+    if (options?.structuredOnly || !(error instanceof Error)) return false;
+    return textMatchesCodexContextWindowExhaustedMessage(error.message);
 }
 
 export function isCodexAppServerTemporaryRecoverableTurnFailureError(error: unknown): boolean {
@@ -277,7 +297,7 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         CODEX_APP_SERVER_TURN_FAILURE_MESSAGE,
         {
             isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
-            isContextWindowExhausted: payload ? isCodexAppServerContextWindowExhaustedPayload(payload) : false,
+            contextWindowExhaustionEvidence: payload ? readCodexAppServerContextWindowExhaustionEvidence(payload) : null,
             isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
             runtimeAuthClassification: sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification),
             isWorkspaceRoutingUnauthorized: isCodexWorkspaceRoutingUnauthorizedFailure(params.value),

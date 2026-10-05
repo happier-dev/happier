@@ -14,6 +14,7 @@ import {
 } from '@/components/plugins/shared/declarativeNodes';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { WidgetSnapshotNote } from '@/components/widgets/definitions/WidgetSnapshotNote';
 
 import {
     createSessionBoardHostActionResolver,
@@ -54,6 +55,8 @@ export function SessionBoardDeclarativeContent(props: Readonly<{
     /** The stored `source.kind === 'declarative'` document. */
     document: unknown;
     actionBinding?: SessionBoardHostActionBinding | null;
+    /** A posted snapshot: frozen numbers that say they will not update (lab VS). */
+    snapshot?: boolean;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -85,6 +88,7 @@ export function SessionBoardDeclarativeContent(props: Readonly<{
                 renderField: renderNothing,
                 renderCollectionList: renderNothing,
             })}
+            {props.snapshot ? <WidgetSnapshotNote /> : null}
         </View>
     );
 }

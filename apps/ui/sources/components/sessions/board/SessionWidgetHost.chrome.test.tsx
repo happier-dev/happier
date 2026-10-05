@@ -9,20 +9,16 @@ import {
 
 import { HAPPIER_WIDGET_FRAME_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { findGestureByKind } from '@/dev/testkit/mocks/gestureHandler';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type { SessionBoardItemProjection } from '@/sync/domains/session/board';
-import { registerSessionCompanionDropTarget } from '@/components/sessions/companion/drop/sessionCompanionDropStore';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { projectSessionBoard, type SessionBoardItemProjection } from '@/sync/domains/session/board';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop';
+import type { SessionSurfaceEntityBinding } from './SessionSurfaceEntityDrag';
+import { resolveSessionBoardEntityDrop } from './sessionSurfaceEntityDrop';
 
 import {
-    resolveSessionBoardDragVisualOffset,
     SessionWidgetHost,
     type SessionWidgetHostProps,
 } from './SessionWidgetHost';
-
-const workletsHarness = vi.hoisted(() => ({
-    defer: false,
-    pending: [] as Array<() => unknown>,
-}));
 
 // Escape cancelling an in-flight pointer drag is a keyboard affordance of the
 // pointer platforms (web and desktop), so the handle only publishes `onKeyDown`
@@ -37,15 +33,6 @@ vi.mock('react-native-gesture-handler', async () => {
     const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
     return createGestureHandlerMock();
 });
-vi.mock('react-native-worklets', () => ({
-    scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => {
-        if (workletsHarness.defer) {
-            workletsHarness.pending.push(() => callback(...args));
-            return;
-        }
-        return callback(...args);
-    },
-}));
 
 /**
  * The widget card's chrome, as a person actually meets it.
@@ -86,12 +73,41 @@ function unavailableInstalledItem(): SessionBoardItemProjection {
                 frame: 'card',
                 height: { mode: 'auto', fallback: 'regular' },
                 source: {
-                    kind: 'installedSurface',
-                    surface: { pluginId: 'acme.review', localId: 'review-status' },
+                    kind: 'widget',
+                    instance: { v: 1, id: 'plugin-widget-1', bindings: {},
+                        definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status' } } },
                 },
             } as SessionSurfaceItemV1,
         },
     };
+}
+
+const SCOPE = { serverId: 'home-1', accountId: 'account-1' };
+const ADDRESS = { serverId: SCOPE.serverId, sessionId: 'session-1' };
+
+function entityDrag(): SessionSurfaceEntityBinding {
+    return {
+        scope: SCOPE,
+        isCurrent: () => true,
+        title: 'Release plan',
+        getItem: () => ({ kind: 'session-board-item', scope: SCOPE, address: ADDRESS, viewId: 'overview', itemId: 'note-1' }),
+    };
+}
+
+function boardSnapshot() {
+    const item = noteItem();
+    if (item.state.kind !== 'ready') throw new Error('Expected ready note fixture');
+    return projectSessionBoard({
+        layout: { revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', outcome: { status: 'ready', value: {
+            v: 1, tabs: [
+                { id: 'overview', title: 'Overview', items: [{ itemId: 'note-1', width: 'medium' }] },
+                { id: 'research', title: 'Research', items: [] },
+            ],
+        } } },
+        items: new Map([['note-1', { revision: item.revision ?? 'rev-1', outcome: { status: 'ready' as const, value: item.state.item } }]]),
+        capabilities: { readTranscript: true, editSessionRecords: true },
+        freshness: 'fresh', reachability: 'reachable', loading: 'idle', incomplete: false,
+    });
 }
 
 async function renderCard(overrides: Partial<SessionWidgetHostProps> = {}) {
@@ -137,41 +153,31 @@ function elementHasTestId(
 }
 
 describe('SessionWidgetHost chrome', () => {
+    it('renders the live walkthrough source rather than reporting it as an unavailable renderer', async () => {
+        const screen = await renderCard({
+            item: noteItem({ title: 'Walkthrough', source: { kind: 'walkthrough', comparison: 'session' } }),
+            serverId: 'home-1',
+        });
+        expect(screen.findByTestId('widget-walkthrough')).toBeTruthy();
+    });
     beforeEach(() => {
         standardCleanup();
-        workletsHarness.defer = false;
-        workletsHarness.pending = [];
     });
 
-    it('keeps Companion dragging off the body and enables it only while a rail can accept it', async () => {
-        const screen = await renderCard({ density: 'compact', onAddToCompanion: vi.fn() });
-        const detectorForTitle = (target = screen) => {
-            let node = target.findHostByTestId('widget-title')?.parent;
-            while (node && String(node.type) !== 'GestureDetector') node = node.parent;
-            return node;
-        };
+    it('publishes a qualified source without requiring a mounted Companion rail and preserves body selection', async () => {
+        const screen = await renderCard({ density: 'compact', entityDrag: entityDrag() });
+        expect(screen.findHostByTestId('widget-move-handle')).not.toBeNull();
         let bodyParent = screen.findHostByTestId('widget-body')?.parent;
         while (bodyParent && String(bodyParent.type) !== 'GestureDetector') bodyParent = bodyParent.parent;
-        // An enabled RNGH web detector suppresses selection and scrolling on all descendants.
         expect(bodyParent).toBeNull();
-        expect(detectorForTitle()?.props.gesture.__config.enabled).toBe(false);
-        let unregister: (() => void) | undefined;
-        try {
-            await act(async () => {
-                unregister = registerSessionCompanionDropTarget('session-1', {
-                    measure: async () => ({ x: 800, y: 0, width: 300, height: 800 }),
-                    accept: vi.fn(),
-                });
-            });
-            expect(detectorForTitle()?.props.gesture.__config.enabled).toBe(true);
-            // Media queries are the real platform boundary, not a mocked pointer decision.
-            vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' }) });
-            const touchScreen = await renderCard({ density: 'compact', onAddToCompanion: vi.fn() });
-            expect(detectorForTitle(touchScreen)?.props.gesture.__config.enabled).toBe(false);
-            vi.unstubAllGlobals();
-            await act(async () => { unregister?.(); });
-            expect(detectorForTitle()?.props.gesture.__config.enabled).toBe(false);
-        } finally { vi.unstubAllGlobals(); unregister?.(); }
+        const runtime = (await renderHook(() => useEntityDragDropRuntime())).getCurrent();
+        const pan = findGestureByKind(
+            screen.tree.root.findByType('GestureDetector' as never).props.gesture, 'pan',
+        );
+        await act(async () => { pan?.__handlers.onStart?.({ absoluteX: 50, absoluteY: 50 }); });
+        expect(runtime.getSnapshot().item).toEqual(entityDrag().getItem());
+        await act(async () => { pan?.__handlers.onFinalize?.(); });
+        expect(runtime.getSnapshot().phase).toBe('idle');
     });
 
     it('lets the elected mount decide executability, whatever chrome density asks for', async () => {
@@ -189,8 +195,9 @@ describe('SessionWidgetHost chrome', () => {
                     frame: 'card',
                     height: { mode: 'auto', fallback: 'regular' },
                     source: {
-                        kind: 'installedSurface',
-                        surface: { pluginId: 'acme.review', localId: 'review-status' },
+                        kind: 'widget',
+                        instance: { v: 1, id: 'plugin-widget-1', bindings: {},
+                            definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status' } } },
                     },
                 } as SessionSurfaceItemV1,
             },
@@ -222,9 +229,7 @@ describe('SessionWidgetHost chrome', () => {
 
     it('names the reorder handle after the item it reorders', async () => {
         const screen = await renderCard({
-            onMove: vi.fn(),
-            canMoveBefore: true,
-            canMoveAfter: true,
+            entityDrag: entityDrag(),
         });
 
         const handle = screen.findHostByTestId('widget-move-handle');
@@ -236,107 +241,69 @@ describe('SessionWidgetHost chrome', () => {
         expect(label).toContain('Release plan');
     });
 
-    it('keeps a single item attached to a valid cross-view target and commits only that move', async () => {
-        const onMoveToView = vi.fn();
-        const onMove = vi.fn();
-        const onMoveAnchored = vi.fn();
-        const screen = await renderCard({
-            onMove,
-            canMoveBefore: false,
-            canMoveAfter: false,
-            moveDestinations: [{ id: 'research', title: 'Research' }],
-            onMoveToView,
-            resolveMoveToView: (_translationX, translationY) => translationY <= -80 ? 'research' : null,
-            onMoveAnchored,
-            orderedMoveItemIds: ['note-1'],
-            moveItemRects: new Map([['note-1', { x: 0, y: 160, width: 240, height: 120 }]]),
+    it('releases through current shared-runtime cross-view admission without a dwell lifecycle', async () => {
+        const runtime = (await renderHook(() => useEntityDragDropRuntime())).getCurrent();
+        const written: unknown[] = [];
+        const board = boardSnapshot();
+        const retire = runtime.registerTarget({
+            id: 'research', scope: SCOPE, acceptedKinds: ['session-board-item'],
+            getBounds: () => ({ x: 800, y: 0, width: 300, height: 800 }),
+            resolve: ({ item }) => resolveSessionBoardEntityDrop({
+                item, scope: SCOPE, address: ADDRESS, board, viewId: 'research',
+                preview: { verb: 'Move to', target: 'Research' },
+            }),
+            execute: async effect => { written.push(effect.input); return { status: 'applied' }; },
         });
-
-        // Same-view edge resistance belongs only to the current ordering path.
-        // Once the pointer is over a real view target, the card remains under it
-        // even though this one-item view has no before/after neighbour.
-        expect(resolveSessionBoardDragVisualOffset({
-            translationX: 12,
-            translationY: -120,
-            canMoveBefore: false,
-            canMoveAfter: false,
-            crossViewTarget: true,
-        })).toEqual({ x: 12, y: -120 });
-
-        // The move handle's detector: the card's own keep-beside-chat detector is disabled here.
-        const detector = screen.tree.root.findAll(
-            (node) => String(node.type) === 'GestureDetector'
-                && (node.props as { gesture?: { __config?: { enabled?: boolean } } }).gesture?.__config?.enabled !== false,
-            { deep: true },
-        )[0];
-        const pan = findGestureByKind(
-            (detector?.props as { gesture?: Parameters<typeof findGestureByKind>[0] }).gesture,
-            'pan',
-        );
-        expect(pan).not.toBeNull();
-
-        vi.useFakeTimers();
-        act(() => {
-            pan?.__handlers.onStart?.();
-            pan?.__handlers.onUpdate?.({ translationX: 12, translationY: -120 });
-            vi.advanceTimersByTime(500);
-            pan?.__handlers.onUpdate?.({ translationX: 12, translationY: -120 });
-            pan?.__handlers.onEnd?.({ translationX: 12, translationY: -120 }, true);
-            pan?.__handlers.onFinalize?.();
-        });
-        vi.useRealTimers();
-
-        expect(onMoveToView).toHaveBeenCalledOnce();
-        expect(onMoveToView).toHaveBeenCalledWith('research');
-        expect(onMove).not.toHaveBeenCalled();
-        expect(onMoveAnchored).not.toHaveBeenCalled();
+        try {
+            const screen = await renderCard({ entityDrag: entityDrag() });
+            const pan = findGestureByKind(screen.tree.root.findByType('GestureDetector' as never).props.gesture, 'pan');
+            expect(pan).not.toBeNull();
+            await act(async () => {
+                pan?.__handlers.onStart?.({ absoluteX: 50, absoluteY: 50 });
+                pan?.__handlers.onUpdate?.({ absoluteX: 850, absoluteY: 100 });
+            });
+            expect(written).toEqual([]);
+            expect(runtime.getSnapshot().admission?.status).toBe('allowed');
+            await act(async () => {
+                pan?.__handlers.onEnd?.({ absoluteX: 850, absoluteY: 100 }, true);
+                pan?.__handlers.onFinalize?.();
+            });
+            expect(written).toEqual([{
+                sessionId: ADDRESS.sessionId, expectedLayoutRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+                operation: { op: 'item.move', itemId: 'note-1', fromTabId: 'overview', toTabId: 'research' },
+            }]);
+        } finally { await act(async () => { retire(); runtime.cancel(); }); }
     });
 
-    it('restores an active pointer drag on Escape without allowing its later end event to write', async () => {
-        const onMove = vi.fn();
-        const onMoveAnchored = vi.fn();
-        const screen = await renderCard({
-            onMove,
-            canMoveBefore: false,
-            canMoveAfter: true,
-            onMoveAnchored,
-            orderedMoveItemIds: ['note-1', 'note-2'],
-            moveItemRects: new Map([
-                ['note-1', { x: 0, y: 0, width: 100, height: 80 }],
-                ['note-2', { x: 116, y: 0, width: 100, height: 80 }],
-            ]),
+    it('cancels a pointer carry on Escape before a later successful end can write', async () => {
+        const runtime = (await renderHook(() => useEntityDragDropRuntime())).getCurrent();
+        const written: unknown[] = [];
+        const board = boardSnapshot();
+        const retire = runtime.registerTarget({
+            id: 'research', scope: SCOPE, acceptedKinds: ['session-board-item'],
+            getBounds: () => ({ x: 800, y: 0, width: 300, height: 800 }),
+            resolve: ({ item }) => resolveSessionBoardEntityDrop({
+                item, scope: SCOPE, address: ADDRESS, board, viewId: 'research',
+                preview: { verb: 'Move to', target: 'Research' },
+            }),
+            execute: async effect => { written.push(effect.input); return { status: 'applied' }; },
         });
-        // The move handle's detector: the card's own keep-beside-chat detector is disabled here.
-        const detector = screen.tree.root.findAll(
-            (node) => String(node.type) === 'GestureDetector'
-                && (node.props as { gesture?: { __config?: { enabled?: boolean } } }).gesture?.__config?.enabled !== false,
-            { deep: true },
-        )[0];
-        const pan = findGestureByKind(
-            (detector?.props as { gesture?: Parameters<typeof findGestureByKind>[0] }).gesture,
-            'pan',
-        );
-        const handle = screen.findHostByTestId('widget-move-handle');
-
-        act(() => {
-            pan?.__handlers.onStart?.();
-            pan?.__handlers.onUpdate?.({ translationX: 140, translationY: 0 });
-            handle?.props.onKeyDown?.({
-                key: 'Escape',
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
+        try {
+            const screen = await renderCard({ entityDrag: entityDrag() });
+            const pan = findGestureByKind(screen.tree.root.findByType('GestureDetector' as never).props.gesture, 'pan');
+            const handle = screen.findHostByTestId('widget-move-handle');
+            await act(async () => {
+                pan?.__handlers.onStart?.({ absoluteX: 50, absoluteY: 50 });
+                pan?.__handlers.onUpdate?.({ absoluteX: 850, absoluteY: 100 });
+                handle?.props.onKeyDown?.({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() });
             });
-            // Model the real UI-thread/RN boundary: the gesture end can be
-            // accepted now and its RN callback can run only after finalize.
-            workletsHarness.defer = true;
-            pan?.__handlers.onEnd?.({ translationX: 140, translationY: 0 }, true);
-            pan?.__handlers.onFinalize?.();
-            workletsHarness.defer = false;
-            for (const pending of workletsHarness.pending.splice(0)) pending();
-        });
-
-        expect(onMove).not.toHaveBeenCalled();
-        expect(onMoveAnchored).not.toHaveBeenCalled();
+            expect(runtime.getSnapshot().phase).toBe('idle');
+            await act(async () => {
+                pan?.__handlers.onEnd?.({ absoluteX: 850, absoluteY: 100 }, true);
+                pan?.__handlers.onFinalize?.();
+            });
+            expect(written).toEqual([]);
+        } finally { await act(async () => { retire(); runtime.cancel(); }); }
     });
 
     it('offers rename to a keyboard and screen reader, not only to a pointer on the title', async () => {

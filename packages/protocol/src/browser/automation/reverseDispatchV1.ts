@@ -4,19 +4,21 @@ import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { browserViewKey } from '../view/key.js';
 import { BrowserViewV1Schema } from '../view/v1.js';
+import { BrowserCommandDispatchResultV1Schema } from '../control/v1.js';
 import { BrowserAutomationActionResultV1Schema, BrowserAutomationCancelActiveResultV1Schema, BrowserAutomationInterruptedResultV1Schema, BrowserAutomationTimelineV1Schema } from './v1.js';
 
 /** A continuation of an already-admitted daemon Action, on the exact client-owned view. */
 export const UiBrowserAutomationDispatchRequestV1Schema = z.object({
   v: z.literal(1),
   sessionId: z.string().trim().min(1),
-  actionId: z.enum(ACTION_ID_FAMILIES_V1.browser_automation),
+  actionId: z.enum([...ACTION_ID_FAMILIES_V1.browser_automation, 'browser.control.takeControl', 'browser.control.handBack']),
   input: z.unknown(),
   authority: z.enum(['present_user', 'account_automation']).optional(),
 }).strict();
 export type UiBrowserAutomationDispatchRequestV1 = z.infer<typeof UiBrowserAutomationDispatchRequestV1Schema>;
 
 export const UiBrowserAutomationDispatchResultV1Schema = z.union([
+  BrowserCommandDispatchResultV1Schema,
   BrowserAutomationActionResultV1Schema,
   BrowserAutomationTimelineV1Schema,
   BrowserAutomationCancelActiveResultV1Schema,

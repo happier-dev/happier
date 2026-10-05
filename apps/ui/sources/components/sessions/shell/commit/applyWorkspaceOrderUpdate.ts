@@ -44,17 +44,17 @@ export function buildSessionWorkspaceOrderAfterTreeDrop(params: Readonly<{
     });
 }
 
-export function applyWorkspaceOrderUpdate(params: Readonly<{
+export async function applyWorkspaceOrderUpdate(params: Readonly<{
     tree: SessionListTreeModel;
     currentMap: WorkspaceOrderMap;
     movedRowId: string;
     containerId: string;
     beforeRowId?: string | null;
     afterRowId?: string | null;
-    setSessionWorkspaceOrderV1: (next: Record<string, string[]>) => void;
-}>): boolean {
+    setSessionWorkspaceOrderV1: (next: Record<string, string[]>) => Promise<void>;
+}>): Promise<boolean> {
     const next = buildSessionWorkspaceOrderAfterTreeDrop(params);
     if (!next) return false;
-    params.setSessionWorkspaceOrderV1(next);
+    await params.setSessionWorkspaceOrderV1(next);
     return true;
 }

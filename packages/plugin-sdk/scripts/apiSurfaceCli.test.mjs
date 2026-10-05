@@ -150,6 +150,7 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'VoiceSettingReadinessDeclaration',
     'VoiceSettingsActionContext',
     'classifyVoiceProviderHttpFailure',
+    'resolveVoiceProviderLanguagePreference',
     'createVoiceRecordSchema',
     'withVoiceSchemaField',
   ]),

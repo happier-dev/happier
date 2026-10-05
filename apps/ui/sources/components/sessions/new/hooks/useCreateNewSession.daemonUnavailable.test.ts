@@ -59,8 +59,6 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
   },
 }));
 
-type NewSessionHarnessStorageState = ReturnType<(typeof import('@/sync/domains/state/storageStore'))['storage']['getState']>;
-
 function spawnSuccess(sessionId: string): Extract<SessionSpawnNewResultV1, { type: 'success' }> {
   return {
     type: 'success',
@@ -87,7 +85,6 @@ async function createHarness() {
       code: 'machine_offline',
       retryable: true,
   }));
-  let storageState: NewSessionHarnessStorageState;
   installNewSessionScreenModelCommonModuleMocks({
     text: () =>
       createTextModuleMock({
@@ -110,9 +107,8 @@ async function createHarness() {
   storage.getState().activateSettingsScope({ serverId: 'server-a', accountId: 'account-a' });
   storage.getState().applySettings(storage.getState().settings, 1);
   storage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: 'server-a' });
-  storageState = storage.getState();
-  vi.spyOn(storageState, 'upsertPendingMessage');
-  vi.spyOn(storageState, 'markSessionOptimisticThinking');
+  vi.spyOn(storage.getState(), 'upsertPendingMessage');
+  vi.spyOn(storage.getState(), 'markSessionOptimisticThinking');
 
 
 
@@ -135,7 +131,7 @@ async function createHarness() {
   };
   socketRpcBoundary.respond = respondMachineRpc;
   const machineRpcSpy = vi.spyOn(apiSocket, 'machineRPC').mockImplementation(async (_machineId, method, input) => await respondMachineRpc(method, input));
-  const { sync } = await import('@/sync/sync');
+  const { sync } = await import('@/sync/syncEngine');
   syncSingletonBridge.current = sync;
   const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
   let authProjection: Awaited<ReturnType<typeof renderScreen>> | null = null;
@@ -203,11 +199,7 @@ async function createHarness() {
   vi.spyOn(sync, 'sendMessage');
   await import('@/sync/ops/actions/defaultActionExecutor');
 
-  loadedUseCreateNewSessionOwner ??= (await import('./useCreateNewSession')).useCreateNewSession;
-  const followUpModule = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
-  vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope).mockReset();
-  vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope).mockResolvedValue(undefined);
-  const useCreateNewSessionOwner = loadedUseCreateNewSessionOwner;
+  const { useCreateNewSession: useCreateNewSessionOwner } = await import('./useCreateNewSession');
   const useCreateNewSession: typeof useCreateNewSessionOwner = (params) => useCreateNewSessionOwner({
     ...params,
     draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
@@ -226,7 +218,6 @@ async function createHarness() {
       machineRpcSpy.mockClear();
       sessionSpawnNewActionBoundarySpy.mockReset().mockResolvedValue({ type: 'error', code: 'machine_offline', retryable: true });
       storage.setState({ ...initialStore, sessions: {}, sessionPending: {} });
-      storageState = storage.getState();
       const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
       actionOperationStore.reset();
       authoringMemoryHttp.reset();
@@ -246,7 +237,7 @@ async function createHarness() {
     todoKv,
     machineRpcSpy,
     async disposeAuth() { await authProjection?.unmount(); authProjection = null; },
-    get storageState() { return storageState; },
+    get storageState() { return storage.getState(); },
   };
 }
 
@@ -272,7 +263,7 @@ async function setupTaskHarness() {
   storage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: scope.serverId });
   // Accepted creation also hydrates the destination through the real request
   // owner. Keep its propagation/recovery timers running through completion.
-  return { ...result, scope, storageState: storage.getState() };
+  return { ...result, scope, get storageState() { return storage.getState(); } };
 }
 
 type CreateSessionParams = Parameters<(typeof import('./useCreateNewSession'))['useCreateNewSession']>[0];
@@ -507,7 +498,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
   it('links E2EE tasks with real Account crypto and rejects mode mismatches before writing', async () => {
     const { todoKv, scope } = await setupTaskHarness();
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { encodeBase64 } = await import('@/encryption/base64');
     const { resolveAccountScopedCryptoMaterialFromCredentials } = await import('@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials');
@@ -552,7 +543,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
   it('creates a no-folder session: managed directory, no checkout, no recent folder written', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, modalAlertSpy, storageState } = await setupHarness();
-    sessionSpawnNewActionBoundarySpy.mockResolvedValue(spawnSuccess('session-managed'));
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    sessionSpawnNewActionBoundarySpy.mockImplementationOnce(async () => {
+      // Accepted creation exposes the destination before the real route handoff.
+      storage.getState().applySessions([
+        createSessionFixture({ id: 'session-managed', serverId: 'server-a' }),
+      ]);
+      return spawnSuccess('session-managed');
+    });
     const recentBefore = storageState.authoringMemory.recentMachinePaths;
     const params = createRetryParams(storageState.settings, {
       // The remembered folder and its checkout draft stay in the draft; neither reaches the spawn.
@@ -569,7 +567,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const request = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0];
     expect(request?.directory).toEqual({ kind: 'managed' });
     expect(request?.checkoutCreationDraft ?? null).toBeNull();
-    const { storage } = await import('@/sync/domains/state/storageStore');
     expect(storage.getState().authoringMemory.recentMachinePaths).toEqual(recentBefore);
     await hook.unmount();
   });
@@ -683,7 +680,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
   });
 
-  it('shows the typed daemon-unavailable Action failure without a client retry', async () => {
+  it('offers manual Retry for a typed daemon-unavailable Action without automatically retrying', async () => {
     const { useCreateNewSession, modalAlertSpy } = await setupHarness();
 
     const setIsCreating = vi.fn();
@@ -732,12 +729,19 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       createPromise = hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await createPromise;
 
     expect(modalAlertSpy).toHaveBeenCalled();
     const args = modalAlertSpy.mock.calls[0] ?? [];
-    expect(args).toEqual(['common.error', 'newSession.daemonRpcUnavailableBody']);
+    expect(args).toEqual([
+      'newSession.daemonRpcUnavailableTitle',
+      expect.stringContaining('newSession.daemonRpcUnavailableBody'),
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'common.retry', onPress: expect.any(Function) }),
+        expect.objectContaining({ text: 'common.cancel' }),
+      ]),
+    ]);
     await hook.unmount();
   });
 
@@ -799,7 +803,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
     await hook.unmount();
@@ -867,12 +871,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await hook.rerender({ selectedPath: '/tmp', triggerCreate: true });
 
     if (!createPromise) throw new Error('expected createPromise to be assigned');
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await createPromise;
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
-    const arg = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as any;
-    expect(arg?.directory).toBe('/tmp');
+    const arg = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0];
+    expect(arg?.directory).toEqual({ kind: 'path', path: '/tmp' });
 
     await hook.unmount();
   });
@@ -928,17 +932,17 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       createPromise = hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await createPromise!;
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
-    const arg = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as any;
-    expect(arg?.directory).toBe('/home/happier/projects/subdir');
+    const arg = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0];
+    expect(arg?.directory).toEqual({ kind: 'path', path: '/home/happier/projects/subdir' });
 
     await hook.unmount();
   });
 
-  it('does not expose a client retry for a typed Action rejection', async () => {
+  it('does not automatically retry a typed Action rejection while offering explicit recovery', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy } = await setupHarness();
 
     const setIsCreating = vi.fn();
@@ -986,13 +990,19 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalled();
 
-    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.daemonRpcUnavailableBody');
-    expect(modalAlertSpy.mock.calls[0]).toHaveLength(2);
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'newSession.daemonRpcUnavailableTitle',
+      expect.stringContaining('newSession.daemonRpcUnavailableBody'),
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'common.retry', onPress: expect.any(Function) }),
+        expect.objectContaining({ text: 'common.cancel' }),
+      ]),
+    );
 
     await hook.unmount();
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
@@ -1051,7 +1061,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalled();
@@ -1060,7 +1070,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('admits and projects the accepted first prompt before opening the created session route', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
     const { storage } = await import('@/sync/domains/state/storageStore');
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
     const router = {
       push: vi.fn(),
@@ -1153,7 +1163,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       }));
       expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
     } finally {
-      storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+      harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
       spawnDeferred.resolve(spawnSuccess('session-created'));
       await act(async () => {
         await createPromise;
@@ -1170,7 +1180,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       storageState,
     } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce({
       type: 'pending',
         retryWithSameCreationKey: true,
@@ -1222,7 +1232,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     const creationKey = (sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as any)?.creationKey;
     expect(creationKey).toEqual(expect.stringMatching(/^manual:new-session-attempt-/));
@@ -1242,7 +1252,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
     await prepareSessionDraftPersistenceStorage();
     const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce({
       ...spawnSuccess('session-created'),
       type: 'success', disposition: 'created', sessionId: 'session-created',
@@ -1272,7 +1282,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       storageState,
     } = await setupHarness();
 
-    storageState.sessions['session-after-retry'] = createSessionFixture({ id: 'session-after-retry', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-after-retry', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy
       .mockResolvedValueOnce({
         type: 'pending',
@@ -1326,7 +1336,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(router.replace).not.toHaveBeenCalled();
     const firstSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as {
@@ -1351,10 +1361,11 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       storageState,
     } = await setupHarness();
 
-    storageState.sessions['session-from-operation-settlement'] = createSessionFixture({
+    harness.storageState.applySessions([createSessionFixture({
       id: 'session-from-operation-settlement',
+      serverId: 'server-a',
       encryptionMode: 'plain',
-    });
+    })]);
     sessionSpawnNewActionBoundarySpy
       .mockResolvedValueOnce({
         type: 'pending',
@@ -1412,14 +1423,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await firstHook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await firstHook.unmount();
 
     const secondHook = await renderHook(createHook);
     await act(async () => {
       await secondHook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await secondHook.unmount();
 
     const firstSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as {
@@ -1490,7 +1501,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await firstHook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await firstHook.unmount();
 
     const firstSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as {
@@ -1501,7 +1512,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await secondHook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await secondHook.unmount();
 
     const secondSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0] as {
@@ -1572,7 +1583,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     const firstSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as {
       creationKey?: string;
@@ -1582,7 +1593,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       await hook.getCurrent().handleCreateSession();
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(2);
     const secondSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0] as {
@@ -1596,7 +1607,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('offers Retry for daemon-unavailable post-create follow-up failures without creating another session', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
     const retryableFollowUpError = Object.assign(new Error('Machine target not available for session'), {
       rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
@@ -1651,14 +1662,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       createPromise = hook.getCurrent().handleCreateSession({ afterCreated });
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     let retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
       const buttons = call[2];
       return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
     });
     for (let attempts = 0; attempts < 5 && !retryAlertCall; attempts += 1) {
-      await flushHookEffects({ runAllTimers: true });
+      await flushHookEffects({ runOnlyPendingTimers: true });
       retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
         const buttons = call[2];
         return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
@@ -1692,7 +1703,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('drops duplicate create requests while a launch is already in flight', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValue(spawnSuccess('session-created'));
     let resolveAfterCreated: () => void = () => {
       throw new Error('expected afterCreated to be waiting');
@@ -1764,7 +1775,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('does not navigate when launch scope changes before completion', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
     let resolveAfterCreated: () => void = () => {
       throw new Error('expected afterCreated to be waiting');
@@ -1838,7 +1849,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('keeps routing when macOS resolves a /tmp launch path to its /private/tmp canonical path', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
     let resolveAfterCreated: () => void = () => {
       throw new Error('expected afterCreated to be waiting');
@@ -1905,7 +1916,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     resolveAfterCreated();
     await createPromise;
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(router.replace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
 
@@ -1965,8 +1976,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       await flushHookEffects({ cycles: 1, turns: 1 });
     });
     expect(router.replace).not.toHaveBeenCalled();
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
-    await flushHookEffects({ runAllTimers: true });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await createPromise;
 
     expect(router.replace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
@@ -1980,7 +1991,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('treats profile-mode changes as launch scope changes', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
     let resolveAfterCreated: () => void = () => {
       throw new Error('expected afterCreated to be waiting');
@@ -2042,7 +2053,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     resolveAfterCreated();
     await createPromise;
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     expect(router.replace).not.toHaveBeenCalled();
 
@@ -2052,8 +2063,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('retries post-create follow-up failures against the created session without respawning', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
-    sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
+    const retryPresented = createDeferred<void>();
+    modalAlertSpy.mockImplementationOnce(() => retryPresented.resolve(undefined));
+    const spawnDispatch = createDeferred<SessionSpawnNewInputV2>();
+    sessionSpawnNewActionBoundarySpy.mockImplementationOnce(async (input) => {
+      spawnDispatch.resolve(input);
+      return spawnSuccess('session-created');
+    });
     const afterCreated = vi.fn()
       .mockRejectedValueOnce(new Error('Created session is not available locally yet'))
       .mockResolvedValueOnce(undefined);
@@ -2102,11 +2119,14 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     let createPromise: Promise<void> | void | null = null;
     await act(async () => {
-      createPromise = hook.getCurrent().handleCreateSession({ initialMessage: 'skip', afterCreated });
-      await flushHookEffects({ runAllTimers: true });
+      createPromise = hook.getCurrent().handleCreateSession({ afterCreated });
+      await spawnDispatch.promise;
+      await retryPresented.promise;
+      await flushHookEffects({ runOnlyPendingTimers: true });
     });
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+    expect(afterCreated).toHaveBeenCalledTimes(1);
     expect(router.replace).not.toHaveBeenCalled();
     const retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
       const buttons = call[2];
@@ -2119,11 +2139,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     await act(async () => {
       retry?.onPress?.();
-      await flushHookEffects({ runAllTimers: true });
+      await flushHookEffects({ runOnlyPendingTimers: true });
     });
     await createPromise;
 
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+    expect(afterCreated).toHaveBeenCalledTimes(2);
     expect(afterCreated).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: 'session-created',
       launchAttempt: expect.objectContaining({
@@ -2138,7 +2159,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('shows the generic follow-up error when retry fails for a non-daemon reason', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
 
-    storageState.sessions['session-created'] = createSessionFixture({ id: 'session-created', encryptionMode: 'plain' });
+    harness.storageState.applySessions([createSessionFixture({ id: 'session-created', serverId: 'server-a', encryptionMode: 'plain' })]);
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce(spawnSuccess('session-created'));
     const retryableFollowUpError = Object.assign(new Error('Machine target not available for session'), {
       rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
@@ -2192,7 +2213,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       createPromise = hook.getCurrent().handleCreateSession({ afterCreated });
     });
-    await flushHookEffects({ runAllTimers: true });
+    await flushHookEffects({ runOnlyPendingTimers: true });
 
     const retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
       const buttons = call[2];

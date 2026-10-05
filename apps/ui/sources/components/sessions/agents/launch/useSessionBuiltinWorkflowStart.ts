@@ -98,6 +98,8 @@ export function useSessionBuiltinWorkflowStart(params: Readonly<{
     const modalProps = React.useMemo<WorkflowRunComposerModalProps | null>(() => pending === null ? null : {
         inputs: pending.entry.definition.inputs,
         definition: pending.entry.definition,
+        optionsConsumer: pending.entry.source.kind === 'catalog' ? { kind: 'workflow', workflow: pending.entry.source.workflow }
+            : pending.entry.source.kind === 'saved' ? { kind: 'workflow', workflow: pending.entry.source.definitionId } : undefined,
         values: pending.values,
         onChangeValues: changeValues,
         rawTextValues: pending.rawTextValues,

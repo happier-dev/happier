@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { resolveReviewNarratorPolicy } from '@happier-dev/plugin-sdk/reviews';
 import {
   Button,
   Form,
@@ -12,10 +12,7 @@ import {
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 
-import {
-  TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
-  TriageStartPullRequestReviewResultV1Schema,
-} from '../../actions/entrySessionProtocol.js';
+import { continueTriagePullRequestReviewV1 } from '../../sessions/pullRequestReviewContinuation.js';
 import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
 import {
   readAvailableEngineOptions,
@@ -78,6 +75,8 @@ export function TriagePullRequestReviewChooser(
   const engineFocus = usePluginUiFocusTarget();
   const recoveryFocus = usePluginUiFocusTarget();
   const [phase, setPhase] = React.useState<ReviewChooserPhaseV1>(IDLE);
+  const [walkthrough, setWalkthrough] = React.useState(true);
+  const [narratorEngineId, setNarratorEngineId] = React.useState<string | null>(null);
   const operation = React.useRef(0);
 
   const loadEngines = React.useCallback(async (): Promise<void> => {
@@ -132,52 +131,56 @@ export function TriagePullRequestReviewChooser(
   const startReview = React.useCallback(async (
     options: readonly TriageReviewEngineOptionV1[],
     selected: readonly string[],
+    writeWalkthrough = walkthrough,
   ): Promise<void> => {
     if (selected.length === 0) return;
+    const policy = resolveReviewNarratorPolicy({ selectedEngineIds: selected, engines: options });
+    const candidates = options.filter((option) => option.capabilities.structuredNarration);
+    const narrator = candidates.find((option) => option.value === narratorEngineId)
+      ?? candidates.find((option) => option.value === policy.defaultNarratorEngineId)
+      ?? candidates[0];
+    if (writeWalkthrough && (props.pending.comparisonSource === undefined || narrator === undefined)) return;
     const currentOperation = operation.current + 1;
     operation.current = currentOperation;
     setPhase({ kind: 'starting', options, selected });
-    let raw: unknown;
-    try {
-      raw = await host.executeAction(
-        TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
-        {
-          v: 1,
-          sessionId: props.pending.sessionId,
-          review: props.pending.review,
-          engineIds: [...selected],
-          instructions: props.pending.instructions,
-        } as unknown as JsonValue,
-      );
-    } catch {
+    const continuation = await continueTriagePullRequestReviewV1(host, props.pending, {
+      engineIds: [...selected],
+      ...(writeWalkthrough ? {
+        outputs: ['walkthrough'], comparisonSource: props.pending.comparisonSource,
+        ...(policy.requiresSeparateNarrator ? { narrator: { engineId: narrator!.value } } : {}),
+      } : {}),
+    }, { isCurrent: () => operation.current === currentOperation });
+    if (operation.current !== currentOperation) return;
+    if (continuation.kind === 'cancelled') {
+      setPhase({ kind: 'choosing', options, selected });
+      return;
+    }
+    if (continuation.kind === 'unknown') {
       // This outward write may already have reached review.start. Repeating it
       // would be a blind second mutation; only the idempotent Session open is
       // offered from this state.
-      if (operation.current === currentOperation) {
-        setPhase({ kind: 'failed', failure: 'reviewUnknown', options, selected });
-      }
+      setPhase({ kind: 'failed', failure: 'reviewUnknown', options, selected });
       return;
     }
-    if (operation.current !== currentOperation) return;
-    const result = TriageStartPullRequestReviewResultV1Schema.safeParse(raw);
-    if (!result.success || result.data.status !== 'started') {
+    if (continuation.kind !== 'settled' || continuation.result.status !== 'started') {
       setPhase({ kind: 'failed', failure: 'reviewRefused', options, selected });
       return;
     }
+    const result = continuation.result;
     // The fan-out answers per engine. A run that never started must be visible
     // and repeatable, and the runs that DID start must not be repeated with it,
     // so the retry selection narrows to exactly the refused engines.
-    if (result.data.failedEngineIds.length > 0) {
+    if (result.failedEngineIds.length > 0) {
       setPhase({
         kind: 'failed',
         failure: 'reviewPartial',
         options,
-        selected: [...result.data.failedEngineIds],
+        selected: [...result.failedEngineIds],
       });
       return;
     }
     await openSession();
-  }, [host, openSession, props.pending]);
+  }, [host, narratorEngineId, openSession, props.pending, walkthrough]);
 
   const choosing = phase.kind === 'choosing' ? phase : null;
   const failed = phase.kind === 'failed' ? phase : null;
@@ -185,6 +188,13 @@ export function TriagePullRequestReviewChooser(
   const selected = choosing?.selected ?? failed?.selected ?? [];
   const canRetryReview = failed?.failure === 'reviewRefused' || failed?.failure === 'reviewPartial';
   const mustOnlyOpen = failed?.failure === 'reviewUnknown' || failed?.failure === 'open';
+  const narratorPolicy = resolveReviewNarratorPolicy({ selectedEngineIds: selected, engines: options });
+  const narratorOptions = options.filter((option) => option.capabilities.structuredNarration);
+  const chosenNarrator = narratorOptions.find((option) => option.value === narratorEngineId)
+    ?? narratorOptions.find((option) => option.value === narratorPolicy.defaultNarratorEngineId)
+    ?? narratorOptions[0];
+  const canStart = selected.length > 0 && (!walkthrough
+    || (props.pending.comparisonSource !== undefined && chosenNarrator !== undefined));
 
   return (
     <Stack gap="small">
@@ -204,7 +214,9 @@ export function TriagePullRequestReviewChooser(
       {choosing !== null || (failed !== null && options.length > 0) ? (
         <Form.Select
           label={text('plugins.triage.surface.reviewChooser.engines', 'Review engines')}
-          options={options}
+          options={options.map((option) => ({ ...option, accessibilityLabel: option.label, ...(!option.capabilities.structuredNarration ? {
+            description: text('plugins.triage.surface.reviewChooser.findingsOnly', 'Findings only'),
+          } : {}) }))}
           value={selected}
           multiple
           required
@@ -217,6 +229,41 @@ export function TriagePullRequestReviewChooser(
               selected: Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [],
             });
           }}
+        />
+      ) : null}
+
+      {choosing !== null && choosing.options.length > 0 ? (
+        <Form.Toggle
+          label={text('plugins.triage.surface.reviewChooser.walkthrough', 'Also write a walkthrough')}
+          value={walkthrough}
+          onChange={setWalkthrough}
+        />
+      ) : null}
+
+      {choosing !== null && walkthrough && selected.length > 0 && narratorPolicy.requiresSeparateNarrator ? (
+        <Form.Select
+          label={text('plugins.triage.surface.reviewChooser.narrator', 'Narrator')}
+          options={narratorOptions}
+          value={chosenNarrator?.value}
+          presentation={narratorOptions.length > 4 ? 'field' : 'inline'}
+          required
+          onChange={(value) => { if (typeof value === 'string') setNarratorEngineId(value); }}
+        />
+      ) : null}
+
+      {choosing !== null && walkthrough && selected.length > 0 && chosenNarrator === undefined ? (
+        <Status
+          tone="warning"
+          labelKey="plugins.triage.surface.reviewChooser.noNarrator"
+          label="No available engine can write a walkthrough. Choose findings only to start this review."
+        />
+      ) : null}
+
+      {choosing !== null && walkthrough && props.pending.comparisonSource === undefined ? (
+        <Status
+          tone="warning"
+          labelKey="plugins.triage.surface.comparisonUnavailable"
+          label="This source cannot open a comparison for this pull request."
         />
       ) : null}
 
@@ -282,7 +329,7 @@ export function TriagePullRequestReviewChooser(
             titleKey="plugins.triage.surface.reviewChooser.start"
             title="Start review"
             variant="primary"
-            disabled={phase.selected.length === 0}
+            disabled={!canStart}
             onPress={() => { void startReview(phase.options, phase.selected); }}
           />
         ) : null}
@@ -310,7 +357,9 @@ export function TriagePullRequestReviewChooser(
             title="Try again"
             variant="primary"
             focusTarget={recoveryFocus}
-            onPress={() => { void startReview(options, selected); }}
+            // The original operation already admitted its one narrator. A
+            // partial retry starts only the refused reviewers, never another narrator.
+            onPress={() => { void startReview(options, selected, failed?.failure === 'reviewPartial' ? false : walkthrough); }}
           />
         ) : null}
         {mustOnlyOpen ? (

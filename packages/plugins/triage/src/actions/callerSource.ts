@@ -8,17 +8,10 @@ import type { TriageAdmittedSourceV1 } from './listEntries.js';
 /**
  * The one owner of "who is calling a caller-bound Triage Action".
  *
- * Two Actions ask this question — source administration writes what the answer
- * owns, and the configured-instance read returns it — and a second copy of the
- * resolution would be a second authority over which rows a source may reach.
- * The rule is deliberately not a filter the caller supplies: the host stamps the
- * caller, this resolves that caller's own currently admitted V1 contribution at
- * this target's own point, and the point admits at most one contribution per
- * contributor, so the caller's plugin id resolves it exactly.
- *
- * A caller with none, one whose contribution is retired, one whose descriptor
- * declares no purpose, and a non-plugin caller are all the same answer: no
- * source. Every consumer turns that into the published `invalidCaller` refusal.
+ * Plugin callers remain bound to their own admitted contribution. Authenticated
+ * host agent/MCP/CLI invocations may select an admitted source address; that
+ * address is never caller provenance. Nested plugin calls cannot inherit host
+ * authority merely by claiming an origin surface.
  */
 
 export type TriageCallerSourceV1 = Readonly<{
@@ -38,39 +31,55 @@ export type TriageCallerSourceResolutionV1 =
     | Readonly<{ kind: 'currentnessConflict' }>;
 
 const INVALID_CALLER: TriageCallerSourceResolutionV1 = Object.freeze({ kind: 'invalidCaller' });
-const CURRENTNESS_CONFLICT: TriageCallerSourceResolutionV1 = Object.freeze({
-    kind: 'currentnessConflict',
-});
 
-function callerSourceFrom(
+export function isTriageHostActionCaller(context: PluginInvocationContext): boolean {
+    return context.caller === undefined
+        && (context.surface === 'agent' || context.surface === 'mcp' || context.surface === 'cli');
+}
+
+export function isTriageAccountCaller(context: PluginInvocationContext): boolean {
+    return isTriageSelfCaller(context) || isTriageHostActionCaller(context);
+}
+
+type TriageCallerSourcesResolutionV1 =
+    | Readonly<{ kind: 'sources'; callers: readonly TriageCallerSourceV1[] }>
+    | Readonly<{ kind: 'invalidCaller' }>
+    | Readonly<{ kind: 'currentnessConflict' }>;
+
+function sameSource(left: PluginContributionIdentity, right: PluginContributionIdentity): boolean {
+    return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+function callerSourcesFrom(
     context: PluginInvocationContext,
     admitted: readonly TriageAdmittedSourceV1[],
-): TriageCallerSourceV1 | null {
+    requestedSource?: PluginContributionIdentity,
+): readonly TriageCallerSourceV1[] | null {
     const caller = context.caller;
-    if (!caller || caller.kind !== 'plugin') return null;
-    const matches = admitted.filter((entry) => entry.contributor.pluginId === caller.pluginId);
-    const contribution = matches.length === 1 ? matches[0] : undefined;
-    if (!contribution) return null;
-    const declaredPurpose = contribution.descriptor?.purpose;
-    if (typeof declaredPurpose !== 'string') return null;
-    return {
-        contribution,
-        source: {
-            pluginId: contribution.contributor.pluginId,
-            localId: contribution.contributor.contributionId,
-        },
-        declaredPurpose,
-    };
+    const hostCaller = isTriageHostActionCaller(context);
+    if (!hostCaller && caller?.kind !== 'plugin') return null;
+    const callerPluginId = caller?.kind === 'plugin' ? caller.pluginId : undefined;
+    const matches = hostCaller ? admitted : admitted.filter((entry) => entry.contributor.pluginId === callerPluginId);
+    if (!hostCaller && matches.length !== 1) return null;
+    const sources = matches.flatMap((contribution): TriageCallerSourceV1[] => {
+        const declaredPurpose = contribution.descriptor?.purpose;
+        if (typeof declaredPurpose !== 'string') return [];
+        const source = { pluginId: contribution.contributor.pluginId, localId: contribution.contributor.contributionId };
+        if (requestedSource && !sameSource(source, requestedSource)) return [];
+        return [{ contribution, source, declaredPurpose }];
+    });
+    return (requestedSource || !hostCaller) && sources.length !== 1 ? null : sources;
 }
 
 /**
  * Read the caller's own admitted source contribution from the live admitted
  * view, holding an invalidation watch for the length of the read.
  */
-export async function resolveTriageCallerSource(
+export async function resolveTriageCallerSources(
     context: PluginInvocationContext,
     options?: PluginCancellationOptions,
-): Promise<TriageCallerSourceResolutionV1> {
+    requestedSource?: PluginContributionIdentity,
+): Promise<TriageCallerSourcesResolutionV1> {
     let invalidated = false;
     const observation = context.services.targetedContributions.observeForSelf(
         TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
@@ -78,13 +87,25 @@ export async function resolveTriageCallerSource(
     );
     try {
         const snapshot = await observation.readCurrent(options);
-        const caller = callerSourceFrom(context, snapshot.contributions);
-        if (!caller) return INVALID_CALLER;
-        if (invalidated) return CURRENTNESS_CONFLICT;
-        return Object.freeze({ kind: 'source', caller });
+        const callers = callerSourcesFrom(context, snapshot.contributions, requestedSource);
+        if (!callers) return { kind: 'invalidCaller' };
+        if (invalidated) return { kind: 'currentnessConflict' };
+        return Object.freeze({ kind: 'sources', callers });
     } finally {
         observation.dispose();
     }
+}
+
+export async function resolveTriageCallerSource(
+    context: PluginInvocationContext,
+    options?: PluginCancellationOptions,
+    requestedSource?: PluginContributionIdentity,
+): Promise<TriageCallerSourceResolutionV1> {
+    if (isTriageHostActionCaller(context) && requestedSource === undefined) return INVALID_CALLER;
+    const resolution = await resolveTriageCallerSources(context, options, requestedSource);
+    if (resolution.kind !== 'sources') return { kind: resolution.kind };
+    const caller = resolution.callers[0];
+    return caller && resolution.callers.length === 1 ? { kind: 'source', caller } : INVALID_CALLER;
 }
 
 /**

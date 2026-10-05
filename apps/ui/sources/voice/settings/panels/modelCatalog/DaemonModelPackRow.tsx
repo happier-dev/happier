@@ -15,6 +15,8 @@ import { formatModelCatalogRowDetail } from './formatModelCatalogRowDetail';
 import { useDaemonVoiceModelCatalogController } from './DaemonVoiceModelCatalogContext';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 
 const REMOVE_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 const REMOVE_BUTTON_STYLE = {
@@ -121,6 +123,7 @@ export function DaemonModelPackRow(props: Readonly<{
 export function SelectedDaemonModelPackRow(props: Readonly<{
     packId: string | null;
     kind: ModelPackKind;
+    setting?: SettingRef;
 }>): React.ReactElement | null {
     const controller = useDaemonVoiceModelCatalogController();
     if (!controller || !props.packId) return null;
@@ -135,7 +138,7 @@ export function SelectedDaemonModelPackRow(props: Readonly<{
     const rows = props.kind === 'stt_sherpa' ? groups.stt : groups.tts;
     const row = rows.find((candidate) => candidate.packId === canonicalPackId);
     if (!row) return null;
-    return (
+    const item = (
         <DaemonModelPackRow
             row={row}
             actionInFlight={controller.state.actionPackId === row.packId}
@@ -146,4 +149,5 @@ export function SelectedDaemonModelPackRow(props: Readonly<{
             onCancel={controller.cancel}
         />
     );
+    return props.setting ? <SettingAnchor setting={props.setting}>{item}</SettingAnchor> : item;
 }

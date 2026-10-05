@@ -1,15 +1,128 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { renderSystemdServiceUnit } from '../../service/systemd.js';
+import { buildLaunchdPlistXml } from '../../service/launchd.js';
 import { renderWindowsScheduledTaskWrapperPs1 } from '../../service/windows.js';
 
 import { discoverHappierServices } from './discoverHappierServices.js';
 
 describe('discoverHappierServices', () => {
+    it.each(['exit', 'error', 'throw', 'stderr'] as const)('keeps unavailable launchd observations unknown for %s', async (failure) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-launchd-status-'));
+        const label = 'com.happier.cli.daemon.company';
+        try {
+            await writeFile(join(root, `${label}.plist`), buildLaunchdPlistXml({
+                label,
+                programArgs: ['happier', 'daemon', 'start-sync'],
+                env: { HAPPIER_HOME_DIR: root },
+                stdoutPath: join(root, 'out.log'),
+                stderrPath: join(root, 'err.log'),
+                runAtLoad: true,
+            }));
+            const inventory = await discoverHappierServices({ platform: 'darwin', uid: 501, roots: [{ path: root, scope: 'user' }], commands: { run: () => {
+                if (failure === 'throw') throw new Error('Query denied');
+                return { stdout: '', stderr: `label = ${label}\npid = 42\ndisabled services = {}`, status: failure === 'exit' ? 1 : failure === 'error' ? null : 0, error: failure === 'error' ? new Error('Unavailable') : undefined };
+            } } });
+            expect(inventory.services).toEqual([expect.objectContaining({ installed: true, verification: 'verified', running: null, enabled: null })]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+    it.each(['exit', 'error', 'throw'] as const)('preserves Scheduler enumeration %s failures', async (failure) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-enumeration-error-'));
+        try {
+            await expect(discoverHappierServices({ platform: 'win32', roots: [{ path: root, scope: 'user' }], commands: { run: () => {
+                if (failure === 'throw') throw new Error('Scheduler denied');
+                return { stdout: '', stderr: 'Access denied', status: failure === 'exit' ? 1 : null, error: failure === 'error' ? new Error('Scheduler unavailable') : undefined };
+            } } })).rejects.toMatchObject({ code: 'service_inventory_unavailable' });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it.each(['linux', 'darwin', 'win32'] as const)('preserves named Happier definition read failures on %s, while ignoring unrelated unreadable definitions', async (platform) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-unreadable-'));
+        try {
+            const fileName = platform === 'darwin' ? 'com.happier.cli.daemon.company.plist' : platform === 'win32' ? 'happier-daemon.company.ps1' : 'happier-daemon.company.service';
+            const unrelated = platform === 'darwin' ? 'other.plist' : platform === 'win32' ? 'other.ps1' : 'other.service';
+            await writeFile(join(root, unrelated), 'unrelated');
+            const denied = Object.assign(new Error('Access denied'), { code: 'EACCES' });
+            const params = { platform, roots: [{ path: root, scope: 'user' as const }], fs: { readFile: (async () => { throw denied; }) as typeof readFile }, commands: { run: () => '' } };
+            await expect(discoverHappierServices(params)).resolves.toEqual({ services: [] });
+            await writeFile(join(root, fileName), 'known definition');
+            await expect(discoverHappierServices(params)).rejects.toMatchObject({ code: 'service_inventory_unavailable', message: expect.stringContaining(fileName) });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        { label: 'happier-daemon.default', instanceId: null, targetMode: 'default-following' },
+        { label: 'happier-daemon.company.profile', instanceId: 'company.profile', targetMode: 'pinned' },
+        { label: 'happier-daemon.dev', instanceId: 'dev', targetMode: 'pinned' },
+    ])('discovers named Scheduler task $label when its wrapper and services directory are absent', async ({ label, instanceId, targetMode }) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-task-only-'));
+        try {
+            const definitionPath = `C:\\Users\\tester\\.happier\\services\\${label}.ps1`;
+            const inventory = await discoverHappierServices({ platform: 'win32', roots: [{ path: join(root, 'missing'), scope: 'user' }], commands: { run: ({ args }) => {
+                if (args.includes('CSV')) return `"\\Happier\\${label}","N/A"\r\n`;
+                if (args.includes('/XML')) return `<Task><Arguments>-File "${definitionPath}"</Arguments></Task>`;
+                return `TaskName: \\Happier\\${label}\r\nStatus: Ready\r\n`;
+            } } });
+            expect(inventory.services).toEqual([expect.objectContaining({ serviceType: 'daemon', label, instanceId, definitionPath, happierHomeDir: 'C:\\Users\\tester\\.happier', ring: 'stable', targetMode, verification: 'candidate', installed: true })]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('retains a readable installed Windows definition when Scheduler registration is absent', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-stale-wrapper-'));
+        try {
+            const path = join(root, 'happier-daemon.default.ps1');
+            await writeFile(path, renderWindowsScheduledTaskWrapperPs1({ workingDirectory: root, programArgs: ['happier.exe', 'daemon', 'start-sync'], env: { HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service' }, stdoutPath: join(root, 'out.log'), stderrPath: join(root, 'err.log') }));
+            const inventory = await discoverHappierServices({ platform: 'win32', roots: [{ path: root, scope: 'user' }], commands: { run: ({ args }) => ({ stdout: '', stderr: args.includes('CSV') ? '' : 'Task not found', status: args.includes('CSV') ? 0 : 1 }) } });
+            expect(inventory.services).toEqual([expect.objectContaining({ definitionPath: path, installed: true, running: null, enabled: null })]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        { label: 'happier-daemon.dev', instanceId: 'dev', ring: 'stable' },
+        { label: 'happier-daemon.preview.company.profile', instanceId: 'company.profile', ring: 'preview' },
+    ])('infers the complete pinned identity and ring of $label without an env declaration', async ({ label, instanceId, ring }) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-inferred-pin-'));
+        try {
+            await writeFile(join(root, `${label}.service`), renderSystemdServiceUnit({ description: 'Happier daemon', execStart: ['happier', 'daemon', 'start-sync'], env: { HAPPIER_HOME_DIR: root }, wantedBy: 'default.target' }));
+            const inventory = await discoverHappierServices({ platform: 'linux', roots: [{ path: root, scope: 'user' }], commands: { run: () => '' } });
+            expect(inventory.services).toEqual([expect.objectContaining({ instanceId, ring, targetMode: 'pinned', verification: 'verified' })]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('names a Scheduler task whose details fail and accepts disappearance only after successful enumeration', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-runtime-task-error-'));
+        try {
+            let listings = 0;
+            let disappears = false;
+            const params = { platform: 'win32' as const, roots: [{ path: root, scope: 'user' as const }], commands: { run: ({ args }: { args: readonly string[] }) => {
+                if (args.includes('CSV')) return ++listings > 1 && disappears ? '' : '"\\Happier\\happier-daemon.company","N/A"\r\n';
+                throw new Error('OS inspection denied');
+            } } };
+            await expect(discoverHappierServices(params)).rejects.toMatchObject({ code: 'service_inventory_unavailable', message: expect.stringContaining('happier-daemon.company') });
+            listings = 0;
+            disappears = true;
+            await expect(discoverHappierServices(params)).resolves.toEqual({ services: [] });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('discovers Windows scheduled-task wrappers from user scope', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-runtime-services-win32-'));
         try {
@@ -121,7 +234,7 @@ describe('discoverHappierServices', () => {
                     definitionPath: join(systemRoot, 'com.happier.cli.daemon.preview.cloud.plist'),
                     executablePath: '/Users/tester/.happier/cli-preview/current/happier',
                     installed: true,
-                    running: false,
+                    running: null,
                 }),
             ]);
         } finally {
@@ -300,6 +413,7 @@ describe('discoverHappierServices', () => {
             const inventory = await discoverHappierServices({
                 platform: params.platform,
                 roots: [{ path: serviceRoot, scope: 'user' }],
+                commands: { run: () => '' },
             });
 
             expect(inventory.services).toEqual([
@@ -315,7 +429,7 @@ describe('discoverHappierServices', () => {
                     definitionPath: join(serviceRoot, params.fileName),
                     executablePath: params.executablePath,
                     installed: true,
-                    running: false,
+                    running: null,
                     serverUrl: params.serverUrl,
                     publicServerUrl: params.serverUrl,
                 }),

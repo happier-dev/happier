@@ -16,14 +16,15 @@ describe('readVoiceConversationBindingMetadata', () => {
         targetSessionId: ' s1 ',
         updatedAt: '123',
       },
-    });
+    }, { sourceServerId: ' server-a ' });
 
         expect(binding).toEqual({
             adapterId: 'local_conversation',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
+            conversationSessionAddress: { serverId: 'server-a', sessionId: 'carrier-s1' },
             transcriptMode: 'native_session',
-            targetSessionId: 's1',
+            targetSessionAddress: { serverId: 'server-a', sessionId: 's1' },
             updatedAt: 123,
         });
   });
@@ -38,10 +39,11 @@ describe('readVoiceConversationBindingMetadata', () => {
           adapterId: ' local_conversation ',
           controlSessionId: ' voice-global ',
           conversationSessionId: ' carrier-s1 ',
+          conversationSessionAddress: { serverId: ' server-a ', sessionId: ' carrier-s1 ' },
           transcriptMode: 'synthetic',
-          targetSessionId: ' s1 ',
+          targetSessionAddress: { serverId: ' server-b ', sessionId: ' s1 ' },
           updatedAt: 123,
-        } as any,
+        },
       ),
     ).toEqual({
       systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
@@ -51,6 +53,7 @@ describe('readVoiceConversationBindingMetadata', () => {
           controlSessionId: 'voice-global',
           transcriptMode: 'synthetic',
           targetSessionId: 's1',
+          targetServerId: 'server-b',
           updatedAt: 123,
         },
     });
@@ -66,10 +69,11 @@ describe('readVoiceConversationBindingMetadata', () => {
           adapterId: '   ',
           controlSessionId: ' voice-global ',
           conversationSessionId: ' carrier-s1 ',
+          conversationSessionAddress: { serverId: 'server-a', sessionId: 'carrier-s1' },
           transcriptMode: 'synthetic',
-          targetSessionId: ' s1 ',
+          targetSessionAddress: { serverId: 'server-a', sessionId: 's1' },
           updatedAt: 123,
-        } as any,
+        },
       ),
     ).toThrow(TypeError);
   });

@@ -19,6 +19,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     title: string;
     subtitle?: string;
     primary?: boolean;
+    /** A centred welcome CTA with its glyph before the label, rather than an action card. */
+    presentation?: 'card' | 'button';
     iconName?: IconName;
     /**
      * A provider's own connect colour, exactly as its Home projected it
@@ -68,6 +70,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const accent = accentColor && accentColor !== 'transparent' && isValidThemeProfileColorValue(accentColor)
         ? accentColor
         : null;
+    const button = props.presentation === 'button';
 
     if (props.unavailable) {
         return (
@@ -107,18 +110,24 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                 <Animated.View
                     style={[
                         styles.card,
+                        button ? styles.button : null,
                         primary
                             ? { backgroundColor: theme.colors.button.primary.background, borderColor: theme.colors.button.primary.background }
-                            : { backgroundColor: hovered ? theme.colors.surface.elevated : theme.colors.surface.base, borderColor: theme.colors.border.default },
+                            : button
+                                ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.elevated, borderColor: 'transparent' }
+                                : { backgroundColor: hovered ? theme.colors.surface.elevated : theme.colors.surface.base, borderColor: theme.colors.border.default },
                         focusRingStyle({ focused, color: theme.colors.border.focus }),
                         pressFeedback.animatedStyle,
                     ]}
                 >
-                    <View testID={`${props.testID}-text`} style={styles.textBlock}>
+                    {button && pending ? <ActivitySpinner color={foreground} /> : button && props.iconName ? (
+                        <Icon testID={`${props.testID}-icon`} name={props.iconName} size={20} color={foreground} />
+                    ) : null}
+                    <View testID={`${props.testID}-text`} style={button ? styles.buttonText : styles.textBlock}>
                         <Text testID={`${props.testID}-title`} style={[styles.title, { color: foreground }]}>{props.title}</Text>
                         {props.subtitle ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>
-                    {pending ? <ActivitySpinner color={foreground} /> : props.iconName ? (
+                    {!button && pending ? <ActivitySpinner color={foreground} /> : !button && props.iconName ? (
                         <View
                             testID={accent ? `${props.testID}-accent` : undefined}
                             accessibilityElementsHidden
@@ -152,6 +161,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 16,
     },
     textBlock: { flex: 1, gap: 0 },
+    button: { minHeight: 50, justifyContent: 'center', gap: 8 },
+    buttonText: { gap: 0, alignItems: 'center', flexShrink: 1 },
     // The same frame, quieter: its words still read while its action waits.
     unavailableText: { opacity: 0.6 },
     accentMark: {

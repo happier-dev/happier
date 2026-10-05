@@ -14,7 +14,6 @@ import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWra
 import { ProjectsListView } from '@/components/projects/ProjectsListView';
 import { ExternalSessionsEmptyState } from '@/components/sessions/shell/ExternalSessionsEmptyState';
 import { Header } from '@/components/navigation/Header';
-import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -24,7 +23,6 @@ import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatu
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -299,7 +297,6 @@ const PhoneMainView = React.memo((props: Readonly<{
     const router = useRouter();
     const friendsEnabled = useFriendsEnabled();
     const inboxEnabled = useInboxAvailable();
-    const voiceEnabled = useFeatureEnabled('voice');
     const { activeTab, setActiveTab } = useMainAppTabState();
 
     React.useEffect(() => {
@@ -370,7 +367,6 @@ const PhoneMainView = React.memo((props: Readonly<{
                     headerShadowVisible={false}
                     headerTransparent={true}
                 />
-                {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
             </View>
             {renderTabContent()}
         </View>

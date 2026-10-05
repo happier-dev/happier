@@ -3,7 +3,12 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import type { ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { WorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
+import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
+import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
+import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/actions';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { WorkflowActionFieldBindingV1, WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
@@ -12,31 +17,17 @@ import { ActionInputFields } from '@/components/sessions/actions/ActionInputFiel
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
-import { WorkflowContainerSummary } from './WorkflowContainerSummary';
+import { WorkflowStepOptionsFootChip } from './WorkflowStepOptionsChip';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
-import { WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
-
-/**
- * A field fed by an options source (for example `review.engines.available`,
- * the review-engine inventory) offers exactly what that source returns for
- * this Machine — never a static enum from the Action schema, and nothing
- * until the source answers (04 §5.3 E20).
- */
-function resolveActionFieldChoices(
-    field: EffectiveActionInputField,
-    resolveFieldOptions: ResolveSessionActionFieldOptions | undefined,
-) {
-    const resolved = resolveFieldOptions?.(field);
-    if (resolved !== undefined) return resolved;
-    return field.optionsSourceId === undefined ? (field.options ?? []) : [];
-}
+import { formatWorkflowValueReference, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 /** The literal a newly set field starts from: an empty selection for a multi-select, empty text otherwise. */
 function initialActionFieldLiteral(hint: EffectiveActionInputField | null): WorkflowActionFieldBindingV1 {
@@ -57,10 +48,11 @@ type ActionFieldRow = Readonly<{
  * any field already bound that the declaration no longer lists (kept visible,
  * never dropped).
  */
-function resolveActionFieldRows(spec: ActionSpec | null, input: WorkflowActionLeafV1['input']): readonly ActionFieldRow[] {
+function resolveActionFieldRows(spec: WorkflowActionSpec | null, input: WorkflowActionLeafV1['input']): readonly ActionFieldRow[] {
     const rows: ActionFieldRow[] = [];
     const seen = new Set<string>();
-    for (const field of spec?.inputHints?.fields ?? []) {
+    const literals = Object.fromEntries(Object.entries(input).flatMap(([name, binding]) => binding.kind === 'literal' ? [[name, binding.value]] : []));
+    for (const field of spec === null ? [] : resolveEffectiveActionInputFields(spec, literals)) {
         if (field.path.includes('.') || seen.has(field.path)) continue;
         seen.add(field.path);
         rows.push({
@@ -68,7 +60,7 @@ function resolveActionFieldRows(spec: ActionSpec | null, input: WorkflowActionLe
             label: field.title,
             ...(field.description === undefined ? {} : { description: field.description }),
             required: field.required === true,
-            hint: { ...field, visible: true, required: field.required === true, disabled: false },
+            hint: field,
         });
     }
     for (const key of Object.keys(input)) {
@@ -95,6 +87,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     onSelect: () => void;
     onChangeBlock: (next: WorkflowActionLeafV1) => void;
     resolveFieldOptions?: ResolveSessionActionFieldOptions;
+    composerScope?: AuthoringComposerScope;
     editable?: boolean;
     slots?: WorkflowDocumentStepSlots | null;
     /** Opens this block's Step options, anchored beside its options control; absent when read-only. */
@@ -104,8 +97,16 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const { block, testIDPrefix } = props;
     const { theme } = useUnistyles();
     const editable = props.editable !== false;
-    const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId), [block.actionId]);
+    const catalog = useWorkflowActionCatalog(props.composerScope);
+    const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId, catalog.specs), [block.actionId, catalog.specs]);
     const rows = React.useMemo(() => resolveActionFieldRows(spec, block.input), [block.input, spec]);
+    const literalInput = React.useMemo(() => Object.fromEntries(Object.entries(block.input)
+        .flatMap(([name, binding]) => binding.kind === 'literal' ? [[name, binding.value]] : [])), [block.input]);
+    const fieldOptions = useInputFieldOptions({ machineId: catalog.machineId, serverId: catalog.serverId,
+        enabled: editable && spec !== null,
+        requests: rows.flatMap((row) => row.hint ? [{ field: row.hint, actionId: block.actionId, draftInput: literalInput }] : []) });
+    const resolveFieldOptions = parseQualifiedPluginActionId(block.actionId) ? fieldOptions.resolveOptions
+        : props.resolveFieldOptions ?? fieldOptions.resolveOptions;
     const displayName = spec?.title ?? block.actionId;
     const rowPrefix = `${testIDPrefix}-action-${block.id}`;
 
@@ -117,6 +118,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     return (
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
+                kindMark={<Icon name="lightning" size={16} />}
                 ordinal={props.ordinal}
                 displayName={displayName}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
@@ -126,23 +128,8 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 testID={`${rowPrefix}-label`}
                 actionsTestID={`${rowPrefix}-actions`}
             />
-            {props.onOpenOptions === undefined || props.editable === false ? null : (
-                <WorkflowContainerSummary
-                    sentence={props.block.onlyWhen === undefined
-                        ? t('workflows.page.inspector.stepOptions')
-                        : t('workflows.page.inspector.onlyWhenSentence', {
-                            condition: formatWorkflowConditionSentence(props.draft, props.block.onlyWhen),
-                        })}
-                    onOpenOptions={props.onOpenOptions}
-                    optionsLabel={t('workflows.page.inspector.stepOptions')}
-                    testID={`${rowPrefix}-options`}
-                />
-            )}
-            <Text style={workflowEditorStyles.metaText}>
-                {spec === null
-                    ? t('workflows.page.blocks.actionUnavailable', { action: block.actionId })
-                    : t('workflows.page.blocks.actionSub')}
-            </Text>
+            {props.slots?.occurrenceSelector ?? null}
+            <View testID={`${rowPrefix}-card`} style={workflowEditorStyles.actionCard}>
             {rows.length === 0 ? (
                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.noFields')}</Text>
             ) : rows.map((row) => {
@@ -150,12 +137,13 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 const fieldId = `${rowPrefix}-field-${row.key}`;
                 return (
                     <View key={row.key} testID={fieldId} style={workflowEditorStyles.actionFieldRow}>
-                        <View style={workflowEditorStyles.metaRow}>
+                        <View style={workflowEditorStyles.actionFieldLabelColumn}>
                             <Text style={workflowEditorStyles.actionFieldLabel}>{row.label}</Text>
                             {row.required ? (
                                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.required')}</Text>
                             ) : null}
                         </View>
+                        <View style={workflowEditorStyles.actionFieldValue}>
                         {binding === undefined ? (
                             <View style={workflowEditorStyles.metaRow}>
                                 <Text style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.notSet')}</Text>
@@ -174,6 +162,13 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                     </HappierPressable>
                                 ) : null}
                             </View>
+                        ) : !editable ? (
+                            <Text style={workflowEditorStyles.metaText} selectable>
+                                {(binding.kind === 'list' ? binding.items : [binding]).map((reference) =>
+                                    reference.kind === 'origin_session_id'
+                                        ? t('workflows.page.inspector.originSession')
+                                        : formatWorkflowValueReference(props.draft, reference)).join(' · ')}
+                            </Text>
                         ) : binding.kind === 'list' ? (
                             binding.items.map((item, index) => (
                                 <WorkflowValueReferenceEditor
@@ -193,7 +188,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                                 fields={[{ ...(row.hint as EffectiveActionInputField), widget: 'select' }]}
                                                 input={{ [row.key]: value }}
                                                 editable={editable}
-                                                resolveFieldOptions={(field) => resolveActionFieldChoices(field, props.resolveFieldOptions)}
+                                                resolveFieldOptions={resolveFieldOptions}
                                                 onPatch={(patch) => onChange(patch[row.key])}
                                                 resolveFieldTestID={() => `${fieldId}-item-${index}-literal`}
                                             />
@@ -215,7 +210,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                             fields={[row.hint as EffectiveActionInputField]}
                                             input={{ [row.key]: value }}
                                             editable={editable}
-                                            resolveFieldOptions={(field) => resolveActionFieldChoices(field, props.resolveFieldOptions)}
+                                            resolveFieldOptions={resolveFieldOptions}
                                             onPatch={(patch) => onChange(patch[row.key])}
                                             resolveFieldTestID={() => `${fieldId}-literal`}
                                         />
@@ -225,9 +220,33 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                 testIDPrefix={fieldId}
                             />
                         )}
+                        </View>
                     </View>
                 );
             })}
+            <View style={workflowEditorStyles.actionCardFoot}>
+                <Text style={workflowEditorStyles.metaText}>
+                    {spec === null
+                        ? t('workflows.page.blocks.actionUnavailable', { action: block.actionId })
+                        : t('workflows.page.blocks.actionSub')}
+                </Text>
+                {props.onOpenOptions === undefined || !editable ? null : (
+                    <WorkflowStepOptionsFootChip
+                        label={block.onlyWhen === undefined
+                            ? t('workflows.page.blocks.workflowDefaults')
+                            : t('workflows.page.inspector.onlyWhenSentence', {
+                                condition: formatWorkflowConditionSentence(props.draft, block.onlyWhen),
+                            })}
+                        changed={block.onlyWhen !== undefined}
+                        onOpen={props.onOpenOptions}
+                        testID={`${rowPrefix}-options`}
+                        labelTestID={`${rowPrefix}-options-label`}
+                    />
+                )}
+            </View>
+            </View>
+            {props.slots?.reviewedCard ?? null}
+            {props.slots?.footer ?? null}
         </View>
     );
 }

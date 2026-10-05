@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig } from 'vitest/config';
 import tsconfigPaths from 'vite-tsconfig-paths';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
+    ...resolveVitestWorkers(),
     globals: true,
     environment: 'node',
     testTimeout: 20_000,

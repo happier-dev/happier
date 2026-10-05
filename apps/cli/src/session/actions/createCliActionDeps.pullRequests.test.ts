@@ -33,7 +33,17 @@ describe('CLI session pull request binding', () => {
     const result = await deps.workflowAction!({ actionId: 'session.trigger.list', input: { sessionId }, context: { surface: 'cli', actionCaller: { kind: 'host' } } });
     expect(result).toMatchObject(echoSessionId === sessionId
       ? { sessionId, pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 42 }] }
-      : { ok: false, errorCode: 'target_unavailable' });
+      : { sessionId, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } });
+  });
+  it('lists Session triggers with unavailable PR links when the Session Machine is offline', async () => {
+    boundary.rpc.mockRejectedValue(new Error('Machine offline'));
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({
+        features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {},
+      }) }),
+    });
+    await expect(deps.workflowAction!({ actionId: 'session.trigger.list', input: { sessionId }, context: { surface: 'cli', actionCaller: { kind: 'host' } } }))
+      .resolves.toMatchObject({ sessionId, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } });
   });
   it.each(['created', 'reused'] as const)('links a successful %s PR on the originating Session machine', async (result) => {
     const effects: unknown[] = [];

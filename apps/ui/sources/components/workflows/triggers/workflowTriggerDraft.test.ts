@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationTriggerIdSchema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { AutomationTriggerIdSchema, WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
 
 import {
     EMPTY_WORKFLOW_TRIGGER_DRAFT,
+    captureWorkflowTriggerSnapshot,
     editWorkflowTriggerDraft,
     isWorkflowTriggerDraftDirty,
     projectWorkflowTriggerRows,
+    restoreWorkflowTriggerSnapshot,
     saveWorkflowTriggerDraft,
     type WorkflowTriggerDraft,
     type WorkflowTriggerWriter,
@@ -42,6 +44,25 @@ function recordingWriter(options: Readonly<{ failOn?: 'add' | 'update' | 'remove
 describe('workflow trigger draft', () => {
     const nightlyId = AutomationTriggerIdSchema.parse('nightly');
     const weeklyId = AutomationTriggerIdSchema.parse('weekly');
+    it('keeps implicit Runs on implicit when restoring an untouched unsaved trigger snapshot', () => {
+        const snapshot = captureWorkflowTriggerSnapshot(null, EMPTY_WORKFLOW_TRIGGER_DRAFT,
+            (clientId, triggerId) => ({ clientId, triggerId }));
+        expect(restoreWorkflowTriggerSnapshot(null, snapshot)).toEqual(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+    });
+    it('refuses recreation of a deleted private Event without changing the desired history snapshot', () => {
+        const { schedule: _schedule, nextRunAt: _nextRunAt, ...base } = savedTrigger('event', '0 2 * * *');
+        const event = { ...base, kind: 'pluginEvent', eventRef: { pluginId: 'plugin', localId: 'event' },
+            sourceSelectorId: 'source', sourceContractVersion: 1, observation: { kind: 'socket', watcher: null },
+            sourceStatus: null, sourceCatalogStatus: null, triggerDefinitionEnvelope: 'sealed-private' } as const;
+        const set = triggerSet(7, []);
+        const eventSet = WorkflowTriggerSetV1Schema.parse({ ...set, triggers: [event] });
+        const snapshot = captureWorkflowTriggerSnapshot(eventSet, EMPTY_WORKFLOW_TRIGGER_DRAFT,
+            (clientId, triggerId) => ({ clientId, triggerId }));
+        expect(restoreWorkflowTriggerSnapshot(eventSet, snapshot).removes).toEqual([]);
+        expect(() => restoreWorkflowTriggerSnapshot(set, snapshot)).toThrowError(expect.objectContaining({ code: 'workflow_trigger_restore_requires_setup' }));
+        expect(snapshot.rows).toHaveLength(1);
+        expect(snapshot.rows[0]?.trigger).toBeNull();
+    });
     it('shows edits in place without writing: a changed trigger, a removed one gone, a new one last', () => {
         const set = triggerSet(7, [savedTrigger('nightly', '0 2 * * *'), savedTrigger('weekly', '0 9 * * 1')]);
         let draft: WorkflowTriggerDraft = EMPTY_WORKFLOW_TRIGGER_DRAFT;

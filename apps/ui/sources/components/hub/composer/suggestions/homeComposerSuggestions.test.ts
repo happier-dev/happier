@@ -33,7 +33,7 @@ describe('deriveHomeComposerSuggestions (session history)', () => {
             ],
         });
 
-        expect(suggestions).toHaveLength(1);
+        expect(suggestions).toHaveLength(3);
         expect(suggestions[0]).toMatchObject({
             source: 'sessionHistory',
             project: 'happier',
@@ -50,13 +50,13 @@ describe('deriveHomeComposerSuggestions (session history)', () => {
             nowMs: NOW,
             sessions: [session('a', new Date(2026, 8, 30, 8).getTime(), '/w/app'), session('b', NOW - 60_000, '/w/app')],
         });
-        expect(today[0]?.since.kind).toBe('today');
+        expect(today[0]).toMatchObject({ since: { kind: 'today' } });
 
         const yesterday = deriveHomeComposerSuggestions({
             nowMs: NOW,
             sessions: [session('a', new Date(2026, 8, 29, 23).getTime(), '/w/app'), session('b', NOW - 60_000, '/w/app')],
         });
-        expect(yesterday[0]?.since.kind).toBe('yesterday');
+        expect(yesterday[0]).toMatchObject({ since: { kind: 'yesterday' } });
     });
 
     it('keeps the same folder on two machines (or two Homes) as separate projects', () => {
@@ -71,11 +71,18 @@ describe('deriveHomeComposerSuggestions (session history)', () => {
         expect(suggestions[0]).toMatchObject({ sessionCount: 2, fill: { placement: { machineId: 'machine-2' } } });
     });
 
-    it('offers nothing when no recent session has a folder and a machine to return to', () => {
-        expect(deriveHomeComposerSuggestions({ nowMs: NOW, sessions: [] })).toEqual([]);
+    it('offers starter prompts without invented history or placement when there is no recent project', () => {
+        const starters = deriveHomeComposerSuggestions({ nowMs: NOW, sessions: [] });
+        expect(starters.map((entry) => entry.id)).toEqual(['starter:explain', 'starter:fixTest']);
+        expect(starters.every((entry) => entry.source === 'starter' && entry.fill.placement === null)).toBe(true);
         expect(deriveHomeComposerSuggestions({
             nowMs: NOW,
             sessions: [session('a', NOW - DAY, null), session('b', NOW - DAY, '/w/app', null), session('c', NOW - 30 * DAY, '/w/app')],
-        })).toEqual([]);
+        })).toEqual(starters);
+    });
+
+    it('offers automation authoring only when the Home supports Automations', () => {
+        const suggestions = deriveHomeComposerSuggestions({ nowMs: NOW, sessions: [], automationsEnabled: true });
+        expect(suggestions.map((entry) => entry.id)).toEqual(['starter:explain', 'starter:fixTest', 'starter:automation']);
     });
 });

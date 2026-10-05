@@ -800,6 +800,7 @@ export type HostSessionRuntimeConfig = {
   resolveInitialResumeId?: (params: { opts: HostSessionRuntimeRunOptions; session: ApiSessionClient; metadata: Metadata }) => string | null | undefined;
   initializeSession?: Readonly<{
     startupSideEffectsOrder?: InitializeBackendRunSessionOptions['startupSideEffectsOrder'];
+    retainedTerminalRecovery?: InitializeBackendRunSessionOptions['retainedTerminalRecovery'];
   }>;
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void;
   onAttachMetadataSnapshotError?: (error: unknown) => void;
@@ -1151,6 +1152,8 @@ export async function runHostSessionRuntime(
   let pendingSessionInitializedHook:
     | Readonly<{ attachedToExistingSession: boolean }>
     | null = null;
+  let sessionIsNew: boolean | undefined;
+  let initialSessionId: string | undefined;
   let pendingAttachedProviderBindingMetadataUpdate = false;
 
   const observeRuntimeActivityPublication = (
@@ -1390,6 +1393,7 @@ export async function runHostSessionRuntime(
     typeof createPreparedDeferredStartupBootstrap = async (params) =>
       await createPreparedDeferredStartupBootstrapFn({
         ...params,
+        retainedTerminalRecovery: config.initializeSession?.retainedTerminalRecovery,
         augmentSessionMetadata,
         transformSessionInputBeforeCommit,
         afterComposerAttachmentMessageAccepted,
@@ -1415,10 +1419,12 @@ export async function runHostSessionRuntime(
       : null;
 
   if (startupBootstrap) {
+    sessionIsNew = !startupBootstrap.attachedToExistingSession;
     api = startupBootstrap.api;
     machineId = startupBootstrap.machineId;
     metadata = startupBootstrap.metadata;
     session = startupBootstrap.session;
+    initialSessionId = session.sessionId;
     initialPermissionMode = startupSeed.permissionMode;
     reconnectionHandle = startupBootstrap.reconnectionHandle;
     deferredStartupStart = startupBootstrap.start ?? null;
@@ -1531,6 +1537,7 @@ export async function runHostSessionRuntime(
         });
       },
       startupSideEffectsOrder: config.initializeSession?.startupSideEffectsOrder,
+      retainedTerminalRecovery: config.initializeSession?.retainedTerminalRecovery,
       onAttachMetadataSnapshotMissing: config.onAttachMetadataSnapshotMissing,
       onAttachMetadataSnapshotError: config.onAttachMetadataSnapshotError,
       deferPendingFirstInputCommitUntilRuntimeReady:
@@ -1541,6 +1548,8 @@ export async function runHostSessionRuntime(
     });
 
     session = initializedSession.session;
+    initialSessionId = session.sessionId;
+    sessionIsNew = !initializedSession.attachedToExistingSession;
     commitPendingFirstInputAfterRuntimeReady =
       initializedSession.commitPendingFirstInputAfterRuntimeReady ?? null;
     if (initializedSession.attachedToExistingSession && providerBindingMetadataUpdate !== undefined) {
@@ -1742,6 +1751,7 @@ export async function runHostSessionRuntime(
         );
       }
       session = attachedSession;
+      initialSessionId = session.sessionId;
       hostOwnsSessionConstructionCleanup = true;
     } else {
       claimedSessionForAuthorityPreparation = session;
@@ -3290,6 +3300,7 @@ export async function runHostSessionRuntime(
       },
       api,
       session: currentLifecycleSession,
+      sessionIsNew: currentLifecycleSession.sessionId === initialSessionId ? sessionIsNew : false,
       runtime,
       hookRuntime,
       terminalRemoteModeLoop,

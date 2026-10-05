@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 
 const shared = vi.hoisted(() => ({
     /** The theme on screen, as the running Unistyles theme reports it. */
@@ -9,6 +10,7 @@ const shared = vi.hoisted(() => ({
     settings: {} as Record<string, unknown>,
     setTheme: vi.fn(),
     setAdaptiveThemes: vi.fn(),
+    setStatusBarStyle: vi.fn(),
 }));
 
 vi.mock('react-native', async () => {
@@ -28,10 +30,10 @@ vi.mock('react-native-unistyles', async () => {
         },
     };
 });
-vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
+vi.mock('expo-status-bar', () => ({ setStatusBarStyle: shared.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleMock, createLiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     const useLocalSettingMutable = (key: string) => [
         shared.settings[key] ?? null,
         (next: unknown) => { shared.settings[key] = next; },
@@ -39,12 +41,16 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
+            storage: createLiveStorageStoreMock(() => ({
+                localSettings: { ...localSettingsDefaults, ...shared.settings },
+                applyLocalSettings: delta => { Object.assign(shared.settings, delta); },
+            })),
             useLocalSettingMutable: useLocalSettingMutable as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
         },
     });
 });
 
-const { useToggleThemeMode } = await import('./useApplyThemeSelection');
+const { useToggleThemeMode, useApplyThemeSelection, previewThemeSelection } = await import('./useApplyThemeSelection');
 
 const CUSTOM_PROFILES = { activeProfileIds: { light: null, dark: 'nightDark' }, profiles: [] };
 
@@ -62,9 +68,25 @@ afterEach(() => {
     standardCleanup();
     shared.setTheme.mockClear();
     shared.setAdaptiveThemes.mockClear();
+    shared.setStatusBarStyle.mockClear();
 });
 
 describe('useToggleThemeMode', () => {
+    it('previews the runtime mode and status bar without storing the selection', () => {
+        shared.settings = { themePreference: 'light', themeProfiles: CUSTOM_PROFILES };
+        previewThemeSelection('dark', CUSTOM_PROFILES);
+        expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
+        expect(shared.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
+        expect(shared.settings).toEqual({ themePreference: 'light', themeProfiles: CUSTOM_PROFILES });
+    });
+    it('returns the commit Promise and propagates a refused settings write', async () => {
+        shared.settings = { themePreference: 'light', themeProfiles: CUSTOM_PROFILES };
+        const failure = new Error('settings scope changed');
+        const hook = await renderHook(() => useApplyThemeSelection(() => { throw failure; }));
+        await expect(hook.getCurrent()('dark', CUSTOM_PROFILES)).rejects.toBe(failure);
+        expect(shared.settings.themePreference).toBe('light');
+        expect(shared.setTheme).not.toHaveBeenCalled();
+    });
     it('turns Adaptive into the explicit opposite of the theme on screen', async () => {
         expect((await toggleFrom({ preference: 'adaptive', screenDark: false, systemScheme: 'light' })).themePreference).toBe('dark');
         expect(shared.setAdaptiveThemes).toHaveBeenLastCalledWith(false);

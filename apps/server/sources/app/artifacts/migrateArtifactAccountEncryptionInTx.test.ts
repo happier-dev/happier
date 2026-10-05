@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from 'node:crypto';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     encodePlainArtifactStoredContent,
@@ -20,6 +21,43 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
         process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST =
             "none";
         markAccountChanged.mockClear();
+    });
+
+    it('atomically replaces head and retained private blobs and rejects changed source custody before writes', async () => {
+        const artifactId = '00000000-0000-4000-8000-000000000001';
+        const blobId = '00000000-0000-4000-8000-000000000002';
+        const uploadId = '00000000-0000-4000-8000-000000000003';
+        const bytes = Uint8Array.of(0, 255, 12);
+        const digest = createHash('sha256').update(bytes).digest('hex');
+        const source = { id: blobId, artifactId, storageKey: 'source-private-file', encryptionMode: 'e2ee', storedSizeBytes: 3n };
+        const target = { accountId: 'account-1', row: { ...source, storageKey: `artifacts/${artifactId}/${blobId}/${uploadId}`,
+            encryptionMode: 'plain', storedSizeBytes: 40n }, contentSha256: digest, sizeBytes: bytes.byteLength, candidate: true };
+        const body = encodePlainArtifactStoredContent({ body: { blobId, mime: 'application/octet-stream', sizeBytes: 3, sha256: digest } });
+        const row = { id: artifactId, headerVersion: 1, bodyVersion: 2, seq: 2, currentBlobId: blobId,
+            header: Buffer.from([2, 1]), body: Buffer.from([2, 2]), dataEncryptionKey: Buffer.from([3, 4]),
+            revisions: [{ bodyVersion: 1, body: Buffer.from([2, 3]), blobId }], blobs: [source] };
+        const item = { artifactId, expectedHeaderVersion: 1, expectedBodyVersion: 2,
+            expectedDataEncryptionKey: row.dataEncryptionKey.toString('base64'), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            recipientKeyEnvelopes: [], header: encodePlainArtifactStoredContent({ title: 'File' }), body,
+            revisions: [{ bodyVersion: 1, expectedBody: row.revisions[0]!.body.toString('base64'), body }],
+            blobs: [{ blobId, expectedContentSha256: digest, content: { t: 'plain' as const, uploadId, contentSha256: digest } }] };
+        const writes: string[] = [];
+        const tx = { artifact: { findMany: async () => [row], findFirst: async () => null,
+            updateMany: async () => { writes.push('head'); return { count: 1 }; } },
+            artifactRevision: { count: async () => 1, updateMany: async () => { writes.push('history'); return { count: 1 }; } },
+            artifactBlob: { updateMany: async () => { writes.push('blob'); return { count: 1 }; } },
+            uploadedFile: { findFirst: async () => ({ id: uploadId }), deleteMany: async () => ({ count: 1 }),
+                upsert: async () => ({ id: 'displaced' }) },
+            artifactKeyEnvelope: { deleteMany: async () => ({ count: 0 }) } } as unknown as Parameters<typeof migrateArtifactAccountEncryptionInTx>[0]['tx'];
+        const options = { tx, accountId: 'account-1', fromMode: 'e2ee' as const, toMode: 'plain' as const,
+            directive: { action: 'migrate' as const, items: [item] }, markChanged: async () => 1,
+            preparedBlobs: new Map([[`${artifactId}/${blobId}`, { source: { ...source }, expectedContentSha256: digest, target }]]) };
+        await expect(migrateArtifactAccountEncryptionInTx(options)).resolves.toEqual({ status: 'applied' });
+        expect(writes).toEqual(['head', 'history', 'blob']);
+        writes.length = 0;
+        source.storageKey = 'concurrently-replaced-private-file';
+        await expect(migrateArtifactAccountEncryptionInTx(options)).resolves.toEqual({ status: 'migration_incomplete' });
+        expect(writes).toEqual([]);
     });
 
     it("rewrites every retained body with the head and rejects changed history before writes", async () => {

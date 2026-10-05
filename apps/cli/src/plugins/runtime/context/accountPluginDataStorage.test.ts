@@ -229,6 +229,26 @@ function bindHost(params: Readonly<{
 }
 
 describe('Account plugin Data storage host', () => {
+    it('retains a static Collection binding without losing declaration or occurrence admission', async () => {
+        const controller = new AbortController();
+        const post = vi.fn(async () => ({ status: 200, data: { row: null, absenceEpoch: 0 } }));
+        const account = bindHost({ signal: controller.signal, post });
+        const collection = account.collection(collectionDefinition);
+        // Polling callers repeatedly resolve the same readonly declaration. Its
+        // bound schema/validator belong to this occurrence, not each wake.
+        for (let wake = 0; wake < 10; wake++) {
+            expect(account.collection(collectionDefinition)).toBe(collection);
+        }
+        const forged = { ...collectionDefinition, schemaVersion: 2 };
+        await expect(account.collection(forged).get('task-1')).rejects.toMatchObject({ code: 'plugin_collection_undeclared' });
+        await expect(collection.get('task-1')).resolves.toBeNull();
+        controller.abort();
+        await expect(account.collection(collectionDefinition).get('task-1')).rejects.toMatchObject({ code: 'plugin_collection_cancelled' });
+        const next = bindHost({ post });
+        expect(next.collection(collectionDefinition)).not.toBe(collection);
+        await expect(next.collection(collectionDefinition).get('task-1')).resolves.toBeNull();
+    });
+
     it.each([plainCredentials, encryptedCredentials])('settles issued Account KV writes without replay for $token', async (credentials) => {
         for (const settlement of ['cancelled', 'retired', 'accountChanged', 'lost', 'malformed', 'conflict'] as const) {
             const wire = createAccountKvWireStore();

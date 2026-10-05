@@ -28,13 +28,30 @@ import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } fr
 import { useSessionMessageAuthorshipScope } from '../useSessionMessageAuthorshipScope';
 import { deriveReadOnlyTranscriptInteraction } from '../forkContext/deriveReadOnlyTranscriptInteraction';
 import { SessionTranscriptSourceProvider, useSessionTranscriptSource } from './SessionTranscriptSourceContext';
-import type { SessionTranscriptSource } from './types';
+import type { SessionTranscriptSource, TranscriptHistoryState } from './types';
+import type { SessionMessagesWindowState } from '@/sync/runtime/sessionMessagesWindowState';
 import { createAppSessionTranscriptActions } from './appSessionTranscriptActions';
 
 const EMPTY_IDS: readonly string[] = [];
 const EMPTY_MESSAGES: readonly Message[] = [];
 const EMPTY_MESSAGES_BY_ID: Record<string, Message> = {};
 const EMPTY_PENDING = { permissionRequests: [], userActionRequests: [] } as const;
+
+function useSourceTargetWindow(sessionId: string, enabled = true): SessionMessagesWindowState | null {
+    const subscribe = React.useCallback((listener: () => void) => sync.subscribeSessionTargetWindowState(sessionId, listener), [sessionId]);
+    const read = React.useCallback(() => enabled ? sync.getSessionTargetWindowState(sessionId) : null, [enabled, sessionId]);
+    return React.useSyncExternalStore(subscribe, read, read);
+}
+
+function projectHistoryFrontiers(state: TranscriptHistoryState, window: SessionMessagesWindowState | null): TranscriptHistoryState {
+    if (!window?.isWindowMode || window.windowId === null || window.targetSeq === null) return { ...state, hasNewer: false, targetWindow: null };
+    return {
+        ...state,
+        hasOlder: window.hasMoreOlder !== false,
+        hasNewer: window.hasMoreNewer !== false,
+        targetWindow: { windowId: window.windowId, targetSeq: window.targetSeq, olderCursor: window.olderCursor, newerCursor: window.newerCursor },
+    };
+}
 
 /** The app transport owns sidechain paging; presentation only supplies its exact target. */
 export function createAppSidechainHistoryLoader(sessionId: string, sidechainId: string | null): NonNullable<SessionTranscriptSource['history']['loadOlder']> {
@@ -276,8 +293,9 @@ function TranscriptOriginAppSourceRoot(props: Readonly<{ source: SessionTranscri
                 useState: () => {
                     const { isLoaded } = useSessionTranscriptIds(sessionId);
                     useSessionMessagesVersion(sessionId);
+                    const window = useSourceTargetWindow(sessionId);
                     const available = sync.getSessionTailDiscontinuityOlderAvailability(sessionId);
-                    return React.useMemo(() => ({ isLoaded, hasOlder: available ?? true, isLoadingOlder: false }), [available, isLoaded]);
+                    return React.useMemo(() => projectHistoryFrontiers({ isLoaded, hasOlder: available ?? true, isLoadingOlder: false }, window), [available, isLoaded, window]);
                 },
                 loadOlder: null, loadTargetWindow: null,
             },
@@ -295,6 +313,7 @@ function AppSessionTranscriptSourceRoot(props: AppSourceProviderProps) {
         let interaction = props.interaction;
         let loadOlderOverride = props.loadOlder;
         let olderLoadCount = 0;
+        let newerLoadCount = 0;
         let hasOlder = true;
         const listeners = new Set<() => void>();
         const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
@@ -317,10 +336,12 @@ function AppSessionTranscriptSourceRoot(props: AppSourceProviderProps) {
                 useState: () => {
                     const { isLoaded } = useSessionTranscriptIds(sessionId);
                     useSessionMessagesVersion(sessionId);
+                    const window = useSourceTargetWindow(sessionId, loadOlderOverride == null);
                     const loading = React.useSyncExternalStore(subscribe, () => olderLoadCount > 0, () => olderLoadCount > 0);
+                    const loadingNewer = React.useSyncExternalStore(subscribe, () => newerLoadCount > 0, () => newerLoadCount > 0);
                     const more = React.useSyncExternalStore(subscribe, () => hasOlder, () => hasOlder);
                     const available = sync.getSessionTailDiscontinuityOlderAvailability(sessionId);
-                    return React.useMemo(() => ({ isLoaded, hasOlder: available ?? more, isLoadingOlder: loading }), [available, isLoaded, loading, more]);
+                    return React.useMemo(() => projectHistoryFrontiers({ isLoaded, hasOlder: available ?? more, isLoadingOlder: loading, isLoadingNewer: loadingNewer }, window), [available, isLoaded, loading, loadingNewer, more, window]);
                 },
                 loadOlder: props.readOnly === true ? null : async (options) => {
                     olderLoadCount += 1;
@@ -334,6 +355,31 @@ function AppSessionTranscriptSourceRoot(props: AppSourceProviderProps) {
                     } finally { olderLoadCount -= 1; notify(); }
                 },
                 loadTargetWindow: props.readOnly === true ? null : (target, options) => sync.loadTargetWindowMessages(sessionId, target, options),
+                loadFindPage: props.readOnly === true ? null : async (direction, options) => {
+                    const window = loadOlderOverride == null ? sync.getSessionTargetWindowState(sessionId) : null;
+                    if (!window?.isWindowMode || window.windowId === null || window.targetSeq === null) {
+                        return direction === 'older' && source.history.loadOlder
+                            ? source.history.loadOlder(options)
+                            : { loaded: 0, hasMore: false, status: 'no_more' };
+                    }
+                    if (direction === 'older') olderLoadCount += 1; else newerLoadCount += 1;
+                    notify();
+                    try {
+                        const result = await sync.loadTargetWindowMessages(sessionId, { kind: 'seq', seq: window.targetSeq }, {
+                            direction, limit: options?.limit, continuationWindowId: window.windowId,
+                        });
+                        const hasMore = (direction === 'older' ? result.hasMoreOlder : result.hasMoreNewer) !== false;
+                        return {
+                            loaded: result.appliedSeqs.length,
+                            hasMore,
+                            status: result.status === 'loaded' ? hasMore ? 'loaded' : 'no_more'
+                                : result.status === 'retryable_error' ? 'retryable_error' : 'not_ready',
+                        };
+                    } finally {
+                        if (direction === 'older') olderLoadCount -= 1; else newerLoadCount -= 1;
+                        notify();
+                    }
+                },
             },
             loadSidechain: props.readOnly === true ? null : (sidechainId) => sync.ensureSidechainMessagesLoaded(sessionId, sidechainId),
             navigate: props.readOnly === true || props.navigation === 'none' ? null : (href) => {

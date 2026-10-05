@@ -144,6 +144,11 @@
             ],
             "workspaceWrites": "deny"
           },
+          "structuredOutput": {
+            "formats": [
+              "json"
+            ]
+          },
           "surfaces": [
             "terminal",
             "externalSessions"

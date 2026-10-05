@@ -28,12 +28,12 @@ object HappierHardwareKeyboardShortcutsBridge {
 
     val module = moduleRef?.get() ?: return false
     if (!module.canReceiveHardwareKeyEvents()) return false
-    val payload = payloadFromEvent(event, focusedView) ?: return false
+    val payload = payloadFromEvent(event, focusedView, module) ?: return false
     module.emitHardwareKey(payload)
     return module.shouldConsumeHardwareKey(payload)
   }
 
-  private fun payloadFromEvent(event: KeyEvent, focusedView: View?): Map<String, Any>? {
+  private fun payloadFromEvent(event: KeyEvent, focusedView: View?, module: HappierHardwareKeyboardShortcutsModule): Map<String, Any>? {
     val key = normalizedKey(event.keyCode) ?: return null
     val modifiers = mapOf(
       "shift" to event.isShiftPressed,
@@ -41,9 +41,7 @@ object HappierHardwareKeyboardShortcutsBridge {
       "meta" to event.isMetaPressed,
       "alt" to event.isAltPressed
     )
-    if (!shouldEmit(key, modifiers)) return null
-
-    return mapOf(
+    val payload = mapOf(
       "key" to key,
       "code" to codeName(event.keyCode),
       "characters" to charactersForKey(key),
@@ -54,11 +52,17 @@ object HappierHardwareKeyboardShortcutsBridge {
       // reports itself as a text editor through this platform API.
       "isEditableTarget" to (focusedView?.onCheckIsTextEditor() == true)
     )
+    // Focused input keys (plain Return and arrows) are admitted by the same
+    // provider configuration that decides whether Android consumes them.
+    if (!shouldEmit(key, modifiers) && !module.shouldConsumeHardwareKey(payload)) return null
+    return payload
   }
 
   private fun normalizedKey(keyCode: Int): String? = when (keyCode) {
     KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> "Enter"
     KeyEvent.KEYCODE_ESCAPE -> "Escape"
+    KeyEvent.KEYCODE_DPAD_UP -> "ArrowUp"
+    KeyEvent.KEYCODE_DPAD_DOWN -> "ArrowDown"
     KeyEvent.KEYCODE_K -> "k"
     else -> normalizedPrintableKey(keyCode)
   }
@@ -67,6 +71,8 @@ object HappierHardwareKeyboardShortcutsBridge {
     KeyEvent.KEYCODE_ENTER -> "Enter"
     KeyEvent.KEYCODE_NUMPAD_ENTER -> "NumpadEnter"
     KeyEvent.KEYCODE_ESCAPE -> "Escape"
+    KeyEvent.KEYCODE_DPAD_UP -> "ArrowUp"
+    KeyEvent.KEYCODE_DPAD_DOWN -> "ArrowDown"
     KeyEvent.KEYCODE_K -> "KeyK"
     else -> codeNameForPrintableKey(keyCode)
   }

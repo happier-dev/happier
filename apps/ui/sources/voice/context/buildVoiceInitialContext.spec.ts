@@ -142,6 +142,16 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('Recent context');
   });
 
+  it('includes an explicit attempt target without attempt-local tracking state', () => {
+    const out = buildVoiceInitialContext('s1', { targetSessionAddress: { serverId: getActiveServerSnapshot().serverId, sessionId: 's1' } });
+
+    expect(out).toContain('## Session Summary');
+    expect(out).toContain('Summary visible only for tracked sessions');
+    expect(out).toContain('## Recent Messages');
+    expect(out).toContain('Recent messages in');
+    expect(out).toContain('Recent context');
+  });
+
   it('does not let a retained live-context cache elevate initial disclosure', () => {
     useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
 

@@ -24,6 +24,7 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         // A template: the public `FreshnessLine` puts its time into `{time}`, keeping each locale's order.
         'happier.plugin-ui.state.asOf': t('surfaceState.asOf', { time: '{time}' }),
         'happier.plugin-ui.list.moreActions': t('ui.pluginUi.moreActions'),
+        'happier.plugin-ui.collection.board.empty': t('ui.pluginUi.collectionEmpty'),
         'happier.plugin-ui.select.choose': t('common.choose'),
         'happier.plugin-ui.detailsPane.back': t('common.back'),
         // Templates: the public `PresenceCapsule` puts the agent's name into `{agent}`.

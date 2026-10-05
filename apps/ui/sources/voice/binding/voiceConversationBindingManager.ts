@@ -4,6 +4,7 @@ import { voiceSessionBindingStore } from './voiceConversationBindingStore';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { VoiceConversationTargeting } from '@/voice/session/types';
 import type { VoiceConversationBindingResolution, VoiceSessionBinding } from './voiceConversationBindingTypes';
+import { resolveVoiceConversationNavigationAddress } from './resolveVoiceConversationNavigationAddress';
 import {
     areSessionAddressesEqual,
     normalizeSessionAddress,
@@ -158,9 +159,10 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         // carrier, so the caller never has to re-derive one from the active Home.
         const existingConversationServerId = existing?.conversationSessionAddress?.serverId ?? null;
         if (existing?.lifetime === 'runtime_attempt') {
+            const address = resolveVoiceConversationNavigationAddress(existing);
             return {
-                conversationSessionId: existing.targetSessionAddress?.sessionId ?? null,
-                conversationServerId: existing.targetSessionAddress?.serverId ?? null,
+                conversationSessionId: address?.sessionId ?? null,
+                conversationServerId: address?.serverId ?? null,
             };
         }
         if (

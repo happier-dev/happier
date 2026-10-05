@@ -213,6 +213,26 @@ function bundleCacheIdentity(bundleInput: ReturnType<typeof firstBundle>) {
 }
 
 describe('resolveProjectedPluginUiClientExecutables', () => {
+    it('activates source and target rights from their exact shared answering artifact without an Action declaration', () => {
+        const definitions = PluginContributesV2Schema.parse({
+            dragSources: [{ id: 'entry', title: 'Entry', referenceSchema: { type: 'string' }, client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }],
+            dropTargets: [{ id: 'entry', title: 'Review', acceptedKinds: ['session'], actions: [{ kind: 'host', actionId: 'session.open' }], client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }],
+        });
+        const entry = { id: `${pluginId}/entry`, pluginId, pluginVersion: '1.0.0', occurrenceId: 'entity-occurrence', [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin };
+        const projected = { ...EMPTY_PLUGIN_UI_PROJECTION, generation,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
+                source: { kind: 'local', locator: pluginId } } },
+            dragSourcesById: { [entry.id]: { ...entry, definition: definitions.dragSources[0]! } },
+            dropTargetsById: { [entry.id]: { ...entry, definition: definitions.dropTargets[0]! } },
+            reactNativeBundlesById: { [`reactNativeBundle:${pluginId}:dragSources/entry`]: bundle('dragSources/entry'), [`reactNativeBundle:${pluginId}:dropTargets/entry`]: bundle('dropTargets/entry') },
+        };
+        const resolved = resolve(projected);
+        expect(resolved).toHaveLength(1);
+        expect(resolved[0]?.contributes).toMatchObject({ dragSources: [{ id: 'entry' }], dropTargets: [{ id: 'entry' }] });
+        const missing = resolve({ ...projected, reactNativeBundlesById: {} });
+        expect(missing).toEqual([]);
+        expect(resolve({ ...projected, dragSourcesById: {}, dropTargetsById: {} })).toEqual([]);
+    });
     it('returns a Voice-only target through the generic executable projection', () => {
         const resolved = resolve(voiceOnlyProjection());
 

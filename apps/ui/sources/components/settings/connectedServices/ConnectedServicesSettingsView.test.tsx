@@ -541,10 +541,10 @@ describe('ConnectedServicesSettingsView', () => {
 
         expect(modalAlertSpy).not.toHaveBeenCalled();
         expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
+            pathname: '/(app)/settings/connected-services',
             params: {
-                pluginId: 'happier.agent.codex',
-                localId: 'openai-codex',
+                connect: '1',
+                service: 'happier.agent.codex/openai-codex',
             },
         });
     });
@@ -561,10 +561,10 @@ describe('ConnectedServicesSettingsView', () => {
 
         expect(modalAlertSpy).not.toHaveBeenCalled();
         expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
+            pathname: '/(app)/settings/connected-services',
             params: {
-                pluginId: 'happier.agent.codex',
-                localId: 'openai-codex',
+                connect: '1',
+                service: 'happier.agent.codex/openai-codex',
             },
         });
     });

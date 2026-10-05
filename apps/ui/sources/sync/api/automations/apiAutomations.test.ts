@@ -233,7 +233,7 @@ describe('apiAutomations', () => {
     });
 
     it('admits managed Workflow runs through the current route without a capability probe', async () => {
-        const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+        const fetchSpy = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
             run: { ...runSummary, automationId: 'workflow-managed' },
             workflowRun: { recipeKind: 'workflow-v2', workflowRunId: runSummary.id },
         }), { status: 200 }));

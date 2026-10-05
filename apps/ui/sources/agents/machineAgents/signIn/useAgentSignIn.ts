@@ -1,14 +1,13 @@
 import * as React from 'react';
-import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type DaemonTerminalStreamEventUrl } from '@happier-dev/protocol';
+import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type DaemonTerminalStreamEventUrl, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelOutput } from '@happier-dev/protocol';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { replaceTerminalSurfaceState, createEmptyTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
-import { machineTerminalClose } from '@/sync/ops/machineTerminal';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { refreshMachineAgents } from '../useMachineAgents';
 import type { MachineAgentSignInSession } from '../machineAgentTypes';
-import { startAgentSignInRpc, checkAgentSignInRpc } from './api';
+import { startAgentSignInRpc, checkAgentSignInRpc, cancelAgentSignInRpc } from './api';
 
 // A progress cadence, not a deadline. Stop with no observers, on success or exit.
 const SIGN_IN_POLL_INTERVAL_MS = 2_000;
@@ -18,7 +17,7 @@ type Entry = {
   state: MachineAgentSignInSession; accountLabel: string | null;
   targets: Set<BoundTarget>; listeners: Set<() => void>;
   timer: ReturnType<typeof setTimeout> | null;
-  opening: Promise<void> | null; checking: Promise<AgentSignInStatusResponse | null> | null;
+  opening: Promise<MachinesAgentsSignInStartOutput | undefined> | null; checking: Promise<AgentSignInStatusResponse | null> | null;
   openAbort: AbortController | null; probeAbort: AbortController | null;
   terminalExited: boolean;
   terminalId: string | null;
@@ -82,11 +81,16 @@ function checkAgain(entry: Entry): Promise<AgentSignInStatusResponse | null> {
   })();
   entry.checking = checking; return checking;
 }
-async function start(entry: Entry) {
+async function start(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortSignal) {
   if (entry.opening) return await entry.opening;
-  if (entry.state.phase === 'waiting') return;
-  const target = currentTarget(entry); if (!target) return;
+  if (entry.state.phase === 'waiting' && entry.terminalId && entry.state.terminalKey) return { terminalKey: entry.state.terminalKey, terminalId: entry.terminalId };
+  const target = requestedTarget ?? currentTarget(entry); if (!target?.lifetime.isCurrent()) return;
   const abort = new AbortController(); entry.openAbort = abort;
+  // A presenter unmount is non-owning; only an Action's request lifetime aborts its acquisition.
+  const retire = requestedTarget?.lifetime.onRetire(() => abort.abort());
+  const abortFromSignal = () => abort.abort();
+  signal?.addEventListener('abort', abortFromSignal, { once: true });
+  if (signal?.aborted) abort.abort();
   entry.terminalExited = false; entry.accountLabel = null;
   publish(entry, { phase: 'opening', terminalKey: machineAgentSignInTerminalKey(target.machineId, target.agentId),
     authUrl: null, startedAtMs: Date.now(), failure: null });
@@ -97,34 +101,82 @@ async function start(entry: Entry) {
       });
       if (abort.signal.aborted) {
         if (entry.terminalId && 'errorCode' in result) throw new Error(result.errorCode);
-        return;
+        if (target.lifetime.isCurrent()) publish(entry, IDLE);
+        return result;
       }
       if (!target.lifetime.isCurrent()) return;
       if ('terminalKey' in result) {
         publish(entry, { phase: 'waiting', terminalKey: result.terminalKey }); schedulePoll(entry);
       } else publish(entry, { phase: 'failed', failure: 'errorCode' in result ? result.errorCode : 'agent_login_unsupported' });
+      return result;
     } catch (error) {
       if (abort.signal.aborted && entry.terminalId) throw error;
       if (!abort.signal.aborted && target.lifetime.isCurrent()) publish(entry, {
         phase: 'failed', failure: error instanceof Error ? error.message : 'sign_in_unavailable',
       });
-    } finally { entry.opening = null; if (entry.openAbort === abort) entry.openAbort = null; }
+    } finally { retire?.dispose(); signal?.removeEventListener('abort', abortFromSignal); entry.opening = null; if (entry.openAbort === abort) entry.openAbort = null; }
   })();
-  entry.opening = opening; await opening;
+  entry.opening = opening; return await opening;
 }
-async function cancel(entry: Entry) {
-  const target = currentTarget(entry);
+async function cancel(entry: Entry, requestedTarget?: BoundTarget, acquiredTerminalId?: string, signal?: AbortSignal) {
+  const target = requestedTarget ?? currentTarget(entry);
+  if (!target?.lifetime.isCurrent()) return { ok: false as const, errorCode: 'sign_in_unavailable', error: 'Sign-in Account is unavailable.' };
+  if (acquiredTerminalId && entry.terminalId && acquiredTerminalId !== entry.terminalId) {
+    return { ok: false as const, errorCode: 'sign_in_terminal_changed', error: 'The acquired sign-in terminal is no longer current.' };
+  }
   entry.openAbort?.abort(); stopPolling(entry);
   const key = entry.state.terminalKey;
   publish(entry, IDLE); entry.accountLabel = null; entry.terminalExited = false;
-  await entry.opening;
-  const terminalId = entry.terminalId;
-  if (target && terminalId && target.lifetime.isCurrent()) {
-    const closed = await machineTerminalClose(target.machineId, { terminalId }, { serverId: target.serverId });
-    if (!closed.ok) throw new Error(closed.errorCode);
-    if (key) replaceTerminalSurfaceState(key, createEmptyTerminalSurfaceState());
+  try {
+    await entry.opening;
+    const terminalId = entry.terminalId ?? acquiredTerminalId;
+    if (terminalId && target.lifetime.isCurrent()) {
+      const abort = new AbortController();
+      const retire = target.lifetime.onRetire(() => abort.abort());
+      const abortFromSignal = () => abort.abort();
+      signal?.addEventListener('abort', abortFromSignal, { once: true });
+      if (signal?.aborted) abort.abort();
+      const closed = await cancelAgentSignInRpc({ ...target, signal: abort.signal }, target.agentId, terminalId)
+        .finally(() => { retire.dispose(); signal?.removeEventListener('abort', abortFromSignal); });
+      if (!closed.ok) {
+        if (target.lifetime.isCurrent()) publish(entry, { phase: 'failed', terminalKey: key ?? machineAgentSignInTerminalKey(target.machineId, target.agentId), failure: closed.error ?? closed.errorCode });
+        return closed;
+      }
+      if (key) replaceTerminalSurfaceState(key, createEmptyTerminalSurfaceState());
+    }
+    entry.terminalId = null;
+    return { ok: true as const };
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : 'sign_in_unavailable';
+    if (target.lifetime.isCurrent() && entry.terminalId) publish(entry, {
+      phase: 'failed', terminalKey: key ?? machineAgentSignInTerminalKey(target.machineId, target.agentId), failure,
+    });
+    return { ok: false as const, errorCode: 'sign_in_unavailable', error: failure };
   }
-  entry.terminalId = null;
+}
+
+/** Actions and presenters consume the same Account-scoped process custody and state. */
+type LifecycleTarget = Readonly<{ serverId: string; machineId: string; agentId: string; lifetime: ServerAccountScopeLifetime; signal?: AbortSignal }>;
+export function executeAgentSignInLifecycle(target: LifecycleTarget, operation: 'cancel', terminalId: string): Promise<MachinesAgentsSignInCancelOutput>;
+export function executeAgentSignInLifecycle(target: LifecycleTarget, operation: 'start' | 'restart', terminalId?: string): Promise<MachinesAgentsSignInStartOutput>;
+export async function executeAgentSignInLifecycle(
+  target: LifecycleTarget,
+  operation: 'start' | 'cancel' | 'restart',
+  terminalId?: string,
+): Promise<MachinesAgentsSignInStartOutput | MachinesAgentsSignInCancelOutput> {
+  if (!target.lifetime.isCurrent() || target.lifetime.scope.serverId !== target.serverId) return { ok: false, errorCode: 'sign_in_unavailable', error: 'Sign-in Account is unavailable.' };
+  const entry = getEntry(serverAccountScopedResourceKey(target.lifetime.scope, 'agent-sign-in', target.machineId, target.agentId));
+  entry.targets.add(target);
+  try {
+    if (operation !== 'start') {
+      const closed = await cancel(entry, target, terminalId, target.signal);
+      if (!closed.ok || operation === 'cancel') return closed;
+    }
+    return await start(entry, target, target.signal) ?? { ok: false, errorCode: 'sign_in_unavailable', error: 'Sign-in did not start.' };
+  } finally {
+    entry.targets.delete(target);
+    if (!currentTarget(entry)) stopPolling(entry);
+  }
 }
 
 export function useAgentSignIn(target: Readonly<{ serverId?: string | null; machineId: string | null; agentId: string }>) {
@@ -158,16 +210,16 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     start: () => entry ? start(entry) : Promise.resolve(),
     checkAgain: async () => { if (entry) { await checkAgain(entry); schedulePoll(entry); } },
     cancel: () => entry ? cancel(entry) : Promise.resolve(),
-    restart: async () => { if (entry) { await cancel(entry); await start(entry); } },
+    restart: async () => { if (entry) { const closed = await cancel(entry); if (closed.ok) await start(entry); } },
     reportTerminalUrl: (event: Pick<DaemonTerminalStreamEventUrl, 'kind' | 'url'> | null) => {
       if (entry && boundTarget?.lifetime.isCurrent() && event?.kind === 'auth' && entry.state.terminalKey) publish(entry, { authUrl: event.url });
     },
-    reportTerminalExit: async () => {
-      if (!entry || !boundTarget?.lifetime.isCurrent() || !entry.state.terminalKey) return;
+    reportTerminalExit: async (terminalId: string) => {
+      if (!entry || !boundTarget?.lifetime.isCurrent() || !entry.state.terminalKey || entry.terminalId !== terminalId) return;
       entry.terminalExited = true; stopPolling(entry); await entry.checking;
-      if (!entry.state.terminalKey || !boundTarget.lifetime.isCurrent()) return;
+      if (!entry.state.terminalKey || !boundTarget.lifetime.isCurrent() || entry.terminalId !== terminalId) return;
       const result = await checkAgain(entry);
-      if (boundTarget.lifetime.isCurrent() && entry.state.terminalKey && result?.status !== 'signedIn') {
+      if (boundTarget.lifetime.isCurrent() && entry.state.terminalKey && entry.terminalId === terminalId && result?.status !== 'signedIn') {
         publish(entry, { phase: 'failed', failure: entry.state.failure ?? 'agent_login_not_confirmed' });
       }
     },

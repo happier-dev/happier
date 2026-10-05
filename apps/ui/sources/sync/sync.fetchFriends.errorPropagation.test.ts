@@ -41,7 +41,7 @@ describe('sync fetchFriends error propagation', () => {
     });
 
     it('propagates errors so InvalidateSync can own retry/backoff semantics', async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         (sync as any).credentials = { token: 'token', secret: 'secret' };
 
         await expect((sync as any).fetchFriends()).rejects.toThrow('boom');

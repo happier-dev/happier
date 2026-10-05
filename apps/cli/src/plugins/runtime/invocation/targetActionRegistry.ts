@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
     ActionOperationProgressV1Schema,
     createPluginActionInvocation,
+    pluginActionRequiresPresentUserIntent,
     PluginHostAccessRequestV2Schema,
     type PluginActionPresentUserGatePolicy,
     type PluginActionInputParser,
@@ -122,7 +123,7 @@ export type TargetActionInvocationResult = Readonly<
 >;
 
 type TargetActionPreDispatchResult = Readonly<{
-    status: 'unavailable';
+    status: 'unavailable' | 'invalid';
     code: string;
     message: string;
 }>;
@@ -174,7 +175,7 @@ export type InvokeTargetActionParams = Readonly<{
     /** Current host Action-settings enablement for this exact qualified target Action. */
     isEnabledByActionSettings?: () => boolean;
     /** Current host Action-settings policy for this exact qualified target Action. */
-    isApprovalRequiredByActionSettings?: () => boolean;
+    isApprovalRequiredByActionSettings?: (manifestDefault: boolean) => boolean;
     /** Present only when the daemon operation runner already owns this invocation. */
     operationProgress?: TargetActionOperationProgressPort;
     /** Host-private custody admission; never projected into plugin context. */
@@ -287,13 +288,14 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     readCurrentPluginOccurrenceId?(pluginId: string): string | null;
     resolveCurrentSessionUi?: (sessionId: string) => HostCurrentSessionUiServices | null;
     /**
-     * Narrow host-owned Action-form Account recheck. It runs after canonical
+     * Host-owned Action-form recheck. It runs after canonical
      * input-schema admission and immediately before the target handler.
      */
-    revalidateConnectedAccountActionFormInput?(input: Readonly<{
+    revalidateActionFormInput?(input: Readonly<{
         pluginId: string;
         localId: string;
         input: unknown;
+        sessionId?: string;
         signal: AbortSignal;
         isCurrent(): boolean;
     }>): Promise<TargetActionPreDispatchResult | null>;
@@ -461,13 +463,14 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         let operationSettled = false;
         const result = await indexed.invocation.invoke(invocation.input, {
             ...(invocation.signal ? { signal: invocation.signal } : {}),
-            ...(params.revalidateConnectedAccountActionFormInput
+            ...(params.revalidateActionFormInput
                 ? {
                     preDispatch: ({ input, signal }) => (
-                        params.revalidateConnectedAccountActionFormInput!({
+                        params.revalidateActionFormInput!({
                             pluginId: registration.pluginId,
                             localId: registration.localId,
                             input,
+                            ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
                             signal,
                             isCurrent: indexed.isCurrent,
                         })
@@ -708,10 +711,13 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         facts: invocation.facts,
                     }),
                 });
-                let approvalRequiredByActionSettings = false;
+                let approvalRequiredByActionSettings: boolean | undefined;
                 try {
                     approvalRequiredByActionSettings = invocation
-                        .isApprovalRequiredByActionSettings?.() === true;
+                        .isApprovalRequiredByActionSettings?.(pluginActionRequiresPresentUserIntent(
+                            registration.definition,
+                            invocation.invocationSurface ?? invocation.surface,
+                        ));
                 } catch {
                     // A failed host settings re-read cannot authorize a plugin Action.
                     approvalRequiredByActionSettings = true;
@@ -725,9 +731,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(registration.definition.confirmation === undefined
                         ? {}
                         : { confirmation: registration.definition.confirmation }),
-                    ...(approvalRequiredByActionSettings
-                        ? { approvalRequiredByActionSettings: true as const }
-                        : {}),
+                    ...(approvalRequiredByActionSettings === undefined
+                        ? {}
+                        : { approvalRequiredByActionSettings }),
                     hostAccess: (registration.definition.hostAccessRequests ?? []).map(({ request, required }) => ({
                         id: request.id,
                         required,

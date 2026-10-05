@@ -2,6 +2,7 @@ export * from './Action.js';
 export * from './Button.js';
 export * from './Collection.js';
 export * from './Content.js';
+export { Chart, DataRows, DataTable, Metric, type ChartProps, type DataRowsProps, type MetricProps } from './Data.js';
 export {
   AgentCursor,
   PresenceCapsule,
@@ -23,10 +24,24 @@ export { Icon, type IconName, type IconProps } from './Icon.js';
 export * from './Image.js';
 export * from './StoredImage.js';
 export * from './Layout.js';
-export * from './List.js';
+export {
+  List, Item, ItemGroup,
+  type ListSearchProps, type ListMultiSelectionCapabilityProps, type ListSelectionProps,
+  type ListHeaderContext, type ListSectionData, type ListProps, type ListSectionProps,
+  type ItemProps, type ListItemProps, type ListAccessibilityPattern, type ItemGroupProps,
+} from './List.js';
 export * from './NavigationList.js';
 export * from './PageHeader.js';
-export * from './ListMultiSelection.js';
+export {
+  createListMultiSelectionStore, useListMultiSelectionController,
+  ListMultiSelectionProvider, useOptionalListMultiSelectionStore,
+  useListMultiSelectionStoreSnapshot, useListMultiSelectionSnapshot, useListMultiSelectionRow,
+  ListSelectionActionBar,
+  type ListMultiSelectionKey, type ListMultiSelectionSnapshot, type ListMultiSelectionActions,
+  type ListMultiSelectionStore, type UseListMultiSelectionControllerInput,
+  type ListMultiSelectionProviderProps, type ListMultiSelectionRow,
+  type ListBulkAction, type ListSelectionActionBarProps,
+} from './ListMultiSelection.js';
 export * from './Overlay.js';
 export {
   usePluginAccessibility,
@@ -43,7 +58,11 @@ export * from './Spinner.js';
 export * from './State.js';
 export * from './Status.js';
 export * from './Step.js';
+export * from './Setup.js';
+export * from './Voice.js';
 export * from './Surface.js';
 export * from './Tabs.js';
 export * from './Text.js';
 export * from './TargetedSurface.js';
+export { WidgetSurface, type WidgetSurfaceProps } from './WidgetSurface.js';
+export { DragSource, DropTarget, type DragSourceProps, type DropTargetProps } from './EntityDragDrop.js';

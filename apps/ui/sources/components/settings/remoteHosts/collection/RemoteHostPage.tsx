@@ -6,7 +6,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -135,9 +136,9 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                 description={t(isNew ? 'settingsRemoteHostsPage.newHostDescription' : 'settingsRemoteHostsPage.hostPageDescription')}
                 meta={host ? [{ key: 'target', text: host.ssh.target }] : undefined}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
                 actions={(
                     <View style={styles.headerActions}>

@@ -1,6 +1,7 @@
 import type {
     AcpConfigOptionOverridesV1,
     AgentExecutionTargetV1,
+    PersistedBackendTargetRefV2,
     PluginProjectedAgentConnectedAccountPurposeV2,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
@@ -158,6 +159,8 @@ export type SessionAuthoringAgentTargetOption = Readonly<{
     label: string;
     subtitle?: string;
     target: AgentExecutionTargetV1;
+    /** The catalog's capability-probe identity, consumed by the shared engine detail. */
+    backendTarget?: PersistedBackendTargetRefV2;
     /**
      * The exact operational Agent id the canonical backend catalog resolved for
      * this target: the plugin contribution's own Agent id for a plugin Agent,
@@ -194,6 +197,7 @@ export type SessionAuthoringAgentTargetOption = Readonly<{
  */
 export type SessionAuthoringControlFacts = Readonly<{
     agentTargets?: readonly SessionAuthoringAgentTargetOption[];
+    agentPickerContext?: Readonly<{ machineId: string | null; serverId: string | null; directory: string | null }>;
     /**
      * The Agent the canonical New Session resolver would preselect for this
      * exact Machine, present only once that Machine's projection has resolved

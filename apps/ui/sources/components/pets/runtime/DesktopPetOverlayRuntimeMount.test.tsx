@@ -439,7 +439,7 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         const runtimeBaseline = desktopRuntimeProps.calls.length;
         const computationBaseline = resolvePolicy.mock.calls.length;
         await act(async () => {
-            storage.getState().applySettingsLocal({ homeHubLayoutV1: { order: ['sessions'], hidden: [] } });
+            storage.getState().applySettingsLocal({ favoriteDirectories: ['~/code'] });
         });
         expect(commits.mock.calls.length).toBe(baseline);
         expect(desktopRuntimeProps.calls.length).toBe(runtimeBaseline);

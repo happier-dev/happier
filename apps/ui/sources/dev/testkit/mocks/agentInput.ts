@@ -23,6 +23,11 @@ export function createAgentInputModuleMock(options: Readonly<{
      * from the Composer ref it already owns.
      */
     resolveTestID?: (props: Record<string, unknown>) => string | undefined;
+    /**
+     * Renders the host's in-composer chips (`extraActionChips`) through their own
+     * `render` contract, for a host whose controls live in the composer's chip row.
+     */
+    renderExtraActionChips?: boolean;
 }> = {}) {
     return {
         AgentInput: (props: Record<string, unknown>) => {
@@ -34,6 +39,18 @@ export function createAgentInputModuleMock(options: Readonly<{
                 return () => publishFocusRequest(null);
             }, [publishFocusRequest]);
             const testID = options.resolveTestID?.(props);
+            const chipAnchorRef = React.useRef(null);
+            const chips = options.renderExtraActionChips === true && Array.isArray(props.extraActionChips)
+                ? (props.extraActionChips as ReadonlyArray<Readonly<{ key: string; render: (ctx: unknown) => React.ReactNode }>>)
+                    .map((chip) => React.createElement(React.Fragment, { key: chip.key }, chip.render({
+                        chipStyle: () => null,
+                        showLabel: true,
+                        iconColor: 'chip-tint',
+                        textStyle: null,
+                        countTextStyle: null,
+                        popoverAnchorRef: chipAnchorRef,
+                    })))
+                : null;
             return React.createElement('AgentInput', {
                 ...(testID === undefined ? {} : { testID }),
                 value: props.value,
@@ -44,7 +61,7 @@ export function createAgentInputModuleMock(options: Readonly<{
                 sessionId: props.sessionId,
                 autocompleteKinds: props.autocompleteKinds,
                 autocompleteSuggestions: props.autocompleteSuggestions,
-            });
+            }, chips);
         },
     };
 }

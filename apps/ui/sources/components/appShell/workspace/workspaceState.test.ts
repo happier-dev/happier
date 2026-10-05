@@ -11,6 +11,46 @@ const tab = (id: string, kind = 'session', preview = false): WorkspaceTab => {
 };
 
 describe('workspace state', () => {
+    it('opens a destination edge in one transition and leaves all state untouched if measured admission fails', () => {
+        const state = createWorkspaceState(tab('current', 'session', true));
+        const action = { type: 'openSplitTab' as const, groupId: 'group:1', tab: tab('incoming'),
+            newGroupId: 'group:2', axis: 'row' as const, placement: 'after' as const,
+            availableSizePx: 1200, minimumFirstSizePx: 420, minimumSecondSizePx: 420 };
+        const refused = reduceWorkspaceState(state, { ...action, availableSizePx: 500 });
+        expect(refused).toBe(state);
+        const opened = reduceWorkspaceState(state, action);
+        expect(opened.groups['group:1'].tabIds).toEqual(['current']);
+        expect(opened.groups['group:2'].tabIds).toEqual(['incoming']);
+        expect(opened.tabs.current).toBe(state.tabs.current);
+        expect(opened.focusedGroupId).toBe('group:2');
+    });
+
+    it('keeps both preview contents when an existing tab is moved into another pane', () => {
+        let state = createWorkspaceState(tab('a'));
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('b') });
+        state = reduceWorkspaceState(state, { type: 'splitTab', tabId: 'b', sourceGroupId: 'group:1', targetGroupId: 'group:1', newGroupId: 'group:2', axis: 'row', placement: 'after', availableSizePx: 1200, minimumFirstSizePx: 320, minimumSecondSizePx: 320 });
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('moving', 'session', true) });
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:2', tab: tab('current', 'session', true) });
+        const moved = reduceWorkspaceState(state, { type: 'moveTab', tabId: 'moving', sourceGroupId: 'group:1', targetGroupId: 'group:2', beforeTabId: 'current' });
+        expect(moved.groups['group:2'].tabIds).toEqual(['b', 'moving', 'current']);
+        expect(moved.tabs.current).toBe(state.tabs.current);
+        expect(moved.tabs.moving.preview).toBe(false);
+    });
+
+    it('opens and moves against current before-tab membership without replacing kept tabs', () => {
+        let state = createWorkspaceState(tab('a'));
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('b') });
+        state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('late'), beforeTabId: 'b' });
+        expect(state.groups['group:1'].tabIds).toEqual(['a', 'late', 'b']);
+        state = reduceWorkspaceState(state, { type: 'splitTab', tabId: 'b', sourceGroupId: 'group:1', targetGroupId: 'group:1', newGroupId: 'group:2', axis: 'row', placement: 'after', availableSizePx: 1200, minimumFirstSizePx: 320, minimumSecondSizePx: 320 });
+        state = reduceWorkspaceState(state, { type: 'moveTab', tabId: 'late', sourceGroupId: 'group:1', targetGroupId: 'group:2', beforeTabId: 'b' });
+        expect(state.groups['group:2'].tabIds).toEqual(['late', 'b']);
+        expect(state.groups['group:1'].tabIds).toEqual(['a']);
+        const reordered = reduceWorkspaceState(state, { type: 'reorderTab', groupId: 'group:2', tabId: 'late', beforeTabId: 'deleted' });
+        expect(reordered.groups['group:2'].tabIds).toEqual(['b', 'late']);
+        expect(reordered.tabs.b).toBe(state.tabs.b);
+    });
+
     it('retains the owner-bounded most recent undo entries without limiting open tabs', () => {
         let state = createWorkspaceState(tab('a'));
         for (let index = 0; index <= WORKSPACE_RECENTLY_CLOSED_LIMIT; index++) {

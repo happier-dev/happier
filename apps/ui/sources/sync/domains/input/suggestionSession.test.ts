@@ -43,6 +43,15 @@ function state(args: Readonly<{
 }
 
 describe('composer session suggestion source (D-7, D-8)', () => {
+    it('projects only the carried identity through the same current Session eligibility', () => {
+        const current = state({ byServer: { 'server-a': [renderable('selected'), renderable('neighbor'),
+            renderable('archived', { archivedAt: 42 }), renderable('current')] } });
+        const scope = { serverId: 'server-a', currentSessionId: 'current', candidateSessionId: 'selected' };
+        expect(projectComposerSessionSuggestionItems(current, scope).map(item => item.id)).toEqual(['selected']);
+        expect(projectComposerSessionSuggestionItems(current, { ...scope, candidateSessionId: 'archived' })).toEqual([]);
+        expect(projectComposerSessionSuggestionItems(current, { ...scope, candidateSessionId: 'current' })).toEqual([]);
+        expect(projectComposerSessionSuggestionItems(current, { ...scope, candidateSessionId: 'missing' })).toEqual([]);
+    });
     /**
      * The new-session composer has no session to derive a server from, so it declares the
      * server its session will spawn on. That is the only arm that makes `@session` reachable

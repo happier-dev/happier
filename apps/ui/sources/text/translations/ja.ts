@@ -1,3 +1,7 @@
+import { promptPickerTranslations } from './promptPickerTranslations';
+import { pendingNavigationTranslations } from './pendingNavigationTranslations';
+import { fileContentSearchTranslations } from './fileContentSearchTranslations';
+import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
 import { folderlessSessionTranslations } from './folderlessSessionTranslations';
 import { sessionCollaborationTranslations } from './sessionCollaborationTranslations';
 import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
@@ -33,6 +37,7 @@ import { pluginSettingsPresentationTranslations } from './pluginSettingsPresenta
 import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
 import { sessionWorkTranslations } from './sessionWorkTranslations';
+import { entityDragDropTranslations } from './entityDragDropTranslations';
 import { agentStartTranslations } from './agentStartTranslations';
 import { goalControlTranslations } from './goalControlTranslations';
 import { inboxWorkTranslations } from './inboxWorkTranslations';
@@ -42,6 +47,14 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { committedMessageActionTranslations } from './committedMessageActionTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -76,6 +89,8 @@ import { actionConfirmationTranslations } from './actionConfirmationTranslations
 import { detailPageTranslations } from './detailPageTranslations';
 import { rolesTranslations } from './rolesTranslations';
 import { boardsTranslations } from './boardsTranslations';
+import { findTranslations } from './findTranslations';
+import { transcriptFindTranslations } from './transcriptFindTranslations';
 import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
 import { workStatusTranslations } from './workStatusTranslations';
 import { shareSheetTranslations } from './shareSheetTranslations';
@@ -97,11 +112,16 @@ import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslat
 import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
 import { settingsOverviewTranslations } from './settingsOverviewTranslations';
 import { homeSetupTranslations } from './homeSetupTranslations';
+import { personalizeTranslations } from './personalizeTranslations';
 import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
 import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
+import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
+import { voicePresenceTranslations } from './voicePresenceTranslations';
+import { voiceMomentsTranslations } from './voiceMomentsTranslations';
 import { homeIndexTranslations } from './homeIndexTranslations';
 import { addFlowsTranslations } from './addFlowsTranslations';
 import { machineAddTranslations } from './machineAddTranslations';
@@ -269,6 +289,7 @@ const newSessionMcpTranslationExtension = {
 } as const;
 
 const settingsAppearanceTranslationExtension = {
+  glassControls: glassAppearanceTranslations['ja'],
   switchToDarkTheme: 'ダークテーマに切り替え',
   switchToLightTheme: 'ライトテーマに切り替え',
   themeToggle: {
@@ -430,6 +451,7 @@ const settingsAppearanceTranslationExtension = {
       syntax: '構文',
       versionControl: 'バージョン管理',
       diff: '差分',
+      find: '検索の一致',
       permission: '権限',
       overlay: 'オーバーレイ',
     },
@@ -772,11 +794,16 @@ export const ja = {
     homeDeviceApproval: homeDeviceApprovalTranslations.ja,
     settingsOverview: settingsOverviewTranslations.ja,
     homeSetup: homeSetupTranslations.ja,
+    personalize: personalizeTranslations.ja,
     connectedServicesSetup: connectedServicesSetupTranslations.ja,
     homeWidgets: homeWidgetTranslations.ja,
     widgetFrame: widgetFrameTranslations.ja,
+    inputPicker: inputPickerTranslations.ja,
     widgetAdd: widgetAddTranslations.ja,
+    widgetDefinition: widgetDefinitionTranslations.ja,
     widgetGlances: widgetGlanceTranslations.ja,
+    voicePresence: voicePresenceTranslations.ja,
+    voiceMoments: voiceMomentsTranslations.ja,
     homeIndex: homeIndexTranslations.ja,
     addFlows: addFlowsTranslations.ja,
     machineAdd: machineAddTranslations.ja,
@@ -792,6 +819,8 @@ export const ja = {
     detailPages: detailPageTranslations.ja,
     roles: rolesTranslations.ja,
     boards: boardsTranslations.ja,
+    find: findTranslations.ja,
+    transcriptFind: transcriptFindTranslations['ja'],
     workStatus: workStatusTranslations.ja,
     shareSheet: shareSheetTranslations.ja,
     surfaceState: surfaceStateTranslations.ja,
@@ -805,6 +834,7 @@ export const ja = {
     },
     workspaceSync: workspaceSyncTranslations.ja,
     sessionDrafts: sessionDraftTranslations.ja,
+    pendingNavigation: pendingNavigationTranslations.ja,
     sessionDirectoryRecovery: sessionDirectoryRecoveryTranslations.ja,
     transferRecovery: {
         title: '一時アップロードを完了',
@@ -819,6 +849,7 @@ export const ja = {
     sessionBoard: sessionBoardTranslations.ja,
     sessionAgentActivity: sessionAgentActivityTranslations.ja,
     sessionWork: sessionWorkTranslations.ja,
+    entityDragDrop: entityDragDropTranslations.ja,
     agentStart: agentStartTranslations.ja,
     goalControl: goalControlTranslations.ja,
     sessionGitPane: sessionGitPaneTranslations.ja,
@@ -827,6 +858,14 @@ export const ja = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.ja,
     sessionConversation: sessionConversationSurfaceTranslations.ja,
     ...changedFileEvidenceTranslations.ja,
+    ...turnChangesTranslations.ja,
+    ...committedMessageActionTranslations.ja,
+    ...scmComparisonTranslations.ja,
+    ...walkthroughTranslations.ja,
+    ...walkthroughSettingsTranslations.ja,
+    ...walkthroughStartTranslations.ja,
+    ...reviewWalkthroughTranslations.ja,
+    ...commitProposalTranslations.ja,
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.ja,
     pluginSurfaces: {
         state: {
@@ -893,13 +932,19 @@ export const ja = {
         setShortcutInvalidMessage: '少なくとも 1 つの非修飾キーを入力します。必要に応じて Mod、Ctrl、Shift、または Alt を入力します。',
         resetCommandAccessibility: ({ command }: { command: string }) => `Reset ${command} shortcut`,
         commands: {
+            findOpen: transcriptFindTranslations['ja'].findOpen,
+            findNext: transcriptFindTranslations['ja'].findNext,
+            findPrevious: transcriptFindTranslations['ja'].findPrevious,
             ...workspaceTabKeyboardTranslations,
             ...terminalWorkspaceKeyboardTranslations,
             composerAbortConfirm: '中断を確認',
             composerFocus: 'コンポーザーにフォーカス',
+            composerPromptsOpen: promptPickerTranslations.ja.open,
+            voiceToggle: '音声会話を開始または終了',
             composerSendImmediate: 'すぐに送信',
             composerSendPending: '保留キューに送信',
             commandPaletteOpen: '検索を開く',
+            searchTextInFiles: fileContentSearchTranslations["ja"].textInFiles,
             browserAddressFocus: 'ブラウザーのアドレスバーにフォーカス',
             browserBack: 'ブラウザーで戻る',
             browserForward: 'ブラウザーで進む',
@@ -908,6 +953,7 @@ export const ja = {
             shortcutsHelpOpen: 'ショートカットヘルプを開く',
             sessionNew: '新しいセッションを作成',
             sessionMruNext: '次の最近使ったセッション',
+            sessionPendingNext: '次の保留中のリクエスト',
             sessionMruPrevious: '前の最近使ったセッション',
             sessionVisibleNext: '次の表示中セッション',
             sessionVisiblePrevious: '前の表示中セッション',
@@ -1076,6 +1122,7 @@ export const ja = {
     stopWaiting: "待機を停止",
     loadError: "承認を読み込めませんでした。",
     decisionError: "承認を更新できませんでした。",
+    decisionAuthorityError: "このログインではリクエストを承認できません。アカウントの復旧キーでこのHomeにログインするか、アカウントでログイン済みの別の端末から承認してください。",
     unsafeDetailsTitle: "この内容は安全に表示できません",
     unsafeDetailsBody: "送信されたとおりに表示できなかったため、このリクエストは承認できません。拒否するか、再送を依頼してください。",
     approveUnavailableHint: "この内容を安全に表示できない間は承認できません。",
@@ -1721,7 +1768,10 @@ export const ja = {
   },
 
   common: {
+        decrease: "減らす",
+        increase: "増やす",
     // Simple string constants
+    search: '検索',
     add: "追加",
     edit: "編集",
     change: "変更",
@@ -1734,6 +1784,10 @@ export const ja = {
     decline: "拒否",
     submit: "送信",
     close: "閉じる",
+    minimizeWindow: "ウィンドウを最小化",
+    maximizeWindow: "ウィンドウを最大化",
+    restoreWindow: "ウィンドウを元に戻す",
+    closeWindow: "ウィンドウを閉じる",
     dismissKeyboard: 'キーボードを閉じる',
       open: "開く",
       done: "完了",
@@ -1852,6 +1906,7 @@ export const ja = {
     pluginUi: {
       loading: "読み込み中",
       empty: "表示するものはありません",
+      collectionEmpty: 'なし',
       error: "問題が発生しました",
       moreActions: "その他の操作",
     },
@@ -2981,7 +3036,7 @@ localTailscale: {
     systemTaskStartFailed: "システムタスクを開始できませんでした。",
     appearance: "外観",
     appearanceSubtitle: "アプリの見た目をカスタマイズ",
-    voiceAssistant: "音声アシスタント",
+    voiceAssistant: "音声",
     voiceAssistantSubtitle: "エージェントと話し、コンポーザーに音声入力します。",
     memorySearch: "ローカルメモリ検索",
     memorySearchSubtitle: "過去の会話を検索（端末内）",
@@ -7612,6 +7667,7 @@ localTailscale: {
   },
 
     universalSearch: {
+        content: fileContentSearchTranslations["ja"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: 'コミットを検索するには、このマシンの Happier を更新してください。',
     moreResultsAvailable: 'さらに結果があります。検索条件を絞り込んでください。',
@@ -7626,7 +7682,7 @@ localTailscale: {
   },
 
   commandPalette: {
-    placeholder: "コマンドを入力または検索...",
+    placeholder: fileContentSearchTranslations["ja"].placeholder,
     noCommandsFound: "コマンドが見つかりません",
     activationFailed: "そのコマンドを実行できませんでした。",
         shortcutsHelpTitle: 'キーボードショートカット',
@@ -7709,9 +7765,10 @@ localTailscale: {
     thinking: "考えています…",
     speaking: "話しています",
     microphonePermissionRequired: "マイクへのアクセスが必要です",
+    microphoneBlocked: "マイクがブロックされています",
     interrupted: "中断されました",
     active: "音声アシスタントが有効です",
-    connectionError: "接続エラー",
+    connectionError: "接続できませんでした",
     label: "音声アシスタント",
     tapToEnd: "タップして終了",
     startDictation: "音声入力を開始",
@@ -8378,6 +8435,7 @@ localTailscale: {
   },
 
   agentInput: {
+      promptPicker: promptPickerTranslations['ja'],
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。選択中。`,
       },
@@ -10978,9 +11036,9 @@ settingsSession: {
         },
         messageActions: {
           groupTitle: 'メッセージ操作',
-          groupFooter: 'トランスクリプトでのメッセージ選択と転送操作を設定します。',
+          groupFooter: '各メッセージの下に表示するアクションを選びます。オフにしたアクションは行と長押しメニューから消えます。',
           selectionEnabled: {
-            title: 'メッセージ選択を有効化',
+            title: '選択',
             subtitle: 'メッセージ下に選択アイコンを表示し、一括コピーまたは転送できるようにする',
           },
           sendToSessionEnabled: {
@@ -11330,6 +11388,7 @@ settingsSession: {
     consoleSubtitle: "標準の Windows コンソールウィンドウでセッションを開きます。",
   },
   settingsVoice: {
+    ...voiceSettingsPagesTranslations.ja,
     ...voiceDiagnosticsTranslations.ja,
     intents: {
       dictation: { title: '音声入力', subtitle: '1回の発話を入力欄のテキストに変換します。' },
@@ -11343,7 +11402,7 @@ settingsSession: {
       sectionFooter: '対象なしおよびグローバル音声会話の文字起こしを確認または削除します。',
       pageDescription: 'グローバル音声と、セッション外で始めた会話の文字起こし。',
       entryTitle: '音声履歴',
-      entrySubtitle: '保存された音声文字起こしを検索、書き出し、または消去します。',
+      entrySubtitle: "過去の音声会話を検索、書き出し、削除できます。",
       searchTitle: '読み込み済み履歴を検索',
       searchFooter: 'この端末ですでに復号された音声メッセージを検索します。',
       searchPlaceholder: '文字起こしまたはプロバイダーを検索',
@@ -11359,15 +11418,15 @@ settingsSession: {
       loadOlderFooter: '古いメッセージは、読み込むか消去するまでサーバーに残ります。',
       loadingOlder: '古いメッセージを読み込んでいます…',
       loadOlderFailed: '古い音声履歴を読み込めませんでした。',
-      exportTitle: '音声履歴を書き出す',
+      exportTitle: "音声履歴を書き出す",
       exportSubtitle: '残りの履歴を読み込み、JSONとして保存します。',
       exporting: '書き出しを準備しています…',
       exportSucceeded: '音声履歴の書き出し準備ができました。',
       exportFailed: '音声履歴を書き出せませんでした。',
-      clearTitle: '音声履歴を消去',
+      clearTitle: "音声履歴を削除",
       clearSubtitle: 'このアカウントのスタンドアロン音声履歴全体を削除します。',
       clearing: '音声履歴を消去しています…',
-      clearConfirmTitle: '音声履歴を消去しますか？',
+      clearConfirmTitle: "音声履歴を削除しますか？",
       clearConfirmBody: 'このアカウントのスタンドアロン音声履歴全体が完全に削除されます。この操作は元に戻せません。',
       clearConfirmAction: '履歴を消去',
       clearSucceeded: '音声履歴を消去しました。',
@@ -11419,17 +11478,17 @@ settingsSession: {
       "音声機能を設定します。音声を完全に無効にするか、Happier Voice（サブスクリプションが必要）を使用するか、ご自身のElevenLabsアカウントを使用できます。",
     mode: {
       off: "オフ",
-      offSubtitle: "すべての音声機能を無効化",
-      happier: "Happier Voice",
+      offSubtitle: "音声会話はオフです。音声入力は引き続き使えます。",
+      happier: "Happier",
       happierSubtitle: "Happier Voiceを使用（サブスクリプションが必要）",
       local: "ローカル OSS 音声",
       localSubtitle: "ローカルの OpenAI 互換 STT/TTS エンドポイントを使用",
-      byo: "自分のElevenLabsを使用",
+      byo: "自分のElevenLabsアカウント",
       byoSubtitle: "自分のElevenLabs APIキーとエージェントを使用",
       openaiRealtime: "OpenAI Realtime",
       openaiRealtimeSubtitle: "保存済みのAPIキー、または明示的に選択したOpenAIアカウントを使用",
-      grokRealtime: "Grok Voice · BYOK",
-      grokRealtimeSubtitle: "自分のxAI APIキーをライブ音声に使用",
+      grokRealtime: "Grok Voice",
+      grokRealtimeSubtitle: "xAIのAPIキーを使用します",
     },
     realtimeProviders: {
       ...voiceProviderPrivacyTranslations.ja,
@@ -11453,6 +11512,13 @@ settingsSession: {
       activityFeedEnabledSubtitle: "音声利用中に最近の音声イベントを表示",
       activityFeedAutoExpandOnStart: "開始時に自動で展開",
       activityFeedAutoExpandOnStartSubtitle: "音声開始時にフィードを自動で展開します",
+      presenceContainer: {
+          title: "音声の表示位置",
+          subtitle: "このデバイスで音声を表示する場所を選びます。",
+          topBar: "トップバー",
+          island: "アイランド",
+          orb: "オーブ",
+      },
       orbEnabled: "フローティング音声オーブ",
       orbEnabledSubtitle: "このデバイスでドラッグできる音声コンパニオンを表示します。音声はサイドバーと入力欄から引き続き利用できます。",
       scopeTitle: "デフォルトの音声スコープ",
@@ -11505,7 +11571,7 @@ settingsSession: {
       },
     },
     byo: {
-      title: "自分のElevenLabsを使用",
+      title: "自分のElevenLabsアカウント",
 	      agentReuseDialog: {
 	        title: "Happier エージェントは既に存在します",
 	        messageWithId: ({ name, id }: { name: string; id: string }) =>
@@ -11916,9 +11982,9 @@ settingsSession: {
         },
 
         provider: {
-          title: "ローカルニューラル（ベータ）",
+          title: "Happier 音声モデル",
           subtitle:
-            "Web では daemon 経由の STT を使用し、対応環境ではネイティブ Sherpa ストリーミングパックも利用できます。",
+            "あなたのコンピューターで動作し、音声は手元に残ります。",
           detail: "Sherpa エンジン",
         },},
       executionMachine: {
@@ -11927,7 +11993,7 @@ settingsSession: {
         title: "実行マシン",
         fallbackSubtitle: "ローカル音声に使用するマシンを選択します。",
         autoTitle: "自動",
-        autoSubtitle: "最近の使用状況から利用可能なマシンを選択します。",
+        autoSubtitle: "このアカウントで一度選んだマシンを使い続けます。オフラインの場合は、別のマシンを明示的に選んでください。",
         onlineLabel: "オンライン",
         offlineLabel: "オフライン",
         unknownMachineLabel: "不明なマシン",
@@ -11944,15 +12010,15 @@ settingsSession: {
         },
         handsFree: {
           title: "ハンズフリー",
-          enableTitle: "ハンズフリーを有効化",
-          silenceTitle: "無音タイムアウト（ms）",
-          minSpeechTitle: "最小発話（ms）",
+          enableTitle: "ハンズフリー",
+          silenceTitle: "応答までの間",
+          minSpeechTitle: "これより短い音を無視",
         },
         customBackendIdSubtitle: "カスタム backend ID を入力します。",
         searchBackendsPlaceholder: "backend を検索",
         searchModelsPlaceholder: "モデルを検索",
         machineAutoSubtitle:
-          "最近の利用状況に基づいて自動でマシンを選択します。",
+          "このアカウントで一度選んだマシンを使い続けます。オフラインの場合は、別のマシンを明示的に選んでください。",
         rootSessionPolicy: {
           title: "ルートセッション方針",
           fallbackSubtitle: "方針を選択してください。",
@@ -11995,12 +12061,12 @@ settingsSession: {
             "音声エージェントを実行する場所を選択します。",
           stayInVoiceHomeTitle: "voice home に留める",
           stayInVoiceHomeEnabledSubtitle:
-            "voice home マシンでエージェントを動かし続けます。",
+            "エージェントを音声ホームのフォルダーに保ちます。",
           stayInVoiceHomeDisabledSubtitle:
-            "エージェントがセッションのマシンに追従できるようにします。",
+            "エージェントがセッションのプロジェクトフォルダーを使えるようにします。",
           allowTeleportTitle: "テレポートを許可",
           teleportEnabledSubtitle:
-            "必要に応じてエージェントを別マシンへ移動できます。",
+            "エージェントを作業セッションのプロジェクトフォルダーへ移動できるようにします。",
           teleportDisabledSubtitle: "テレポート無効。",
         },
         machineRecovery: {
@@ -12136,9 +12202,9 @@ settingsSession: {
       mediatorVerbosityShort: "短く",
       mediatorVerbosityBalanced: "バランス",
       mediatorIdleTtl: "メディエーター idle TTL",
-      mediatorIdleTtlSubtitle: "非アクティブ時に自動停止（60–3600秒）",
-      mediatorIdleTtlDescription: "60〜3600 の数値を入力してください。",
-      mediatorIdleTtlInvalid: "60〜3600 の数値を入力してください。",
+      mediatorIdleTtlSubtitle: "非アクティブ時に自動停止（60–21600秒）",
+      mediatorIdleTtlDescription: "60〜21600 の数値を入力してください。",
+      mediatorIdleTtlInvalid: "60〜21600 の数値を入力してください。",
       mediatorChatModelSource: "メディエーター モデル（チャット）",
       mediatorChatModelSourceSubtitle:
         "セッションのモデル、またはカスタムの高速モデルを使用",
@@ -12195,9 +12261,9 @@ settingsSession: {
       sttModelTitle: "STT モデル",
       sttModelDescription:
         "STT サーバーに送信するモデル名（OpenAI 互換フィールド）。",
-      deviceStt: "デバイス STT（実験的）",
+      deviceStt: "このデバイスの音声認識",
       deviceSttSubtitle:
-        "OpenAI互換エンドポイントの代わりに端末内音声認識を使用",
+        "高速で無料。認識のため、デバイスやブラウザがメーカーに音声を送る場合があります。",
       sttProvider: "STTプロバイダー",
       neuralStt: {
         title: "端末内 STT",
@@ -12406,9 +12472,9 @@ settingsSession: {
     },
     languageTitle: "言語",
     languageDescription:
-      "音声アシスタントの操作に使用する言語を選択します。この設定はすべてのデバイスで同期されます。",
-    preferredLanguage: "優先言語",
-    preferredLanguageSubtitle: "音声アシスタントの応答に使用する言語",
+      "音声サービスが対応する言語を選んでください。一部のサービスでは認識と返信に同じ言語を使います。",
+    preferredLanguage: "返信の言語",
+    preferredLanguageSubtitle: "サービスが対応している場合の返信言語",
     language: {
       searchPlaceholder: "言語を検索...",
       title: "言語",
@@ -12427,6 +12493,7 @@ settingsSession: {
   },
 
   settingsAccount: {
+      ...accountEncryptionRecoveryTranslations['ja'],
     providerCatalogUnavailable: '利用可能なサインイン接続を確認できませんでした。',
     securityPageDescription: "この Home のサインイン方法、復旧、セッション、暗号化。",
     accountServiceUnsupportedTitle: ({ accountService }: { accountService: string }) => `${accountService} はまだ Home を見つけられません`,
@@ -12693,7 +12760,10 @@ settingsSession: {
     },
     defaultTitle: "新着情報",
     onboardingShowcase: {
-        details: PRODUCT_STORY_DETAILS_ENGLISH,
+        details: {
+            ...PRODUCT_STORY_DETAILS_ENGLISH,
+            voice: { ...PRODUCT_STORY_DETAILS_ENGLISH.voice, body: "セッションについて聞き、次の変更を声に出して相談できます。権限リクエストの承認にはタップが必要です。" },
+        },
                 "title": "Happierへようこそ",
                 "subtitle": "あなたのAIエージェントを、働くすべての場所で。",
                 "cards": {
@@ -12706,7 +12776,7 @@ settingsSession: {
                         "existingTitle": "既存のセッションも、そのまま表示",
                         "existingBody": "あなたのマシンで動いているClaude、Codex、OpenCodeのセッションを、Happierでライブに開けます。",
                         "voiceTitle": "一緒に考えられる音声アシスタント",
-                        "voiceBody": "エージェントが何をしているかを聞き、権限リクエストを承認し、メッセージを送信できます。ハンズフリーで。",
+                        "voiceBody": "エージェントの状況を聞き、音声でメッセージを送れます。権限リクエストはタップで承認します。",
                         "reviewTitle": "diffをレビューしてコメント",
                         "reviewBody": "ファイルやdiffの特定行をマークし、送るメモを選び、そのままエージェントに渡せます。",
                         "subagentsTitle": "プロバイダー横断のsubagents",
@@ -12768,7 +12838,7 @@ settingsSession: {
                     "voiceAssistant": {
                         "title": "話しかけられる同僚",
                         "wideTitle": "音声アシスタント：話しかけられる同僚",
-                        "body": "音声アシスタントが実行中のすべてのセッションを監視します。次の変更を一緒に考え、権限を承認し、さらに多くのことをハンズフリーで行えます。",
+                        "body": "セッションについて聞き、次の変更を声に出して相談できます。権限リクエストの承認にはタップが必要です。",
                         "alt": "音声アシスタント用の抽象的なプレースホルダー画像。"
                     },
                     "reviewComments": {
@@ -14684,6 +14754,24 @@ settingsSession: {
     browseActivityUnknown: "不明",
         browseSearchPlaceholder: "読み込み済みセッションを検索…",
         browseSearchAgentPlaceholder: ({ agent }: { agent: string }) => `${agent} のセッションを検索…`,
+        browseTitles: "タイトル",
+        browseConversations: "会話",
+        browseSearchTarget: "検索対象",
+        browseContentPlaceholder: "会話のテキストを検索…",
+        browseContentSearchPrompt: "語句を入力して、会話を検索してください。",
+        browseContentSubmit: "検索",
+        browseContentUpdateRequired: ({ machine }: { machine: string }) => `会話を検索するには ${machine} の Happier を更新してください。`,
+        browseContentPartial: "検索できなかった会話があります。",
+        browseContentNotSearchable: "検索できません",
+        browseContentStopped: "検索を停止しました。結果は不完全です。",
+        browseContentPaletteSearch: ({ query }: { query: string }) => `Claude Code と Codex の会話で「${query}」を検索`,
+        browseContentOnMachine: ({ machine }: { machine: string }) => `${machine} の会話`,
+        browseContentOpen: "Happier で開く",
+        browseContentShow: "外部セッションで表示",
+        browseContentPreviewOpens: ({ query }: { query: string }) => `この位置で会話を開き、「${query}」で検索します。`,
+        browseContentPreviewEmpty: "一致したメッセージがここに表示されます。",
+        browseContentMore: "さらに会話を検索",
+        browseContentBack: "検索に戻る",
         browseNoSearchResults: "この検索に一致する読み込み済みセッションはまだありません。",
     browseIndexing: "外部セッションをインデックスしています…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${total} 件中 ${scanned} 件をインデックス済み`,
@@ -14760,3 +14848,5 @@ settingsSession: {
         },
   },} as const;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
+import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
+import { glassAppearanceTranslations } from './glassAppearanceTranslations';

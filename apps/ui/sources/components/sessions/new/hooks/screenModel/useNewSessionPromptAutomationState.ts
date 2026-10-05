@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionInitialTriggerV1 } from '@happier-dev/protocol';
 
 import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import {
@@ -12,12 +13,16 @@ import { useNewSessionPromptStore, type NewSessionPromptStore } from './newSessi
 type PersistedAuthoringDraftLike = Readonly<{
     displayText?: string | null;
     automation?: unknown;
+    initialTriggers?: SessionInitialTriggerV1[];
 }> | null | undefined;
 
 type TempAuthoringDraftLike = Readonly<{
     displayText?: string | null;
     automation?: unknown;
+    initialTriggers?: SessionInitialTriggerV1[];
 }> | null | undefined;
+
+const EMPTY_INITIAL_TRIGGERS: SessionInitialTriggerV1[] = [];
 
 export function useNewSessionPromptAutomationState(params: Readonly<{
     prompt: string | undefined;
@@ -26,6 +31,7 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     persistedDraftEntryIntent: string | null | undefined;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
+    initialTriggersDraftKey?: string;
     /**
      * Explicit "Use current turn" adoption for the mounted exact-turn binding.
      * Request identity changes only when the user adopts again; the request is
@@ -47,6 +53,8 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     setAutomationDraft: React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>;
     automationRequestedByRoute: boolean;
+    initialTriggers: SessionInitialTriggerV1[];
+    setInitialTriggers: React.Dispatch<React.SetStateAction<SessionInitialTriggerV1[]>>;
 }> {
     const hydratedSessionPrompt = React.useMemo(() => {
         return params.hydratedTempAuthoringDraft?.displayText || params.prompt || params.hydratedPersistedAuthoringDraft?.displayText || '';
@@ -72,6 +80,24 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
         lastHydrationRequestKeyRef.current = hydrationRequestKey;
         hasUserEditedSessionPromptRef.current = false;
     }
+
+    const hydratedInitialTriggers = params.hydratedTempAuthoringDraft?.initialTriggers
+        ?? params.hydratedPersistedAuthoringDraft?.initialTriggers ?? EMPTY_INITIAL_TRIGGERS;
+    const [initialTriggers, setInitialTriggersState] = React.useState(() => hydratedInitialTriggers);
+    const hasEditedInitialTriggersRef = React.useRef(false);
+    const triggerHydrationKey = `${params.initialTriggersDraftKey ?? ''}\u0000${params.dataId ?? ''}`;
+    const lastTriggerHydrationKeyRef = React.useRef(triggerHydrationKey);
+    if (lastTriggerHydrationKeyRef.current !== triggerHydrationKey) {
+        lastTriggerHydrationKeyRef.current = triggerHydrationKey;
+        hasEditedInitialTriggersRef.current = false;
+    }
+    const setInitialTriggers = React.useCallback<React.Dispatch<React.SetStateAction<SessionInitialTriggerV1[]>>>((next) => {
+        hasEditedInitialTriggersRef.current = true;
+        setInitialTriggersState(next);
+    }, []);
+    React.useEffect(() => {
+        if (!hasEditedInitialTriggersRef.current) setInitialTriggersState(hydratedInitialTriggers);
+    }, [hydratedInitialTriggers, triggerHydrationKey]);
 
     const automationRequestedByRoute = React.useMemo(() => {
         if (typeof params.automationParam !== 'string') return false;
@@ -157,5 +183,7 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
         automationDraft,
         setAutomationDraft,
         automationRequestedByRoute,
+        initialTriggers,
+        setInitialTriggers,
     };
 }

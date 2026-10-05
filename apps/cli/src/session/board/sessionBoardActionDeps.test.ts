@@ -7,19 +7,16 @@ import {
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   verifyExternalActionMachineRequestV1,
-  verifyExternalActionMachineRpcRequestV1,
   projectSessionAccessCapabilitiesV1,
   FeaturesResponseSchema,
   type ExternalActionExecutionAuthorizationV1,
 } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rpc';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { createSessionBoardActionDeps } from './sessionBoardActionDeps';
-import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import {
   CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
@@ -34,22 +31,13 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createCurrentSessionPresentationService } from '@/session/presentation/currentSessionPresentationService';
 
-const projectionSocket = vi.hoisted(() => {
-  const handlers = new Map<string, () => void>();
-  return {
-    connect: () => handlers.get('connect')?.(),
-    on: (event: string, handler: () => void) => handlers.set(event, handler),
-    off: (event: string) => handlers.delete(event),
-    disconnect: () => {}, close: () => {}, emit: vi.fn(),
-  };
-});
-// The Socket.IO connection is the Machine RPC network boundary.
-vi.mock('@/api/session/sockets', () => ({ createUserScopedSocket: () => projectionSocket }));
-
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
 const item = { v: 1, title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
   source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Hello' } } },
 } as const;
+const installed = { ...item, source: { kind: 'widget', instance: {
+  v: 1, id: 'status', definition: { kind: 'installed', surface: { pluginId: 'acme.widgets', localId: 'status' } }, bindings: {},
+} } } as const;
 const rawSession: RawSessionRecord = {
   id: 'session-one', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
   encryptionMode: 'plain', metadata: '{}', metadataVersion: 1, dataEncryptionKey: null, agentState: null, agentStateVersion: 0,
@@ -309,7 +297,7 @@ describe('CLI Board Action family', () => {
       input: { sessionId: 'session-one' },
     })).resolves.toMatchObject({ serverId: 'home-a', sessionId: 'session-one', items: [] });
   });
-  it('creates an external installed reference only through its exact signed Machine projection', async () => {
+  it('creates a current external widget reference through the exact signed Board writer and refuses retired shapes', async () => {
     const previousMetadata = rawSession.metadata;
     rawSession.metadata = JSON.stringify({ machineId: 'machine-session' });
     const keyPair = tweetnacl.sign.keyPair();
@@ -329,18 +317,11 @@ describe('CLI Board Action family', () => {
       externalActionExecutionAuthorization: authorization,
       externalActionTarget: target,
     };
-    const installed = { ...item, source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'status' } } } as const;
-    const binding = normalizePluginUiInlineSurfaceBindingV1({ pluginId: 'acme.widgets', surfaceId: 'status', rendererId: 'native', role: 'widget', target: { kind: 'session' } });
-    if (!binding) throw new Error('invalid fixture');
-    let available = true;
     let writes = 0;
     const sessionQueries: unknown[] = [];
     verifySessionRequest = (request) => {
       sessionQueries.push((request as { query?: unknown }).query);
     };
-    app.get('/v1/machines/machine-session', async () => ({ machine: { id: 'machine-session',
-      dataEncryptionKey: Buffer.from(JSON.stringify({ t: 'plain', v: null })).toString('base64'),
-    } }));
     app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: null }));
     app.put('/v2/sessions/session-one/board', async (request) => {
       writes += 1;
@@ -360,33 +341,6 @@ describe('CLI Board Action family', () => {
       })).toBe(true);
       return { operation: 'upsert_item', itemId: 'status', outcome: 'created', itemRevision: revision, layoutRevision: revision };
     });
-    projectionSocket.emit.mockImplementation((event, payload, ack) => {
-      expect(payload.method).toContain('machine-session:');
-      expect(payload.externalActionExecution).toMatchObject({
-        authorization,
-        effectActionId: 'session.board.item.upsert',
-        target,
-        installationId: 'installation-1',
-      });
-      expect(verifyExternalActionMachineRpcRequestV1({
-        authorizationToken: authorization.token,
-        effectActionId: 'session.board.item.upsert',
-        target,
-        installationId: 'installation-1',
-        event: event as typeof SOCKET_RPC_EVENTS.CALL,
-        method: payload.method,
-        requestId: payload.requestId,
-        params: payload.params,
-        publicKey: keyPair.publicKey,
-        signature: payload.externalActionExecution.machineSignature,
-      })).toBe(true);
-      ack({ ok: true, result: { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: { pluginUi: {
-        family: 'pluginUi', entriesById: { status: { id: 'status', pluginId: 'acme.widgets', contributionKind: 'surfacePlacement',
-          descriptorId: 'status', occurrenceId: 'acme.widgets#1', binding,
-        availability: { state: available ? 'available' : 'disabled', reason: 'fixture', diagnostics: [] },
-        } },
-      } } } } });
-    });
     try {
       const deps = createSessionBoardActionDeps({
         credentials: { token: 'daemon-token', encryption: null },
@@ -398,26 +352,16 @@ describe('CLI Board Action family', () => {
       });
       const input = { sessionId: 'session-one', itemId: 'status', item: installed, expectedItemRevision: null, placement: { tabId: 'overview', tabTitle: 'Overview' } };
       await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context, input })).resolves.toMatchObject({ result: { outcome: 'created' } });
-      available = false;
-      await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context, input })).resolves.toMatchObject({ errorCode: 'unsupported_action' });
-      // A renderer this Machine cannot run and a surface this Machine does not
-      // declare are different refusals: the first is genuinely unsupported here,
-      // the second names an invalid Board item the author can correct.
-      available = true;
       await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context, input: {
         ...input,
         item: { ...item, source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'absent' } } },
       } })).resolves.toMatchObject({ errorCode: 'session_board_invalid' });
       expect(writes).toBe(1);
-      // Every attempt authorizes against current Session detail. Only the accepted
-      // installed-surface write performs the second ownership-currentness read;
-      // the disabled projection and the undeclared surface are rejected before any
-      // write can need it.
-      expect(sessionQueries).toEqual(Array.from({ length: 4 }, () => ({ accessProjectionVersion: '1' })));
+      // Retired shapes fail strict input admission before any Session transport.
+      expect(sessionQueries).toEqual([{ accessProjectionVersion: '1' }]);
     } finally { rawSession.metadata = previousMetadata; }
   });
   it('updates a stored installed item while refusing a different surface identity', async () => {
-    const installed = { ...item, source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'status' } } } as const;
     const writes: unknown[] = [];
     app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: { id: 'item-row',
       address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'status' }, content: { t: 'plain', v: installed }, revision,
@@ -433,7 +377,9 @@ describe('CLI Board Action family', () => {
     expect(writes).toEqual([expect.objectContaining({ itemContent: { t: 'plain', v: { ...installed, title: 'Renamed' } } })]);
     await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context: {}, input: {
       sessionId: 'session-one', itemId: 'status', expectedItemRevision: revision,
-      item: { ...installed, source: { ...installed.source, surface: { ...installed.source.surface, localId: 'other' } } },
+      item: { ...installed, source: { ...installed.source, instance: {
+        ...installed.source.instance, definition: { ...installed.source.instance.definition, surface: { ...installed.source.instance.definition.surface, localId: 'other' } },
+      } } },
     } })).resolves.toMatchObject({ errorCode: 'session_board_source_conflict' });
     expect(writes).toHaveLength(1);
   });

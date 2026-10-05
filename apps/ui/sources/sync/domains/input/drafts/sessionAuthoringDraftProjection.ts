@@ -117,6 +117,7 @@ export function projectNewSessionDraftSyncedAuthoringFields(params: Readonly<{
         ...(draft.directoryKind === 'managed' ? { directoryKind: 'managed' as const } : {}),
         ...(draft.checkoutCreationDraft ? { checkoutCreationDraft: draft.checkoutCreationDraft } : {}),
         ...(draft.access !== undefined ? { access: draft.access } : {}),
+        ...(draft.initialTriggers !== undefined ? { initialTriggers: draft.initialTriggers } : {}),
         ...(draft.primaryTeamId !== undefined ? { primaryTeamId: draft.primaryTeamId } : {}),
         ...(draft.organizationPlacement ? { organizationPlacement: draft.organizationPlacement } : {}),
         agentTarget: draft.agentTarget

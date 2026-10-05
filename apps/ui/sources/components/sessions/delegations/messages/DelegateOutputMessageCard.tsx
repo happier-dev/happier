@@ -7,9 +7,41 @@ import {
     ExecutionRunResultLayout,
     type ExecutionRunResultPresentation,
 } from '@/components/sessions/runs/ExecutionRunResultLayout';
-import { Text } from '@/components/ui/text/Text';
+import { StructuredFindText, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+
+function buildDelegateOutputContent(payload: DelegateOutputV1, options: Readonly<{
+    presentation?: ExecutionRunResultPresentation;
+}>) {
+    const block = (id: string, text: string) => ({ id: `structured-delegate-${id}`, text });
+    return {
+        header: options.presentation === 'page' ? null : block('header', t('delegation.output.title')),
+        summary: block('summary', payload.summary),
+        deliverables: (payload.deliverables ?? []).length > 0 ? {
+            label: block('deliverables:label', t('delegation.output.deliverablesTitle')),
+            items: payload.deliverables.slice(0, 30).map((deliverable, index) => ({
+                key: deliverable.id,
+                title: block(`deliverable:${index}:title`, deliverable.title),
+                details: deliverable.details ? block(`deliverable:${index}:details`, deliverable.details) : null,
+            })),
+        } : null,
+    };
+}
+
+/** Find shares the actual card's displayed deliverables and chrome, never hidden payload fields. */
+export function projectDelegateOutputFindText(payload: DelegateOutputV1, options: Readonly<{
+    presentation?: ExecutionRunResultPresentation;
+}> = {}): readonly StructuredFindTextBlock[] {
+    const content = buildDelegateOutputContent(payload, options);
+    return [
+        ...(content.header ? [content.header] : []),
+        content.summary,
+        ...(content.deliverables ? [content.deliverables.label, ...content.deliverables.items.flatMap((deliverable) => [
+            deliverable.title, ...(deliverable.details ? [deliverable.details] : []),
+        ])] : []),
+    ];
+}
 
 /**
  * A delegated task's result: what was done, in words, then its deliverables. It has no primary of
@@ -23,23 +55,23 @@ export function DelegateOutputMessageCard(props: Readonly<{
     after?: React.ReactNode;
 }>) {
     const styles = stylesheet;
-    const deliverables = props.payload.deliverables ?? [];
+    const content = buildDelegateOutputContent(props.payload, props);
 
     return (
         <ExecutionRunResultLayout presentation={props.presentation ?? 'message'} testID="delegate-output" after={props.after}>
-            {props.presentation === 'page' ? null : (
-                <Text selectable accessibilityRole="header" style={styles.headerText}>{t('delegation.output.title')}</Text>
-            )}
-            <Text selectable style={styles.lead}>{props.payload.summary}</Text>
+            {content.header ? (
+                <StructuredFindText blockId={content.header.id} text={content.header.text} selectable accessibilityRole="header" style={styles.headerText} />
+            ) : null}
+            <StructuredFindText blockId={content.summary.id} text={content.summary.text} selectable style={styles.lead} />
 
-            {deliverables.length > 0 ? (
+            {content.deliverables ? (
                 <View style={styles.section}>
-                    <Text selectable accessibilityRole="header" style={styles.sectionTitle}>{t('delegation.output.deliverablesTitle')}</Text>
+                    <StructuredFindText blockId={content.deliverables.label.id} text={content.deliverables.label.text} selectable accessibilityRole="header" style={styles.sectionTitle} />
                     <View style={styles.sheet}>
-                        {deliverables.slice(0, 30).map((d, index) => (
-                            <View key={d.id} style={[styles.deliverableRow, index > 0 ? styles.deliverableDivider : null]}>
-                                <Text selectable style={styles.deliverableTitle}>{d.title}</Text>
-                                {d.details ? <Text selectable style={styles.deliverableDetails}>{d.details}</Text> : null}
+                        {content.deliverables.items.map((deliverable, index) => (
+                            <View key={deliverable.key} style={[styles.deliverableRow, index > 0 ? styles.deliverableDivider : null]}>
+                                <StructuredFindText blockId={deliverable.title.id} text={deliverable.title.text} selectable style={styles.deliverableTitle} />
+                                {deliverable.details ? <StructuredFindText blockId={deliverable.details.id} text={deliverable.details.text} selectable style={styles.deliverableDetails} /> : null}
                             </View>
                         ))}
                     </View>

@@ -92,12 +92,14 @@ export const SessionAgentPlanCard = React.memo(function SessionAgentPlanCard(pro
     headerAccessory?: React.ReactNode;
     /** Card or plain, resolved by the Companion (the item's override, else its default). */
     frameStyle?: WidgetFrameStyle;
+    presentation?: 'frame' | 'body';
     testID: string;
 }>) {
     const { plan } = props;
     const agent = props.agentLabel ?? t('sessionCompanion.status.agentFallback');
     return (
         <WidgetFrame
+            presentation={props.presentation}
             testID={props.testID}
             frameStyle={props.frameStyle ?? 'plain'}
             placement="companion"

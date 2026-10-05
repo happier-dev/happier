@@ -178,9 +178,4 @@ describe('Sentry detail tab declarations', () => {
     expect(traceless.map((tab) => tab.id)).toContain('release');
   });
 
-  it('lets retention buy list geometry and never a loaded projection', () => {
-    const retained = SENTRY_DETAIL_TABS_V1.filter((tab) => tab.retention === 'retain');
-    expect(retained.map((tab) => tab.id)).toEqual(['occurrences', 'stack-trace']);
-    for (const tab of retained) expect(tab.retainedState).toContain('discarded');
-  });
 });

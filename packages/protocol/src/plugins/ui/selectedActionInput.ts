@@ -16,7 +16,7 @@ import {
 
 /**
  * The host-selected facts that are intentionally absent from public Action
- * input. This stays transient: it is valid only while its producing mount and
+ * input. This stays transient: it is valid only while its producing UI binding and
  * target admission remain current.
  */
 export type PluginUiSelectedActionInputV1 = PluginUiSelectActionInputTargetedSubmittedV1;

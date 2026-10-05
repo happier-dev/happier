@@ -11,6 +11,7 @@ import { configuration } from '@/configuration';
 import { readAccountIdFromToken as readPreviewAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { refreshTerminalPresentUserPolicy } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
+import { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import {
     getActiveAccountSettingsSnapshot,
     resolveActiveAccountSettingsSnapshotRevision,
@@ -368,6 +369,7 @@ import {
     type DisconnectedTerminalHostCandidate,
     type DisconnectedTerminalHostSupervisionResult,
 } from '../sessions/disconnectedTerminalHostSupervision';
+import { resolveTrackedSessionTerminalPresentation } from '../sessions/resolveTrackedSessionTerminalPresentation';
 import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTerminalHostResumeLifecycle';
 import { resolveTrackedSessionCatalogAgentId } from '../sessions/resolveTrackedSessionCatalogAgentId';
 import {
@@ -3949,8 +3951,24 @@ export async function startDaemonSessionControlRuntime(
                 (candidate) => candidate.sessionId === sessionId
                     && !terminalizedDisconnectedTerminalHostIds.has(candidate.attachmentId),
             ) ?? null,
-        resolveResumeGateForCandidate: async (candidate) =>
-            resolveDisconnectedTerminalHostResumeGate(await superviseDisconnectedTerminalHost(candidate)),
+        resolveResumeGateForCandidate: async (candidate) => {
+            const result = await superviseDisconnectedTerminalHost(candidate);
+            if (result.state !== 'recoverable_unservable' || result.reason !== 'runner_absent'
+                || candidate.controlDescriptorAvailable !== true) {
+                return resolveDisconnectedTerminalHostResumeGate(result);
+            }
+            // Selection reads the captured runtime, not today's Account default.
+            // The retained host and native identity are still admitted by the
+            // selected runtime's existing endpoint/terminal recovery owners.
+            const selected = await resolveTrackedSessionTerminalPresentation({
+                pid: candidate.pid, startedBy: 'daemon', happySessionId: candidate.sessionId,
+                spawnOptions: candidate.spawnOptions,
+                happySessionMetadataFromLocalWebhook: candidate.metadata,
+            }, candidate.handle.kind);
+            return resolveDisconnectedTerminalHostResumeGate(result, {
+                ...selected, controlDescriptorAvailable: candidate.controlDescriptorAvailable,
+            });
+        },
         retireCandidate: retireDisconnectedTerminalHostCandidate,
     });
     const superviseDisconnectedTerminalHost = async (
@@ -4094,17 +4112,21 @@ export async function startDaemonSessionControlRuntime(
         try {
             const key = computeDaemonSpawnRequestKey(options);
             return await spawnRequestCoalescer.run(key, async () => {
+                let retainedTerminalRecovery: 'adopt' | undefined;
                 if (options.existingSessionId) {
                     const preGateResult = await disconnectedTerminalHostResumeLifecycle.resolveResumePreGate(
                         options.existingSessionId,
                         async (sessionId) => await stopSession(sessionId),
                     );
-                    if (preGateResult) {
+                    if (preGateResult?.type === 'error') {
                         return {
                             type: 'error',
                             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                             errorMessage: preGateResult.errorMessage,
                         };
+                    }
+                    if (preGateResult?.type === 'resume') {
+                        retainedTerminalRecovery = preGateResult.retainedTerminalRecovery;
                     }
                 }
                 if (options.existingSessionId) {
@@ -4237,6 +4259,7 @@ export async function startDaemonSessionControlRuntime(
                 const spawnResult = await spawnConcurrencyGate.run(async () =>
                     await executeSpawnSessionRequest({
                         options,
+                        retainedTerminalRecovery,
                         credentials: params.credentials,
                         deviceLocalSecretStorage: params.deviceLocalSecretStorage,
                         api: params.api,
@@ -11459,6 +11482,7 @@ export async function startDaemonSessionControlRuntime(
                     externalActionApprovalExecutionOriginCurrentness!,
                 listContributedActionDefinitions:
                     externalActionContributedDefinitionLister!,
+                inputTypeDeps: createCommittedInputTypeDeps(),
                 ...(hostExternalSessionAction
                     ? { hostExternalSessionAction }
                     : {}),

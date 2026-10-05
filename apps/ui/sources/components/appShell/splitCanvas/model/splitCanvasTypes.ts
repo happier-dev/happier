@@ -93,6 +93,7 @@ export type SplitCanvasLeafRect = Readonly<{
 }>;
 
 export type SplitCanvasLeafHostRef = Readonly<{
+    measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void;
     getBoundingClientRect?: () => Readonly<{
         left?: number;
         top?: number;

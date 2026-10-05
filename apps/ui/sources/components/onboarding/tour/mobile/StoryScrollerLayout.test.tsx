@@ -26,7 +26,8 @@ const deviceState = vi.hoisted(() => ({
     safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
 }));
 
-vi.mock('react-native-safe-area-context', () => ({
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => deviceState.safeAreaInsets,
 }));
 
@@ -76,8 +77,6 @@ function createProgress(
 
     return {
         ...model,
-        attentionChoice: 'keep_current',
-        setAttentionChoice: vi.fn(),
         advance: vi.fn(),
         back: vi.fn(),
         skipToSetup: vi.fn(),

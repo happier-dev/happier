@@ -155,6 +155,10 @@ export function resolveStablePluginStructuredMessageConsumer(params: Parameters<
         pluginId: rendererContribution.pluginId,
         occurrenceId: model.identity.occurrenceId,
         renderer: rendererContribution.definition,
+        dragSources: (params.registry.dragSources ?? []).filter((source) => source.pluginId === rendererContribution.pluginId)
+            .map((source) => ({ identity: source.identity, referenceSchema: source.definition.referenceSchema })),
+        dropTargets: (params.registry.dropTargets ?? []).filter((target) => target.pluginId === rendererContribution.pluginId)
+            .map((target) => target.identity),
         settings,
         actions: rendererActionIdentities,
         actionPresentations,

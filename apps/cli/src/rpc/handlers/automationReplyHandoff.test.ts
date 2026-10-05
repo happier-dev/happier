@@ -201,6 +201,7 @@ function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
   return {
     contributes: emptyContributions,
     resolvePromptAssetBlocks: async () => [],
+    resolveCaptureSource: async () => { throw new Error('Capture-source resolution is unavailable in this fixture'); },
     hookHandlersByHookId: new Map(),
     agentRuntimesByAgentId: new Map(),
     scmHostingProvidersById: new Map(),

@@ -42,6 +42,7 @@ vi.mock('@/sync/api/session/apiSocket', async (importOriginal) => {
     return actual;
 });
 
+import './syncEngine';
 import { sync, type SyncServerTarget } from './sync';
 import { storage } from './domains/state/storage';
 import { Encryption } from './encryption/encryption';

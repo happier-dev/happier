@@ -5,7 +5,8 @@ import {
     PluginUiEphemeralInputSettlementV1Schema,
     type PluginUiEphemeralInputSettlementV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 } from '@happier-dev/protocol';
+import type { PluginUiLaunchInputV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {
@@ -23,6 +24,7 @@ import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 import { t } from '@/text';
 
 export type PluginEventAutomationSetupSurfaceSettlement = PluginUiEphemeralInputSettlementV1;
@@ -56,7 +58,10 @@ export function createPluginEventAutomationSetupSurfaceBinding(params: Readonly<
 }
 
 type SetupSurfaceModalProps = Readonly<{
-    eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+    surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
+    title: string;
+    description?: string;
+    launchInput?: PluginUiLaunchInputV1;
     projection: DaemonMergedProjectionInputs;
     machineId: string;
     serverId: string | null;
@@ -67,7 +72,7 @@ type SetupSurfaceModalProps = Readonly<{
 function PluginEventAutomationSetupSurfaceModal(
     props: SetupSurfaceModalProps,
 ): React.ReactElement | null {
-    const setupSurface = props.eligibleEvent.setupSurface;
+    const setupSurface = props.surface;
     const mount = React.useMemo(
         () => setupSurface ? readPluginSurfaceEphemeralMountBinding(setupSurface) : null,
         [setupSurface],
@@ -103,15 +108,15 @@ function PluginEventAutomationSetupSurfaceModal(
     ), [settle]);
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
-        title: props.eligibleEvent.event.title,
-        ...(props.eligibleEvent.event.description
-            ? { subtitle: props.eligibleEvent.event.description }
+        title: props.title,
+        ...(props.description
+            ? { subtitle: props.description }
             : {}),
         footer,
         dimensions: { size: 'lg' as const, maxHeightRatio: 0.9 },
         scrollHost: 'body' as const,
         bodyScroll: 'auto' as const,
-    }), [footer, props.eligibleEvent.event.description, props.eligibleEvent.event.title]);
+    }), [footer, props.description, props.title]);
     useModalCardChrome(props.setChrome, chrome);
 
     React.useEffect(() => () => {
@@ -140,6 +145,7 @@ function PluginEventAutomationSetupSurfaceModal(
             ephemeralMount={ephemeralMount}
             machineId={props.machineId}
             serverId={props.serverId}
+            launchInput={props.launchInput}
         />
     );
 }
@@ -150,17 +156,20 @@ function PluginEventAutomationSetupSurfaceModal(
  * invocation; its caller revalidates and submits the value through the generic
  * Action input owner.
  */
-export async function presentPluginEventAutomationSetupSurface(params: Readonly<{
-    eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+export async function presentPluginEphemeralInputSurface(params: Readonly<{
+    surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
+    title: string;
+    description?: string;
+    launchInput?: PluginUiLaunchInputV1;
     projection: DaemonMergedProjectionInputs;
     machineId: string;
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
 }>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
-    const setupSurface = params.eligibleEvent.setupSurface;
+    const setupSurface = params.surface;
     const plugin = params.projection.pluginProjectionById[
-        params.eligibleEvent.event.identity.pluginId
+        setupSurface.contribution.pluginId
     ];
     if (
         !setupSurface
@@ -175,19 +184,36 @@ export async function presentPluginEventAutomationSetupSurface(params: Readonly<
     return await new Promise<PluginEventAutomationSetupSurfaceSettlement>((resolve) => {
         let modalId = '';
         let settled = false;
+        let releaseRetirement: (() => void) | undefined;
+        let releaseProjection: (() => void) | undefined;
         const finish = (settlement: PluginEventAutomationSetupSurfaceSettlement) => {
             if (settled) return;
             settled = true;
             params.signal?.removeEventListener('abort', onAbort);
+            releaseRetirement?.();
+            releaseProjection?.();
             if (modalId) Modal.hide(modalId);
             resolve(settlement);
         };
         const onAbort = () => finish({ kind: 'cancelled' });
         params.signal?.addEventListener('abort', onAbort, { once: true });
+        const retirement = params.accountLifetime.onRetire(onAbort);
+        releaseRetirement = () => retirement.dispose();
+        releaseProjection = subscribeMachineContributionRegistryProjectionInvalidation({
+            machineId: params.machineId, serverId: params.serverId,
+        }, onAbort);
+        if (settled) {
+            releaseRetirement();
+            releaseProjection();
+            return;
+        }
         modalId = Modal.show({
             component: PluginEventAutomationSetupSurfaceModal,
             props: {
-                eligibleEvent: params.eligibleEvent,
+                surface: params.surface,
+                title: params.title,
+                description: params.description,
+                launchInput: params.launchInput,
                 projection: params.projection,
                 machineId: params.machineId,
                 serverId: params.serverId,
@@ -199,5 +225,21 @@ export async function presentPluginEventAutomationSetupSurface(params: Readonly<
             closeOnBackdrop: false,
         });
         if (!modalId || params.signal?.aborted || !params.accountLifetime.isCurrent()) onAbort();
+    });
+}
+
+export function presentPluginEventAutomationSetupSurface(params: Readonly<{
+    eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+    projection: DaemonMergedProjectionInputs;
+    machineId: string;
+    serverId: string | null;
+    accountLifetime: ActiveServerAccountScopeLifetime;
+    signal?: AbortSignal;
+}>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
+    const surface = params.eligibleEvent.setupSurface;
+    if (!surface) return Promise.resolve({ kind: 'cancelled' });
+    return presentPluginEphemeralInputSurface({
+        ...params, surface, title: params.eligibleEvent.event.title,
+        description: params.eligibleEvent.event.description ?? undefined,
     });
 }

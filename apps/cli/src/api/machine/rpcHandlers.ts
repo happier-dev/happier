@@ -181,7 +181,7 @@ import {
   resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
 } from '@/session/actions/externalSessions/operationProgressPublisher';
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
-import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
+import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import {

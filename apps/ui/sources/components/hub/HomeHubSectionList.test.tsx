@@ -8,15 +8,14 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-// The section table's renderers pull in every section owner; the list reads only which rows are cards.
-vi.mock('./homeHubSections', () => ({
-    isHomeHubCardSection: (section: { kind: string; id: string }) => section.kind === 'widget' || section.id === 'automations',
-}));
 
 afterEach(() => standardCleanup());
 
 const builtin = (id: string) => ({ kind: 'builtin' as const, id, hidden: false, hideable: true });
-const widget = (id: string) => ({ kind: 'widget' as const, id, hidden: false as const, hideable: true as const, widget: { key: id } as never });
+const widget = (id: string, width: 'half' | 'full' = 'half') => ({
+    kind: 'widget' as const, id, hidden: false as const, hideable: true as const, width,
+    instance: { v: 1 as const, id, definition: { kind: 'installed' as const, surface: { pluginId: 'happier.widget.checks', localId: 'latest' } }, bindings: {} },
+});
 
 async function renderList(sections: ReadonlyArray<ReturnType<typeof builtin> | ReturnType<typeof widget>>) {
     const { HomeHubSectionList } = await import('./HomeHubSectionList');
@@ -47,5 +46,14 @@ describe('HomeHubSectionList (the column contract)', () => {
     it('lets a card that is alone in its row take the whole row instead of leaving a hole', async () => {
         const screen = await renderList([builtin('start'), builtin('automations'), builtin('usage')]);
         expect(cellSpans(screen, 'home-hub.cards:automations')).toContain('row');
+    });
+
+    it('preserves a configured full-width copy between independently sized half-width copies', async () => {
+        const screen = await renderList([widget('first'), widget('wide', 'full'), widget('last')]);
+        expect(screen.getTextContent()).toBe('block:first block:wide block:last');
+        const grid = screen.findByTestId('home-hub.cards:first');
+        const full = grid?.findAll((node) => node.props?.span === 'row');
+        expect(full).toHaveLength(1);
+        expect(full?.[0]?.props.children).toBe('block:wide');
     });
 });

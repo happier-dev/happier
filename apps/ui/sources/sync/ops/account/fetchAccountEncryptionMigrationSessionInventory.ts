@@ -29,6 +29,8 @@ export async function fetchAccountEncryptionMigrationSessionInventory(
         /** Must be the request captured for the mounted Home/Account scope. */
         request: SessionInventoryRequest;
         scope: AccountEncryptionMigrationScope;
+        /** Every visible Session, including layout-0 and recipients, before migration filtering. */
+        onSession?: (session: Readonly<{ sessionId: string; encryptionMode: 'plain' | 'e2ee' }>) => void;
     }>,
 ): Promise<readonly AccountEncryptionMigrationSessionRow[]> {
     const request = params.request;
@@ -56,6 +58,10 @@ export async function fetchAccountEncryptionMigrationSessionInventory(
                     );
                 }
                 seenSessionIds.add(row.id);
+                if (row.encryptionMode !== 'plain' && row.encryptionMode !== 'e2ee') {
+                    throw new Error(`Session encryption mode is unavailable (${row.id})`);
+                }
+                params.onSession?.({ sessionId: row.id, encryptionMode: row.encryptionMode });
                 const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
                 if (metadataLayoutVersion === 0) continue;
                 if (metadataLayoutVersion !== 1) {

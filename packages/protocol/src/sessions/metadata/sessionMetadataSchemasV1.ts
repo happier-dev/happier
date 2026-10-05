@@ -141,8 +141,15 @@ const SessionMetadataSharedPatchV1Schema = z.object({
   expectedVersion: SessionEnvelopeVersionSchema,
 }).strict();
 
+export const SessionAgentStateActivitySummaryV1Schema = z.object({
+  pendingPermissionRequestCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  pendingUserActionRequestCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  pendingRequestNewestCreatedAt: TimestampSchema.nullable(),
+}).strict();
+
 const SessionMetadataOwnerMigrationPatchBaseV1Schema = z.object({
   mode: z.literal('owner_migration'),
+  activitySummaryV1: SessionAgentStateActivitySummaryV1Schema.optional(),
   source: z.object({
     metadataLayoutVersion: z.literal(0),
     metadata: z.object({
@@ -211,6 +218,7 @@ export type SessionMetadataPublisherPreconditionV1 = z.infer<
 
 export const SessionMetadataOwnerPatchV1Schema = z.object({
   mode: z.literal('owner'),
+  activitySummaryV1: SessionAgentStateActivitySummaryV1Schema.optional(),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
   publisherPrecondition:
     SessionMetadataPublisherPreconditionV1Schema.optional(),
@@ -229,6 +237,7 @@ export type SessionMetadataOwnerPatchV1 = z.infer<
 export const SessionMetadataInactiveModelIntentOwnerPatchV1Schema =
   SessionMetadataOwnerPatchV1Schema.omit({
     publisherPrecondition: true,
+    activitySummaryV1: true,
   }).extend({
     mode: z.literal('owner_inactive_model_intent'),
     sessionExpectation:
@@ -1273,6 +1282,7 @@ const SessionOwnerSystemV1Schema = z.object({
     controlSessionId: BoundedIdentifierSchema,
     transcriptMode: z.enum(['native_session', 'synthetic']),
     targetSessionId: OptionalOwnerIdentifierSchema,
+    targetServerId: OptionalOwnerIdentifierSchema.optional(),
     updatedAt: z.number().finite(),
   }).strict().optional(),
   voiceAgentStartupInstructionsV1:

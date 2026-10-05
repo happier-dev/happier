@@ -12,6 +12,7 @@ import type {
   VoiceTranscriptLadderObservation,
   VoiceTurnControlAction,
 } from '@happier-dev/plugin-sdk/voice/client';
+import { z } from 'zod';
 
 import type { XaiRealtimeSettingsV1 } from '../../protocol/voice/settings.js';
 import { normalizeXaiRealtimeEventType } from './wire.js';
@@ -84,7 +85,8 @@ export function createXaiSessionUpdate(
     prefix_padding_ms: settings.turnDetection.prefixPaddingMs,
     idle_timeout_ms: settings.turnDetection.idleTimeoutMs,
   });
-  return VoiceRealtimeJsonValueSchema.parse({
+  // Generated tool schemas are metadata; live tool values remain bounded below.
+  return z.json().parse({
     type: 'session.update',
     session: {
       voice: settings.voice.id,

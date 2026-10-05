@@ -1,11 +1,14 @@
 import {
     normalizeWorkflowIngress,
+    SessionInitialTriggerDefinitionV1Schema,
     type AutomationSessionLifecycleEvent,
     type AutomationTriggerDefinitionInput,
+    type JsonValue,
     type TriggerTargetV1,
     type WorkflowBlock,
     type WorkflowDefinitionV1,
     type WorkflowTriggerSetV1,
+    type SessionInitialTriggerDefinitionV1,
 } from '@happier-dev/protocol';
 
 import { readSessionLifecycleKind } from './formatTriggerSummary';
@@ -37,7 +40,11 @@ export type TriggerWhenValue =
         sourceTurnId?: string;
     }>
     | Readonly<{ kind: 'needsYou' | 'sessionArchived' | 'sessionStarts' }>
-    | Readonly<{ kind: 'schedule'; schedule: SimpleSchedule | null; expression: string; timezone: string | null }>
+    /**
+     * A simple schedule, a cron kept as written, or an interval ("Every hour", `everyMs`) kept as it
+     * was saved until the person picks a simple schedule instead.
+     */
+    | Readonly<{ kind: 'schedule'; schedule: SimpleSchedule | null; expression: string; everyMs?: number; timezone: string | null }>
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest: Readonly<{ repository: string; number: number }> | null }>;
 
 export const TRIGGER_THEN_KINDS = ['sendPrompt', 'doAction', 'notifyMe', 'runWorkflow'] as const;
@@ -56,13 +63,15 @@ export type TriggerRunsIn =
     | Readonly<{ kind: 'backgroundRun' }>;
 
 export type TriggerThenValue =
-    | Readonly<{ kind: 'sendPrompt'; prompt: string; runsIn?: TriggerRunsIn }>
+    | Readonly<{ kind: 'sendPrompt'; prompt: string; runsIn?: TriggerRunsIn;
+        /** The compact form edits text and Runs in, not the retained step's other settings. */
+        sourceDefinition?: WorkflowDefinitionV1 }>
     /** One Action step with literal field values, its fields drawn from the Action's own input hints. */
     | Readonly<{ kind: 'doAction'; actionId: string | null; input: Readonly<Record<string, unknown>> }>
     | Readonly<{ kind: 'notifyMe'; message: string; title: string; channels: readonly string[] }>
-    | Readonly<{ kind: 'runWorkflow'; ref: string | null }>
+    | Readonly<{ kind: 'runWorkflow'; ref: string | null; inputs: Readonly<Record<string, JsonValue>> }>
     /** Steps this popover does not author (several steps, an Action step): kept exactly as they are. */
-    | Readonly<{ kind: 'kept'; target: TriggerTargetV1 }>;
+    | Readonly<{ kind: 'kept'; target: TriggerTargetV1; inputs: Readonly<Record<string, JsonValue>> }>;
 
 export type TriggerFormValue = Readonly<{ when: TriggerWhenValue; then: TriggerThenValue; enabled: boolean }>;
 
@@ -107,7 +116,7 @@ export function createDefaultThen(kind: TriggerThenKind): TriggerThenValue {
         case 'notifyMe':
             return { kind: 'notifyMe', message: '', title: '', channels: [] };
         case 'runWorkflow':
-            return { kind: 'runWorkflow', ref: null };
+            return { kind: 'runWorkflow', ref: null, inputs: {} };
     }
 }
 
@@ -119,6 +128,9 @@ export function buildTriggerDefinition(params: Readonly<{
 }>): AutomationTriggerDefinitionInput | null {
     const { when, enabled } = params;
     if (when.kind === 'schedule') {
+        if (when.schedule === null && when.everyMs !== undefined) {
+            return { kind: 'schedule', enabled, schedule: { kind: 'interval', scheduleExpr: null, everyMs: when.everyMs, timezone: when.timezone } };
+        }
         const expression = when.schedule ? buildSimpleScheduleCron(when.schedule) : when.expression.trim();
         if (expression.length === 0) return null;
         return { kind: 'schedule', enabled, schedule: { kind: 'cron', scheduleExpr: expression, everyMs: null, timezone: when.timezone } };
@@ -136,6 +148,25 @@ export function buildTriggerDefinition(params: Readonly<{
             ? { kind: 'currentTurn', sourceTurnId: when.sourceTurnId }
             : { kind: 'everyMatch' },
     };
+}
+
+/** A creation draft leaves the lifecycle source to the session-birth owner. */
+export function buildInitialTriggerDefinition(params: Readonly<{
+    when: TriggerWhenValue;
+    enabled: boolean;
+}>): SessionInitialTriggerDefinitionV1 | null {
+    const { when, enabled } = params;
+    if (when.kind === 'schedule') {
+        const trigger = buildTriggerDefinition({ ...params, sessionId: null });
+        return trigger?.kind === 'schedule' ? trigger : null;
+    }
+    if (when.kind === 'prComment' || when.kind === 'ciFailed') {
+        return when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
+    }
+    if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) return null;
+    return SessionInitialTriggerDefinitionV1Schema.parse({
+        kind: 'sessionLifecycle', enabled, events: [...LIFECYCLE_EVENTS[when.kind]], policy: { kind: 'everyMatch' },
+    });
 }
 
 function normalizeInline(ingress: unknown): WorkflowDefinitionV1 | null {
@@ -163,7 +194,14 @@ export function buildTriggerTarget(then: TriggerThenValue, scope: 'session' | 'a
                 : then.runsIn?.kind === 'session'
                     ? { kind: 'existing_session', sessionId: then.runsIn.sessionId, machineId: then.runsIn.machineId }
                     : { kind: 'fresh' };
-            const definition = normalizeInline({ version: 1, defaults: { conversation }, blocks: [prompt] });
+            const source = then.sourceDefinition;
+            const only = source?.blocks.length === 1 ? source.blocks[0] : undefined;
+            const definition = normalizeInline(source && only?.kind === 'step'
+                ? { ...source, defaults: { ...source.defaults, conversation }, blocks: [{ ...only,
+                    document: { ...only.document, text: prompt },
+                    ...(only.execution?.conversation ? { execution: { ...only.execution, conversation } } : {}),
+                }] }
+                : { version: 1, defaults: { conversation }, blocks: [prompt] });
             return definition === null ? null : { kind: 'inline', definition };
         }
         case 'doAction': {
@@ -217,8 +255,11 @@ function readLiteralStrings(binding: ActionBinding): readonly string[] {
 export function readTriggerThen(
     target: TriggerTargetV1,
     executionTarget?: Readonly<{ kind: string }>,
+    inputs: Readonly<Record<string, JsonValue>> = {},
 ): TriggerThenValue {
-    if (target.kind === 'workflow') return { kind: 'runWorkflow', ref: target.ref };
+    if (target.kind === 'workflow') return { kind: 'runWorkflow', ref: target.ref, inputs };
+    // The compact prompt/Action forms cannot reconstruct declared inputs or their bindings.
+    if (target.definition.inputs.length > 0) return { kind: 'kept', target, inputs };
     const blocks = target.definition.blocks;
     const only = blocks.length === 1 ? blocks[0] : undefined;
     if (only?.kind === 'step') {
@@ -228,7 +269,8 @@ export function readTriggerThen(
             : conversation?.kind === 'existing_session'
                 ? { kind: 'session', sessionId: conversation.sessionId, machineId: conversation.machineId }
                 : conversation?.kind === 'fresh' ? { kind: 'newSession' } : undefined;
-        return { kind: 'sendPrompt', prompt: only.document.text, ...(runsIn === undefined ? {} : { runsIn }) };
+        return { kind: 'sendPrompt', prompt: only.document.text, sourceDefinition: target.definition,
+            ...(runsIn === undefined ? {} : { runsIn }) };
     }
     if (only?.kind === 'action' && only.actionId === NOTIFY_ME_ACTION_ID) {
         const message = readLiteralString(only.input['message']);
@@ -252,20 +294,31 @@ export function readTriggerThen(
             };
         }
     }
-    return { kind: 'kept', target };
+    return { kind: 'kept', target, inputs };
 }
 
 type SetTrigger = WorkflowTriggerSetV1['triggers'][number];
 
+/** The one reading of a saved schedule as a When: a cron as written, or an interval as its period. */
+export function readScheduleWhen(schedule: Readonly<{
+    kind: 'cron' | 'interval';
+    scheduleExpr: string | null;
+    everyMs: number | null;
+    timezone: string | null;
+}>): Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>> {
+    if (schedule.kind === 'interval' && schedule.everyMs !== null) {
+        return { kind: 'schedule', schedule: null, expression: '', everyMs: schedule.everyMs, timezone: schedule.timezone };
+    }
+    const expression = schedule.scheduleExpr ?? '';
+    return { kind: 'schedule', schedule: parseSimpleSchedule(expression), expression, timezone: schedule.timezone };
+}
+
 /** Reads a saved trigger back as the When it was written with. */
-export function readTriggerWhen(trigger: SetTrigger): TriggerWhenValue | null {
+export function readTriggerWhen(trigger: SetTrigger | SessionInitialTriggerDefinitionV1): TriggerWhenValue | null {
     if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
-        return { kind: trigger.kind, pullRequest: trigger.pullRequest };
+        return { kind: trigger.kind, pullRequest: trigger.pullRequest ?? null };
     }
-    if (trigger.kind === 'schedule') {
-        const expression = trigger.schedule.scheduleExpr ?? '';
-        return { kind: 'schedule', schedule: parseSimpleSchedule(expression), expression, timezone: trigger.schedule.timezone };
-    }
+    if (trigger.kind === 'schedule') return readScheduleWhen(trigger.schedule);
     if (trigger.kind === 'sessionLifecycle') {
         const kind = readSessionLifecycleKind(trigger.events);
         // A trigger bound to one turn stays bound when edited.

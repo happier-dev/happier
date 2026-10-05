@@ -31,6 +31,17 @@ function getDetailsView(state: ReturnType<typeof createAppPaneState>, scopeId: s
 }
 
 describe('appPaneReduce', () => {
+    it('removes only Details references to closed terminal members, including hidden Details', () => {
+        const scopeId = 'session:terminal-details-close';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'open', terminal: { id: 'keep', target: { kind: 'workspace_shell' } } } });
+        for (const id of ['embedded', 'keep']) state = appPaneReduce(state, { type: 'openDetailsTab', scopeId, tab: createTerminalTab({ key: `terminal:${id}`, cwd: '/repo' }), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId, tab: createFileTab('README.md'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'closeDetails', scopeId });
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'close', terminalId: 'embedded' } });
+        expect(getDetailsView(state, scopeId).tabs.map((tab) => tab.key)).toEqual(['terminal:keep', 'file:README.md']);
+        expect(state.scopes[scopeId].details.isOpen).toBe(false);
+    });
     it('admits another measured split without a terminal-count ceiling', () => {
         const scopeId = 'session:many-splits';
         let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });

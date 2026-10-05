@@ -357,6 +357,19 @@ async function writeSessionMarkerUnlocked(
       || !sessionIdentityCanAdopt
       || !spawnNonceMatches
     ) {
+      logger.debug('[sessionRegistry] Canonical adoption ownership mismatch', {
+        pid: marker.pid,
+        canonicalIdValid: Boolean(canonicalSessionId) && !isPidPlaceholderSessionId(canonicalSessionId),
+        existingMarkerPresent: existingMarkerFromDisk !== null,
+        placeholderOrSameSession: sessionIdentityCanAdopt,
+        noncePresent: existingSpawnNonce.length > 0 && incomingSpawnNonce.length > 0,
+        nonceEqual: spawnNonceMatches,
+        existingStartWitnessPresent: existingMarkerFromDisk?.processStartTimeMs !== undefined,
+        incomingStartWitnessPresent: incomingProcessStartTimeMs !== undefined,
+        startWitnessEqual: processGenerationMatches(existingMarkerFromDisk?.processStartTimeMs, incomingProcessStartTimeMs),
+        commandHashEqual: Boolean(existingMarkerFromDisk?.processCommandHash)
+          && existingMarkerFromDisk?.processCommandHash === incomingProcessCommandHash,
+      });
       throw new Error(
         'session_marker_canonical_adoption_ownership_mismatch',
       );
@@ -1089,11 +1102,13 @@ export async function promoteSessionMarkerPid(
     )(toPid);
     const targetProcessCommand = targetProcessIdentity?.command.trim() ?? '';
     const promotedProcessIdentity =
-      targetProcessCommand && targetProcessIdentity?.processStartTimeMs !== undefined
+      targetProcessIdentity?.processStartTimeMs !== undefined
         ? {
-            processCommand: targetProcessCommand,
-            processCommandHash: hashProcessCommand(targetProcessCommand),
             processStartTimeMs: targetProcessIdentity.processStartTimeMs,
+            ...(targetProcessCommand ? {
+              processCommand: targetProcessCommand,
+              processCommandHash: hashProcessCommand(targetProcessCommand),
+            } : {}),
           }
         : null;
     const promotedHappySessionId = markerInput.happySessionId;

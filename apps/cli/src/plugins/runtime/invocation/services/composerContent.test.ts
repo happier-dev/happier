@@ -17,10 +17,10 @@ import { createPluginFileSystemService } from './filesystem';
 import type { PluginInvocationServicesSeed } from './types';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
-import { createTransferRecipientKeyPair } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
 import { registerComposerMediaStageLifecycleRpcHandlers } from '@/transfers/rpc/registerComposerMediaStageLifecycleRpcHandlers';
 import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
 const PNG_BYTES = createOneBitGrayscalePng(1, 1);

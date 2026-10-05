@@ -83,7 +83,12 @@ describe('useSplitCanvasKeyboard', () => {
             </KeyboardShortcutProvider>,
         );
 
-        expect(fakeWindow.addEventListener).toHaveBeenCalledTimes(1);
+        // Find owns capture; ordinary shortcuts own bubble. A raw hook listener would
+        // add a second bubble listener, while legitimate focus listeners are unrelated.
+        const keydownListeners = fakeWindow.addEventListener.mock.calls.filter(([kind]) => kind === 'keydown');
+        expect(keydownListeners).toHaveLength(2);
+        expect(keydownListeners.filter(([, , capture]) => capture === true)).toHaveLength(1);
+        expect(keydownListeners.filter(([, , capture]) => capture !== true)).toHaveLength(1);
     });
 
     it('routes focus movement for the focused leaf', async () => {

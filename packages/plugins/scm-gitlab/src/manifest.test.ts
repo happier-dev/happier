@@ -286,22 +286,15 @@ describe('GitLab merge-request mutation Actions', () => {
     }
   });
 
-  it('exposes merge-request writes through centrally approved automation surfaces', () => {
+  it('exposes merge-request and issue writes through centrally approved automation surfaces', () => {
     const ids = Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS);
-    // Enumerated, not sampled. The OMISSIONS are the gate: with no `agent` and no
-    // `mcp` surface the Action is not agent-reachable at all, where a danger level
-    // plus `agent: true` would only floor it to a prompt.
-    //
-    // Mounted RPC admission validates the lease and host-stamps `ui`. Being
-    // rendered by a plugin-owned artifact does not widen the invocation to the
-    // plugin/background surface.
+    // All native writes use the shared approval gate and exact account binding.
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) {
       const surfaces = actions.get(id)?.surfaces;
       expect(surfaces, id).toContain('ui');
       expect(surfaces, id).not.toContain('plugin');
-      expect(surfaces, id).toEqual(id.startsWith('gitlab/merge-request/')
-        ? ['ui', 'agent', 'mcp', 'cli'] : ['ui']);
+      expect(surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(surfaces, id).not.toContain('voice');
     }
   });

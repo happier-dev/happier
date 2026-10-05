@@ -24,7 +24,7 @@ function normalizeComponentEntry(raw) {
   const artifactFingerprint = String(raw.artifactFingerprint ?? '').trim();
   const entrypoint = normalizeManifestEntrypoint(raw.entrypoint);
   if (!artifactFingerprint && !entrypoint) return null;
-  return { artifactFingerprint, entrypoint };
+  return { artifactFingerprint, entrypoint, ...(Array.isArray(raw.stalePackages) && raw.stalePackages.length ? { stalePackages: raw.stalePackages } : {}) };
 }
 
 function normalizeRuntimeTarget(raw) {

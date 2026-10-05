@@ -118,6 +118,7 @@ afterEach(async () => {
 
 async function mountDetail(
   executeAction: NonNullable<PluginUiTestkitHostHandlers['executeAction']>,
+  panel?: string,
 ): Promise<PluginUiTestkit> {
   let detail!: PluginUiTestkit;
   await act(async () => {
@@ -131,7 +132,7 @@ async function mountDetail(
       ),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      launchInput: LAUNCH_INPUT,
+      launchInput: panel === undefined ? LAUNCH_INPUT : { ...LAUNCH_INPUT as object, panel } as JsonValue,
       handlers: { executeAction },
     });
   });
@@ -146,6 +147,63 @@ async function openTab(detail: PluginUiTestkit, name: string): Promise<void> {
 }
 
 describe('the mounted GitLab detail-panel lifecycle', () => {
+  it('composes host Activity as a story while keeping the native discussion', async () => {
+    const detail = await mountDetail(async ({ action }) => {
+      const localId = (action as Readonly<{ localId?: string }>).localId;
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes) return {
+        kind: 'notes', rows: [{ id: 'note-1', author: 'Mara', body: 'Source-only discussion.', system: false }],
+        omittedRowCount: 0, projectionTruncated: false,
+      };
+      return { kind: 'unavailable', failure: { class: 'transient', code: 'fixture-unavailable' } };
+    }, 'activity');
+    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+    await expect(detail.getByText('Source-only discussion.')).resolves.toBeDefined();
+    await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
+  });
+  it.each([
+    [1, 2, 3, '1 failed'],
+    [0, 2, 3, 'Running'],
+    [0, 0, 3, 'Passed'],
+  ] as const)('uses the canonical job rollup for the story state (%s failing, %s running)', async (failingCount, runningCount, passingCount, label) => {
+    const detail = await mountDetail(async ({ action }) => {
+      const localId = (action as Readonly<{ localId?: string }>).localId;
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview) return overviewResult('Repair');
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges) return changesResult('src/story.ts', null);
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines) return {
+        kind: 'pipelines', rows: [], failingCount, runningCount, passingCount,
+        rollupPipelineId: 'pipeline-1', omittedRowCount: 0, projectionTruncated: false,
+      };
+      return { kind: 'unavailable', failure: { class: 'transient', code: 'fixture-unavailable' } };
+    }, 'overview');
+    await expect(detail.getByRole('heading', { name: 'Pipelines' })).resolves.toBeDefined();
+    await expect(detail.getByRole('image', { name: label })).resolves.toBeDefined();
+  });
+  it('does not turn an unavailable job breakdown into a passing story state', async () => {
+    const detail = await mountDetail(async ({ action }) => {
+      const localId = (action as Readonly<{ localId?: string }>).localId;
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview) return overviewResult('Repair');
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges) return changesResult('src/story.ts', null);
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines) return {
+        kind: 'pipelines', rows: [], omittedRowCount: 0, projectionTruncated: false,
+      };
+      return { kind: 'unavailable', failure: { class: 'transient', code: 'fixture-unavailable' } };
+    }, 'overview');
+    await expect(detail.queryByRole('heading', { name: 'Pipelines' })).resolves.toBeUndefined();
+    await expect(detail.queryByRole('image', { name: 'Passed' })).resolves.toBeUndefined();
+  });
+  it('renders the ask and changed files in the host Overview story without a second tab strip', async () => {
+    const detail = await mountDetail(async ({ action }) => {
+      const localId = (action as Readonly<{ localId?: string }>).localId;
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview) return overviewResult('The requested repair.');
+      if (localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges) return changesResult('src/story.ts', null);
+      return { kind: 'unavailable', failure: { class: 'transient', code: 'fixture-unavailable' } };
+    }, 'overview');
+    await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();
+    await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
+    await expect(detail.getByText('The requested repair.')).resolves.toBeDefined();
+    await expect(detail.getByText('src/story.ts')).resolves.toBeDefined();
+    await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
+  });
   it('reads the provider description when the initially active Overview mounts', async () => {
     const dispatched: string[] = [];
     const detail = await mountDetail(async ({ action }) => {

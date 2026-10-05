@@ -1,14 +1,15 @@
+import { resolveInputOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
+import { InputOptionsConsumerV1Schema, inputOptionsConsumerActionId } from '../inputs/inputOptionsConsumer.js';
+import { readRecord, readNonEmptyString, isRecord, hasOwn } from '../inputs/inputRecords.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
+import type { PublicActionInputById } from './actionSpecs.js';
 import { WaitActionInputV1Schema } from './specs/wait.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
+import { isSessionCanvasActionId } from './sessionCanvasActionFamily.js';
 import { isSessionTerminalActionId } from './sessionTerminalActionFamily.js';
-import { WorkflowDefinitionListResultV1Schema } from '../workflows/actionsV1.js';
-import { getBuiltinWorkflowCatalogV1 } from '../workflows/builtins/catalog.js';
-import { resolveWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionResolverV1.js';
-import { parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
+import { parseWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { ComputerSelectedTargetResponseV1Schema, ComputerTargetSelectRequestV1Schema, ComputerTargetsListResponseV1Schema, computerTargetKeyV1, type ComputerApprovalDisplayV1 } from '../computer/v1.js';
-import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
 import { evaluateApiTokenGrantV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
 import { resolveCredentialActionAdmissionV1, isAgentRequestablePresentUserActionId, requiresPresentUserDecisionForActionInputV1, requiresPresentUserExecutionAuthorityForActionInputV1 } from './decisionAuthority.js';
@@ -17,13 +18,22 @@ import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespon
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import { SessionWorkerPublishInputV1Schema, SessionWorkerPublishOutputV1Schema } from '../sessions/relations/workerUpdateV1.js';
 import { MachinesAgentsListInputSchema } from '../capabilities/machineAgentInventory.js';
+import { WorkspaceFilesSearchActionInputSchema } from './actionSpecs.js';
 import { HomeConnectInputSchema, MachineAddCommandInputSchema, MachinePairingCreateInputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, type MachineAddSshActionId } from './specs/machineConnection.js';
 import { NotificationsNotifyMeInputV1Schema } from '../account/notifications/notifyMeV1.js';
-import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
-import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema } from '../daemon/agentSignIn.js';
+import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema, MachinesAgentsSignInCancelInputSchema } from '../daemon/agentSignIn.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
-import { HOME_HUB_LAYOUT_ACTION_IDS } from './specs/homeHub.js';
+import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
+import { HOME_HUB_LAYOUT_ACTION_IDS, HomeHubLayoutUpdateInputSchema } from './specs/homeHub.js';
+import { WidgetInstanceActionIdV1Schema, readWidgetActionSurfaceV1, readWidgetActionDestinationV1, readWidgetCatalogBoundSessionV1 } from '../widgets/actionsV1.js';
+import { executeWidgetInstanceActionV1 } from '../widgets/executeWidgetInstanceActionV1.js';
+import { WidgetDefinitionActionIdV1Schema } from '../widgets/definitionActionIdsV1.js';
+import { readWidgetDefinitionActionAccountV1, readWidgetDefinitionActionSessionV1 } from '../widgets/definitionActionsV1.js';
+import { admitWidgetActionSurfaceV1 } from '../widgets/widgetActionScopeV1.js';
+import { executeWidgetDefinitionActionV1 } from '../widgets/executeWidgetDefinitionActionV1.js';
+import { executeWidgetSnapshotPostV1 } from '../widgets/executeWidgetSnapshotPostV1.js';
+import { prepareWidgetDefinitionPublicationV1 } from '../widgets/widgetDefinitionPublicationV1.js';
 import type { HomeHubLayoutActionId } from './specs/homeHub.js';
 import { executeWorkBoardActionV1 } from '../boards/executeWorkBoardActionV1.js';
 import { snapshotSessionRolesAtSpawnV1 } from '../prompts/roles/sessionRolesSnapshot.js';
@@ -63,6 +73,7 @@ import {
   serializeActionFieldOptions,
 } from './actionCatalog.js';
 import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
+import { inputTypeOptionsSourceId, parseInputTypeOptionsSourceId } from '../inputs/inputTypes.js';
 import { resolveActionApprovalRouting, SURFACE_AUTHORITY_AGENT_FLOOR } from './actionApprovalPolicy.js';
 import { resolveWorkflowRunStartedByForActionCallerV1 } from '../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { readActionCallerLedSubtreeSessionIds } from './executor/sessionLedSubtree.js';
@@ -91,6 +102,7 @@ import type { ActionDefinitionSummaryV1 } from './actionDefinitionV1.js';
 import {
   ActionSurfaceSchema,
   DetachedExecutionRunSendInputSchema,
+  ExecutionRunPermissionRespondInputSchema,
   SessionListActionInputV1Schema,
   SessionModelSetInputSchema,
   getActionSpec,
@@ -165,6 +177,8 @@ import {
 } from '../teams/credentials/resourceV1.js';
 import type { SessionRollbackTarget } from '../sessions/rollback.js';
 import type { ReviewStartInput } from '../reviews/reviewStart.js';
+import { ReviewWalkthroughInputSchema, ReviewWalkthroughRequestSchema, ReviewExplainFindingsInputSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../reviews/reviewNarration.js';
+import { resolveReviewNarratorPolicy } from '../reviews/reviewEngines.js';
 import {
   ReviewCommentActionIdV1Schema,
   ReviewCommentListActionRequestV1Schema,
@@ -204,7 +218,10 @@ import { isHomeDomainActionIdV1 } from './homeDomainActionFamily.js';
 import { ScopeActionIdSchema } from './scopeActionFamily.js';
 import { ConnectedServiceConfigurationActionIdV1Schema } from '../connect/configurationActionsV1.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
+import { isVoiceConversationActionId } from './voiceConversationActionFamily.js';
 import { isAppShellActionId } from './appShellActionFamily.js';
+import { isNotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
+import { isAppUpdateActionId } from './appUpdateActionFamily.js';
 import { SessionOrganizationContentUnavailableError } from '../sessions/organization/content.js';
 import { isInternalActionId } from './pluginActionSurface.js';
 import {
@@ -303,7 +320,6 @@ import {
   SessionCreationKeyV1Schema,
   type SessionCreationKeyV1,
 } from '../sessions/creation/sessionCreationIdentityV1.js';
-import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import {
   SessionSpawnNewInputV2Schema,
   type SessionSpawnNewInputV2,
@@ -354,7 +370,6 @@ import type {
 import {
   resolveActionBackendTargetSelection,
   resolveExecutionBackendTargetSelectionForValue,
-  type ActionBackendTargetSelection,
 } from './resolveActionBackendTargetSelection.js';
 import { projectActionExecuteFailure } from './actionExecutionResult.js';
 import { dispatchRuntimeAction, type RuntimeActionExecute } from './executor/index.js';
@@ -489,17 +504,8 @@ function resolveExecutionRunLaunchOrigin(ctx: ActionExecutorContext): ExecutionR
   return ctx.surface ? { kind: 'external', source: 'action' } : { kind: 'external' };
 }
 
-function isRecord(raw: unknown): raw is Record<string, unknown> {
-  return Boolean(raw) && typeof raw === 'object' && !Array.isArray(raw);
-}
 
-function readRecord(raw: unknown): Readonly<Record<string, unknown>> {
-  return isRecord(raw) ? raw : {};
-}
 
-function hasOwn(record: Readonly<Record<string, unknown>>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
-}
 
 function reviewScopeForInput(input: unknown): 'paths' | undefined {
   const record = readRecord(input);
@@ -510,10 +516,6 @@ function readNullableString(raw: unknown): string | null {
   return typeof raw === 'string' ? raw : null;
 }
 
-function readRecordListProperty(raw: unknown, key: string): readonly Readonly<Record<string, unknown>>[] {
-  const value = readRecord(raw)[key];
-  return Array.isArray(value) ? value.filter(isRecord) : [];
-}
 
 function readTranscriptDirection(raw: unknown): 'before' | 'after' | undefined {
   return raw === 'before' || raw === 'after' ? raw : undefined;
@@ -547,11 +549,6 @@ function readApprovalRequestStatus(raw: unknown): ApprovalRequest['status'] | nu
     : null;
 }
 
-function readNonEmptyString(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
 
 function readOptionalString(raw: unknown): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
@@ -639,6 +636,14 @@ function buildSessionSpawnNewArgs(
     // The existing creation identity accepts an opaque caller namespace. Bind
     // ordinary Agent retries to their admitted parent, not a human message author.
     ? JSON.stringify(['session', normalizeId(ctx.serverId), normalizeId(ctx.runtimeAccountId), normalizeId(ctx.defaultSessionId)])
+    : ctx.authority === 'account_automation'
+    && ctx.surface === 'voice'
+    && (!ctx.actionCaller || ctx.actionCaller.kind === 'host')
+    && normalizeId(ctx.serverId)
+    && normalizeId(ctx.runtimeAccountId)
+    // Voice creates its own hidden conversation before any parent Session exists.
+    // The admitted Home and Account scope retries without granting user authority.
+    ? JSON.stringify(['voice', normalizeId(ctx.serverId), normalizeId(ctx.runtimeAccountId)])
     : ctx.authority === 'present_user'
     ? 'user'
     : null;
@@ -1026,6 +1031,12 @@ function bindAgentExistingExecutionRunAuthority(
 function resolveSessionIdFromInput(input: unknown, ctx: ActionExecutorContext): string | null {
   const sessionId = normalizeId(readRecord(input).sessionId);
   if (sessionId) return sessionId;
+  const definitionSession = readWidgetDefinitionActionSessionV1(input);
+  if (definitionSession) return definitionSession.sessionId;
+  const widgetSurface = readWidgetActionSurfaceV1(input);
+  if (widgetSurface?.owner.kind === 'sessionBoard' || widgetSurface?.owner.kind === 'companion') return widgetSurface.owner.sessionId;
+  const widgetDestination = readWidgetActionDestinationV1(input);
+  if (widgetDestination?.owner.kind === 'sessionBoard' || widgetDestination?.owner.kind === 'companion') return widgetDestination.owner.sessionId;
   const fallback = normalizeId(ctx.defaultSessionId);
   return fallback || null;
 }
@@ -1564,53 +1575,6 @@ async function checkDetachedExecutionRunProtocolV2(
   };
 }
 
-function normalizeResolvedOptions(value: unknown): readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] {
-  const items = readRecordListProperty(value, 'items').length > 0
-    ? readRecordListProperty(value, 'items')
-    : Array.isArray(value)
-      ? value.filter(isRecord)
-      : [];
-
-  return items
-    .map((item) => {
-      const valueCandidate =
-        typeof item?.targetKey === 'string'
-          ? item.targetKey
-          : typeof item?.value === 'string'
-          ? item.value
-          : typeof item?.id === 'string'
-            ? item.id
-            : typeof item?.path === 'string'
-              ? item.path
-              : typeof item?.agentId === 'string'
-                ? item.agentId
-                : typeof item?.engineId === 'string'
-                  ? item.engineId
-                  : null;
-      if (!valueCandidate) return null;
-      const labelCandidate =
-        typeof item?.label === 'string'
-          ? item.label
-          : typeof item?.title === 'string'
-            ? item.title
-            : valueCandidate;
-      const descriptionCandidate = typeof item?.description === 'string' ? item.description : undefined;
-      const disabledCandidate =
-        item?.disabled === true || item?.enabled === false ? true : undefined;
-      return {
-        value: valueCandidate,
-        label: labelCandidate,
-        ...(descriptionCandidate ? { description: descriptionCandidate } : {}),
-        ...(disabledCandidate ? { disabled: true as const } : {}),
-      };
-    })
-    .filter(Boolean) as readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[];
-}
-
-function tryNormalizeExecutionBackendOptionValue(value: string): string | null {
-  return resolveExecutionBackendTargetSelectionForValue(value)?.backendTargetKey ?? null;
-}
-
 function normalizeExecutionBackendOptionValue(value: string): string {
   const normalized = tryNormalizeExecutionBackendOptionValue(value);
   if (!normalized) {
@@ -1671,330 +1635,11 @@ function buildAvailableExecutionBackendOptionKeys(value: unknown): ReadonlySet<s
   return keys;
 }
 
-function resolveAgentInventorySelection(
-  input: Record<string, unknown>,
-  agentScope: 'required' | 'optional',
-): ActionBackendTargetSelection | null {
-  const resolvedSelection = resolveActionBackendTargetSelection({
-    agentId: typeof input.agentId === 'string' ? input.agentId : undefined,
-    backendTargetKey: typeof input.backendTargetKey === 'string' ? input.backendTargetKey : undefined,
-  });
-  if (!resolvedSelection.ok) return null;
-  const selection = resolvedSelection.selection;
-  if (!selection.agentId && !selection.backendTargetKey && agentScope === 'required') return null;
-  return selection;
-}
-
-/**
- * The agent an inventory read is scoped to.
- *
- * `required` is the rule for every inventory that cannot be enumerated without
- * knowing whose it is — models, config options, session modes, connected
- * services. `optional` belongs to the profiles catalog alone: a Launch Profile
- * carries its own `supportedAgentIds`, so the agent narrows the answer rather
- * than making it possible, and a caller that picks a profile FIRST has no agent
- * to name yet. A contradictory pair is still refused in both modes.
- */
-async function buildAgentInventorySelectionArgs(params: Readonly<{
-  deps: ActionExecutorDeps;
-  actionId: ActionId | null;
-  input: Record<string, unknown>;
-  agentScope?: 'required' | 'optional';
-}>): Promise<Readonly<{ agentId?: string; backendTargetKey?: string }> | null> {
-  const { deps, actionId, input } = params;
-  const agentScope = params.agentScope ?? 'required';
-  if (actionId === 'session.spawn_new') {
-    const agentTarget = AgentExecutionTargetV1Schema.safeParse(input.agentTarget);
-    if (!agentTarget.success) return agentScope === 'optional' ? {} : null;
-    const machineId = readDynamicOptionMachineId(input, actionId);
-    const serverId = readNonEmptyString(readRecord(input.executionTarget).serverId);
-    return await deps.resolveSessionSpawnAgentInventorySelection?.({
-      agentTarget: agentTarget.data,
-      ...(machineId ? { machineId } : {}),
-      ...(serverId ? { serverId } : {}),
-    })
-      ?? (agentScope === 'optional' ? {} : null);
-  }
-
-  const selection = resolveAgentInventorySelection(input, agentScope);
-  if (!selection) return null;
-  return {
-    ...(selection.agentId ? { agentId: selection.agentId } : {}),
-    ...(selection.backendTargetKey ? { backendTargetKey: selection.backendTargetKey } : {}),
-  };
-}
-
-function readDynamicOptionMachineId(
-  input: Record<string, unknown>,
-  actionId: ActionId | null,
-): string | undefined {
-  if (actionId === 'session.spawn_new') {
-    return readNonEmptyString(readRecord(input.executionTarget).machineId);
-  }
-  return typeof input.machineId === 'string' ? input.machineId : undefined;
-}
-
-function readDynamicOptionModelId(
-  input: Record<string, unknown>,
-  actionId: ActionId | null,
-): string | undefined {
-  if (actionId !== 'session.spawn_new') {
-    return typeof input.modelId === 'string' ? input.modelId : undefined;
-  }
-
-  const selectedModelId = readNonEmptyString(readRecord(readRecord(input.modelSelection).ref).modelId);
-  if (selectedModelId) return selectedModelId;
-  return readNonEmptyString(readRecord(readRecord(input.configuration).model).value);
-}
-
-function readDynamicOptionDirectory(
-  input: Record<string, unknown>,
-  actionId: ActionId | null,
-): string | undefined {
-  if (actionId === 'session.spawn_new') {
-    const intent = SessionDirectoryIntentV1Schema.safeParse(input.directory);
-    return intent.success && intent.data.kind === 'path' ? intent.data.path : undefined;
-  }
-  return readNonEmptyString(input.directory) ?? readNonEmptyString(input.path);
-}
-
-async function resolveDynamicActionOptions(params: Readonly<{
-  deps: ActionExecutorDeps;
-  ctx: ActionExecutorContext;
-  actionId: ActionId | null;
-  optionsSourceId: string;
-  input: Record<string, unknown>;
-  includeSpawnModelCatalog?: boolean;
-}>): Promise<ActionExecuteResult & Readonly<{
-  modelCatalog?: NonNullable<PublicActionResultById['action.options.resolve']['modelCatalog']>;
-}>> {
-  const { deps, ctx, actionId, optionsSourceId, input } = params;
-  const machineId = readDynamicOptionMachineId(input, actionId);
-  const serverId = actionId === 'session.spawn_new'
-    ? readNonEmptyString(readRecord(input.executionTarget).serverId)
-    : readNonEmptyString(ctx.serverId);
-  const modelId = readDynamicOptionModelId(input, actionId);
-  const directory = readDynamicOptionDirectory(input, actionId);
-
-  if (optionsSourceId === 'workflows.references.available') {
-    if (!deps.workflowAction) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workflows.references.available' };
-    }
-    const options: Array<{ value: string; label: string }> = [];
-    let cursor: string | undefined;
-    do {
-      ctx.signal?.throwIfAborted();
-      const result = await deps.workflowAction({ actionId: 'workflow.definition.list',
-        input: cursor ? { cursor } : {}, context: ctx });
-      const failure = readActionFailureEnvelope(result);
-      if (failure) return failure;
-      const page = WorkflowDefinitionListResultV1Schema.parse(result);
-      for (const plugin of page.pluginWorkflows ?? []) {
-        options.push({ value: plugin.workflow, label: plugin.title });
-      }
-      for (const definition of page.definitions) {
-        // Run source.workflow is the catalog arm; saved Runs require an exact
-        // Artifact revision through source.definitionId instead.
-        const ref = parseWorkflowDefinitionRefV1(definition.definitionId);
-        if (actionId !== 'workflow.run.start' && ref?.kind === 'artifact') {
-          options.push({ value: formatWorkflowDefinitionRefV1(ref), label: definition.metadata.title });
-        }
-      }
-      cursor = page.nextCursor;
-    } while (cursor);
-    for (const entry of getBuiltinWorkflowCatalogV1()) {
-      const resolved = await resolveWorkflowDefinitionRefV1(entry.id, { signal: ctx.signal });
-      if (resolved?.kind === 'catalog') {
-        options.push({ value: resolved.ref, label: entry.id });
-      }
-    }
-    return { ok: true, result: options };
-  }
-
-  if (optionsSourceId === 'notifications.channels.available') {
-    if (!deps.notificationChannelsList) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:notifications.channels.available' };
-    }
-    const result = await deps.notificationChannelsList(ctx);
-    const failure = readActionFailureEnvelope(result);
-    return failure ?? { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'execution.backends.enabled' || optionsSourceId === 'agents.backends.enabled') {
-    const result = await deps.agentsBackendsList({
-      ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : { includeDisabled: false }),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-      ...(machineId === undefined ? {} : { machineId }),
-    });
-    return {
-      ok: true,
-      result: normalizeResolvedOptions(result)
-        .map((option) => {
-          const normalizedValue = tryNormalizeExecutionBackendOptionValue(option.value);
-          if (!normalizedValue) {
-            return null;
-          }
-          return {
-            ...option,
-            value: normalizedValue,
-          };
-        })
-        .filter((option): option is NonNullable<typeof option> => Boolean(option)),
-    };
-  }
-
-  if (optionsSourceId === 'review.engines.available') {
-    const sessionId = resolveSessionIdFromInput(input, ctx);
-    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-    const result = await deps.reviewEnginesList({
-      sessionId,
-      ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : {}),
-      ...(reviewScopeForInput(input) ? { scope: 'paths' as const } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'session.modes.available') {
-    const sessionId = resolveSessionIdFromInput(input, ctx);
-    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-    const result = await deps.sessionModesList({ sessionId });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'agents.models.available') {
-    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
-    if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await deps.agentsModelsList({
-      ...selectionArgs,
-      ...(machineId === undefined ? {} : { machineId }),
-      ...(serverId === undefined ? {} : { serverId }),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-      ...(params.includeSpawnModelCatalog ? { includeProviderProjection: true as const } : {}),
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
-    });
-    const options = normalizeResolvedOptions(result);
-    if (!params.includeSpawnModelCatalog) return { ok: true, result: options };
-    const projection = DaemonProviderModelProjectionResponseV1Schema.safeParse(readRecord(result).providerProjection);
-    return { ok: true, result: options, modelCatalog: {
-      nativeModels: options.map(({ value, label, description }) => ({ value, label,
-        ...(description === undefined ? {} : { description }) })),
-      providerProjection: projection.success && projection.data.status === 'success' ? projection.data : null,
-    } };
-  }
-
-  if (optionsSourceId === 'agents.session_modes.available') {
-    if (!deps.agentsSessionModesList) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.session_modes.list' };
-    }
-    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
-    if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await deps.agentsSessionModesList({
-      ...selectionArgs,
-      ...(machineId === undefined ? {} : { machineId }),
-      ...(serverId === undefined ? {} : { serverId }),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'agents.config_options.available') {
-    if (!deps.agentsConfigOptionsList) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.config_options.list' };
-    }
-    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
-    if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await deps.agentsConfigOptionsList({
-      ...selectionArgs,
-      ...(machineId === undefined ? {} : { machineId }),
-      ...(serverId === undefined ? {} : { serverId }),
-      ...(modelId === undefined ? {} : { modelId }),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'sessions.spawn.paths.recent') {
-    const result = await deps.pathsListRecent({
-      ...(machineId === undefined ? {} : { machineId }),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    const pathOptions = normalizeResolvedOptions(result).flatMap((option) => {
-      const intent = SessionDirectoryIntentV1Schema.safeParse({ kind: 'path', path: option.value });
-      return intent.success ? [{ ...option, value: JSON.stringify(intent.data) }] : [];
-    });
-    return { ok: true, result: [
-      { value: JSON.stringify(SessionDirectoryIntentV1Schema.parse({ kind: 'managed' })), label: 'No folder' },
-      ...pathOptions,
-    ] };
-  }
-
-  if (optionsSourceId === 'sessions.spawn.machines.available') {
-    const result = await deps.machinesList({
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'sessions.spawn.servers.available') {
-    const result = await deps.serversList({
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'sessions.spawn.profiles.available') {
-    if (!deps.spawnProfilesList) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.profiles.list' };
-    }
-    const selectionArgs = await buildAgentInventorySelectionArgs({
-      deps,
-      actionId,
-      input,
-      agentScope: 'optional',
-    });
-    if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await deps.spawnProfilesList({
-      ...selectionArgs,
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'sessions.spawn.connected_services.available') {
-    if (!deps.spawnConnectedServicesList) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.connected_services.list' };
-    }
-    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
-    if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const machineId = readDynamicOptionMachineId(input, actionId);
-    const result = await deps.spawnConnectedServicesList({
-      ...selectionArgs,
-      ...(machineId ? { machineId } : {}),
-      ...(serverId ? { serverId } : {}),
-      ...(typeof input.includeUnavailable === 'boolean' ? { includeUnavailable: input.includeUnavailable } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  if (optionsSourceId === 'sessions.spawn.mcp_servers.preview') {
-    if (!deps.spawnMcpServersPreview) {
-      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.mcp_servers.preview' };
-    }
-    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
-    if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const result = await deps.spawnMcpServersPreview({
-      ...selectionArgs,
-      ...(machineId === undefined ? {} : { machineId }),
-      ...(directory ? { directory } : {}),
-      ...(actionId === 'session.spawn_new'
-        ? (hasOwn(input, 'mcpSelection') ? { selection: input.mcpSelection } : {})
-        : (hasOwn(input, 'selection') ? { selection: input.selection } : {})),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
-    });
-    return { ok: true, result: normalizeResolvedOptions(result) };
-  }
-
-  return { ok: false, errorCode: 'options_source_not_supported', error: 'options_source_not_supported' };
+function readReviewRunActionPayload(value: unknown): unknown {
+  const transport = readRecord(value);
+  const native = transport.ok === true && transport.data !== undefined ? transport.data : value;
+  const host = readRecord(native);
+  return host.ok === true && host.result !== undefined ? host.result : native;
 }
 
 type FanoutResultItem = Readonly<{
@@ -2081,6 +1726,7 @@ async function fanoutStarts(params: Readonly<{
             key,
             ok: false,
             ...readFanoutStartError(result),
+            details: withExecutionRunStartFailureDetails(undefined, 'outcomeUnknown'),
           };
         }
         return { key, ok: true, result };
@@ -2193,6 +1839,9 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
     SessionControlErrorCodeSchema.safeParse(value).success
     || SpawnSessionErrorCodeSchema.safeParse(value).success
     || value === 'workspace_sync_update_required'
+    // Transport owners have already decided whether a mutation may have committed.
+    || value === 'outcome_unknown'
+    || value === 'cancelled'
   )) ?? '';
   const rpcErrorCode = readRpcErrorCode(error);
   const typedRpcErrorCode = rpcErrorCode && RPC_ERROR_CODE_SET.has(rpcErrorCode)
@@ -2558,8 +2207,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && typeof action.pluginId === 'string' && typeof action.localId === 'string'
       ? formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.localId })
       : parseQualifiedPluginActionId(actionId) !== null ? actionId : undefined;
-    const sessionId = input === undefined ? null : normalizeId(readRecord(input).sessionId);
-    const target = sessionId ? { kind: 'session' as const, sessionId } : ctx.externalActionTarget
+    const widgetSurface = (actionId === 'widgets.snapshot.post' || WidgetInstanceActionIdV1Schema.safeParse(actionId).success) ? readWidgetActionSurfaceV1(input) : null;
+    const widgetSessionId = widgetSurface?.owner.kind === 'sessionBoard' || widgetSurface?.owner.kind === 'companion' ? widgetSurface.owner.sessionId : null;
+    const definitionAction = WidgetDefinitionActionIdV1Schema.safeParse(actionId).success;
+    const definitionSession = definitionAction ? readWidgetDefinitionActionSessionV1(input) : null;
+    const sessionId = definitionSession?.sessionId ?? widgetSessionId ?? (input === undefined ? null : normalizeId(readRecord(input).sessionId));
+    const target = sessionId ? { kind: 'session' as const, sessionId } : widgetSurface || definitionAction ? null : ctx.externalActionTarget
       ?? (ctx.defaultSessionId ? { kind: 'session' as const, sessionId: ctx.defaultSessionId } : null);
     const result = evaluateApiTokenGrantV1({
       grant: discovery ? { ...grant, targets: null, create: null }
@@ -2567,11 +2220,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       actionId: contributedQualifiedId && actionId !== 'action.invoke' ? 'action.invoke' : actionId,
       ...(contributedQualifiedId ? { contributedQualifiedId } : {}),
       ...(actionId === 'session.spawn_new' && input !== undefined ? { spawnInput: input } : {}),
-      target, targetMachineId: ctx.defaultSessionMachineId
+      target, targetMachineId: sessionId && sessionId !== ctx.defaultSessionId ? undefined : ctx.defaultSessionMachineId
         ?? (ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.machineId : undefined),
     });
-    return result.ok ? null : {
-      ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason: result.reason },
+    const boundSession = actionId === 'widgets.catalog.list' ? readWidgetCatalogBoundSessionV1(input) : null;
+    const boundResult = result.ok && boundSession ? evaluateApiTokenGrantV1({ grant, actionId,
+      target: { kind: 'session', sessionId: boundSession.sessionId },
+      targetMachineId: boundSession.sessionId === ctx.defaultSessionId ? ctx.defaultSessionMachineId : undefined,
+    }) : result;
+    const destination = actionId === 'widgets.instance.move' ? readWidgetActionDestinationV1(input) : null;
+    const destinationSession = destination?.owner.kind === 'sessionBoard' || destination?.owner.kind === 'companion' ? destination.owner.sessionId : null;
+    const finalResult = boundResult.ok && destination ? evaluateApiTokenGrantV1({ grant, actionId,
+      target: destinationSession ? { kind: 'session', sessionId: destinationSession } : null,
+      targetMachineId: destinationSession && destinationSession === ctx.defaultSessionId ? ctx.defaultSessionMachineId : undefined,
+    }) : boundResult;
+    return finalResult.ok ? null : {
+      ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason: finalResult.reason },
     };
   }
 
@@ -3274,6 +2938,48 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (credentialFailure) return credentialFailure;
     const workspaceFailure = workspaceWriteFailure(spec, admittedInput, ctx);
     if (workspaceFailure) return workspaceFailure;
+    if (WidgetDefinitionActionIdV1Schema.safeParse(actionId).success) {
+      const account = readWidgetDefinitionActionAccountV1(admittedInput);
+      if (!account) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
+      const accountFailure = admitWidgetActionSurfaceV1(deps, { ...account, owner: { kind: 'home' } }, ctx);
+      if (accountFailure) return accountFailure;
+      const sourceSession = readWidgetDefinitionActionSessionV1(admittedInput);
+      if (sourceSession) {
+        if (sourceSession.serverId !== account.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        const sourceScopeFailure = await resolveActionCurrentSessionScopeFailure(actionId,
+          { sessionId: sourceSession.sessionId }, ctx, { sessionId: 'current_session' }, deps);
+        if (sourceScopeFailure) return sourceScopeFailure;
+      }
+    }
+    const widgetTarget = (actionId === 'widgets.snapshot.post' || WidgetInstanceActionIdV1Schema.safeParse(actionId).success) ? readWidgetActionSurfaceV1(admittedInput) : null;
+    if (actionId === 'widgets.snapshot.post' && widgetTarget) {
+      const snapshotScopeFailure = admitWidgetActionSurfaceV1(deps, widgetTarget, ctx);
+      if (snapshotScopeFailure) return snapshotScopeFailure;
+    }
+    const widgetDestination = actionId === 'widgets.instance.move' ? readWidgetActionDestinationV1(admittedInput) : null;
+    if (widgetTarget && widgetDestination && widgetTarget.serverId !== widgetDestination.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+    if (widgetTarget && widgetDestination && widgetTarget.accountId !== widgetDestination.accountId) return { ok: false, errorCode: 'account_target_mismatch', error: 'account_target_mismatch' };
+    if (widgetTarget?.owner.kind === 'sessionBoard' || widgetTarget?.owner.kind === 'companion') {
+      const widgetScopeFailure = await resolveActionCurrentSessionScopeFailure(actionId,
+        { sessionId: widgetTarget.owner.sessionId }, ctx, { sessionId: 'current_session' }, deps);
+      if (widgetScopeFailure) return widgetScopeFailure;
+    }
+    if (widgetDestination?.owner.kind === 'sessionBoard' || widgetDestination?.owner.kind === 'companion') {
+      const destinationScopeFailure = await resolveActionCurrentSessionScopeFailure(actionId,
+        { sessionId: widgetDestination.owner.sessionId }, ctx, { sessionId: 'current_session' }, deps);
+      if (destinationScopeFailure) return destinationScopeFailure;
+    }
+    if (actionId === 'widgets.instance.add') {
+      const publication = await prepareWidgetDefinitionPublicationV1(deps, admittedInput, ctx);
+      if (!publication.ok) return publication;
+      admittedInput = publication.input;
+    }
+    const boundWidgetSession = actionId === 'widgets.catalog.list' ? readWidgetCatalogBoundSessionV1(admittedInput) : null;
+    if (boundWidgetSession) {
+      const boundScopeFailure = await resolveActionCurrentSessionScopeFailure(actionId,
+        { sessionId: boundWidgetSession.sessionId }, ctx, { sessionId: 'current_session' }, deps);
+      if (boundScopeFailure) return boundScopeFailure;
+    }
     const currentSessionScopeFailure = await resolveActionCurrentSessionScopeFailure(
       actionId,
       admittedInput,
@@ -3496,7 +3202,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         && (normalizeId(ctx.defaultSessionId) === String(readRecord(admittedInput).sessionId)
           || (await readActionCallerLedSubtreeSessionIds(deps, ctx))?.has(String(readRecord(admittedInput).sessionId)))
         ? 'safe' as const : 'danger' as const
-      : undefined;
+      : !existingAdmission && spec.safety === 'danger' && widgetDestination
+        ? [widgetTarget, widgetDestination].some(target => target?.owner.kind !== 'home' && target?.owner.kind !== 'companion')
+          ? 'danger' as const
+          : [widgetTarget, widgetDestination].some(target => target?.owner.kind === 'home')
+            ? getActionSpec('home.hub.layout.update').safety : getActionSpec('session.presentation.apply').safety
+      : !existingAdmission && spec.safety === 'danger' && widgetTarget?.owner.kind === 'home'
+        ? getActionSpec('home.hub.layout.update').safety
+        : !existingAdmission && spec.safety === 'danger' && widgetTarget?.owner.kind === 'companion'
+          ? getActionSpec('session.presentation.apply').safety
+          : undefined;
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const baseApprovalRouting = existingAdmission
       ? { required: false, flow: 'deferred' as const, result: 'none' as const }
@@ -3511,7 +3226,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           // `undefined` propagates so `resolveActionApprovalRouting` applies its centralized fail-safe
           // default instead of coercing an unwired dependency to "no approval" here. (F7)
           requiredByPolicy: ctx.bypassApprovals ? false : contextualSafety === undefined
-            ? deps.isActionApprovalRequired?.(actionId, ctx) : undefined,
+            ? deps.isActionApprovalRequired?.(actionId, ctx, admittedInput) : undefined,
         });
     const approvalRouting = (!existingAdmission && actionId === 'workspace.sync.conflict.resolve' && !ctx.bypassApprovals)
       ? { required: true, flow: 'deferred' as const, result: 'required' as const }
@@ -3779,6 +3494,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           context: ctx,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
         });
+      }
+
+      if (spec.executionPlacement === 'client' && deps.clientActionExecute) {
+        return await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx });
       }
 
       if (SESSION_TRANSCRIPT_ACTION_ID_SET.has(actionId) && deps.sessionTranscriptAction) {
@@ -4114,8 +3833,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       if (isWorkBoardActionIdV1(actionId)) {
         if (!deps.workBoardArtifacts) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        if (actionId === 'boards.apply') {
+          const { intent } = WorkBoardActionInputSchemasV1['boards.apply'].parse(parsed.data);
+          if (intent.kind.startsWith('widget_') && 'ref' in intent && 'surface' in intent.ref) {
+            const refusal = admitWidgetActionSurfaceV1(deps, intent.ref.surface, ctx);
+            if (refusal) return refusal;
+          }
+        }
         return await executeWorkBoardActionV1(deps.workBoardArtifacts, actionId, parsed.data, ctx.signal);
       }
+
+      const widgetActionId = WidgetInstanceActionIdV1Schema.safeParse(actionId);
+      if (widgetActionId.success) return await executeWidgetInstanceActionV1(deps, widgetActionId.data, admittedInput, ctx);
+      const widgetDefinitionActionId = WidgetDefinitionActionIdV1Schema.safeParse(actionId);
+      if (widgetDefinitionActionId.success) return await executeWidgetDefinitionActionV1(deps, widgetDefinitionActionId.data, parsed.data, ctx);
+      if (actionId === 'widgets.snapshot.post') return await executeWidgetSnapshotPostV1(deps, parsed.data, ctx);
 
       if (actionId === 'launch_profiles.publish') {
         if (!deps.launchProfilePublish) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -4286,9 +4018,23 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
-      // Client-local Home customization shares the global policy and terminal
-      // output boundary; its adapter delegates the canonical UI layout owner.
+      // Home customization shares the global policy and terminal output boundary.
+      // Account Artifact and semantic owners supply their typed refusal codes.
       if ((HOME_HUB_LAYOUT_ACTION_IDS as readonly string[]).includes(actionId)) {
+        if (actionId !== 'home.reachNudge.dismiss') {
+          if (!deps.homeHubArtifacts) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          try {
+            const result = actionId === 'home.hub.layout.get'
+              ? await deps.homeHubArtifacts.describe(await deps.homeHubArtifacts.read(ctx.signal), ctx.signal)
+              : await deps.homeHubArtifacts.apply(HomeHubLayoutUpdateInputSchema.parse(parsed.data).intent, ctx.signal);
+            return { ok: true, result };
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
+              return { ok: false, errorCode: error.code, error: error.message };
+            }
+            throw error;
+          }
+        }
         if (!deps.homeHubLayoutAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.homeHubLayoutAction({ actionId: actionId as HomeHubLayoutActionId, input: parsed.data, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         const failure = readActionFailureEnvelope(result);
@@ -4300,11 +4046,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return completeActionResult(await deps.scopeAction({ actionId: scopeActionId.data, input: parsed.data, context: ctx }));
       }
       const sessionBoardActionId = SessionBoardActionIdV1Schema.safeParse(actionId);
+      if (actionId === 'session.pending.next') {
+        return completeActionResult(deps.nextPendingSession
+          ? await deps.nextPendingSession(ctx)
+          : { status: 'unavailable' });
+      }
       if (actionId === 'ui.command_palette.list' || actionId === 'ui.command_palette.invoke') {
         if (!deps.uiCommandPaletteAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         return await deps.uiCommandPaletteAction({ actionId, input: parsed.data, context: ctx });
+      }
+      if (actionId === 'ui.current_context.read' || actionId === 'ui.current_context.command.invoke') {
+        return deps.uiCurrentContextAction
+          ? await deps.uiCurrentContextAction({ actionId, input: parsed.data, context: ctx })
+          : { ok: false, errorCode: 'unsupported_action', error: 'current_ui_context_not_mounted' };
+      }
+      if (actionId === 'ui.find') {
+        return deps.uiFindAction
+          ? await deps.uiFindAction({ actionId, input: parsed.data, context: ctx })
+          : completeActionResult({ status: 'unavailable', reason: 'noClient' });
+      }
+      if (actionId === 'ui.prompts.picker.open') {
+        return deps.uiPromptPickerOpen
+          ? await deps.uiPromptPickerOpen({ actionId, input: parsed.data, context: ctx })
+          : completeActionResult({ status: 'unavailable', reason: 'noClient' });
       }
       if (sessionBoardActionId.success) {
         if (!deps.sessionBoardAction) {
@@ -4443,6 +4209,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
+      if (isVoiceConversationActionId(actionId)) {
+        if (!deps.voiceConversationAction) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        const result = await deps.voiceConversationAction({ actionId, input: parsed.data, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+
       if (isSettingsDeclarationActionIdV1(actionId)) {
         if (!deps.settingsDeclarationAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -4456,6 +4230,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.appShellAction({ actionId, input: parsed.data, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+
+      if (isNotificationConfigurationActionId(actionId)) {
+        if (!deps.notificationConfigurationAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.notificationConfigurationAction({ actionId, input: parsed.data, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      if (isAppUpdateActionId(actionId)) {
+        if (!deps.appUpdateAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.appUpdateAction({ actionId, input: parsed.data, context: ctx });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
@@ -4584,6 +4369,24 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
         return completeActionResult(result);
+      }
+
+      if (actionId === 'account.encryption.automationTemplates.recover') {
+        if (!deps.accountEncryptionAutomationTemplatesRecoverAction) {
+          return { ok: false, errorCode: 'target_unavailable', error: 'Historical template recovery belongs to the invoking client; no client key custodian is available.' };
+        }
+        return completeActionResult(await deps.accountEncryptionAutomationTemplatesRecoverAction({
+          input: {}, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+        }));
+      }
+
+      if (actionId === 'account.encryption.historicalKey.forget') {
+        if (!deps.accountHistoricalEncryptionKeyForgetAction) {
+          return { ok: false, errorCode: 'target_unavailable', error: 'Historical credentials belong to the invoking client; no client credential custodian is available.' };
+        }
+        return completeActionResult(await deps.accountHistoricalEncryptionKeyForgetAction({
+          input: {}, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+        }));
       }
 
       if (actionId === 'account.apiTokens.update') {
@@ -4718,13 +4521,40 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           input: parsed.data,
           context: ctx,
-          executeCanonicalAction: async (nestedActionId, nestedInput) => await execute(
+          executeCanonicalAction: async (nestedActionId, nestedInput, options) => await execute(
             nestedActionId,
             nestedInput,
-            ctx,
+            options?.requiredContributedActionDangerLevel
+              ? { ...ctx, requiredContributedActionDangerLevel: options.requiredContributedActionDangerLevel }
+              : ctx,
           ),
         });
         return completeActionResult(result);
+      }
+
+      if (actionId === 'review.walkthrough' || actionId === 'review.explain_findings') {
+        const input = actionId === 'review.walkthrough'
+          ? ReviewWalkthroughInputSchema.parse(parsed.data)
+          : ReviewExplainFindingsInputSchema.parse(parsed.data);
+        const sessionId = resolveSessionIdFromInput(input, ctx);
+        if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+        const { sessionId: _sessionId, runId, reviewRunIds, ...request } = input;
+        const nestedInput = actionId === 'review.walkthrough'
+          ? ReviewWalkthroughRequestSchema.parse({ ...request, reviewRunIds: reviewRunIds ?? [runId] })
+          : ReviewExplainFindingsRequestSchema.parse({ ...request, reviewRunIds: reviewRunIds ?? [runId] });
+        // Reuse the existing Run Action admission/authority transport in every surface.
+        const response = await execute('execution.run.action', { sessionId, runId, actionId, input: nestedInput }, ctx);
+        if (!response.ok) return response;
+        const payload = readReviewRunActionPayload(response.result);
+        const host = readRecord(payload);
+        if (host.ok === false) return { ok: false,
+          errorCode: typeof host.errorCode === 'string' ? host.errorCode : 'review_action_failed',
+          error: typeof host.error === 'string' ? host.error : 'review_action_failed' };
+        if (actionId === 'review.walkthrough') return { ok: true, result: payload };
+        const refinement = ReviewExplainFindingsRefinementSchema.safeParse(payload);
+        if (!refinement.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+        // Targeting was verified by the host; revision admission remains with U3.
+        return execute(refinement.data.refinement.actionId, refinement.data.refinement.input, { ...ctx, defaultSessionId: sessionId });
       }
 
       if (actionId === 'review.start') {
@@ -4806,14 +4636,38 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const {
           teamCredentialSessionBindingConsent: _teamCredentialSessionBindingConsent,
           secretReferenceOverlay: _secretReferenceOverlay,
+          outputs: _outputs,
+          narrator: _narrator,
           ...reviewIntentInput
         } = reviewInput;
         const intentInputBase = { ...reviewIntentInput, permissionMode };
-        const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(await deps.reviewEnginesList({
+        const reviewEngineInventory = await deps.reviewEnginesList({
           sessionId,
           includeDisabled: false,
           ...(reviewScopeForInput(reviewInput) ? { scope: 'paths' as const } : {}),
-        }));
+        });
+        const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(reviewEngineInventory);
+        const narrationRequested = reviewInput.outputs?.includes('walkthrough') === true;
+        const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
+        const narrationPolicy = resolveReviewNarratorPolicy({
+          selectedEngineIds: engineIds.map((engineId) => tryNormalizeExecutionBackendOptionValue(engineId) ?? engineId),
+          engines: narratorOptions,
+        });
+        const narrator = reviewInput.narrator ?? (narrationPolicy.defaultNarratorEngineId
+          ? { engineId: engineIds.find((engineId) => tryNormalizeExecutionBackendOptionValue(engineId) === narrationPolicy.defaultNarratorEngineId)! }
+          : undefined);
+        if (narrationRequested && (!reviewInput.comparisonId || !sessionId)) {
+          return { ok: false, errorCode: 'review_narration_comparison_required', error: 'review_narration_comparison_required' };
+        }
+        if (narrationRequested && (!narrator || !narratorOptions.some((option) =>
+          option.value === tryNormalizeExecutionBackendOptionValue(narrator.engineId)
+          && option.disabled !== true && option.capabilities.structuredNarration))) {
+          return { ok: false, errorCode: 'review_narrator_unavailable', error: 'review_narrator_unavailable' };
+        }
+        const originalModelId = teamCredentialModel.selection?.modelId ?? (typeof data.modelId === 'string' ? data.modelId : undefined);
+        const continueSingleReview = narrationRequested && engineIds.length === 1 && !narrationPolicy.requiresSeparateNarrator
+          && narrator !== undefined && normalizeExecutionBackendOptionValue(narrator.engineId) === normalizeExecutionBackendOptionValue(engineIds[0]!)
+          && (narrator.modelId === undefined || narrator.modelId === originalModelId);
 
         const reviewGroupId = `review_${bytesToHex(randomBytes(16))}`;
         const results = await fanoutStarts({
@@ -4829,6 +4683,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ok: false,
                 errorCode: 'review_engine_unavailable',
                 error: 'review_engine_unavailable',
+                details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
               };
             }
             return deps.executionRunStart(
@@ -4849,7 +4704,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ...(data.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: data.sessionConfigOptionOverrides } : {}),
                 permissionMode,
                 retentionPolicy: 'resumable',
-                runClass: 'bounded',
+                runClass: continueSingleReview ? 'long_lived' : 'bounded',
                 // Reviews should stream sidechain progress (and tool traffic) into the parent session.
                 ioMode: 'streaming',
                 ...(teamCredentialModel.selection
@@ -4871,7 +4726,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ...(reviewInput.secretReferenceOverlay
                   ? { secretReferenceOverlay: reviewInput.secretReferenceOverlay }
                   : {}),
-                ...(!data.intent || data.intent === 'review' ? { intentInput: { ...intentInputBase, engineId } } : {}),
+                ...(!data.intent || data.intent === 'review' ? { intentInput: {
+                  ...intentInputBase, engineId,
+                  ...(continueSingleReview ? { outputs: ['walkthrough'], narrator } : {}),
+                } } : {}),
               },
               {
                 ...executionRunDispatchOpts,
@@ -4881,7 +4739,37 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           },
         });
 
-        return { ok: true, result: { intent: 'review', sessionId, results } };
+        if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results } };
+        const reviewRunIds = results.flatMap((item) => item.ok && typeof readRecord(item.result).runId === 'string'
+          ? [String(readRecord(item.result).runId)] : []);
+        if (reviewRunIds.length === 0) {
+          return { ok: true, result: { intent: 'review', sessionId, results,
+            narration: { state: 'failed', errorCode: 'review_launch_failed', error: 'review_launch_failed' } } };
+        }
+        if (continueSingleReview) {
+          return { ok: true, result: { intent: 'review', sessionId, results, narration: {
+            runId: reviewRunIds[0], comparisonId: reviewInput.comparisonId, reviewRunIds,
+            mode: 'continued_review', state: 'collecting',
+          } } };
+        }
+        const launchFailures = results.flatMap((item) => item.ok ? [] : [{
+          engineId: item.key, errorCode: item.errorCode ?? 'execution_run_failed', error: item.error ?? 'execution_run_failed',
+        }]);
+        let narration: unknown;
+        try {
+          const response = await deps.executionRunAction(sessionId, {
+            runId: reviewRunIds[0], actionId: 'review.walkthrough', input: ReviewWalkthroughRequestSchema.parse({
+              reviewRunIds, comparisonId: reviewInput.comparisonId, narrator,
+              ...(launchFailures.length > 0 ? { launchFailures } : {}),
+            }),
+          }, executionRunDispatchOpts);
+          const payload = readReviewRunActionPayload(response);
+          const actionRecord = readRecord(payload);
+          narration = actionRecord.ok === false ? { state: 'failed', ...actionRecord } : payload;
+        } catch (error) {
+          narration = { state: 'failed', ...readFanoutStartError(error) };
+        }
+        return { ok: true, result: { intent: 'review', sessionId, results, narration } };
       }
 
       if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start' || actionId === 'voice_agent.start') {
@@ -5147,13 +5035,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'action.options.resolve') {
-          const actionIdRaw = normalizeId(data.actionId);
+          let actionIdRaw = normalizeId(data.actionId);
           const fieldPath = normalizeId(data.fieldPath);
           const directOptionsSourceId = normalizeId(data.optionsSourceId);
           let optionsSourceId = directOptionsSourceId;
+          let admittedInputTypeSource = false;
 
           const discoveryGrant = ctx.externalActionCredential?.grant;
-          if (discoveryGrant && discoveryGrant.actions !== null && directOptionsSourceId) {
+          if (discoveryGrant && discoveryGrant.actions !== null && directOptionsSourceId && !parseInputTypeOptionsSourceId(directOptionsSourceId)) {
             const visibleOwner = listActionSpecs().some((candidate) => (
               (!actionIdRaw || candidate.id === actionIdRaw)
               && isActionEnabled(candidate, ctx)
@@ -5165,7 +5054,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             }
           }
 
-          if (actionIdRaw && fieldPath) {
+          if (data.consumer !== undefined) {
+            const consumer = InputOptionsConsumerV1Schema.parse(data.consumer);
+            const consumingActionId = inputOptionsConsumerActionId(consumer);
+            if ((actionIdRaw && actionIdRaw !== consumingActionId) || !fieldPath) {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+            actionIdRaw = consumingActionId;
+            const grantFailure = credentialScopeFailure(consumingActionId, ctx, undefined, true);
+            if (grantFailure) return grantFailure;
+            if (!isActionEnabled(getActionSpec(consumingActionId), ctx)) return actionDisabled(null);
+            const { resolveInputOptionsConsumerField } = await import('../inputs/inputOptionsConsumerResolver.js');
+            const field = await resolveInputOptionsConsumerField({ consumer, fieldPath, deps, context: ctx });
+            if (!field) return { ok: false, errorCode: 'input_type_consumer_unavailable', error: 'input_type_consumer_unavailable' };
+            if ('ok' in field) return field;
+            const staticOptions = serializeActionFieldOptions(field);
+            if (staticOptions.length > 0) return { ok: true, result: { actionId: consumingActionId, fieldPath,
+              optionsSourceId: null, options: filterResolvedActionOptions(staticOptions, data) } };
+            optionsSourceId = field.inputType ? inputTypeOptionsSourceId(field.inputType) : normalizeId(field.optionsSourceId);
+            admittedInputTypeSource = field.inputType !== undefined;
+          } else if (actionIdRaw && fieldPath) {
             const credentialFailure = credentialScopeFailure(actionIdRaw, ctx, undefined, true);
             if (credentialFailure) return credentialFailure;
             let contributedDefinition: ActionDefinitionSummaryV1 | null = null;
@@ -5199,14 +5107,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   },
                 };
               }
-              // Dynamic contributed option sources remain owned by their
-              // plugin execution boundary; ActionExecutor has no source route.
-              return {
-                ok: false,
-                errorCode: 'unavailable',
-                error: 'unavailable',
-              };
-            }
+              if (!field.inputType) return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
+              optionsSourceId = inputTypeOptionsSourceId(field.inputType);
+              admittedInputTypeSource = true;
+            } else {
             const requestedSpec = getActionSpecForCatalogSurface({
               id: actionIdRaw as ActionId,
               surface: ctx.surface ?? null,
@@ -5235,7 +5139,23 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               };
             }
 
-            optionsSourceId = normalizeId(readRecord(field).optionsSourceId) || directOptionsSourceId;
+            optionsSourceId = field.inputType ? inputTypeOptionsSourceId(field.inputType)
+              : normalizeId(readRecord(field).optionsSourceId) || directOptionsSourceId;
+            admittedInputTypeSource = field.inputType !== undefined;
+            }
+          }
+
+          if (parseInputTypeOptionsSourceId(optionsSourceId) && !admittedInputTypeSource) {
+            return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+          }
+
+          if (admittedInputTypeSource && deps.readAdmittedInputTypeOptions) {
+            const result = await deps.readAdmittedInputTypeOptions({ input: data, context: ctx });
+            const failure = readActionFailureEnvelope(result);
+            if (failure) return failure;
+            const parsed = getActionSpec('action.options.resolve').outputSchema!.safeParse(result);
+            return parsed.success ? { ok: true, result: parsed.data }
+              : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
           }
 
           if (!optionsSourceId) {
@@ -5274,7 +5194,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             };
           }
 
-          const dynamic = await resolveDynamicActionOptions({
+          const dynamic = await resolveInputOptions({
+            readFailure: readActionFailureEnvelope,
+            resolveSessionId: resolveSessionIdFromInput,
+            reviewScope: reviewScopeForInput,
             deps,
             ctx,
             actionId: actionIdRaw ? actionIdRaw as ActionId : null,
@@ -5289,9 +5212,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             result: {
               actionId: actionIdRaw || null,
               fieldPath: fieldPath || null,
-              optionsSourceId,
+              optionsSourceId: dynamic.optionsSourceId === null ? null : optionsSourceId,
               options: filterResolvedActionOptions(
-                dynamic.result as readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] ,
+                dynamic.result,
                 data,
               ),
               ...(dynamic.modelCatalog ? { modelCatalog: dynamic.modelCatalog } : {}),
@@ -5322,6 +5245,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             input: data.input,
             context: ctx,
             ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
+            ...(ctx.requiredContributedActionDangerLevel ? { requiredDangerLevel: ctx.requiredContributedActionDangerLevel } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
         }
@@ -5654,6 +5578,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             runId: data.runId,
             includeStructured: data.includeStructured === true,
             ...(data.waitForInputId ? { waitForInputId: data.waitForInputId } : {}),
+            ...(data.waitForOutput ? { waitForOutput: data.waitForOutput } : {}),
           }, capability.opts);
           return completeExecutionRunServiceActionResult(actionId, res);
         }
@@ -5882,6 +5807,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeExecutionRunServiceActionResult(actionId, res);
         }
 
+        if (actionId === 'execution.run.permission.respond') {
+          if (!deps.executionRunPermissionRespond) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.permission.respond' };
+          }
+          const request = ExecutionRunPermissionRespondInputSchema.parse(parsed.data);
+          return completeActionResult(await deps.executionRunPermissionRespond(request, ctx));
+        }
+
         if (actionId === 'execution.run.action') {
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
@@ -6008,6 +5941,41 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(await deps.workspaceAction({ actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
+        if (isSessionCanvasActionId(actionId)) {
+          if (!deps.sessionCanvasAction) return { ok: true, result: { status: 'unavailable' } };
+          return completeActionResult(await deps.sessionCanvasAction({ actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'workflow.authoring.conversation.bind') {
+          if (!deps.workflowConversationBind) return { ok: true, result: { status: 'unavailable' } };
+          return completeActionResult(await deps.workflowConversationBind({ input: parsed.data, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'session.organization.move') {
+          if (!deps.sessionOrganizationMove) return { ok: true, result: { status: 'unavailable' } };
+          return completeActionResult(await deps.sessionOrganizationMove({ input: parsed.data,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'composer.transaction.apply' || actionId === 'composer.attachments.pick' || actionId === 'repository.upload.pick') {
+          if (!deps.composerIngress) return { ok: true, result: { status: actionId === 'composer.transaction.apply' ? 'composerUnavailable' : 'unavailable' } };
+          return completeActionResult(await deps.composerIngress({ actionId, input: parsed.data, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'session.pending.reorder' || actionId === 'todos.reorder') {
+          if (!deps.listReorder) return { ok: true, result: { status: 'unavailable' } };
+          return completeActionResult(await deps.listReorder({ actionId, input: parsed.data,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'todos.session.link') {
+          if (!deps.todoSessionLink) return { ok: true, result: { status: 'unavailable' } };
+          return completeActionResult(await deps.todoSessionLink({ input: parsed.data, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
         if (isSessionTerminalActionId(actionId)) {
           if (!deps.sessionTerminalAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           return completeActionResult(await deps.sessionTerminalAction({ actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
@@ -6015,15 +5983,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (actionId === 'session.open') {
           // A headless Session-open owner can resume Sessions, but cannot target a client tab.
-          if (typeof data.tabId === 'string' && !deps.workspaceAction) {
+          if ((typeof data.tabId === 'string' || data.destination !== undefined) && !deps.workspaceAction) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
           }
           const resolution = await resolveActionSessionAddress(deps, data, ctx);
           if (resolution.kind !== 'unique') return projectSessionReferenceFailure(resolution);
           const { serverId, sessionId } = resolution.address;
+          const destination = (parsed.data as PublicActionInputById['session.open']).destination;
+          if (destination && 'sessionId' in destination.comparison && destination.comparison.sessionId
+            && destination.comparison.sessionId !== sessionId) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_session_mismatch' };
+          }
           const res = await deps.sessionOpen({
             sessionId,
             serverId,
+            ...(destination ? { destination } : {}),
             ...(typeof data.tabId === 'string' ? { tabId: data.tabId } : {}),
             ...(typeof data.approvedNewDirectoryCreation === 'boolean'
               ? { approvedNewDirectoryCreation: data.approvedNewDirectoryCreation } : {}),
@@ -6351,6 +6325,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const res = await promptInvocationsList({
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
         }
@@ -6366,7 +6341,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const res = await promptInvocationResolve({
             invocationId,
+            sessionId: ctx.defaultSessionId ?? null,
             ...(typeof data.argsText === 'string' ? { argsText: data.argsText } : {}),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
         }
@@ -6416,6 +6393,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(res);
         }
 
+        if (actionId === 'workspace.files.search') {
+          if (!deps.workspaceFilesSearch) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+          return completeActionResult(await deps.workspaceFilesSearch(WorkspaceFilesSearchActionInputSchema.parse(parsed.data), ctx));
+        }
+
         if (actionId === 'agents.backends.list') {
           const res = await deps.agentsBackendsList({
             ...(typeof data.includeDisabled === 'boolean' ? { includeDisabled: data.includeDisabled } : {}),
@@ -6438,6 +6420,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...MachinesAgentsSignInStatusInputSchema.parse(parsed.data),
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
           }));
+        }
+        if (actionId === 'machines.agents.signIn.cancel' || actionId === 'machines.agents.signIn.restart') {
+          const operation = actionId === 'machines.agents.signIn.cancel' ? deps.machineAgentSignInCancel : deps.machineAgentSignInRestart;
+          if (!operation) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+          return completeActionResult(await operation({ ...MachinesAgentsSignInCancelInputSchema.parse(parsed.data),
+            ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
+          }), { treatReturnedErrorEnvelopeAsFailure: true });
         }
         if (actionId === 'machines.agents.install') {
           if (!deps.machineAgentInstallStart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
@@ -7213,7 +7202,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const timeoutSeconds = typeof data.timeoutSeconds === 'number' ? data.timeoutSeconds : 300;
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionWaitIdle({ sessionId, timeoutSeconds, ...(serverId ? { serverId } : {}) });
+          const res = await deps.sessionWaitIdle({ sessionId, timeoutSeconds, ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return completeActionResult(res);
         }
 
@@ -7645,6 +7634,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(await deps.promptDocGet({
             artifactId: String(data.artifactId), ...(ctx.signal ? { signal: ctx.signal } : {}),
           }));
+        }
+
+        if (actionId === 'prompt_doc.create') {
+          if (!deps.promptDocCreate) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_doc.create' };
+          return completeActionResult(await deps.promptDocCreate({ title: String(data.title), markdown: String(data.markdown),
+            ...(typeof data.folderId === 'string' || data.folderId === null ? { folderId: data.folderId } : {}),
+            ...(Array.isArray(data.tags) ? { tags: data.tags.filter((entry): entry is string => typeof entry === 'string') } : {}),
+            ...(typeof data.favorite === 'boolean' ? { favorite: data.favorite } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'prompt_doc.favorite.set') {
+          if (!deps.promptDocFavoriteSet) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_doc.favorite.set' };
+          return completeActionResult(await deps.promptDocFavoriteSet({ artifactId: String(data.artifactId), favorite: data.favorite === true,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'prompts.library.list') {
+          if (!deps.promptsLibraryList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompts.library.list' };
+          return completeActionResult(await deps.promptsLibraryList({ ...(typeof data.query === 'string' ? { query: data.query } : {}),
+            ...(data.includeBundles === false ? { includeBundles: false } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
         if (actionId === 'prompt_doc.update') {

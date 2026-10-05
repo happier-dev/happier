@@ -34,6 +34,35 @@ installCodeViewCommonModuleMocks({
 });
 
 describe('CodeLineRow', () => {
+    it('uses the content material for diff paint while preserving the addition prefix and text', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const { glassSurfaceBackgroundColor } = await import('@/components/ui/glass/glassSurfacePaint');
+        const { theme } = await import('react-native-unistyles').then(module => module.useUnistyles());
+        const screen = await renderScreen(<CodeLineRow
+            line={{ id: 'glass-add', sourceIndex: 0, kind: 'add', oldLine: null, newLine: 1,
+                renderPrefixText: '+', renderCodeText: 'const added = true;', renderIsHeaderLine: false, selectable: true }}
+            selected={false}
+        />);
+        const backgrounds = screen.tree.root.findAll(node => typeof node.type === 'string')
+            .map(node => flattenTestStyle(node.props.style).backgroundColor);
+        expect(backgrounds).toContain(glassSurfaceBackgroundColor(theme.colors.diff.added.background, 'content'));
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('const added = true;');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('+');
+    });
+    it('decorates Find ranges inside syntax-highlighted code without changing the displayed text', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const screen = await renderScreen(<CodeLineRow
+            line={{ id: '1', sourceIndex: 0, kind: 'add', oldLine: null, newLine: 1,
+                renderPrefixText: '+', renderCodeText: 'const target = 1;', renderIsHeaderLine: false, selectable: true }}
+            selected={false}
+            findRanges={[{ start: 6, end: 12, current: true }]}
+            syntaxHighlighting={{ mode: 'simple', language: 'typescript', maxLineLength: 100 }}
+        />);
+        const match = screen.tree.root.findAll((node) => node.props.testID === 'find-match-current');
+        expect(match.length).toBeGreaterThan(0);
+        expect(match[match.length - 1].children.join('')).toBe('target');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('const');
+    });
     it('renders prefix and code segments', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
@@ -332,6 +361,7 @@ describe('CodeLineRow', () => {
     });
 
     it('renders intra-line diff segments when provided', async () => {
+        const { glassSurfaceBackgroundColor } = await import('@/components/ui/glass/glassSurfacePaint');
         const { CodeLineRow } = await import('./CodeLineRow');
 
         const screen = await renderScreen(<CodeLineRow
@@ -365,14 +395,14 @@ describe('CodeLineRow', () => {
             const style = node.props?.style;
             if (!style) return false;
             const flattened = Array.isArray(style) ? style.flat() : [style];
-            return flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAdded.background);
+            return flattened.some((s: any) => s?.backgroundColor === glassSurfaceBackgroundColor(theme.colors.diff.inlineAdded.background, 'content'));
         });
 
         expect(addedNodes.length).toBeGreaterThan(0);
         const addedNode = addedNodes[0]!;
         const flattened = Array.isArray(addedNode.props.style) ? addedNode.props.style.flat() : [addedNode.props.style];
 
-        expect(flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAdded.background)).toBe(true);
+        expect(flattened.some((s: any) => s?.backgroundColor === glassSurfaceBackgroundColor(theme.colors.diff.inlineAdded.background, 'content'))).toBe(true);
         expect(JSON.stringify(screen.tree.toJSON())).toContain('x');
     });
 });

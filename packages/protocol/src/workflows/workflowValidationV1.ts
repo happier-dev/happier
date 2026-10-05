@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { listActionSpecs } from '../actions/actionSpecs.js';
 
 import {
@@ -1007,6 +1008,17 @@ export type ValidateWorkflowDefinitionOptions = Readonly<{
    */
   targetIssues?: readonly WorkflowValidationIssue[];
 }>;
+
+/** The authored-source comparison used by admission rejoin and Plan review recovery. */
+export function matchesWorkflowAcceptedDefinitionV1(
+  acceptedAuthoredDefinition: WorkflowDefinitionV1,
+  proposal: unknown,
+  options: ValidateWorkflowDefinitionOptions = {},
+): boolean {
+  const checked = validateWorkflowDefinition(proposal, options);
+  return checked.valid && checked.normalizedDefinition !== undefined
+    && sameStrictJsonValue(acceptedAuthoredDefinition, checked.normalizedDefinition);
+}
 
 /**
  * Normalizes and semantically validates a workflow definition or its ingress

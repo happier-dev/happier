@@ -15,7 +15,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
@@ -82,7 +82,7 @@ vi.mock('react-native-keyboard-controller', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const React = await import('react');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     const empty = settingsParse({});
     const readSettings = () => boundary.settings ?? empty;
     // The live account snapshot is a subscribed store: a settings write
@@ -92,17 +92,14 @@ vi.mock('@/sync/domains/state/storage', async () => {
         boundary.listeners.add(listener);
         return () => { boundary.listeners.delete(listener); };
     };
-    return {
-        ...createStorageModuleStub({
-            useSettings: () => React.useSyncExternalStore(subscribe, readSettings, readSettings),
-        }),
-        storage: { getState: () => ({ settings: readSettings() }) },
-        getStorage: () => ({ getState: () => ({ settings: readSettings() }) }),
-    };
+    return createStorageModuleStub({
+        storage: createLiveStorageStoreMock(() => ({ settings: readSettings() })),
+        useSettings: () => React.useSyncExternalStore(subscribe, readSettings, readSettings),
+    });
 });
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => ({
-    ...(await importOriginal<Record<string, unknown>>()),
+vi.mock('@/sync/store/hooks', async () => ({
+    ...await import('@/sync/domains/state/storage'),
     useSettingsVersion: () => 7,
     useSetting: (key: string) => (boundary.settings as unknown as Record<string, unknown> | null)?.[key],
     useLocalSetting: (key: string) => (key === 'uiFontScale' ? 1 : undefined),
@@ -117,7 +114,8 @@ const syncSingleton = {
 vi.mock('@/sync/sync', () => ({ sync: syncSingleton }));
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({ getSyncSingleton: () => syncSingleton }));
 
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
     fetchAccountEncryptionMode: vi.fn(async () => ({ mode: 'e2ee' })),
 }));
 
@@ -143,16 +141,11 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     ),
 }));
 
-vi.mock('@/voice/registry/defaultRegistry', () => ({
-    createDefaultVoiceProviderRegistry: () => ({
-        get: () => ({
-            kind: 'voice.conversation-provider.v1',
-            declaration: declarationRef.current,
-        }),
-    }),
-}));
-
-const declarationRef: { current: unknown } = { current: null };
+const { createVoiceProviderRegistry } = await import('@/voice/registry/providerRegistry');
+const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } = await import(
+    '@/voice/registry/externalVoiceProviderRegistrations'
+);
+const registrationToken = Object.freeze({});
 
 const CONTRIBUTION = { pluginId: 'com.acme.voice', localId: 'conversation' } as const;
 
@@ -216,6 +209,7 @@ afterEach(async () => {
         await act(async () => { current.root.unmount(); });
         current.container.remove();
     }
+    removeExternalVoiceProviderRegistration(registrationToken);
     boundary.reportAppliedWithoutApplying = false;
     boundary.appliedRaw = [];
     boundary.mutateAccountSettings.mockReset();
@@ -316,7 +310,7 @@ async function renderRow(options: Readonly<{
         })
         : null;
 
-    declarationRef.current = VoiceProviderContributionSchema.parse({
+    const declaration = VoiceProviderContributionSchema.parse({
         id: 'conversation',
         title: 'ElevenLabs',
         kind: 'conversation',
@@ -358,6 +352,20 @@ async function renderRow(options: Readonly<{
         },
     });
 
+    const providerId = 'com.acme.voice/conversation';
+    const descriptor = createVoiceProviderRegistry({
+        bundledContributions: [{ pluginId: CONTRIBUTION.pluginId, providerId, declaration }],
+        bundledPresentations: [{ providerId, settingsSectionId: 'voice.acme.conversation' }],
+    }).get(providerId);
+    if (!descriptor) throw new Error('saved-secret fixture declaration was not admitted');
+    commitExternalVoiceProviderRegistration({
+        token: registrationToken,
+        ...CONTRIBUTION,
+        providerId,
+        descriptor,
+        adapter: null,
+    });
+
     boundary.rawSettings = options.initialRawSettings ?? { secrets: SECRETS };
     boundary.settings = settingsParse(boundary.rawSettings);
     await installAccountSettingsTransport();
@@ -378,7 +386,7 @@ async function renderRow(options: Readonly<{
                     contribution={CONTRIBUTION}
                     credentialSlotId="api-key"
                     credentialSourcePurpose={options.credentialSourcePurpose}
-                    credentialSourceDeclaration={declarationRef.current as never}
+                    credentialSourceDeclaration={declaration}
                     recipientContract={recipientContract}
                     recipientContractDigest={recipientContract
                         ? createRecipientContractDigestV1(recipientContract)
@@ -394,14 +402,12 @@ async function renderRow(options: Readonly<{
  * The first render pulls in the modal host, the protocol package and the Voice
  * registry. Warmed once so a single test is not charged for the whole graph.
  */
-beforeAll(async () => {
-    await Promise.all([
-        import('@/modal'),
-        import('./CredentialItem'),
-        import('@happier-dev/protocol'),
-        import('@/sync/domains/settings/settings'),
-    ]);
-}, 180_000);
+await Promise.all([
+    import('@/modal'),
+    import('./CredentialItem'),
+    import('@happier-dev/protocol'),
+    import('@/sync/domains/settings/settings'),
+]);
 
 const CASE_TIMEOUT_MS = 180_000;
 

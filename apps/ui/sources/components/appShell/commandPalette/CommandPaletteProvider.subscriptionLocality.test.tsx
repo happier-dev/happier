@@ -88,6 +88,7 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => false,
+    desktopHostKind: () => null,
 }));
 
 vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({

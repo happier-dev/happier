@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createBufferTransferPayloadSource } from './transferPayloadSource';
 import { createDirectTransferServerLifecycle } from './directTransferServerLifecycle';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
-import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createTailscaleTransferServeLifecycle } from './tailscaleTransferServeLifecycle';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';

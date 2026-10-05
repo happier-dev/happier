@@ -7,7 +7,8 @@ import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIden
 import { resolveAgentsMachineCandidateAvailability } from '@/components/settings/agents/collection/useAgentAdministrationCatalog';
 import { MachineAdministrationContextBar } from '@/components/settings/machines/MachineAdministrationContextBar';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
@@ -63,7 +64,7 @@ export const AgentDetailHeader = React.memo(function AgentDetailHeader(props: Re
             ) : undefined}
             description={props.description}
             leading={(
-                <PageHeaderMarkTile>
+                <PageHeaderMarkSlot>
                     <AgentCatalogIdentityIcon
                         entry={props.projection}
                         machineId={props.machineId}
@@ -72,7 +73,7 @@ export const AgentDetailHeader = React.memo(function AgentDetailHeader(props: Re
                         color={theme.colors.text.secondary}
                         size={24}
                     />
-                </PageHeaderMarkTile>
+                </PageHeaderMarkSlot>
             )}
             actions={enabled || (props.menuActions?.length ?? 0) > 0 ? (
                 <View style={styles.actions}>

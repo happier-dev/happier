@@ -4,13 +4,16 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { hrefForDestinationRef, type CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
-import { SplitCanvasHost } from '@/components/appShell/splitCanvas/components/SplitCanvasHost';
-import type { SplitCanvasAction, SplitCanvasDirection, SplitCanvasDropTarget, SplitCanvasLeafNode } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
-import { decodeWorkspaceDragData, resolveWorkspaceTabCanvasDrop, setWorkspaceTabDragActive, useWorkspaceTabDragActive } from './workspaceDragData';
+import { SplitCanvasHost, type SplitCanvasRetainedLeafContent } from '@/components/appShell/splitCanvas/components/SplitCanvasHost';
+import type { SplitCanvasAction, SplitCanvasDirection, SplitCanvasLeafNode } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
+import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { executeWorkspaceEntityDrop, resolveWorkspaceEntityDrop, WORKSPACE_ENTITY_KINDS } from './workspaceEntityDrop';
+import { describePaneDropDestination, presentPaneDropAdmission } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
+import { createWorkspaceDropScene, readWorkspaceTabTitle } from './workspaceDropScene';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
-import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
@@ -21,8 +24,9 @@ import type { WorkspaceGroup } from './workspaceState';
 import { createWorkspaceSplit, WORKSPACE_VIEW_MINIMUM } from './workspaceSplit';
 import { WorkspaceGroupTabs } from './titleBar/WorkspaceGroupTabs';
 import { resolveWorkspaceTopRowGroupIds, WorkspaceBarGeometryContext } from './titleBar/workspaceBarGeometry';
+// The body selector shares Expo's already-loaded context, not a second lazy graph.
+import { WorkspaceDestinationBody as DestinationBody } from './WorkspaceDestinationBody';
 
-const DestinationBody = React.lazy(() => import('./WorkspaceDestinationBody').then((module) => ({ default: module.WorkspaceDestinationBody })));
 const SessionBody = React.lazy(() => import('@/components/sessions/shell/SessionDestinationBody').then((module) => ({ default: module.SessionDestinationBody })));
 const SessionDetailsBody = React.lazy(() => import('@/components/sessions/shell/SessionDetailsDestinationBody').then((module) => ({ default: module.SessionDetailsDestinationBody })));
 const renderSession = () => <SessionBody />;
@@ -31,7 +35,7 @@ const leafMinimum = () => WORKSPACE_VIEW_MINIMUM;
 type GroupPayload = Readonly<{ groupId: string }>;
 
 const styles = StyleSheet.create((theme) => ({
-    group: { flex: 1, minWidth: 0, minHeight: 0 },
+    group: { minWidth: 0, minHeight: 0 },
     strip: {
         flexDirection: 'row', alignItems: 'center', minHeight: M.heightPx,
         paddingLeft: M.paddingStartPx, paddingRight: M.paddingEndPx,
@@ -67,6 +71,9 @@ function WorkspaceCanvas(props: Readonly<{
     catalog: readonly CompactAppDestination[];
 }>) {
     const workspace = props.workspace;
+    const scope = useActiveServerAccountScope();
+    const workspaceRefs = useSetting('workspaceRefsV1');
+    const runtime = useEntityDragDropRuntime();
     const dispatchCanvas = React.useCallback((action: SplitCanvasAction<GroupPayload>) => {
         switch (action.type) {
             case 'focusLeaf':
@@ -97,7 +104,7 @@ function WorkspaceCanvas(props: Readonly<{
     const titleBarGeometry = React.useContext(WorkspaceBarGeometryContext);
     const titleBarKey = titleBarGeometry ? resolveWorkspaceTopRowGroupIds(workspace.state).join('|') : '';
     const titleBarGroupIds = React.useMemo(() => (titleBarKey ? titleBarKey.split('|') : []), [titleBarKey]);
-    const renderLeaf = React.useCallback((input: Readonly<{
+    const renderLeafHeader = React.useCallback((input: Readonly<{
         leaf: SplitCanvasLeafNode<GroupPayload>;
         isFocused: boolean;
         requestSplit: (direction: SplitCanvasDirection) => void;
@@ -106,32 +113,53 @@ function WorkspaceCanvas(props: Readonly<{
         if (!group) return null;
         return <WorkspaceGroupView workspace={workspace} group={group} catalog={props.catalog}
             focused={input.isFocused}
-            tabsInTitleBar={titleBarGroupIds.includes(group.id)}
-            visible={!workspace.state.maximizedGroupId || workspace.state.maximizedGroupId === group.id} />;
+            tabsInTitleBar={titleBarGroupIds.includes(group.id)} />;
     }, [props.catalog, titleBarGroupIds, workspace]);
-    // A tab dragged onto a pane: the centre moves it there, an edge splits (workspace lab D). The
-    // canvas owns the drop preview and the measured admission.
-    const [dropTarget, setDropTarget] = React.useState<SplitCanvasDropTarget | null>(null);
-    const onLeafDrop = React.useCallback((input: Readonly<{ payload: string; target: SplitCanvasDropTarget;
-        availableSizePx?: number; minimumExistingSizePx?: number }>) => {
-        setWorkspaceTabDragActive(false);
-        const data = decodeWorkspaceDragData(input.payload);
-        if (data?.kind !== 'tab') return;
-        const action = resolveWorkspaceTabCanvasDrop(workspace.state, { tabId: data.tabId, target: input.target,
-            availableSizePx: input.availableSizePx, minimumExistingSizePx: input.minimumExistingSizePx, createId: randomUUID });
-        if (action) workspace.dispatch(action);
-    }, [workspace]);
-    const tabDragActive = useWorkspaceTabDragActive();
-    React.useEffect(() => { if (!tabDragActive) setDropTarget(null); }, [tabDragActive]);
+    const retainedLeafContents = React.useMemo(() => Object.values(workspace.state.groups).flatMap(group =>
+        group.tabIds.flatMap((tabId): SplitCanvasRetainedLeafContent[] => {
+            const tab = workspace.state.tabs[tabId];
+            if (!tab) return [];
+            const href = hrefForDestinationRef(props.catalog, tab.target);
+            const pathname = href?.split(/[?#]/, 1)[0] ?? null;
+            const safeGroup = toTestIdSafeValue(group.id);
+            return [{ id: tabId, leafId: group.id, isActive: tabId === group.activeTabId,
+                render: ({ isFocused, isVisible }) => <View style={styles.body} role="tabpanel"
+                    testID={`workspace-retained-${tabId}`}
+                    nativeID={`workspace-${safeGroup}-panel-${toTestIdSafeValue(tabId)}`}
+                    aria-labelledby={`workspace-${safeGroup}-tab-${toTestIdSafeValue(tabId)}`}>
+                    <DestinationInstanceHost tabId={tabId} ref={tab.target}
+                        pathname={pathname ?? ''} focused={isFocused && isVisible} visible={isVisible}
+                        navigation={workspace.navigationForTab(tabId)}>
+                        <NavigationTitleChromeProvider showsTitle={false}>
+                            {pathname ? <React.Suspense fallback={<PaneLoadingFallback />}>
+                                <DestinationBody target={tab.target} pathname={pathname}
+                                    renderSession={renderSession} renderSessionDetails={renderSessionDetails} />
+                            </React.Suspense> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />}
+                        </NavigationTitleChromeProvider>
+                    </DestinationInstanceHost>
+                </View> }];
+        })), [props.catalog, workspace]);
     return <SplitCanvasHost
-        activeDropTarget={tabDragActive ? dropTarget : null}
-        onActiveDropTargetChange={tabDragActive ? setDropTarget : undefined}
-        onLeafDrop={tabDragActive ? onLeafDrop : undefined}
+        entityDrop={scope ? {
+            runtime, id: 'workspace', scope, acceptedKinds: WORKSPACE_ENTITY_KINDS,
+            isCurrent: () => workspace.active && !workspace.phone,
+            label: target => {
+                const group = workspace.state.groups[target.leafId];
+                return describePaneDropDestination(target.placement,
+                    group ? readWorkspaceTabTitle(workspace.state, props.catalog, group.activeTabId) : null);
+            },
+            resolve: ({ declinedSplit, ...input }) => presentPaneDropAdmission(
+                resolveWorkspaceEntityDrop({ ...input, workspace, scope, catalog: props.catalog, workspaceRefs }),
+                createWorkspaceDropScene(workspace.state, props.catalog, { paneId: input.target.leafId, declinedSplit: Boolean(declinedSplit) })),
+            execute: effect => executeWorkspaceEntityDrop(effect, scope),
+        } : undefined}
         controlsRef={workspace.canvasControlsRef}
         state={{ root: workspace.state.root, focusedLeafId: workspace.state.focusedGroupId,
-            maximizedLeafId: workspace.state.maximizedGroupId, maxLeaves: Number.POSITIVE_INFINITY }}
+            maximizedLeafId: workspace.phone ? workspace.state.focusedGroupId : workspace.state.maximizedGroupId,
+            maxLeaves: Number.POSITIVE_INFINITY }}
         dispatch={dispatchCanvas}
-        renderLeaf={renderLeaf}
+        renderLeafHeader={renderLeafHeader}
+        retainedLeafContents={retainedLeafContents}
         getLeafMinimumSizePx={leafMinimum}
         onRequestSplitLeaf={(input) => splitTab(workspace, { ...input, groupId: input.leafId })}
         keyboardEnabled={workspace.active}
@@ -144,7 +172,6 @@ function WorkspaceGroupView(props: Readonly<{
     group: WorkspaceGroup;
     catalog: readonly CompactAppDestination[];
     focused: boolean;
-    visible: boolean;
     /** The pane's tabs live in the window's top strip (a top-row pane under a strip that carries them). */
     tabsInTitleBar: boolean;
 }>) {
@@ -164,32 +191,9 @@ function WorkspaceGroupView(props: Readonly<{
         return () => geometry.setGroupFrame(group.id, null);
     }, [geometry, group.id, props.tabsInTitleBar, publishFrame]);
     return <View ref={frameRef} testID={`workspace-group-${safeGroup}`} style={styles.group} onLayout={publishFrame}>
-        {props.tabsInTitleBar ? null : <View style={styles.strip}>
+        {props.tabsInTitleBar || workspace.phone ? null : <View style={styles.strip}>
             <WorkspaceGroupTabs workspace={workspace} group={group} catalog={props.catalog}
                 focused={props.focused} placement="strip" />
         </View>}
-        {group.tabIds.map((tabId) => {
-            const tab = workspace.state.tabs[tabId];
-            if (!tab) return null;
-            const href = hrefForDestinationRef(props.catalog, tab.target);
-            const pathname = href?.split(/[?#]/, 1)[0] ?? null;
-            const visible = props.visible && tabId === group.activeTabId;
-            return <RetainedPanelSurface key={tabId} isActive={visible} testID={`workspace-retained-${tabId}`}>
-                <View style={styles.body} role="tabpanel"
-                    nativeID={`workspace-${safeGroup}-panel-${toTestIdSafeValue(tabId)}`}
-                    aria-labelledby={`workspace-${safeGroup}-tab-${toTestIdSafeValue(tabId)}`}>
-                    <DestinationInstanceHost tabId={tabId} ref={tab.target}
-                        pathname={pathname ?? ''} focused={props.focused && visible} visible={visible}
-                        navigation={workspace.navigationForTab(tabId)}>
-                        <NavigationTitleChromeProvider showsTitle={false}>
-                            {pathname ? <React.Suspense fallback={<PaneLoadingFallback />}>
-                                <DestinationBody target={tab.target} pathname={pathname}
-                                    renderSession={renderSession} renderSessionDetails={renderSessionDetails} />
-                            </React.Suspense> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />}
-                        </NavigationTitleChromeProvider>
-                    </DestinationInstanceHost>
-                </View>
-            </RetainedPanelSurface>;
-        })}
     </View>;
 }

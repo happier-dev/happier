@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { presentActiveCliAcquisition, resolveCliAcquisitionFailureMessage } from '@/components/systemTasks/cliAcquisitionPresentation';
 import { Text } from '@/components/ui/text/Text';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { Typography } from '@/constants/Typography';
 import { t, tLoose } from '@/text';
 
@@ -23,7 +25,7 @@ const CONTENT_MAX_WIDTH = 520;
 const RECOVERY_MAX_WIDTH = 420;
 
 const styles = StyleSheet.create((theme) => ({
-    root: { flex: 1, backgroundColor: theme.colors.background.canvas },
+    root: { flex: 1 },
     scroll: { flex: 1 },
     scrollContent: { flexGrow: 1, paddingHorizontal: 32, paddingVertical: 40, alignItems: 'center' },
     // Auto margins centre the composition while keeping BOTH overflow edges reachable at compact
@@ -120,6 +122,8 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
     onKeepSignedInHome?: () => void;
     onCreatePersonalHome?: () => void;
 }>) {
+    const { theme } = useUnistyles();
+    const { blurEnabled, blurIntensity } = useGlassBlurSetting();
     const [detailsOpen, setDetailsOpen] = React.useState(false);
     const retryRef = React.useRef<FocusableAction | null>(null);
     const detailsRef = React.useRef<React.ElementRef<typeof Pressable>>(null);
@@ -196,7 +200,13 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
     );
 
     return (
-        <View style={styles.root} testID="personal-home-setup-surface">
+        <GlassSurface
+            style={styles.root}
+            testID="personal-home-setup-surface"
+            enabled={blurEnabled}
+            blurIntensity={blurIntensity}
+            solidColor={theme.colors.background.canvas}
+        >
             <ScrollView
                 style={styles.scroll}
                 contentContainerStyle={styles.scrollContent}
@@ -280,6 +290,6 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
                     {showDetails && !showExistingDecision ? detailsPanel : null}
                 </View>
             </ScrollView>
-        </View>
+        </GlassSurface>
     );
 });

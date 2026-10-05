@@ -1,4 +1,6 @@
 import { SessionPaneLazyLoader } from './SessionPaneLazyLoader';
+import { FileFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 import type { SessionCommitDetailsViewProps } from '@/components/sessions/files/views/SessionCommitDetailsView';
 import type { SessionFileDetailsViewProps } from '@/components/sessions/files/views/SessionFileDetailsView';
@@ -14,8 +16,13 @@ type SessionSubagentDetailsViewProps = Readonly<{
 
 const loadSessionFileDetailsView = async () => (await import('@/components/sessions/files/views/SessionFileDetailsView')).SessionFileDetailsView;
 
-export function SessionFileDetailsViewForPanel(props: SessionFileDetailsViewProps) {
-    return <SessionPaneLazyLoader testID="session-file-details-loading" load={loadSessionFileDetailsView} props={props} />;
+export function SessionFileDetailsViewForPanel(props: SessionFileDetailsViewProps & Readonly<{ active?: boolean }>) {
+    const scope = useWorkspaceScopeForSession(props.sessionId, props.serverId);
+    if (!scope) return <SessionPaneLazyLoader testID="session-file-details-loading" load={loadSessionFileDetailsView} props={props} />;
+    return <FileFindSeedHost destination={{ host: 'session', id: props.sessionId, scope, path: props.filePath }} active={props.active !== false}>
+        {({ findSeed, consumeFindSeed }) => <SessionPaneLazyLoader testID="session-file-details-loading" load={loadSessionFileDetailsView}
+            props={{ ...props, findSeed, onFindSeedConsumed: consumeFindSeed }} />}
+    </FileFindSeedHost>;
 }
 
 const loadSessionCommitDetailsView = async () => (await import('@/components/sessions/files/views/SessionCommitDetailsView')).SessionCommitDetailsView;

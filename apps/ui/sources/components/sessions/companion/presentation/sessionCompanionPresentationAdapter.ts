@@ -31,6 +31,7 @@ export type SessionPresentationMutationOutcome = Readonly<{
 }>;
 
 export type SessionBoardPresentationMutationOutcome = SessionPresentationMutationOutcome;
+export type SessionCompanionMutationObserver = (outcome: SessionCompanionMutationOutcome) => void;
 
 export type SessionBoardPresentationPort = Readonly<{
     /** Exact mounted Board binding is current and reachable for presentation. */
@@ -189,10 +190,12 @@ function announce(
 }
 
 function fromCompanionOutcome(
-    ports: SessionPresentationPorts,
+    ports: Pick<SessionPresentationPorts, 'companion' | 'publishNotice' | 'noticeKeyPrefix'>,
     kind: string,
     message: string,
     apply: () => SessionCompanionMutationOutcome | null,
+    onCompanionMutation?: SessionCompanionMutationObserver,
+    unchangedResult: CurrentSessionPresentationIntentResultV1 = UNCHANGED,
 ): CurrentSessionPresentationIntentResultV1 {
     if (ports.companion.availability !== 'ready') return UNAVAILABLE;
     const outcome = applySessionCompanionMutationWithNotice({
@@ -203,7 +206,8 @@ function fromCompanionOutcome(
         message,
         apply: () => apply(),
     });
-    if (!outcome) return UNCHANGED;
+    if (!outcome) return unchangedResult;
+    onCompanionMutation?.(outcome);
     return APPLIED;
 }
 
@@ -219,9 +223,26 @@ function fromPresentationOutcome(
     return APPLIED;
 }
 
+/** The mounted human and bound agent share the same reference placement owner. */
+export function applySessionCompanionItemPresentationIntent(
+    ports: Pick<SessionPresentationPorts, 'companion' | 'publishNotice' | 'noticeKeyPrefix' | 'canAddCompanionItem'>,
+    intent: Extract<CurrentSessionPresentationIntentV1, { kind: 'companion.item.add' | 'companion.item.move' }>,
+    onCompanionMutation?: SessionCompanionMutationObserver,
+): CurrentSessionPresentationIntentResultV1 {
+    if (!ports.noticeKeyPrefix || ports.companion.availability !== 'ready') return UNAVAILABLE;
+    if (intent.kind === 'companion.item.add') {
+        if (!ports.canAddCompanionItem(intent.item)) return INVALID_TARGET;
+        return fromCompanionOutcome(ports, intent.kind, t('sessionBoard.companion.notices.added'),
+            () => intent.index === undefined ? ports.companion.addItem(intent.item) : ports.companion.addItem(intent.item, intent.index), onCompanionMutation);
+    }
+    return fromCompanionOutcome(ports, intent.kind, t('sessionBoard.companion.notices.reordered'),
+        () => ports.companion.moveItem(intent.item, intent.toIndex), onCompanionMutation);
+}
+
 export function applySessionPresentationIntent(
     ports: SessionPresentationPorts,
     intent: CurrentSessionPresentationIntentV1,
+    onCompanionMutation?: SessionCompanionMutationObserver,
 ): CurrentSessionPresentationIntentResultV1 {
     if (!ports.noticeKeyPrefix) return UNAVAILABLE;
     const exactPorts = { ...ports, noticeKeyPrefix: ports.noticeKeyPrefix };
@@ -294,34 +315,24 @@ export function applySessionPresentationIntent(
                 () => exactPorts.companion.hide(),
             );
 
-        case 'companion.item.add': {
-            if (!exactPorts.canAddCompanionItem(intent.item)) return INVALID_TARGET;
-            return fromCompanionOutcome(
-                exactPorts,
-                'companion.item.add',
-                t('sessionBoard.companion.notices.added'),
-                () => intent.index === undefined
-                    ? exactPorts.companion.addItem(intent.item)
-                    : exactPorts.companion.addItem(intent.item, intent.index),
-            );
-        }
+        case 'companion.item.add':
+        case 'companion.item.move':
+            return applySessionCompanionItemPresentationIntent(exactPorts, intent, onCompanionMutation);
 
         case 'companion.item.remove':
+            if (intent.expectedPresentation && !intent.expectedInstance) return INVALID_TARGET;
             return fromCompanionOutcome(
                 exactPorts,
                 'companion.item.remove',
                 t('sessionBoard.companion.notices.removed'),
-                () => exactPorts.companion.removeItem(intent.item),
+                () => intent.expectedInstance ? exactPorts.companion.removeItem(intent.item, {
+                    expectedInstance: intent.expectedInstance,
+                    ...(intent.expectedPresentation ? { expectedPresentation: intent.expectedPresentation } : {}),
+                }) : exactPorts.companion.removeItem(intent.item),
+                onCompanionMutation,
+                intent.expectedInstance ? INVALID_TARGET : UNCHANGED,
             );
 
-        case 'companion.item.move': {
-            return fromCompanionOutcome(
-                exactPorts,
-                'companion.item.move',
-                t('sessionBoard.companion.notices.reordered'),
-                () => exactPorts.companion.moveItem(intent.item, intent.toIndex),
-            );
-        }
 
         case 'companion.item.frameStyle.set':
             return fromCompanionOutcome(
@@ -330,6 +341,15 @@ export function applySessionPresentationIntent(
                 t('common.done'),
                 () => exactPorts.companion.setItemFrameStyle(intent.item, intent.frameStyle),
             );
+
+        case 'companion.instance.inputs.set':
+        case 'companion.instance.inputs.reset':
+        case 'companion.instance.rename': {
+            if (!exactPorts.companion.preference.items.some((item) => item.kind === 'instance' && item.instance.id === intent.instanceId)) return INVALID_TARGET;
+            return fromCompanionOutcome(exactPorts, intent.kind, t('common.done'), () => intent.kind === 'companion.instance.rename'
+                ? exactPorts.companion.renameInstance(intent.instanceId, intent.displayName)
+                : exactPorts.companion.setInstanceInputs(intent.instanceId, intent.kind === 'companion.instance.inputs.set' ? intent.bindings : {}));
+        }
 
         case 'companion.edge.set':
             return fromCompanionOutcome(

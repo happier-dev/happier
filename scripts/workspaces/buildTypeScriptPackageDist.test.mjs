@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { buildTypeScriptPackageDist } from './buildTypeScriptPackageDist.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
+import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { runCaptureResult } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
@@ -96,6 +99,130 @@ function isPathInside(parentPath, candidatePath) {
 function resolveMapSourcePath(mapPath, sourceRoot, source) {
   return resolve(dirname(mapPath), typeof sourceRoot === 'string' ? sourceRoot : '', source);
 }
+
+test('buildTypeScriptPackageDist excludes type tests while the original project still checks them', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-type-tests');
+  const projectPath = join(packageDir, 'tsconfig.json');
+  const originalConfig = await readFile(projectPath, 'utf-8');
+  const config = JSON.parse(originalConfig);
+  config.compilerOptions.incremental = true;
+  config.compilerOptions.jsx = 'preserve';
+  config.compilerOptions.rootDir = '../src';
+  config.compilerOptions.outDir = '../dist';
+  config.include = ['../src/**/*.ts', '../src/**/*.tsx'];
+  config.exclude = ['../src/**/*.test.ts', '../src/**/*.spec.ts', '../src/**/*.testSupport.ts'];
+  // Inheritance must keep the package's existing exclusions and relative paths.
+  await mkdir(join(packageDir, 'config'));
+  await writeJson(join(packageDir, 'config', 'tsconfig.base.json'), config);
+  await writeJson(projectPath, { extends: './config/tsconfig.base.json' });
+  const unchangedConfig = await readFile(projectPath, 'utf-8');
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n');
+  for (const suffix of ['test.ts', 'spec.ts', 'testSupport.ts']) {
+    await writeFile(join(packageDir, 'src', `excluded.${suffix}`), 'const broken: string = 1;\nexport {};\n');
+  }
+  const invocation = resolveTypeScriptCliInvocation({});
+  const compile = (args) => runCaptureResult(invocation.command, [...invocation.argsPrefix, ...args], {
+    cwd: packageDir, ownedProcessGroup: true,
+  });
+  for (const suffix of ['test-d.ts', 'test-d.tsx']) {
+    await writeFile(join(packageDir, 'src', `${suffix.endsWith('tsx') ? 'jsx-contract' : 'contract'}.${suffix}`), 'export const checked = true;\n');
+  }
+  const baselineDir = join(packageDir, '.baseline');
+  assert.equal((await compile(['-p', projectPath, '--outDir', baselineDir])).exitCode, 0);
+  const baselineFiles = await readdir(baselineDir);
+  assert.ok(baselineFiles.some((name) => name.includes('.test-d.')));
+  await cp(baselineDir, join(packageDir, 'dist'), { recursive: true });
+
+  for (const suffix of ['test-d.ts', 'test-d.tsx']) {
+    await writeFile(join(packageDir, 'src', `${suffix.endsWith('tsx') ? 'jsx-contract' : 'contract'}.${suffix}`), 'export const checked: string = 1;\n');
+  }
+  const typecheck = await compile(['--noEmit', '-p', projectPath]);
+  assert.equal(typecheck.exitCode, 1, 'type tests must remain enforced by typecheck');
+  assert.match(typecheck.out, /contract\.test-d\.ts\(1,14\): error TS2322/);
+  assert.match(typecheck.out, /jsx-contract\.test-d\.tsx\(1,14\): error TS2322/);
+
+  for (const args of [['-p', 'tsconfig.json'], ['--project=tsconfig.json']]) {
+    await buildTypeScriptPackageDist({ packageDir, args, stdio: 'inherit' });
+    const distFiles = await readdir(join(packageDir, 'dist'));
+    assert.deepEqual(distFiles.sort(), baselineFiles.filter((name) => !name.includes('.test-d.')).sort());
+    for (const name of distFiles) {
+      assert.deepEqual(await readFile(join(packageDir, 'dist', name)), await readFile(join(baselineDir, name)));
+    }
+  }
+  assert.equal(await readFile(projectPath, 'utf-8'), unchangedConfig);
+
+  // An explicit files list bypasses TypeScript's exclude patterns.
+  await writeJson(projectPath, {
+    extends: './config/tsconfig.base.json', include: [],
+    files: ['src/index.ts', 'src/contract.test-d.ts', 'src/jsx-contract.test-d.tsx'],
+  });
+  await buildTypeScriptPackageDist({ packageDir, args: ['--project', '.'], stdio: 'inherit' });
+  assert.deepEqual((await readdir(join(packageDir, 'dist'))).sort(), ['index.d.ts', 'index.js']);
+});
+
+test('buildTypeScriptPackageDist preserves original Node type roots in isolated staged builds', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-node-type-roots');
+  const projectPath = join(packageDir, 'tsconfig.json');
+  const config = JSON.parse(await readFile(projectPath, 'utf-8'));
+  config.compilerOptions.types = ['node'];
+  config.compilerOptions.rootDir = '../src';
+  config.compilerOptions.paths = { '#value': ['../src/value.ts'] };
+  config.include = ['../src/**/*.ts'];
+  await mkdir(join(packageDir, 'config'));
+  await symlink(fileURLToPath(new URL('../../node_modules', import.meta.url)), join(packageDir, 'node_modules'), 'junction');
+  await writeJson(join(packageDir, 'config', 'tsconfig.base.json'), config);
+  await writeJson(projectPath, { extends: './config/tsconfig.base.json' });
+  await writeFile(join(packageDir, 'src', 'value.ts'), 'export const value = 1;\n');
+  await writeFile(join(packageDir, 'src', 'index.ts'), "import { value } from '#value';\nexport const built: number = process.pid + value;\n");
+  const invocation = resolveTypeScriptCliInvocation({});
+  const baseline = await runCaptureResult(invocation.command, [...invocation.argsPrefix, '--noEmit', '-p', projectPath], {
+    cwd: packageDir, ownedProcessGroup: true,
+  });
+  assert.equal(baseline.exitCode, 0, baseline.out);
+
+  // Both default ancestor lookup and an inherited explicit root must survive
+  // relocating the top-level build config outside the original project tree.
+  for (const explicitRoots of [false, true]) {
+    if (explicitRoots) {
+      await symlink(fileURLToPath(new URL('../../node_modules/@types', import.meta.url)), join(packageDir, 'custom-types'), 'junction');
+      await rm(join(packageDir, 'node_modules'));
+      config.compilerOptions.typeRoots = ['../custom-types'];
+      await writeJson(join(packageDir, 'config', 'tsconfig.base.json'), config);
+    }
+    const originalConfig = await readFile(projectPath, 'utf-8');
+    const result = await buildTypeScriptPackageDist({
+      packageDir, args: ['-p', 'tsconfig.json'],
+      outputDir: join(packageDir, '.staged-dist'), stdio: 'inherit',
+    });
+    assert.equal(result.promoted, false);
+    assert.match(await readFile(join(result.outputDir, 'index.js'), 'utf-8'), /process\.pid/);
+    assert.match(await readFile(join(result.outputDir, 'index.d.ts'), 'utf-8'), /built: number/);
+    assert.equal(await readFile(projectPath, 'utf-8'), originalConfig);
+  }
+});
+
+test('buildTypeScriptPackageDist defaults to one checker but respects an explicitly sized compiler', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-checker-budget');
+  for (const explicit of [false, true]) {
+    await buildTypeScriptPackageDist({
+      packageDir,
+      args: ['-p', 'tsconfig.json', ...(explicit ? ['--singleThreaded', 'false'] : [])],
+      stdio: 'ignore',
+      resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+      // The process boundary observes the resource policy passed to the real
+      // compiler; output admission, caching and promotion remain real.
+      runCommandImpl: (_command, args) => {
+        const checkerOption = args.indexOf('--singleThreaded');
+        assert.notEqual(checkerOption, -1, 'package compiles must not implicitly use every checker');
+        if (explicit) assert.equal(args[checkerOption + 1], 'false');
+        assert.equal(args.filter((arg) => arg === '--singleThreaded').length, 1);
+        writeTypeScriptFixtureOutput(args);
+        return { status: 0 };
+      },
+    });
+    assert.match(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), /built/);
+  }
+});
 
 test('buildTypeScriptPackageDist preserves previous dist when TypeScript compilation fails', async (t) => {
   const packageDir = await createPackageFixture(t, 'build-ts-package-fail');
@@ -346,7 +473,7 @@ test('buildTypeScriptPackageDist composes an explicit staged UI producer before 
     resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
     resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
     runCommandImpl: (_command, args, options) => {
-      if (args.includes('tsconfig.json')) {
+      if (args.includes('--outDir')) {
         writeTypeScriptFixtureOutput(args);
         return { status: 0 };
       }
@@ -387,7 +514,7 @@ test('buildTypeScriptPackageDist preserves the complete prior dist when the stag
       resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
       resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
       runCommandImpl: (_command, args) => {
-        if (args.includes('tsconfig.json')) {
+        if (args.includes('--outDir')) {
           writeTypeScriptFixtureOutput(args);
           return { status: 0 };
         }
@@ -447,7 +574,7 @@ test('buildTypeScriptPackageDist does not invoke a staged output producer when T
       resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
       resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
       runCommandImpl: (_command, args) => {
-        if (args.includes('tsconfig.json')) return { status: 1 };
+        if (args.includes('--outDir')) return { status: 1 };
         if (args.includes('build:ui')) uiBuildCalls += 1;
         return { status: 0 };
       },
@@ -686,7 +813,7 @@ test('buildTypeScriptPackageDist does not invalidate compiler output for a wildc
         resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
         resolveYarnCommandInvocationImpl: () => ({ command: 'yarn', args: ['-s', 'build:ui'] }),
         runCommandImpl: (_command, args, options) => {
-          if (args.includes('tsconfig.json')) {
+          if (args.includes('--outDir')) {
             const tsBuildInfoFile = args[args.indexOf('--tsBuildInfoFile') + 1];
             if (existsSync(tsBuildInfoFile)) {
               compilerCacheReused = true;

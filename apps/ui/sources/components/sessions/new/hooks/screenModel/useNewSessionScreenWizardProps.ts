@@ -140,6 +140,8 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         NewSessionWizardParams,
         | 'promptStore'
         | 'composerDocument'
+        | 'composerReferenceHost'
+        | 'composerFileScope'
         | 'setSessionPrompt'
         | 'handleCreateSession'
         | 'registerTemporaryComputerReplacementLaunch'

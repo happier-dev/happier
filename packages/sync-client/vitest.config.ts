@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 
@@ -10,5 +11,5 @@ export default defineConfig({
     { find: /^@happier-dev\/protocol$/, replacement: fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)) },
     { find: /^@happier-dev\/connection-supervisor$/, replacement: fileURLToPath(new URL('../connection-supervisor/src/index.ts', import.meta.url)) },
   ] },
-  test: { include: ['src/**/*.test.ts'] },
+  test: { ...resolveVitestWorkers(), include: ['src/**/*.test.ts'] },
 });

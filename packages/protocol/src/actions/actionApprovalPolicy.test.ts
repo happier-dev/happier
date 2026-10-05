@@ -31,6 +31,45 @@ async function loadRoutingResolver() {
 }
 
 describe('isApprovalRequiredByActionsSettings', () => {
+  it('keeps consequential widget and shared Board UI edits in the configurable policy without flooring personal Home or Companion edits', () => {
+    const context = { surface: 'ui' as const, authority: 'present_user' as const };
+    const shared = { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'shared' } } as const;
+    const personal = { ...shared, owner: { kind: 'home' } } as const;
+    const edits = [
+      { actionId: 'session.board.layout.update', input: {} },
+      { actionId: 'session.board.item.upsert', input: {} },
+      { actionId: 'widgets.definition.update', input: {} },
+      { actionId: 'widgets.definition.delete', input: {} },
+      { actionId: 'widgets.snapshot.post', input: {} },
+      { actionId: 'widgets.instance.frame.set', input: { ref: { surface: shared, instanceId: 'copy' } } },
+      { actionId: 'widgets.instance.move', input: { ref: { surface: personal, instanceId: 'copy' }, to: { surface: shared, index: 0 } } },
+    ] as const;
+    for (const edit of edits) {
+      const args = { ...edit, spec: getActionSpec(edit.actionId), context, settings: normalizeActionsSettingsV1({ v: 1 }) };
+      expect.soft(resolveActionApprovalRouting(args).required, edit.actionId).toBe(true);
+      const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [edit.actionId]: ['ui'] } });
+      expect(resolveActionApprovalRouting({ ...args, settings: waived }).required, edit.actionId).toBe(false);
+    }
+    for (const owner of [{ kind: 'home' }, { kind: 'companion', sessionId: 'shared' }] as const) {
+      expect(resolveActionApprovalRouting({ actionId: 'widgets.instance.frame.set', spec: getActionSpec('widgets.instance.frame.set'),
+        input: { ref: { surface: { ...shared, owner }, instanceId: 'copy' } }, context,
+        defaultSafety: 'safe', settings: normalizeActionsSettingsV1({ v: 1 }),
+      }).required).toBe(false);
+    }
+  });
+
+  it('resolves contributed manifest defaults, waivers, and Ask-first through the same settings owner', () => {
+    const actionId = 'acme.alpha/actions/run' as const;
+    const context = { surface: 'agent' as const };
+    expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context, undefined, true)).toBe(true);
+    const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } });
+    expect(isApprovalRequiredByActionsSettings(actionId, waived, context, undefined, true)).toBe(false);
+    const required = normalizeActionsSettingsV1({ v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } },
+      approvalWaivedSurfaces: { [actionId]: ['agent'] },
+    });
+    expect(isApprovalRequiredByActionsSettings(actionId, required, context, undefined, false)).toBe(true);
+  });
   it('keeps fresh-folder consent mandatory on agent and MCP without flooring ordinary session open', () => {
     for (const surface of ['agent', 'mcp'] as const) {
       const context = { surface, authority: 'account_automation' as const };

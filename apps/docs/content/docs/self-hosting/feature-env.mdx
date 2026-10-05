@@ -4,9 +4,9 @@ description: Every HAPPIER_FEATURE_* variable the server reads, generated from t
 ---
 
 This is the complete list of environment variables the server reads to decide
-what it advertises and how much of it a client may use. There are **164**, of
+what it advertises and how much of it a client may use. There are **167**, of
 which **66** are on/off switches and the rest are limits, timeouts,
-policies and header names. **164** of them can also be set by a Home owner
+policies and header names. **167** of them can also be set by a Home owner
 in Home Administration; an explicit env value still wins there and is shown as fixed.
 
 - **Switches** (`…__ENABLED`) turn a capability on or off. When the capability
@@ -28,6 +28,14 @@ Every other server variable is listed in the
 ## Variables
 
 Grouped by feature family.
+
+### Artifact
+
+| Variable | Kind | Type | Default | Applies | Set from | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES` | Setting | int ≥ 0 | — | Live | Home settings or env | Optional Account byte budget for ordinary Artifact stored headers, bodies and retained bodies; unset means unlimited. |
+| `HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES` | Setting | int ≥ 0 | — | Live | Home settings or env | Optional byte cap for an ordinary Artifact stored header, body and retained bodies; unset means unlimited. |
+| `HAPPIER_ARTIFACT_REVISION_RETENTION_COUNT` | Setting | int ≥ 0 | `10` | Live | Home settings or env | Number of prior bodies retained for each ordinary Account Artifact. |
 
 ### Attachments
 

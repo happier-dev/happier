@@ -1,4 +1,5 @@
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
+import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number | null;
@@ -7,6 +8,7 @@ export type DaemonControlRequestOptions = {
 };
 
 type DaemonPostOptions = DaemonControlRequestOptions & {
+  mutation?: boolean;
   authScope?: 'daemon-control' | 'connected-service-run-materialize';
   authTokenOverride?: string;
 };
@@ -21,6 +23,9 @@ async function resolveTimeout(path: string, options: DaemonControlRequestOptions
   if (options.timeoutMs !== undefined) {
     return positiveTimeout(options.timeoutMs, 10_000, path === '/connected-service-run/materialize' ? 600_000 : 300_000);
   }
+  // Runner exit and terminal retirement belong to the daemon Stop lifecycle.
+  // Explicit caller deadlines and cancellation still apply.
+  if (path === '/stop-session') return null;
   if (path === '/spawn-session') {
     const { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } = await import('@happier-dev/protocol');
     const raw = process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
@@ -43,12 +48,15 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
     await logControlError(error);
     return { error };
   }
+  let requestIssued = false;
   try {
     const timeout = await resolveTimeout(path, options);
     const authToken = options.authTokenOverride ?? (options.authScope === 'connected-service-run-materialize'
       ? deriveConnectedServiceRunMaterializeToken(state.controlToken) : state.controlToken);
     const timeoutSignal = timeout === null ? null : AbortSignal.timeout(timeout);
     const signal = options.signal && timeoutSignal ? AbortSignal.any([options.signal, timeoutSignal]) : options.signal ?? timeoutSignal ?? undefined;
+    signal?.throwIfAborted();
+    requestIssued = true;
     const response = await fetch(`http://127.0.0.1:${state.httpPort}${path}`, {
       method: 'POST', headers: buildDaemonControlHttpHeaders(authToken), body: JSON.stringify(body || {}),
       ...(signal ? { signal } : {}),
@@ -70,7 +78,11 @@ export async function daemonPost(path: string, body?: unknown, options: DaemonPo
   } catch (cause) {
     const error = `Request failed: ${path}, ${cause instanceof Error ? cause.message : 'Unknown error'}`;
     await logControlError(error);
-    return { error };
+    const failure = classifyActionTransportFailure(cause, {
+      mutation: options.mutation === true, requestIssued,
+      cancelled: options.signal?.aborted === true,
+    });
+    return { error, ...(failure && failure !== 'network' ? { errorCode: failure } : {}) };
   }
 }
 

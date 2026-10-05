@@ -134,6 +134,8 @@ export type WorkflowInvocationRecoveryPresentation = Readonly<{
      * repeating without saying one was strictly better.
      */
     canStartReviewedNewRun: boolean;
+    /** A reviewed new Run, never a retry of the sealed step. */
+    canRunWithAnotherAgent: boolean;
     preparedRecovery: WorkflowInvocationRecoveryV1 | null;
     /** Continuation and retry stay refused until this exact attempt is acknowledged. */
     requiresUncertaintyAcknowledgement: boolean;
@@ -247,6 +249,10 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         // input may still be running — no acknowledgement starts replacement
         // work while `workflow_outcome_unresolved` stands.
         canStartReviewedNewRun: workspaceUnavailable && !canRestoreWorkspace && !waitingForStop,
+        canRunWithAnotherAgent: params.progress?.reason?.code === 'target_unavailable'
+            && params.progress.blockKind === 'step'
+            && (invocation?.lifecycle === 'failed' || invocation?.lifecycle === 'blocked')
+            && params.run.workflowCustodyState === 'settled',
         preparedRecovery: params.progress?.recovery ?? null,
         requiresUncertaintyAcknowledgement: requiresUncertainPriorEffectsAcknowledgement(params),
         waitingForStop,
@@ -279,10 +285,18 @@ export function formatWorkflowRunOriginLabel(origin: WorkflowRunSummaryV1['origi
  * terminal state. A nonterminal Run states what it is waiting on instead of
  * claiming a result.
  */
+/**
+ * The first loaded item that needs the person, named by its authored step. A
+ * Wait-for-you step is waiting for *you*; every other hold is waiting for your
+ * review (07 §6.1, §6.2).
+ */
+export type WorkflowRunAttentionLead = Readonly<{ step: string; waitForYou: boolean }>;
+
 export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     run: WorkflowRunSummaryV1;
     coverage: WorkflowRunCoverage;
     historyComplete?: boolean;
+    attention?: WorkflowRunAttentionLead | null;
     /**
      * The Run's exact Machine as the machine owner currently sees it. An active
      * Run whose Machine is known unreachable says it lost contact — no more:
@@ -309,6 +323,11 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
                 failed: counts.failed,
             })
             : t('workflows.run.completedCount', { count: counts.completed });
+    }
+    if (params.attention && (run.state === 'running' || run.state === 'waiting_for_review')) {
+        return params.attention.waitForYou
+            ? t('workflows.run.attentionWaitSentence', { step: params.attention.step })
+            : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
     }
     if (run.state === 'pause_requested') return t('workflows.run.pausePending');
     if (run.state === 'paused') return t('workflows.run.paused');
@@ -342,11 +361,30 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     state: WorkflowRunStateV1;
     coverage: WorkflowRunCoverage;
     historyComplete?: boolean;
+    /**
+     * True when every loaded item the parked Run waits on is a Wait-for-you
+     * step: the Run is then waiting for you, not for your review.
+     */
+    waitingOnlyForYou?: boolean;
 }>): string {
     if (params.state === 'succeeded' && params.coverage.knownFailure) {
         return t('workflows.runState.completed_with_failures');
     }
+    if (params.state === 'waiting_for_review' && params.waitingOnlyForYou === true) {
+        return t('workflows.review.waitTitle');
+    }
     return formatWorkflowRunStateLabel(params.state);
+}
+
+/**
+ * Run detail says its status once, as the first words of the outcome line
+ * (07 §3, §6.1): "{word} — {sentence}". A sentence that already opens with the
+ * word ("Completed. 3 items completed.") is the line on its own.
+ */
+export function formatWorkflowRunOutcomeLine(params: Readonly<{ word: string; sentence: string }>): string {
+    return params.sentence.startsWith(params.word)
+        ? params.sentence
+        : t('workflows.run.outcomeLine', { word: params.word, sentence: params.sentence });
 }
 
 /**

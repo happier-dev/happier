@@ -207,6 +207,8 @@ export type FrozenSessionListProjectionResult = Readonly<{
  * `rootPlacement` field (its `TreeInstruction` has no `move-to-root.placement`).
  */
 export type SessionListDragIntent = Readonly<{
+    /** Mounted Home and Account that admitted this intent. */
+    scope?: Readonly<{ serverId: string; accountId: string }>;
     /** Stable tree row id of the dragged source. */
     sourceRowId: string;
     /** Structural kind of the dragged source. */
@@ -236,6 +238,7 @@ export type SessionListDragIntent = Readonly<{
  */
 export type SessionListDragCommitNoOpReason =
     | 'blocked-intent'
+    | 'feature-disabled'
     | 'source-missing'
     | 'target-missing'
     | 'container-missing'
@@ -243,6 +246,7 @@ export type SessionListDragCommitNoOpReason =
     | 'descendant-cycle'
     | 'date-ordering-mode'
     | 'no-change'
+    | 'outcome-unknown'
     /** The owner of the relationship (the server, for `reportsTo`) refused the move. */
     | 'refused';
 

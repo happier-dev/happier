@@ -1,22 +1,28 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { HomeMark } from '@/components/homes/HomeMark';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
-import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { selectAllHomes } from '@/sync/domains/server/selection/homeViewSelectionState';
+import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { readViewportClass, useViewportClass } from '@/utils/platform/useViewportClass';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -60,6 +66,8 @@ export function ReconcileHomesContent(props: Readonly<{
     onClose: () => void;
 }>) {
     const router = useRouter();
+    const phone = useViewportClass() === 'compact';
+    const { theme } = useUnistyles();
     const { found, personal, settle, onClose } = props;
     const choices = React.useMemo(() => [...found, ...(personal ? [personal] : [])], [found, personal]);
     const [runInId, setRunInId] = React.useState<string | null>(null);
@@ -74,6 +82,17 @@ export function ReconcileHomesContent(props: Readonly<{
         settle();
         onClose();
     }, [onClose, settle]);
+    const showSessions = React.useCallback(async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            await selectAllHomes({ scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
+            settle();
+            onClose();
+        } finally {
+            setBusy(false);
+        }
+    }, [busy, onClose, settle]);
     const useSelected = React.useCallback(async () => {
         if (!selected || busy) return;
         setBusy(true);
@@ -98,8 +117,9 @@ export function ReconcileHomesContent(props: Readonly<{
     }));
 
     return (
+        <ListPresentationProvider value="page">
         <View style={styles.body} testID="reconcile-homes">
-            <ItemGroup title={t('homesJourneys.reconcileFound')}>
+            <ItemGroup title={phone ? undefined : t('homesJourneys.reconcileFound')}>
                 {found.map((profile) => {
                     const id = resolveServerProfileScopeId(profile);
                     const label = resolveHomeDisplayLabel(profile, profile.id);
@@ -109,13 +129,18 @@ export function ReconcileHomesContent(props: Readonly<{
                             testID={`reconcile-homes.found.${id}`}
                             icon={<HomeMark serverUrl={profile.canonicalServerUrl ?? profile.serverUrl} />}
                             title={label}
-                            subtitle={toServerUrlDisplay(profile.canonicalServerUrl ?? profile.serverUrl)}
                             showChevron={false}
-                            rightElement={<PaneConfirmed label={t('homesJourneys.connected')} />}
+                            rightElement={<PaneConfirmed label={t('homesJourneys.connected')} dotOnly={phone} />}
                         />
                     );
                 })}
             </ItemGroup>
+            {phone ? (
+                <View style={styles.phoneAction}>
+                    <RoundButton testID="reconcile-homes.show-sessions" title={t('homesJourneys.phone.showMySessions')}
+                        loading={busy} onPress={() => { void showSessions(); }} />
+                </View>
+            ) : <>
             <ItemGroup title={t('homesJourneys.reconcileThisComputer')}>
                 <DropdownMenu
                     open={menuOpen}
@@ -123,12 +148,16 @@ export function ReconcileHomesContent(props: Readonly<{
                     items={menuItems}
                     selectedId={selectedId}
                     onSelect={(id) => setRunInId(id)}
-                    itemTrigger={{
-                        title: t('homesJourneys.runSessionsIn'),
-                        subtitle: t('homesJourneys.runSessionsInDescription'),
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'reconcile-homes.run-in', accessoryLayout: 'adaptive' },
-                    }}
+                    trigger={({ open, toggle, selectedItem }) => (
+                        <Item testID="reconcile-homes.run-in" title={t('homesJourneys.runSessionsIn')}
+                            subtitle={t('homesJourneys.runSessionsInDescription')} subtitleLines={0}
+                            accessoryLayout="adaptive" showChevron={false} onPress={toggle} accessibilityExpanded={open}
+                            rightElement={renderDropdownItemTriggerRightElement({
+                                detail: selectedItem?.title ?? null, open,
+                                detailColor: theme.colors.text.secondary, chevronColor: theme.colors.text.secondary,
+                                field: resolveFieldBoxColors(theme), leading: selectedItem?.icon,
+                            })} />
+                    )}
                 />
             </ItemGroup>
             <EmptyPersonalHomeOption choice={emptyChoice} detail={t('homesJourneys.removeEmptyPersonalHomeDescription')} />
@@ -153,20 +182,24 @@ export function ReconcileHomesContent(props: Readonly<{
                     ) : null}
                 </View>
             </View>
+            </>}
         </View>
+        </ListPresentationProvider>
     );
 }
 
 /** Opens the sheet: automatically right after a sign-in connected Homes, or from its setup tile. */
 export function presentReconcileHomesSheet(input: Readonly<{ foundCount: number }>): string {
+    const phone = readViewportClass() === 'compact';
     return Modal.show({
         component: ReconcileHomesSheet,
         closeOnBackdrop: true,
         chrome: {
             kind: 'card',
             leading: <HeaderLogo size={32} />,
-            title: t('homesJourneys.reconcileTitle'),
-            subtitle: t('homesJourneys.reconcileLead', { count: input.foundCount }),
+            title: t(phone ? 'homesJourneys.phone.reconcileTitle' : 'homesJourneys.reconcileTitle'),
+            subtitle: phone ? t('homesJourneys.phone.reconcileLead') : t('homesJourneys.reconcileLead', { count: input.foundCount }),
+            phonePresentation: 'sheet',
             dimensions: { width: 560 },
             testID: 'reconcile-homes-sheet',
         },
@@ -177,6 +210,7 @@ const styles = StyleSheet.create((theme) => ({
     body: {
         paddingBottom: 16,
     },
+    phoneAction: { paddingHorizontal: 20 },
     footer: {
         flexDirection: 'row',
         flexWrap: 'wrap',

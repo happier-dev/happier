@@ -48,6 +48,7 @@ export const SESSION_COMPOSER_SETTINGS = defineSettingsPage({
         layout: {
             titleKey: 'settingsSessionPages.composer.layoutSection',
             settings: {
+                promptLibraryButton: { storage: { scope: 'account', key: 'composerPromptLibraryButtonEnabled', access: 'read_write' }, titleKey: 'committedMessageActions.composerButton', descriptionKey: 'committedMessageActions.composerHint' },
                 actionBar: { storage: { scope: 'account', key: 'agentInputActionBarLayout', access: 'read_write' }, titleKey: 'settingsSessionPages.composer.actionBarTitle' },
                 chipDensity: { storage: { scope: 'account', key: 'agentInputChipDensity', access: 'read_write' }, titleKey: 'settingsSessionPages.composer.chipDensityTitle' },
                 glass: { storage: { scope: 'account', key: 'composerSurfaceStyle', access: 'read_write' }, titleKey: 'settingsAppearance.glass.composer', descriptionKey: 'settingsAppearance.glass.composerHint' },

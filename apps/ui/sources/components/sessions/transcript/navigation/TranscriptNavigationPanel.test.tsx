@@ -24,7 +24,7 @@ installNavigationCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            FlatList: ({ data, renderItem, keyExtractor, ...props }: any) => React.createElement(
+            FlatList: ({ data, renderItem, keyExtractor, ListFooterComponent, ...props }: any) => React.createElement(
                 'FlatList',
                 { ...props, data },
                 (data ?? []).map((item: any, index: number) => React.createElement(
@@ -32,6 +32,7 @@ installNavigationCommonModuleMocks({
                     { key: keyExtractor ? keyExtractor(item, index) : String(index) },
                     renderItem?.({ item, index }),
                 )),
+                typeof ListFooterComponent === 'function' ? React.createElement(ListFooterComponent) : ListFooterComponent,
             ),
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
             ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
@@ -51,6 +52,9 @@ installNavigationCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+
+// Resolve after the shared boundary options are configured, before timed interactions.
+await import('./TranscriptNavigationPanel');
 
 function entry(overrides: Partial<TranscriptNavigationEntry> & Pick<TranscriptNavigationEntry, 'id' | 'kind' | 'seq' | 'promptPreview'>): TranscriptNavigationEntry {
     const pinned = overrides.pinned ?? overrides.kind.startsWith('pinned-');
@@ -311,11 +315,10 @@ describe('TranscriptNavigationPanel', () => {
             />,
         );
 
-        screen.pressByTestId('nav-entry:answer-1');
+        await screen.pressByTestIdAsync('nav-entry:answer-1');
 
         expect(onEntryPress).toHaveBeenCalledTimes(1);
-        // Newest first: ArrowDown from the top reaches the older row.
-        expect(onEntryPress).toHaveBeenCalledWith(ENTRIES[0]);
+        expect(onEntryPress).toHaveBeenCalledWith(ENTRIES[1]);
     });
 
     it('renders localized fallback text for unloaded pinned entries without derivation labels', async () => {
@@ -370,14 +373,17 @@ describe('TranscriptNavigationPanel', () => {
                 preventDefault,
             });
         });
-        invokeTestInstanceHandler(screen.findByTestId('nav-entry-list'), 'onKeyDown', {
-            nativeEvent: { key: 'Enter' },
-            preventDefault,
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('nav-entry-list'), 'onKeyDown', {
+                nativeEvent: { key: 'Enter' },
+                preventDefault,
+            });
         });
 
         expect(preventDefault).toHaveBeenCalled();
         expect(onEntryPress).toHaveBeenCalledTimes(1);
-        expect(onEntryPress).toHaveBeenCalledWith(ENTRIES[1]);
+        // Newest first: ArrowDown from the top reaches the older user turn.
+        expect(onEntryPress).toHaveBeenCalledWith(ENTRIES[0]);
     });
 
     it('closes on Escape when the panel provides a close request handler', async () => {

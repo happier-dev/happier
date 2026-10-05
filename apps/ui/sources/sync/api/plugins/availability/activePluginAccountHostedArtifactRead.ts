@@ -547,9 +547,9 @@ export function createActivePluginAccountHostedArtifactReader(
             });
             if (currentnessAfterEnvelope) return unavailable(currentnessAfterEnvelope);
             if (!envelope) return unavailable('artifact_envelope_unavailable');
-            const body = envelope.body.body === null
-                ? null
-                : decodePluginUiArtifactArchiveBodyV1(envelope.body.body);
+            const body = typeof envelope.body.body === 'string'
+                ? decodePluginUiArtifactArchiveBodyV1(envelope.body.body)
+                : null;
             const archive = body
                 ? openPluginUiArtifactArchiveV1({
                     pluginId: request.data.release.pluginId,

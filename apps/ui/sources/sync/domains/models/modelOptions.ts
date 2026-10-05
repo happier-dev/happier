@@ -1,4 +1,5 @@
 import type { ModelMode } from '../permissions/permissionTypes';
+import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
@@ -29,6 +30,7 @@ export type PreflightModelList = Readonly<{
         description?: string;
         extendedContextModelId?: string;
         modelOptions?: readonly AcpConfigOption[];
+        capabilities?: ProviderModelDescriptorV1['capabilities'];
     }>>;
     supportsFreeform: boolean;
     unavailable?: boolean;

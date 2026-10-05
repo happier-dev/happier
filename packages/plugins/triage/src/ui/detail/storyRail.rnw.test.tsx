@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
+import type { ReviewCommentV1 } from '@happier-dev/plugin-sdk/reviews';
 import { defineUiSurface, useSessionState } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,6 +24,7 @@ const SESSION: SessionStateV1 = {
   lifecycle: 'active',
   runtime: 'waiting',
   operational: 'permission_required',
+  workStatus: { bucket: 'needs_you', tone: 'attention', word: 'Permission required' },
   workspace: { worktreeName: 'fix/2476-checks' },
   pendingPermissions: [{
     requestId: 'request-1',
@@ -34,6 +36,24 @@ const SESSION: SessionStateV1 = {
 } as SessionStateV1;
 
 const answers: unknown[] = [];
+const opened: unknown[] = [];
+let proposals: readonly ReviewCommentV1[] = [];
+
+function finding(id: string, sessionId: string): ReviewCommentV1 {
+  return {
+    v: 1, id, accountId: 'account-a', projectId: 'project-a', sessionId,
+    anchor: { kind: 'file', filePath: 'src/a.ts' },
+    snapshot: { kind: 'text', selectedLines: ['value'], beforeContext: [], afterContext: [],
+      selectedLinesHash: 'selected', contextWindowHash: 'context', capturedAt: 1, fileLength: 1,
+      source: 'committed', isUncommitted: false, isUntracked: false, truncated: false,
+      hasBidiControls: false, likelyMinified: false },
+    body: `Finding ${id}`, bodyVersion: 1, edits: [],
+    author: { kind: 'plugin', pluginId: 'happier.triage', engineRunId: 'run-a' },
+    state: 'proposed', flags: {}, dispositions: {}, threadId: id, transitions: [],
+    linkedRefs: [{ kind: 'pullRequest', url: 'https://example.test/pull/1' }],
+    createdAt: 1, updatedAt: 1, serverRevision: 1,
+  };
+}
 
 const renderRail = defineUiSurface(function Rail(_context: RenderContext): React.ReactElement {
   const live = useSessionState('session-a');
@@ -57,8 +77,10 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
-async function mountRail(): Promise<PluginUiTestkit> {
+async function mountRail(nextProposals: readonly ReviewCommentV1[] = []): Promise<PluginUiTestkit> {
   answers.length = 0;
+  opened.length = 0;
+  proposals = nextProposals;
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -74,7 +96,10 @@ async function mountRail(): Promise<PluginUiTestkit> {
           answers.push(input.request);
           return { status: 'answered' };
         },
-        executeAction: async () => ({ comments: [] }),
+        executeAction: async ({ action, input }) => {
+          if (action === 'session.open') { opened.push(input); return {}; }
+          return { items: proposals, cursor: null };
+        },
       },
     });
   });
@@ -83,6 +108,21 @@ async function mountRail(): Promise<PluginUiTestkit> {
 }
 
 describe('the story rail\'s live agent', () => {
+  it('uses the linked Session destination when scoped review rows omit their optional Session id', async () => {
+    const { sessionId: _sessionId, ...scopedFinding } = finding('4', 'session-a');
+    const rail = await mountRail([finding('1', 'session-a'), finding('2', 'session-a'),
+      finding('3', 'session-a'), scopedFinding]);
+    await act(async () => { await rail.press(await rail.findByRole('button', { name: 'See all' })); });
+    expect(opened).toEqual([{ sessionId: 'session-a' }]);
+  });
+  it('opens the Session that owns findings beyond the three-item preview', async () => {
+    const rail = await mountRail([finding('1', 'session-a'), finding('2', 'session-a'),
+      finding('3', 'session-a'), finding('4', 'session-a')]);
+    const seeAll = await rail.findByRole('button', { name: 'See all' });
+    await expect(rail.queryByText('Finding 4')).resolves.toBeUndefined();
+    await act(async () => { await rail.press(seeAll); });
+    expect(opened).toEqual([{ sessionId: 'session-a' }]);
+  });
   it('shows a waiting permission above the rail and answers it through the host owner', async () => {
     const rail = await mountRail();
 

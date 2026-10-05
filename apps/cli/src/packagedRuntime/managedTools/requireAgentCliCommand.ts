@@ -2,6 +2,7 @@ import { legacyCustomAcpCompat } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 
+import { AgentCliNotFoundError } from './agentCliNotFoundError';
 import { readAgentCliOverrideForRuntime, resolveAgentCliCommandForRuntime } from './agentCliResolution';
 
 export type AgentCliResolutionOptions = Readonly<{
@@ -45,7 +46,7 @@ export function requireAgentCliCommand(
     processEnv: opts.processEnv,
   });
   if (resolved) return resolved.command;
-  throw new ReferenceError(buildMissingAgentCliCommandErrorMessage(agentId, opts));
+  throw new AgentCliNotFoundError(agentId, buildMissingAgentCliCommandErrorMessage(agentId, opts));
 }
 
 function capitalize(value: string): string {

@@ -1,8 +1,11 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { renderHook, type RenderHookResult } from '@/dev/testkit/hooks/renderHook';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { getStorage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
@@ -27,7 +30,8 @@ const connectedServices = vi.hoisted(() => ({
     snapshot: { entries: [] as readonly ConnectedServiceRegistryEntry[] },
 }));
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/appShell/plugins/AppShellPluginUiProjection')>(),
     useProjectedConnectedServicesRegistry: () => connectedServices.snapshot,
 }));
 
@@ -174,6 +178,7 @@ describe('useVoiceAttemptControl start admission', () => {
         registerVoiceAdapters([]);
         getStorage().setState(initialStorageState, true);
     });
+
 
     it('refuses a start the surface model refuses when the connected-services reference is missing', async () => {
         const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
@@ -368,6 +373,7 @@ describe('external provider registration reaches the surface', () => {
             settingsSectionId: 'voice.acme-demo',
             roles: [] as never[],
             requirements: [] as never[],
+            supportedPlatforms: ['web', 'ios', 'android'] as const,
             source: { kind: 'external' as const, pluginId: 'acme.voice.demo', localId: 'realtime-demo' },
             projectSettings: () => ({ status: 'ready' as const, modeId: 'byo' }),
         };
@@ -508,13 +514,30 @@ describe('useVoiceAttemptControl availability ladder', () => {
         await hook.unmount();
     });
 
-    it('is still terminally unavailable when the refusal is not a setup the user can finish', async () => {
+    it('hides the setup-pose mic once the person dismissed "Set up voice", until Voice is set up', async () => {
+        const { setHomeSetupStepHidden } = await import('@/components/hub/layout/homeHubLayout');
+        const { VOICE_SETUP_STEP_ID } = await import('@/voice/settings/setup/useVoiceSetupItem');
+        seedVoiceSettings({ providerId: null, ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } });
+        getStorage().setState((state: any) => ({
+            ...state,
+            settings: { ...state.settings, homeHubLayoutV1: setHomeSetupStepHidden(state.settings.homeHubLayoutV1, VOICE_SETUP_STEP_ID, true) },
+        }));
+
+        const hook = await renderBothOwners();
+
+        // The same dismissal Home's "Get set up" uses; Settings → Voice stays reachable on its own.
+        expect(hook.getCurrent().control).toMatchObject({ availability: 'unavailable', primaryAction: null });
+
+        await hook.unmount();
+    });
+
+    it('keeps the rest mic and opens Voice setup when the selected provider cannot run here', async () => {
         const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
         registerVoiceAdapters([
             createGlobalStartAdapter('local_conversation', { requiresVoiceAgentFeature: true }),
         ]);
-        // A server feature the Voice settings screen cannot switch on. Sending the user there would
-        // be a transport that still cannot do anything — exactly what the third rung exists for.
+        // A server feature this provider needs is off. There is no recovery for the attempt, but
+        // Voice setup is where another service is chosen, so the mic stays and opens it.
         featureState.current = { 'voice.agent': false };
         seedVoiceSettings({
             providerId: 'local_conversation',
@@ -526,7 +549,22 @@ describe('useVoiceAttemptControl availability ladder', () => {
 
         const hook = await renderBothOwners();
 
-        expect(hook.getCurrent().control.availability).toBe('unavailable');
+        expect(hook.getCurrent().control.availability).toBe('setup');
+
+        await hook.unmount();
+    });
+
+    it('makes Voice discoverable on a fresh Account: the rest mic opens Voice setup instead of starting', async () => {
+        seedVoiceSettings({ providerId: null, ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } });
+        const { SETTINGS_ROUTES } = await import('@/components/settings/catalog/routes');
+
+        const hook = await renderBothOwners();
+        const { control } = hook.getCurrent();
+
+        expect(control).toMatchObject({ availability: 'setup', primaryAction: 'setup', canStart: false, markPose: 'mic' });
+        expect(control.primaryActionLabel).toBe(t('voicePresence.setUp'));
+        control.onPrimaryAction();
+        expect(routerMock.instance?.spies.push.mock.calls.at(-1)?.[0]).toBe(SETTINGS_ROUTES.voice);
 
         await hook.unmount();
     });
@@ -714,7 +752,7 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
         getStorage().setState(initialStorageState, true);
     });
 
-    async function renderControl(snapshot: Readonly<Record<string, unknown>>) {
+    async function renderControl(snapshot: Readonly<Record<string, unknown>>, onRender?: () => void) {
         const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
         setVoiceSessionSnapshot(snapshot as never);
         const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
@@ -723,10 +761,203 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
             return <VoiceEnergyAppProvider>{props.children}</VoiceEnergyAppProvider>;
         }
         return await renderHook(
-            () => useVoiceAttemptControl(GLOBAL_TARGET),
+            () => {
+                onRender?.();
+                return useVoiceAttemptControl(GLOBAL_TARGET);
+            },
             { wrapper: VoiceEnergyHookTestProvider },
         );
     }
+
+    it('keeps command-only attempt consumers unchanged while canonical transcript text changes', async () => {
+        seedVoiceSettings({ providerId: 'local_conversation', ui: { activityFeedEnabled: true }, providers: { local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } } } });
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { projectCanonicalVoiceTranscriptEvent } = await import('@/voice/transcript/voiceConversationTranscript');
+        const conversationSessionId = 'latest-line-conversation';
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation', controlSessionId: 'latest-line-control', conversationSessionId,
+            conversationSessionAddress: { serverId: recoveryRuntime.serverId, sessionId: conversationSessionId },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt: 1,
+        });
+        const mergeOwner = await import('@/components/voice/surface/mergeVoiceSurfaceTranscriptEntries');
+        const merge = vi.spyOn(mergeOwner, 'mergeVoiceSurfaceTranscriptEntries');
+        let renders = 0;
+        const snapshot = { adapterId: 'local_conversation', sessionId: 'latest-line-control', status: 'connected', mode: 'listening', canStop: true };
+        const hook = await renderControl(snapshot, () => { renders += 1; });
+        const composer = await renderControl(snapshot, () => { renders += 1; });
+        const closedContainer = await renderControl(snapshot, () => { renders += 1; });
+        const publish = (itemId: string, sequence: number, revision: number, text: string) => projectCanonicalVoiceTranscriptEvent({
+            conversationSessionId,
+            event: { v: 1, epoch: 1, type: 'voice.transcript.updated', itemId, sequence, revision, eventId: `${itemId}-${revision}`, role: 'assistant', provenance: 'live', text },
+        });
+        let detail: RenderHookResult<ReturnType<typeof import('@/components/voice/surface/useVoiceSurfaceConversationState').useVoiceSurfaceConversationState>, void> | null = null;
+        try {
+            const initialControl = hook.getCurrent();
+            const baselineRenders = renders;
+            merge.mockClear();
+            await act(async () => { publish('oldest', 1, 1, 'Earlier words'); publish('latest', 2, 1, 'Newest words'); });
+            expect(hook.getCurrent()).toBe(initialControl);
+            await act(async () => { publish('oldest', 3, 2, 'Earlier words corrected'); });
+            expect(hook.getCurrent()).toBe(initialControl);
+            await act(async () => { publish('latest', 4, 2, 'Newest words corrected'); });
+            expect(hook.getCurrent()).toBe(initialControl);
+            await act(async () => { getStorage().setState({ sessionMessages: {
+                ...getStorage().getState().sessionMessages,
+                [conversationSessionId]: createSessionMessagesFixture({ messageIdsOldestFirst: ['stored'], messagesById: {
+                    stored: { kind: 'user-text', id: 'stored', localId: null, createdAt: 1, text: 'Persisted transcript turn' },
+                } }),
+            } }); });
+            expect(hook.getCurrent()).toBe(initialControl);
+            expect(renders).toBe(baselineRenders);
+            expect(merge).not.toHaveBeenCalled();
+            const { useVoiceSurfaceConversationState } = await import('@/components/voice/surface/useVoiceSurfaceConversationState');
+            detail = await renderHook(() => useVoiceSurfaceConversationState({
+                providerId: 'local_conversation', activeControlSessionId: 'latest-line-control', surfaceSessionId: null,
+                transcriptEnabled: true, voiceSettings: {},
+            }));
+            expect(detail.getCurrent().transcriptEntries.at(-1)?.text).toBe('Newest words corrected');
+            merge.mockClear();
+            await act(async () => { publish('latest', 5, 3, 'Newest words with open detail'); });
+            expect(detail.getCurrent().transcriptEntries.at(-1)?.text).toBe('Newest words with open detail');
+            expect(renders).toBe(baselineRenders);
+            expect(merge).toHaveBeenCalledTimes(1);
+        } finally {
+            await detail?.unmount();
+            await hook.unmount();
+            await composer.unmount();
+            await closedContainer.unmount();
+            merge.mockRestore();
+            voiceSessionBindingStore.getState().unbind(conversationSessionId);
+        }
+    });
+
+    it('demands a stable compact line and current detail independently of the attempt controls', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { projectCanonicalVoiceTranscriptEvent } = await import('@/voice/transcript/voiceConversationTranscript');
+        const { useVoiceSurfaceLatestTranscriptText, useVoiceSurfaceConversationState } = await import('@/components/voice/surface/useVoiceSurfaceConversationState');
+        const mergeOwner = await import('@/components/voice/surface/mergeVoiceSurfaceTranscriptEntries');
+        const merge = vi.spyOn(mergeOwner, 'mergeVoiceSurfaceTranscriptEntries');
+        const latest = vi.spyOn(mergeOwner, 'resolveVoiceSurfaceLatestTranscriptText');
+        const conversationSessionId = 'compact-line-conversation';
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation', controlSessionId: 'compact-line-control', conversationSessionId,
+            conversationSessionAddress: { serverId: recoveryRuntime.serverId, sessionId: conversationSessionId },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt: 1,
+        });
+        const params = { providerId: 'local_conversation', activeControlSessionId: 'compact-line-control', surfaceSessionId: null, transcriptEnabled: true, voiceSettings: {} };
+        let compactRenders = 0;
+        const compact = await renderHook((transcriptEnabled: boolean) => {
+            compactRenders += 1;
+            return useVoiceSurfaceLatestTranscriptText({ ...params, transcriptEnabled });
+        }, { initialProps: true });
+        const publish = (itemId: string, sequence: number, revision: number, text: string) => projectCanonicalVoiceTranscriptEvent({
+            conversationSessionId,
+            event: { v: 1, epoch: 1, type: 'voice.transcript.updated', itemId, sequence, revision, eventId: `${itemId}-${revision}`, role: 'assistant', provenance: 'live', text },
+        });
+        let detail: RenderHookResult<ReturnType<typeof useVoiceSurfaceConversationState>, void> | null = null;
+        try {
+            merge.mockClear();
+            await act(async () => { getStorage().setState({ sessionMessages: {
+                ...getStorage().getState().sessionMessages,
+                [conversationSessionId]: createSessionMessagesFixture({ messageIdsOldestFirst: ['stored'], messagesById: {
+                    stored: { kind: 'user-text', id: 'stored', localId: null, createdAt: 1, text: 'Persisted words' },
+                } }),
+            } }); });
+            expect(compact.getCurrent()).toBe('Persisted words');
+            await act(async () => { publish('oldest', 1, 1, 'Earlier words'); publish('latest', 2, 1, 'Newest words'); });
+            expect(compact.getCurrent()).toBe('Newest words');
+            expect(merge).not.toHaveBeenCalled();
+            const baselineRenders = compactRenders;
+            const baselineComputations = latest.mock.calls.length;
+            await act(async () => { getStorage().setState({ sessionMessages: {
+                ...getStorage().getState().sessionMessages,
+                unrelated: createSessionMessagesFixture({ messageIdsOldestFirst: ['unrelated'], messagesById: {
+                    unrelated: { kind: 'user-text', id: 'unrelated', localId: null, createdAt: 1, text: 'Unrelated transcript' },
+                } }),
+            } }); });
+            expect(latest.mock.calls.length).toBe(baselineComputations);
+            expect(compactRenders).toBe(baselineRenders);
+            await act(async () => { publish('oldest', 3, 2, 'Earlier words corrected'); });
+            expect(compact.getCurrent()).toBe('Newest words');
+            expect(compactRenders).toBe(baselineRenders);
+            detail = await renderHook(() => useVoiceSurfaceConversationState(params));
+            expect(detail.getCurrent().transcriptEntries.map((entry) => entry.text)).toEqual(['Persisted words', 'Earlier words corrected', 'Newest words']);
+            await act(async () => { publish('latest', 4, 2, 'Newest words corrected'); });
+            expect(compact.getCurrent()).toBe('Newest words corrected');
+            expect(compactRenders).toBe(baselineRenders + 1);
+            expect(detail.getCurrent().transcriptEntries.at(-1)?.text).toBe('Newest words corrected');
+            await detail.unmount();
+            detail = null;
+            await compact.rerender(false);
+            expect(compact.getCurrent()).toBeNull();
+            const disabledComputations = latest.mock.calls.length;
+            const disabledRenders = compactRenders;
+            await act(async () => { publish('latest', 5, 3, 'While compact is disabled'); });
+            expect(latest.mock.calls.length).toBe(disabledComputations);
+            expect(compactRenders).toBe(disabledRenders);
+            await compact.rerender(true);
+            expect(compact.getCurrent()).toBe('While compact is disabled');
+        } finally {
+            await detail?.unmount();
+            await compact.unmount();
+            merge.mockRestore();
+            latest.mockRestore();
+            voiceSessionBindingStore.getState().unbind(conversationSessionId);
+        }
+    });
+
+    it('keeps compact permission status distinct from its full accessible explanation', async () => {
+        const hook = await renderControl({
+            adapterId: 'local_conversation',
+            sessionId: 'control-1',
+            status: 'error',
+            mode: 'idle',
+            errorPresentation: 'permission_required',
+            errorRecoveryAction: 'open_settings',
+        });
+
+        expect(hook.getCurrent().statusLabel).toBe(t('voiceAssistant.microphonePermissionRequired'));
+        expect(hook.getCurrent().statusWord).not.toBe(hook.getCurrent().statusLabel);
+        // The caption says what to do about it rather than repeating the status a second time.
+        expect(hook.getCurrent().captionLabel).toBe(t('voicePresence.captions.blocked'));
+        expect(hook.getCurrent().micStateLabel).toBe(hook.getCurrent().statusLabel);
+        expect(hook.getCurrent().surfaceState).toBe('permission_required');
+        // The transport's visible verb is the short one; the full label stays the accessible name.
+        expect(hook.getCurrent().recoveryShortLabel).toBe(t('voicePresence.recovery.allow'));
+        expect(hook.getCurrent().recoveryLabel).toBe(t('modals.openSettings'));
+        await hook.unmount();
+    });
+
+    it('names why a failed attempt failed and offers its short recovery verb', async () => {
+        const hook = await renderControl({
+            adapterId: 'local_conversation',
+            sessionId: 'control-1',
+            status: 'error',
+            mode: 'idle',
+            errorCode: 'provider_setup_required',
+            errorRecoveryAction: 'open_settings',
+        });
+
+        expect(hook.getCurrent().surfaceState).toBe('error');
+        expect(hook.getCurrent().captionLabel).toBe(t('voice.readiness.settings_missing_required_setting', { service: hook.getCurrent().serviceTitle ?? t('voicePresence.title') }));
+        expect(hook.getCurrent().recoveryLabel).toBe(t('modals.openSettings'));
+        expect(hook.getCurrent().recoveryShortLabel).toBe(t('voicePresence.recovery.setUp'));
+        await hook.unmount();
+    });
+
+    it('names a muted conversation "Muted" while its mode still says it is listening or speaking', async () => {
+        const hook = await renderControl({
+            adapterId: 'local_conversation',
+            sessionId: 'control-1',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+            micMuted: true,
+        });
+        expect(hook.getCurrent().statusWord).toBe(t('voicePresence.muted'));
+        expect(hook.getCurrent().statusWord).not.toBe(t('voiceAssistant.listening'));
+        await hook.unmount();
+    });
 
     it('projects an unmuted but capture-closed attempt truthfully', async () => {
         const hook = await renderControl({
@@ -936,12 +1167,78 @@ describe('useVoiceAttemptControl idle targeting', () => {
         });
 
         expect(hook.getCurrent().openConversationSessionId).toBe('active-conversation-session');
+        expect(hook.getCurrent().openConversationSessionAddress).toEqual({ serverId: recoveryRuntime.serverId, sessionId: 'active-conversation-session' });
+        expect(hook.getCurrent().elapsedStartedAt).toEqual(expect.any(Number));
         hook.getCurrent().onOpenConversation();
         expect(routerMock.instance?.spies.push.mock.calls.map((call) => call[0]))
-            .toContain('/session/active-conversation-session');
+            .toContain('/session/active-conversation-session?serverId=server-work');
 
         await hook.unmount();
         voiceSessionBindingStore.getState().unbind('active-conversation-session');
+    });
+
+    it('opens History for a targetless runtime attempt without navigating its hidden carrier or rebinding', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        const { SETTINGS_ROUTES } = await import('@/components/settings/catalog/routes');
+        const binding = {
+            adapterId: 'local_conversation', controlSessionId: 'global-control', conversationSessionId: 'hidden-history',
+            conversationSessionAddress: { serverId: recoveryRuntime.serverId, sessionId: 'hidden-history' },
+            lifetime: 'runtime_attempt' as const, transcriptMode: 'synthetic' as const,
+            targetSessionAddress: null, updatedAt: 43,
+        };
+        voiceSessionBindingStore.getState().bind(binding);
+        setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'global-control',
+            status: 'connected', mode: 'listening', canStop: true });
+        const hook = await renderControl(GLOBAL_TARGET);
+        expect(hook.getCurrent().canOpenConversation).toBe(true);
+        expect(hook.getCurrent().openConversationSessionAddress).toBeNull();
+        hook.getCurrent().onOpenConversation();
+        expect(routerMock.instance?.spies.push.mock.calls.at(-1)?.[0]).toBe(SETTINGS_ROUTES.voiceHistory);
+        expect(voiceSessionBindingStore.getState().getByControlSessionId('global-control')).toEqual(binding);
+        await hook.unmount();
+        voiceSessionBindingStore.getState().unbind('hidden-history');
+    });
+
+    it.each([
+        { lifetime: 'runtime_attempt' as const, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/coding-target?serverId=ended-home' },
+        { lifetime: 'runtime_attempt' as const, target: null, destination: '/settings/voice-history' },
+        { lifetime: undefined, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/saved-conversation?serverId=ended-home' },
+    ])('opens the captured ended destination after binding removal ($destination)', async ({ lifetime, target, destination }) => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { setVoiceSessionSnapshot, dismissVoiceSessionEndedAttempt } = await import('@/voice/session/voiceSessionStore');
+        const accountScope = { serverId: 'ended-home', accountId: 'ended-account' };
+        getStorage().setState({ profileScope: accountScope });
+        const binding = {
+            adapterId: 'local_conversation', controlSessionId: 'ended-control', conversationSessionId: 'saved-conversation',
+            conversationSessionAddress: { serverId: 'ended-home', sessionId: 'saved-conversation' },
+            lifetime, transcriptMode: 'synthetic' as const, targetSessionAddress: target, updatedAt: 44,
+        };
+        voiceSessionBindingStore.getState().bind(binding);
+        setVoiceSessionSnapshot({ adapterId: binding.adapterId, sessionId: binding.controlSessionId,
+            status: 'connected', mode: 'listening', canStop: true }, binding, { accountScope, conversationScope: { kind: 'voice_home' } });
+        const hook = await renderControl({ kind: 'session', sessionAddress: { serverId: 'new-home', sessionId: 'new-target' } });
+        try {
+            await act(async () => {
+                setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+                voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+            });
+            expect(hook.getCurrent().canOpenConversation).toBe(true);
+            hook.getCurrent().onOpenConversation();
+            expect(routerMock.instance?.spies.push.mock.calls.at(-1)?.[0]).toBe(destination);
+            expect(voiceSessionBindingStore.getState().getByControlSessionId(binding.controlSessionId)).toBeNull();
+            const capturedOpenConversation = hook.getCurrent().onOpenConversation;
+            await act(async () => { getStorage().setState({ profileScope: { ...accountScope, accountId: 'other-account' } }); });
+            expect(hook.getCurrent().canOpenConversation).toBe(false);
+            const previousRoute = routerMock.instance?.spies.push.mock.calls.at(-1);
+            capturedOpenConversation();
+            hook.getCurrent().onOpenConversation();
+            expect(routerMock.instance?.spies.push.mock.calls.at(-1)).toBe(previousRoute);
+        } finally {
+            await hook.unmount();
+            dismissVoiceSessionEndedAttempt();
+            voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+        }
     });
 });
 
@@ -1142,7 +1439,21 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
             await Promise.resolve();
         });
         await vi.waitFor(() => {
-            expect(startSessionIds).toEqual(['', VOICE_AGENT_GLOBAL_SESSION_ID]);
+            // Retry retains the admitted Global target; the provider's synthetic carrier id
+            // is not a new requested Session target.
+            expect(startSessionIds).toEqual(['', '']);
+        });
+        expect(hook.getCurrent().canDismissFailedAttempt).toBe(true);
+        expect(hook.getCurrent().ended).toBeNull();
+        await act(async () => {
+            hook.getCurrent().onDismissFailedAttempt?.();
+        });
+        await vi.waitFor(() => {
+            expect(hook.getCurrent().surfaceState).toBe('idle');
+            expect(hook.getCurrent().markPose).toBe('mic');
+            expect(hook.getCurrent().recoveryAvailable).toBe(false);
+            expect(hook.getCurrent().canDismissFailedAttempt).toBe(false);
+            expect(hook.getCurrent().ended).toBeNull();
         });
         expect(consoleError.mock.calls.some(([entry]) =>
             String(entry).includes('[fireAndForget] VoiceAttemptControl.'),

@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
@@ -54,6 +55,21 @@ it('discloses a request only for its qualified Home without the active duplicate
   reportNewAgentRequestsFromSessionTransition(null, remoteSession);
   expect(received).toEqual([]);
   useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([remote]);
+  reportNewAgentRequestsFromSessionTransition(null, remoteSession);
+  expect(received).toEqual([]);
+  storage.setState((state) => ({ sessionListRowsByServerId: {
+    ...state.sessionListRowsByServerId,
+    [remote.serverId]: { collision: {
+      ...remoteSession,
+      viewer: SessionViewerProjectionV1Schema.parse({
+        readState: { state: 'not_started' },
+        relevance: { relevant: true, reasons: ['followed_by_me'] },
+        attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+        follow: { follows: true, notificationLevel: 'important', includeInVoice: true },
+        notification: { level: 'important', source: 'preference' },
+      }),
+    } },
+  } }));
   reportNewAgentRequestsFromSessionTransition(null, remoteSession);
   expect(received.join('\n')).toContain('REMOTE REQUEST SECRET');
   expect(received.join('\n')).toContain('REMOTE TITLE');

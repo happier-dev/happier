@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig, mergeConfig } from 'vitest/config';
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
@@ -5,6 +6,7 @@ import { createUiProductionHooksVitestConfig } from './vitest.uiProductionHooks'
 
 export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: [
       'suites/contracts/**/*.test.ts',
@@ -15,7 +17,6 @@ export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
     ],
     testTimeout: 180_000,
     hookTimeout: 180_000,
-    maxWorkers: 6,
     globals: false,
     exclude: [...resolveVitestFeatureTestExcludeGlobs()],
     env: {

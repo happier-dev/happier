@@ -56,6 +56,84 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (session control)', () => {
+  it('discovers detached prompt responses but refuses autonomous answers before transport', async () => {
+    const responseAction = 'execution.run.permission.respond';
+    for (const surface of ['agent', 'mcp'] as const) {
+      const transport = vi.fn(async () => ({ ok: true }));
+      const executor = createExecutor({ executionRunPermissionRespond: transport });
+      expect(await executor.execute('action.spec.search', { query: responseAction }, { surface }))
+        .toMatchObject({ ok: true, result: { actionSpecs: expect.arrayContaining([
+          expect.objectContaining({ id: responseAction, requiredAuthority: 'present_user' }),
+        ]) } });
+      expect(await executor.execute(ActionIdSchema.parse(responseAction), {
+        runId: 'run-1', requestId: 'request-1', approved: true,
+      }, { surface, authority: 'account_automation', bypassApprovals: true })).toMatchObject({
+        ok: false, errorCode: 'present_user_required',
+      });
+      expect(transport).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([{ approved: false }, { answers: { branch: ['dev'] } }])
+  ('admits an exact detached prompt response for the present user: %j', async (decision) => {
+    const transport = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ executionRunPermissionRespond: transport });
+    const controller = new AbortController();
+    const onTransportIssued = vi.fn();
+    const context = { surface: 'ui' as const, authority: 'present_user' as const,
+      serverId: 'home-1', executionRunTargetMachineId: 'machine-1',
+      signal: controller.signal, onTransportIssued };
+    const request = { runId: 'run-1', requestId: 'request-1', ...decision };
+    expect(await executor.execute(ActionIdSchema.parse('execution.run.permission.respond'), request, context))
+      .toEqual({ ok: true, result: { ok: true } });
+    expect(transport).toHaveBeenCalledWith(request, expect.objectContaining(context));
+    expect(await executor.execute(ActionIdSchema.parse('execution.run.permission.respond'), {
+      ...request, approved: true, answers: { branch: ['dev'] },
+    }, context)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it.each([true, false])('admits Files Explain=%s through semantic Session navigation on UI and agent surfaces', async (explain) => {
+    const destination = { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'files', explain } as const;
+    const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
+    const executor = createExecutor({ sessionOpen, workspaceAction: async () => ({ ok: true }), isActionApprovalRequired: undefined });
+    for (const surface of ['ui', 'agent', 'mcp'] as const) {
+      const result = await executor.execute('session.open', { sessionId: 's1', destination }, { surface, serverId: 'home' });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      expect(sessionOpen).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 's1', destination }));
+    }
+  });
+  it('dispatches current UI reads and opaque invocations to the answering client for Agent/MCP', async () => {
+    // This dependency is the mounted UI realm boundary, not a mocked domain owner.
+    const executor = createExecutor({ uiCurrentContextAction: async ({ actionId, input, context }) => {
+      expect(context.surface).toMatch(/^(agent|mcp)$/u);
+      return { ok: true, result: actionId === 'ui.current_context.read'
+        ? { navigation: { area: 'workspace', screen: 'pluginAppPage', title: 'PRs & Issues' }, commands: [{ id: 'opaque:1', title: 'Switch to Board' }] }
+        : { invoked: (input as Readonly<{ commandId: string }>).commandId === 'opaque:1' } };
+    } });
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(await executor.execute('ui.current_context.read', {}, { surface })).toMatchObject({ ok: true, result: { commands: [{ id: 'opaque:1' }] } });
+      expect(await executor.execute('ui.current_context.command.invoke', { commandId: 'opaque:1' }, { surface })).toEqual({ ok: true, result: { invoked: true } });
+    }
+    expect(await createExecutor().execute('ui.current_context.read', {}, { surface: 'agent' })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+  it('navigates Next through the mounted client without resuming a Session and preserves unavailability', async () => {
+    const sessionOpen = vi.fn(async () => ({}));
+    // The mounted client is a realm boundary; Action admission and output validation stay real.
+    const nextPendingSession = async () => ({ status: 'opened' as const });
+    const executor = createExecutor({ sessionOpen, nextPendingSession });
+    for (const surface of ['ui', 'agent', 'mcp'] as const) {
+      await expect(executor.execute(ActionIdSchema.parse('session.pending.next'), {}, { surface }))
+        .resolves.toEqual({ ok: true, result: { status: 'opened' } });
+    }
+    expect(sessionOpen).not.toHaveBeenCalled();
+    await expect(createExecutor().execute(ActionIdSchema.parse('session.pending.next'), {}, { surface: 'agent' }))
+      .resolves.toEqual({ ok: true, result: { status: 'unavailable' } });
+    for (const status of ['none', 'unavailable'] as const) {
+      await expect(createExecutor({ nextPendingSession: async () => ({ status }) })
+        .execute(ActionIdSchema.parse('session.pending.next'), {}, { surface: 'mcp' }))
+        .resolves.toEqual({ ok: true, result: { status } });
+    }
+  });
   it('executes folder and tag resource parity through the incumbent organization transport', async () => {
     const folder = { folderId: 'folder-1', folderKey: 'folder-1', parentFolderId: null,
       parentFolderKey: null, sortKey: null, display: { t: 'plain' as const, v: { name: 'Leads' } },
@@ -120,6 +198,25 @@ describe('createActionExecutor (session control)', () => {
     })).resolves.toMatchObject({ ok: true });
     expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', tabId: 'tab-2' }));
   });
+  it('opens an exact SCM comparison through semantic Session navigation and refuses headless success', async () => {
+    const destination = { kind: 'scmReview', comparison: { kind: 'pullRequest', locator: {
+      providerId: 'hosting-source', repository: 'owner/repo', number: 17,
+      } }, view: 'walkthrough', comparisonId: 'a'.repeat(64) } as const;
+    const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
+    const executor = createExecutor({ sessionOpen, workspaceAction: async () => ({ ok: true }) });
+    await expect(executor.execute('session.open', { sessionId: 's1', serverId: 'home-1', destination }, {
+      surface: 'ui', serverId: 'home-1',
+    })).resolves.toMatchObject({ ok: true });
+    expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', destination }));
+    sessionOpen.mockClear();
+    await expect(createExecutor({ sessionOpen }).execute('session.open', { sessionId: 's1', serverId: 'home-1', destination }, { surface: 'ui' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(sessionOpen).not.toHaveBeenCalled();
+    await expect(executor.execute('session.open', { sessionId: 's1', serverId: 'home-1', destination: {
+      ...destination, comparison: { kind: 'session', sessionId: 'another-session' },
+    } }, { surface: 'ui', serverId: 'home-1' })).resolves.toMatchObject({ ok: false, error: 'comparison_session_mismatch' });
+    expect(sessionOpen).not.toHaveBeenCalled();
+  });
   it('discovers and invokes the mounted command palette through its current host owner', async () => {
     const commands = [{ id: 'account', title: 'Account' }];
     const uiCommandPaletteAction = async (request: Readonly<{ actionId: string; input: unknown }>) => (
@@ -134,6 +231,26 @@ describe('createActionExecutor (session control)', () => {
       .resolves.toEqual({ ok: true, result: { invoked: true } });
     await expect(createExecutor().execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'cli' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+  it('controls Find through the mounted client adapter and distinguishes headless absence from zero results', async () => {
+    const uiFindAction = vi.fn(async () => ({ ok: true as const, result: { status: 'results', current: null, total: 0, coverage: 'loaded' } }));
+    const result = await createExecutor({ uiFindAction }).execute('ui.find', { op: 'set', query: 'needle', target: 'chat:1' }, { surface: 'mcp' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'results', total: 0, coverage: 'loaded' } });
+    expect(uiFindAction).toHaveBeenCalledWith(expect.objectContaining({ input: { op: 'set', query: 'needle', target: 'chat:1' } }));
+    await expect(createExecutor().execute('ui.find', { op: 'read' }, { surface: 'agent' }))
+      .resolves.toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
+  });
+
+  it('opens prompts through the mounted client adapter and returns typed absence on headless hosts', async () => {
+    const composerRef = { kind: 'newSession', instanceId: 'new-1' } as const;
+    const uiPromptPickerOpen = vi.fn(async () => ({ ok: true as const, result: { status: 'opened' as const, composerRef } }));
+    await expect(createExecutor({ uiPromptPickerOpen }).execute('ui.prompts.picker.open', { composerRef }, { surface: 'agent' }))
+      .resolves.toEqual({ ok: true, result: { status: 'opened', composerRef } });
+    expect(uiPromptPickerOpen).toHaveBeenCalledWith(expect.objectContaining({ input: { composerRef } }));
+    await expect(createExecutor().execute('ui.prompts.picker.open', {}, { surface: 'agent' }))
+      .resolves.toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
+    await expect(createExecutor({ uiPromptPickerOpen }).execute('ui.prompts.picker.open', {}, { surface: 'cli' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
   });
 
   it('carries explicit fresh-folder consent through the existing session.open owner', async () => {

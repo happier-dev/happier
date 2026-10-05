@@ -1,4 +1,7 @@
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { FileFindSeed as FindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 /**
  * The small UI-internal normalized boundary for built-in Universal Search rows.
@@ -42,6 +45,9 @@ export type UniversalSearchTarget =
         kind: 'workspaceFile';
         scope: WorkspaceScopeBase;
         path: string;
+        anchor?: FileTargetAnchor;
+        anchorSource?: ReviewCommentSource;
+        find?: FindSeed;
         workspaceRefId: string | null;
         sessionId: string | null;
         serverId: string | null;
@@ -78,6 +84,7 @@ export type UniversalSearchResult = Readonly<{
     subtitle?: string;
     searchText?: string;
     exactSearchText?: string;
+    fileContent?: Readonly<{ path: string; line: number; column16: number; length16: number; text: string; before: readonly string[]; after: readonly string[] }>;
     target: UniversalSearchTarget;
 }>;
 
@@ -128,5 +135,6 @@ export const UNIVERSAL_SEARCH_SOURCE_IDS = Object.freeze({
     settings: 'settings',
     transcript: 'transcript',
     files: 'files',
+    fileContent: 'fileContent',
     commits: 'commits',
 } as const);

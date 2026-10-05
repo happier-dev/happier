@@ -62,7 +62,7 @@ function resolveCliPublicationPackageRoot(options = {}) {
  * consume this list directly instead of restating the sequence.
  *
  * @param {{ repoRoot?: string; packageRoot?: string; processExecPath?: string }} [options]
- * @returns {Array<{ name: string; command: string; args: string[]; cwd: string }>}
+ * @returns {Array<{ name: string; command: string; args: string[]; cwd: string; env: Record<string, string> }>}
  */
 export function resolveCliPublicationBuildSteps(options = {}) {
   const packageRoot = resolveCliPublicationPackageRoot(options);
@@ -74,12 +74,14 @@ export function resolveCliPublicationBuildSteps(options = {}) {
       command,
       args: [resolve(scriptDir, 'buildSharedDeps.mjs'), '--artifact'],
       cwd: packageRoot,
+      env: { HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     },
     {
       name: 'dist',
       command,
       args: [resolve(scriptDir, 'build.mjs')],
       cwd: packageRoot,
+      env: { HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
     },
   ];
 }
@@ -106,7 +108,7 @@ export function buildCliPublication(options = {}) {
   for (const step of resolveCliPublicationBuildSteps(options)) {
     exec(step.command, step.args, {
       cwd: step.cwd,
-      env,
+      env: { ...env, ...step.env },
       stdio,
       timeout,
     });

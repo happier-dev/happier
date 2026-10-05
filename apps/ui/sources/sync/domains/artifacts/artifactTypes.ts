@@ -126,7 +126,8 @@ export interface ArtifactCreateRequest {
  * Request to update an existing artifact
  */
 export interface ArtifactUpdateRequest {
-    blob?: ArtifactBlobWriteV1;
+    /** Explicit null deliberately clears an existing binary head; omission is an ordinary write. */
+    blob?: ArtifactBlobWriteV1 | null;
     header?: string;  // Base64 encoded encrypted header
     expectedHeaderVersion?: number;
     body?: string;  // Base64 encoded encrypted body

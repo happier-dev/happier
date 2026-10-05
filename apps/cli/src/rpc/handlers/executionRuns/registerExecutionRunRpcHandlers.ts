@@ -417,6 +417,9 @@ export function registerExecutionRunRpcHandlers(
       if (!parsed.success) return invalidParams();
       const started = await manager.startTurnStream(parsed.data.runId, {
         message: parsed.data.message,
+        ...(parsed.data.speechSegmentTargetChars !== undefined
+          ? { speechSegmentTargetChars: parsed.data.speechSegmentTargetChars }
+          : {}),
         ...(parsed.data.displayMessage ? { displayMessage: parsed.data.displayMessage } : {}),
         ...(parsed.data.resume === true ? { resume: true } : {}),
         userTranscript: parsed.data.userTranscript,

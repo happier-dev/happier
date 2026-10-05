@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
 
@@ -55,30 +56,27 @@ describe('optionalWorkspaceBundleLock', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-lock-mismatch-'));
     try {
       const lockPath = resolveCliSharedDepsBuildLockPath(repoRoot);
-
-      await withWorkspaceBundleLock(
-        async () => {
-          await expect(
-            withOptionalCliSharedDepsBuildLock(
-              async () => 'nested',
-              {
-                repoRoot,
-                lockPath,
-                env: { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: join(repoRoot, 'different.lock') },
-                lockTimeoutMs: 60,
-                lockPollIntervalMs: 10,
-                lockStaleAfterMs: 1_000,
-              },
-            ),
-          ).rejects.toThrow(/Timed out waiting for workspace bundle lock/);
-        },
-        {
+      const waits: string[] = [];
+      let entered = () => {};
+      const acquired = new Promise<void>((resolve) => { entered = resolve; });
+      const holder = withWorkspaceBundleLock(async () => {
+        entered();
+        // Release a healthy incumbent; its wait budget is owned by the lock.
+        await delay(100);
+      }, { lockPath });
+      await acquired;
+      try {
+        const result = await withOptionalCliSharedDepsBuildLock(async () => 'successor', {
+          repoRoot,
           lockPath,
-          timeoutMs: 2_000,
-          pollIntervalMs: 10,
-          staleAfterMs: 1_000,
-        },
-      );
+          env: { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: join(repoRoot, 'different.lock') },
+          lockPollIntervalMs: 10,
+          lockStaleAfterMs: 1_000,
+          onWait: (event: { lockPath: string }) => waits.push(event.lockPath),
+        });
+        expect(result).toBe('successor');
+        expect(waits).toContain(lockPath);
+      } finally { await holder; }
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

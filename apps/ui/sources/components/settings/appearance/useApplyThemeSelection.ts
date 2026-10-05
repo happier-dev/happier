@@ -1,49 +1,34 @@
 import * as React from 'react';
-import { Appearance, Platform } from 'react-native';
-import { setStatusBarStyle } from 'expo-status-bar';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { runThemePreferenceChange } from '@/components/settings/appearance/themePreferenceTransition';
-import { resolveStatusBarStyleForThemePreference, type ThemePreference } from '@/components/ui/layout/statusBarStyle';
+import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
-import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
+import { commitThemeSelection } from '@/theme/profiles/themeProfileRuntime';
 import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 
-/**
- * The one writer for the theme mode and the theme each mode uses. It stores both, applies them to the
- * running theme and the status bar, and plays the mode transition — every surface that changes the
- * theme goes through it so none can store a choice without applying it.
- */
-export function useApplyThemeSelection(): (
+export { commitThemeSelection, previewThemeSelection } from '@/theme/profiles/themeProfileRuntime';
+
+/** `commitThemeSelection` bound to this screen's local settings and reduced-motion preference. */
+export function useApplyThemeSelection(beforeCommit?: () => void): (
     nextThemePreference: ThemePreference,
     nextThemeProfiles: ThemeProfilesLocalStateV1,
-) => void {
+) => Promise<void> {
     const reduceMotion = useReducedMotionPreference();
-    const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
-    const [, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
+    const [themePreference] = useLocalSettingMutable('themePreference');
     return React.useCallback((nextThemePreference, nextThemeProfiles) => {
-        const systemTheme = Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
-        void runThemePreferenceChange({
+        return commitThemeSelection({
             currentPreference: themePreference,
             nextPreference: nextThemePreference,
-            platform: Platform.OS,
+            nextThemeProfiles,
             reduceMotion,
-            forceAnimate: true,
-            systemTheme,
-            mutation: () => {
-                setThemePreference(nextThemePreference);
-                setThemeProfiles(nextThemeProfiles);
-                applyThemeRuntimeSelection({
-                    themePreference: nextThemePreference,
-                    themeProfiles: nextThemeProfiles,
-                    systemTheme,
-                });
-                setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextThemePreference, systemTheme), true);
+            writeLocal: (delta) => {
+                beforeCommit?.();
+                storage.getState().applyLocalSettings(delta);
             },
         });
-    }, [reduceMotion, setThemePreference, setThemeProfiles, themePreference]);
+    }, [beforeCommit, reduceMotion, themePreference]);
 }
 
 /** The theme mode a stored preference means; anything unrecognised follows the system. */
@@ -56,12 +41,12 @@ export function resolveThemeMode(themePreference: unknown): ThemePreference {
  * theme on screen, stored as an explicit mode — so Adaptive becomes Light or Dark — through the same
  * writer as Settings → Appearance, keeping the theme each mode uses.
  */
-export function useToggleThemeMode(): () => void {
+export function useToggleThemeMode(): () => Promise<void> {
     const { theme } = useUnistyles();
     const [themeProfiles] = useLocalSettingMutable('themeProfiles');
     const applyThemeSelection = useApplyThemeSelection();
     const screenDark = theme.dark;
     return React.useCallback(() => {
-        applyThemeSelection(screenDark ? 'light' : 'dark', themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE);
+        return applyThemeSelection(screenDark ? 'light' : 'dark', themeProfiles ?? DEFAULT_THEME_PROFILES_LOCAL_STATE);
     }, [applyThemeSelection, screenDark, themeProfiles]);
 }

@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,6 +9,9 @@ import {
 } from './localVoiceEngine.testHarness';
 
 registerLocalVoiceEngineHarnessHooks();
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('localVoiceEngine capture admission', () => {
     it('fails closed before mic acquisition while Dictation owns capture, then recovers after release', async () => {
@@ -52,6 +57,8 @@ describe('localVoiceEngine capture admission', () => {
 
         await toggleLocalVoiceTurn('s1').catch(() => {});
 
-        expect(voiceCaptureAdmissionController.acquire('dictation').status).toBe('acquired');
+        const recoveredDictation = voiceCaptureAdmissionController.acquire('dictation');
+        expect(recoveredDictation.status).toBe('acquired');
+        if (recoveredDictation.status === 'acquired') recoveredDictation.lease.release();
     });
 });

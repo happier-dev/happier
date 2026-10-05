@@ -33,12 +33,15 @@ import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePick
 import { applyWebDirectoryInputAttributes } from '@/utils/files/applyWebDirectoryInputAttributes';
 import { useWorkspaceFileTransfers, type WorkspaceUploadEntry } from '@/hooks/session/files/useWorkspaceFileTransfers';
 import { showUploadConflictResolutionDialog } from '@/components/workspaces/files/repositoryTree/showUploadConflictResolutionDialog';
-import { shouldUseRepositoryRootDropTarget } from '@/components/workspaces/files/repositoryTree/shouldUseRepositoryRootDropTarget';
+import { readRepositoryFileDropTarget } from '@/components/workspaces/files/repositoryTree/repositoryFileDropTarget';
+import type { WebFileDragEvent } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
 import { useRepositoryTreeWebDropState } from '@/components/sessions/files/repositoryTree/useRepositoryTreeWebDropState';
+import { useRepositoryUploadActionTarget } from '@/components/workspaces/files/repositoryTree/useRepositoryUploadActionTarget';
 import { promptRepositoryUploadDestination } from '@/components/workspaces/files/repositoryTree/promptRepositoryUploadDestination';
 import { WorkspaceRepositoryTreeList } from '@/components/projects/files/WorkspaceRepositoryTreeList';
 import { clearCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
-import { searchWorkspaceFiles, workspaceFileSearchCache } from '@/sync/domains/workspaces/files/workspaceFileSearch';
+import { workspaceFileSearchCache } from '@/sync/domains/workspaces/files/workspaceFileSearch';
+import { useWorkspaceFileQuery } from '@/sync/domains/workspaces/files/useWorkspaceFileQuery';
 import { RepositoryTreeRowActionsMenu } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRowActionsMenu';
 import { useRepositoryTreeRowActions } from '@/components/sessions/files/repositoryTree/useRepositoryTreeRowActions';
 import { useSessionFileTransferAvailabilityState } from '@/components/sessions/files/useSessionFileTransferAvailability';
@@ -109,8 +112,6 @@ export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     selectedPath?: string | null;
 }>;
 
-const EMPTY_FILE_SEARCH_RESULTS: FileItem[] = [];
-
 export const SessionRepositoryTreeBrowserView = React.memo((props: SessionRepositoryTreeBrowserViewProps) => {
     const { theme } = useUnistyles();
     const { machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId, props.serverId);
@@ -157,10 +158,10 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
     const [treeRootLoading, setTreeRootLoading] = React.useState(false);
     const [uploadDestinationDir, setUploadDestinationDir] = React.useState('');
-    const [searchResultState, setSearchResultState] = React.useState<Readonly<{ sessionId: string; scope: WorkspaceScopeBase | null; query: string; files: FileItem[] }> | null>(null);
-    const searchResults = searchResultState?.sessionId === props.sessionId && searchResultState.scope === workspaceScope
-        ? searchResultState.files : EMPTY_FILE_SEARCH_RESULTS;
-    const [isSearching, setIsSearching] = React.useState(false);
+    const fileQuery = useWorkspaceFileQuery({ scope: workspaceScope, query: searchQuery, enabled: !showChangedOnly, limit: 200, reloadToken: treeReloadNonce, contextKey: props.sessionId });
+    const searchResults = fileQuery.items;
+    const isSearching = fileQuery.isSearching;
+
     const showSearchBar = props.showSearchBar !== false;
     const hasWorkspaceTarget = workspaceTarget !== null;
     const allowCreateActions = machineRpcTargetAvailable && hasWorkspaceTarget;
@@ -170,11 +171,12 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     ) && hasWorkspaceTarget;
     const webDropState = useRepositoryTreeWebDropState({
         sessionId: props.sessionId,
-        enabled: allowCreateActions && Platform.OS === 'web',
+        enabled: uploadActionsAvailable && Platform.OS === 'web',
         expandedPaths,
     });
     const webFileInputRef = React.useRef<HTMLInputElement | null>(null);
     const webFolderInputRef = React.useRef<HTMLInputElement | null>(null);
+    const pickedUploadSelectionRef = React.useRef<Readonly<{ destinationDir: string; isCurrent: () => boolean }> | null>(null);
     const setWebFolderInputRef = React.useCallback((node: HTMLInputElement | null) => {
         webFolderInputRef.current = node;
         applyWebDirectoryInputAttributes(node);
@@ -226,54 +228,6 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         scmStatusSync.invalidateFromUser(props.sessionId, workspaceScope?.serverId ?? props.serverId);
     }, [machineRpcTargetAvailable, props.sessionId, treeReloadNonce]);
 
-    React.useEffect(() => {
-        const q = searchQuery.trim();
-        if (showChangedOnly) {
-            setSearchResultState(null);
-            setIsSearching(false);
-            return;
-        }
-        if (!q) {
-            setSearchResultState(null);
-            setIsSearching(false);
-            return;
-        }
-
-        setIsSearching(true);
-        // The AbortSignal is what actually cancels the machine RPC; the timeout only debounces
-        // keystrokes. Dropping stale results with a boolean while the remote search kept
-        // running wasted the machine it ran on.
-        const controller = new AbortController();
-        const handle = setTimeout(() => {
-            void (async () => {
-                try {
-                    if (!workspaceScope) {
-                        setSearchResultState(null);
-                        return;
-                    }
-                    const results = await searchWorkspaceFiles({
-                        scope: workspaceScope,
-                        query: q,
-                        limit: 200,
-                        signal: controller.signal,
-                    });
-                    setSearchResultState({ sessionId: props.sessionId, scope: workspaceScope, query: q, files: results });
-                } catch {
-                    // A superseded search rejects with its abort error; the newer query owns
-                    // the results and spinner from here.
-                } finally {
-                    if (!controller.signal.aborted) {
-                        setIsSearching(false);
-                    }
-                }
-            })();
-        }, 120);
-
-        return () => {
-            controller.abort();
-            clearTimeout(handle);
-        };
-    }, [props.sessionId, searchQuery, showChangedOnly, treeReloadNonce, workspaceScope]);
 
     const shouldShowSearchResults = !showChangedOnly && searchQuery.trim().length > 0;
 
@@ -340,42 +294,42 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         );
     }, [allowCreateActions, canDownload, fileHref, rowActions]);
 
-    const handleFilesDropped = React.useCallback(async (event: any) => {
+    const handleFilesDropped = React.useCallback(async (event: WebFileDragEvent) => {
         const dataTransfer = event?.dataTransfer;
         if (!dataTransfer) return;
-        const dropped = await readWebDroppedEntries(dataTransfer as any);
+        const destinationDir = readRepositoryFileDropTarget(event)?.destinationDir ?? '';
+        // The browser supplies the concrete DataTransfer at this external boundary.
+        const dropped = await readWebDroppedEntries(dataTransfer as DataTransfer);
         const entries: WorkspaceUploadEntry[] = dropped.map((entry) => ({
             kind: 'web',
             file: entry.file,
             relativePath: entry.relativePath,
         }));
-        const res = await transfers.startUploads({ entries, destinationDir: webDropState.dropDestinationDir });
+        const res = await transfers.startUploads({ entries, destinationDir });
         if (!res.ok) {
             Modal.alert(t('common.error'), res.error);
         }
-    }, [transfers.startUploads, webDropState.dropDestinationDir]);
+    }, [transfers.startUploads]);
 
     const dropZoneHandlers = useWebFileDropZone({
-        enabled: allowCreateActions && Platform.OS === 'web',
+        enabled: uploadActionsAvailable && Platform.OS === 'web',
         onFileDragActiveChange: webDropState.onFileDragActiveChange,
         onFilesDropped: handleFilesDropped,
     });
 
     const dropZoneHandlersWithRoot = React.useMemo(() => ({
         ...dropZoneHandlers,
-        onDragEnter: (event: any) => {
-            if (shouldUseRepositoryRootDropTarget(event)) {
-                webDropState.setRootDropTarget();
-            }
+        onDragEnter: (event: WebFileDragEvent) => {
+            const target = readRepositoryFileDropTarget(event);
+            if (target) webDropState.onDropTargetChange(target);
             dropZoneHandlers.onDragEnter(event);
         },
-        onDragOver: (event: any) => {
-            if (shouldUseRepositoryRootDropTarget(event)) {
-                webDropState.setRootDropTarget();
-            }
+        onDragOver: (event: WebFileDragEvent) => {
+            const target = readRepositoryFileDropTarget(event);
+            if (target) webDropState.onDropTargetChange(target);
             dropZoneHandlers.onDragOver(event);
         },
-    }), [dropZoneHandlers, webDropState.setRootDropTarget]);
+    }), [dropZoneHandlers, webDropState.onDropTargetChange]);
 
     const collapseAll = React.useCallback(() => {
         storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, []);
@@ -481,10 +435,12 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         }
     }, [transfers.startUploads]);
 
-    const startNativeUploads = React.useCallback(async () => {
+    const startNativeUploads = React.useCallback(async (destinationDir: string, isCurrent: () => boolean) => {
+        if (!isCurrent()) return 'cancelled' as const;
         const picked = await nativePickFiles({ multiple: true });
+        if (!isCurrent()) return 'cancelled' as const;
         const nativePicked = picked.filter((p): p is Extract<NativePickedFile, { kind: 'native' }> => p.kind === 'native');
-        if (nativePicked.length === 0) return;
+        if (nativePicked.length === 0) return 'cancelled' as const;
         const entries: WorkspaceUploadEntry[] = nativePicked.map((p) => ({
             kind: 'native',
             uri: p.uri,
@@ -493,11 +449,29 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             mimeType: p.mimeType,
             relativePath: p.name,
         }));
-        const res = await transfers.startUploads({ entries, destinationDir: uploadDestinationDir });
+        const res = await transfers.startUploads({ entries, destinationDir });
         if (!res.ok) {
             Modal.alert(t('common.error'), res.error);
         }
-    }, [transfers.startUploads, uploadDestinationDir]);
+        return 'requested' as const;
+    }, [transfers.startUploads]);
+
+    const captureCurrentUploadAcquisition = useRepositoryUploadActionTarget({
+        workspaceScope,
+        enabled: uploadActionsAvailable,
+        pick: async ({ kind, destinationDir, signal }, isCurrent) => {
+            if (signal?.aborted) return { status: 'cancelled' };
+            if (Platform.OS !== 'web') {
+                if (kind === 'folder') return { status: 'unavailable' };
+                return { status: await startNativeUploads(destinationDir, isCurrent) };
+            }
+            const input = kind === 'folder' ? webFolderInputRef.current : webFileInputRef.current;
+            if (!input) return { status: 'unavailable' };
+            pickedUploadSelectionRef.current = { destinationDir, isCurrent };
+            input.click();
+            return { status: 'requested' };
+        },
+    });
 
     const selectUploadDestination = React.useCallback(async () => {
         const nextDestination = await promptRepositoryUploadDestination(uploadDestinationDir, rootLabel);
@@ -521,16 +495,22 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         }
         if (itemId === 'repository-tree-upload-files') {
             if (Platform.OS === 'web') {
+                const isCurrent = captureCurrentUploadAcquisition();
+                if (!isCurrent()) return;
+                pickedUploadSelectionRef.current = { destinationDir: uploadDestinationDir, isCurrent };
                 webFileInputRef.current?.click();
                 return;
             }
-            void startNativeUploads();
+            void startNativeUploads(uploadDestinationDir, captureCurrentUploadAcquisition());
         }
         if (itemId === 'repository-tree-upload-folder') {
             if (Platform.OS !== 'web') return;
+            const isCurrent = captureCurrentUploadAcquisition();
+            if (!isCurrent()) return;
+            pickedUploadSelectionRef.current = { destinationDir: uploadDestinationDir, isCurrent };
             webFolderInputRef.current?.click();
         }
-    }, [createFile, createFolder, selectUploadDestination, startNativeUploads, uploadActionsAvailable]);
+    }, [captureCurrentUploadAcquisition, createFile, createFolder, selectUploadDestination, startNativeUploads, uploadActionsAvailable, uploadDestinationDir]);
 
     // The pane header is just "Files" with the + menu as its trailing action (user ruling over lab H1: no
     // live line); the one change count lives on the Changed only chip. Outside a header-owning pane (the
@@ -584,12 +564,16 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             <View style={repositoryTreeBrowserStyles.content}>
                 {shouldShowSearchResults ? (
                     <SearchResultsList
+                        workspaceScope={workspaceScope}
                         fileHref={fileHref}
                         theme={repositoryTreeTheme}
                         isSearching={isSearching}
                         searchQuery={searchQuery}
                         searchResults={searchResults}
-                        searchResultsQuery={searchResultState?.query}
+                        searchResultsQuery={fileQuery.resultQuery}
+                        searchError={Boolean(fileQuery.error)}
+                        hasMore={fileQuery.hasMore}
+                        onRetry={fileQuery.retry}
                         onFolderPress={handleSearchFolderPress}
                         onFilePress={handleSearchFilePress}
                         onFilePressPinned={handleSearchFilePressPinned}
@@ -609,7 +593,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                         revealedPaths={revealedPaths}
                         revealRequest={latestRequest}
                         onGitIgnoreAvailableChange={setGitIgnoreAvailable}
-                        onWebDropTargetChange={webDropState.onDropTargetChange}
+                        webFileDropEnabled={uploadActionsAvailable && Platform.OS === 'web'}
                         webDropHoverPath={webDropState.dropHoverPath}
                         expandedPaths={expandedPaths}
                         onExpandedPathsChange={handleExpandedPathsChange}
@@ -688,7 +672,10 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         scrollFades.visibility,
         searchQuery,
         searchResults,
-        searchResultState?.query,
+        fileQuery.resultQuery,
+        fileQuery.error,
+        fileQuery.hasMore,
+        fileQuery.retry,
         setSearchQuery,
         shouldShowSearchResults,
         showChangedOnly,
@@ -732,9 +719,11 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                         style={{ display: 'none' }}
                         multiple
                         onChange={(e) => {
+                            const selection = pickedUploadSelectionRef.current;
+                            pickedUploadSelectionRef.current = null;
                             const files = Array.from(e.target.files ?? []);
-                            if (files.length > 0) {
-                                void startWebUploads(files, uploadDestinationDir);
+                            if (files.length > 0 && selection?.isCurrent()) {
+                                void startWebUploads(files, selection.destinationDir);
                             }
                             e.target.value = '';
                         }}
@@ -746,9 +735,11 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                         style: { display: 'none' },
                         multiple: true,
                         onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+                            const selection = pickedUploadSelectionRef.current;
+                            pickedUploadSelectionRef.current = null;
                             const files = Array.from(e.target.files ?? []);
-                            if (files.length > 0) {
-                                void startWebUploads(files, uploadDestinationDir);
+                            if (files.length > 0 && selection?.isCurrent()) {
+                                void startWebUploads(files, selection.destinationDir);
                             }
                             e.target.value = '';
                         },

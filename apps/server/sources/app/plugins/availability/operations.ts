@@ -62,6 +62,7 @@ import {
     type PluginUiArtifactHostingCapabilityV1,
     type PluginUiReleaseSlotV1,
     type MachineOperationProtocolCapabilityNameV1,
+    type ArtifactAccountEncryptionMigrationOwnershipV1,
 } from "@happier-dev/protocol";
 import {
     decodePackageAssetArchiveBodyV1,
@@ -1002,6 +1003,45 @@ function isStoredLinkForDeclaredSlot(
     } catch {
         return false;
     }
+}
+
+/** Transition reads retain immutable release authority, not active hosting intent. */
+export async function qualifyPluginArtifactAccountEncryptionMigrationInTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    artifactId: string;
+    uiRelease: Readonly<{ pluginId: string; version: string }> | null;
+    packageRelease: Readonly<{ pluginId: string; version: string }> | null;
+    envelopes: readonly Readonly<{ header: Uint8Array; body: Uint8Array; dataEncryptionKey: Uint8Array }>[];
+}>): Promise<ArtifactAccountEncryptionMigrationOwnershipV1 | null> {
+    if ((params.uiRelease === null) === (params.packageRelease === null)) return null;
+    const ref = params.uiRelease ?? params.packageRelease!;
+    const release = await resolveReleaseTx(params.tx, params.accountId, ref);
+    if (!release || release.accountId !== params.accountId) return null;
+    try {
+        if (params.packageRelease) {
+            const facts = packageAssetFactsFromRow(release);
+            const stored = await resolveStoredPackageAssetLinkTx(params.tx, release.id);
+            const link = stored && packageAssetLinkFromRow(stored, facts.packageAssetArchive);
+            if (!link || link.artifactId !== params.artifactId || stored?.accountId !== params.accountId
+                || stored.pluginId !== release.pluginId || stored.version !== release.version
+                || !params.envelopes.every(envelope => isExactPlainPackageAssetArchive({ descriptor: facts.packageAssetArchive, envelope }))) return null;
+            return { kind: 'packageAsset', pluginId: release.pluginId, descriptor: facts.packageAssetArchive };
+        }
+        const facts = releaseFactsFromRow(release);
+        for (const slot of facts.uiSlots) {
+            const stored = await resolveStoredSlotLinkTx(params.tx, release.id, slot);
+            if (stored?.artifactId !== params.artifactId) continue;
+            if (!stored.artifact || stored.artifact.id !== params.artifactId || stored.artifact.accountId !== params.accountId
+                || stored.release.accountId !== params.accountId || stored.release.pluginId !== release.pluginId
+                || stored.release.version !== release.version || !isStoredLinkForDeclaredSlot(stored, slot)
+                || !params.envelopes.every(envelope => isExactPlainUiArtifactArchive({ pluginId: release.pluginId, slot, envelope }))) return null;
+            return { kind: 'pluginUi', pluginId: release.pluginId, slot };
+        }
+    } catch {
+        return null;
+    }
+    return null;
 }
 
 type HostedArtifactKind = "ui" | "packageAsset";

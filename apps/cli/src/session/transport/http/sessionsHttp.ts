@@ -1,4 +1,5 @@
 import axios, { type AxiosResponse } from 'axios';
+import { readSessionCreationInitialTriggerError } from '@/api/session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { z } from 'zod';
 import {
@@ -65,7 +66,7 @@ import {
   readCliClientUpgradeRequired,
 } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
-import { resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionStoredContentEncryptionMode, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
 import {
   resolveSessionSnapshotRequestPurpose,
@@ -78,6 +79,7 @@ import { resolveSessionRoleSnapshotCreationMetadata } from '@/session/metadata/r
 import {
   buildSessionInitialAccessCreateFields,
   materializeSessionInitialAccessCreateFields,
+  prepareSessionInitialAccessDataKeyEnvelopes,
   readSessionTeamCredentialBindingUpdateRequiredError,
   readSessionInitialAccessServerError,
 } from '@/api/session/sessionCreationInitialAccess';
@@ -1445,6 +1447,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   organizationPlacement?: SessionOrganizationPlacementV1;
   shouldCommit?: () => boolean;
   initialAccess?: SessionInitialAccessDraftV1;
+  initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];
   reportsTo?: SessionReportsToV1;
   primaryTeamId?: string | null;
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
@@ -1540,6 +1543,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
       ...(params.organizationPlacement ? { organizationPlacement: params.organizationPlacement } : {}),
       ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
     ...materializedInitialAccessFields,
+    ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
     ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
   }, {
     headers: {
@@ -1552,6 +1556,8 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     validateStatus: () => true,
   });
 
+  const initialTriggerError = readSessionCreationInitialTriggerError(response.data, response.status);
+  if (initialTriggerError) throw initialTriggerError;
   const initialAccessServerError = response.status === 200
     ? null
     : readSessionInitialAccessServerError(response.data, response.status);
@@ -1590,9 +1596,20 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   if (!parsed || !parsed.session || typeof parsed.session !== 'object') {
     throw new Error('Unexpected /v1/sessions response shape');
   }
-  assertSessionEncryptionModeAllowedByEffectiveClientRequirement(
-    resolveSessionStoredContentEncryptionMode(parsed.session),
-  );
+  const returnedMode = resolveSessionStoredContentEncryptionMode(parsed.session);
+  assertSessionEncryptionModeAllowedByEffectiveClientRequirement(returnedMode);
+  await prepareSessionInitialAccessDataKeyEnvelopes({
+    fields: initialAccessFields,
+    sessionId: parsed.session.id,
+    sessionEncryptionMode: returnedMode,
+    resolveSessionDataKey: () => {
+      const context = resolveSessionEncryptionContextFromCredentials(params.credentials, parsed.session);
+      return context?.encryptionVariant === 'dataKey' ? context.encryptionKey : null;
+    },
+    token: params.credentials.token,
+    serverHttpBaseUrl: serverUrl,
+    ...(params.shouldCommit ? { isScopeCurrent: params.shouldCommit } : {}),
+  });
   // Released and predecessor servers omit `created`; preserve their historical
   // create-or-load behavior while current servers report the exact race result.
   return {

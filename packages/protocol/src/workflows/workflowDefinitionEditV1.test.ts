@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import Ajv from 'ajv';
 
 import {
-  applyWorkflowDefinitionEditsV1, createWorkflowBlock, createWorkflowLeafBlock, insertWorkflowBlock, moveWorkflowBlock,
+  applyWorkflowDefinitionEditsV1, createWorkflowBlock, createWorkflowLeafBlock, duplicateWorkflowBlock, insertWorkflowBlock, moveWorkflowBlock,
   removeWorkflowBlock, setWorkflowDefaultField, setWorkflowFinalOutput, setWorkflowInputs,
   setWorkflowStepExecutionField, setWorkflowStepText, setWorkflowStepTimeout, updateWorkflowBlock,
   setWorkflowBlockOnlyWhen, setWorkflowLeafPauseForReview, setWorkflowStepExecutionTarget,
@@ -19,6 +19,35 @@ function fixture(): WorkflowDefinitionDraftV1 {
 }
 
 describe('typed workflow definition edits', () => {
+  it('copies evaluated loops with fresh evaluator ids, aggregate paths and iteration scopes while preserving external references and literal data', () => {
+    const draft: WorkflowDefinitionDraftV1 = { ...fixture(), blocks: [{ kind: 'loop', id: 'loop', body: [
+      { kind: 'step', id: 'producer', document: { text: 'Produce', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      { kind: 'action', id: 'consumer', actionId: 'notifications.notify_me', input: {
+        internal: { kind: 'result', producer: { blockId: 'producer', scope: { kind: 'previous_iteration', loopBlockId: 'loop' } }, path: [] },
+        external: { kind: 'workspace', producer: { blockId: 'external', scope: { kind: 'outer', levels: 1 } }, field: 'directory' },
+        literal: { kind: 'literal', value: { blockId: 'producer', path: ['producer'] } },
+      } },
+    ], repetition: { kind: 'evaluate', maxIterations: 3, history: 'none', evaluator: {
+      kind: 'action', id: 'judge', actionId: 'notifications.notify_me', input: {
+        aggregate: { kind: 'result', producer: { blockId: 'loop', scope: { kind: 'current' } }, path: ['last', 'producer'] },
+      },
+    } } }] };
+    const { draft: next, blockId } = duplicateWorkflowBlock(draft, 'loop');
+    expect(next.blocks[0]).toBe(draft.blocks[0]);
+    const copy = next.blocks[1];
+    if (copy?.kind !== 'loop' || copy.repetition.kind !== 'evaluate') throw new Error('Expected evaluated loop copy');
+    expect(copy.id).toBe(blockId);
+    expect(copy.repetition.evaluator.id).not.toBe('judge');
+    expect(copy.body[1]).toMatchObject({ input: {
+      internal: { producer: { blockId: copy.body[0]!.id, scope: { loopBlockId: copy.id } } },
+      external: { producer: { blockId: 'external', scope: { kind: 'outer', levels: 1 } } },
+      literal: { value: { blockId: 'producer', path: ['producer'] } },
+    } });
+    expect(copy.repetition.evaluator).toMatchObject({ input: { aggregate: {
+      producer: { blockId: copy.id }, path: ['last', copy.body[0]!.id],
+    } } });
+    expect(duplicateWorkflowBlock(draft, 'missing')).toEqual({ draft, blockId: null });
+  });
   it('inserts every canonical leaf with optional nested identities and canonical defaults', () => {
     const op = WorkflowDefinitionEditOpV1Schema.parse({
       kind: 'insert_block', list: { kind: 'root' }, block: {

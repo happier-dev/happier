@@ -10,6 +10,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 export type HeaderTitleWithActionProps = {
     title: string;
+    subtitle?: string;
     tintColor?: string;
     actionLabel: string;
     actionIconName: IconName;
@@ -27,13 +28,16 @@ export const HeaderTitleWithAction = React.memo((props: HeaderTitleWithActionPro
 
     return (
         <View style={styles.container}>
-            <Text
-                style={[styles.title, { color: resolvedTintColor }]}
-                numberOfLines={1}
-                accessibilityRole="header"
-            >
-                {props.title}
-            </Text>
+            <View style={styles.titleBlock}>
+                <Text
+                    style={[styles.title, { color: resolvedTintColor }]}
+                    numberOfLines={1}
+                    accessibilityRole="header"
+                >
+                    {props.title}
+                </Text>
+                {props.subtitle ? <Text style={[styles.subtitle, { color: resolvedTintColor }]} numberOfLines={1}>{props.subtitle}</Text> : null}
+            </View>
             <Pressable
                 onPress={props.onActionPress}
                 hitSlop={10}
@@ -61,6 +65,8 @@ const stylesheet = StyleSheet.create(() => ({
         fontSize: 16,
         ...Typography.default('semiBold'),
     },
+    titleBlock: { flexShrink: 1, minWidth: 0 },
+    subtitle: { fontSize: 13, marginTop: 2, ...Typography.default() },
     actionButton: {
         padding: 2,
     },

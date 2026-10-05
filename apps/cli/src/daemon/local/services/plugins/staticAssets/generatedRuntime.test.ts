@@ -167,7 +167,9 @@ async function resolveGeneratedLifecycleSource(happyHomeDir: string) {
         }),
     ]);
     expect(registry).not.toHaveProperty('uiArtifacts');
-    expect(registry.hostedWeb?.filter((contribution) => contribution.pluginId === pluginId) ?? []).toEqual([]);
+    expect(registry.introspectionContributions?.filter((contribution) => (
+        contribution.pluginId === pluginId && contribution.family === 'hostedWeb'
+    )) ?? []).toEqual([]);
     return await resolveHostedWebStaticAssetLifecycleSource({
         registry,
         sessionId: 'session-generated-ui',

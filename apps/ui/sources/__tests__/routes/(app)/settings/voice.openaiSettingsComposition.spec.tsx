@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
@@ -11,18 +12,20 @@ import {
 } from '../../../../../../../packages/plugins/openai/src/protocol/voice/settings';
 
 import { installVoiceSettingsRouteModuleMocks } from './voiceSettingsRouteTestHelpers';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const OPENAI_PROVIDER_ID = 'happier.voice.openai/realtime-openai';
 const routeState = vi.hoisted(() => ({
   voice: null as VoiceSettings | null,
+  writes: [] as VoiceSettings[],
 }));
 
 installVoiceSettingsRouteModuleMocks();
 
 vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
-  useVoiceSettingsMutable: () => [routeState.voice, vi.fn()],
+  useVoiceSettingsMutable: () => [routeState.voice, (next: VoiceSettings) => routeState.writes.push(next)],
 }));
 
 vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
@@ -82,6 +85,7 @@ vi.mock('@/voice/settings/voiceProviderLocalAvailability', async (importOriginal
 });
 
 beforeEach(() => {
+  routeState.writes = [];
   routeState.voice = voiceSettingsParse({
     providerId: OPENAI_PROVIDER_ID,
     providers: {
@@ -104,11 +108,16 @@ describe('VoiceSettingsScreen OpenAI settings composition', () => {
     const screen = await renderSettingsView(<VoiceSettingsScreen />);
     const dropdowns = screen.tree.findAllByType('DropdownMenu' as never);
 
-    expect({
-      manifest: dropdowns.filter((dropdown) => dropdown.props.itemTrigger?.title === 'Turn detection').length,
-      privateDescriptor: dropdowns.filter((dropdown) => (
+    expect(createDefaultVoiceProviderRegistry().get(OPENAI_PROVIDER_ID)?.providerSettings?.presentation).toMatchObject({
+      fields: expect.arrayContaining([expect.objectContaining({ kind: 'select', path: 'turnDetection' })]),
+    });
+    const turnDetectionControls = dropdowns.filter((dropdown) => (
+        dropdown.props.itemTrigger?.title === 'Turn detection'
+        ||
         dropdown.props.testID === 'voice-realtime-field-turnDetection'
-      )).length,
-    }).toEqual({ manifest: 1, privateDescriptor: 0 });
+    ));
+    expect(turnDetectionControls).toHaveLength(1);
+    await act(async () => turnDetectionControls[0].props.onSelect('manual'));
+    expect(routeState.writes.at(-1)?.providers[OPENAI_PROVIDER_ID]?.config).toMatchObject({ turnDetection: 'manual' });
   });
 });

@@ -6,6 +6,8 @@ import {
     type PluginContributionClientPlatform,
     type PluginMachineExecutionOriginV1,
     type VoiceProviderContribution,
+    type PluginProjectedDragSourceEntryV1,
+    type PluginProjectedDropTargetEntryV1,
 } from '@happier-dev/protocol';
 import {
     PluginUiArtifactsManifestEntryV2Schema,
@@ -58,6 +60,10 @@ export type PluginUiClientExecutableArtifactAnchor =
         }>;
     }>
     | Readonly<{
+        artifactOwnerKind: 'clientContribution';
+        clientContribution: Readonly<{ family: 'dragSources' | 'dropTargets'; contribution: Readonly<{ pluginId: string; localId: string }> }>;
+    }>
+    | Readonly<{
         artifactOwnerKind: 'voiceProvider';
     }>;
 
@@ -104,7 +110,7 @@ type ProjectedExecutableOrigin = Readonly<{
 }>;
 
 type ResolvedProjectedClientExecutableContribution = Readonly<{
-    family: 'actions' | 'voiceProviders';
+    family: 'actions' | 'voiceProviders' | 'dragSources' | 'dropTargets';
     localId: string;
     pluginId: string;
     occurrenceId: string;
@@ -125,6 +131,7 @@ type ResolvedProjectedClientExecutableContribution = Readonly<{
     artifactAnchor: PluginUiClientExecutableArtifactAnchor;
     artifactSelectionOwner?: 'accountRelease' | 'daemonProjection';
     action?: PluginUiProjectionModel['actionsById'][string];
+    entityDeclaration?: PluginProjectedDragSourceEntryV1['definition'] | PluginProjectedDropTargetEntryV1['definition'];
     voiceProvider?: PluginUiProjectedClientExecutableVoiceProvider;
 }>;
 
@@ -271,16 +278,33 @@ function readActionCandidate(input: Readonly<{
     const { action } = input;
     if (!isPluginProjectedActionExecutable(action) || action.execution.target !== 'client') return null;
     if (!action.execution.platforms.includes(input.platform)) return null;
+    return readClientContributionCandidate({ ...input, family: 'actions', entry: action, localId: action.id,
+        contributionId: action.id, client: action.execution.client, action });
+}
 
-    const origin = readCurrentProjectedExecutableOrigin({ entry: action, source: input.source });
-    if (!origin || !originServesPlugin(origin, action.pluginId)) return null;
+/** The same artifact/currentness admission serves every client callback family. */
+function readClientContributionCandidate(input: Readonly<{
+    family: 'actions' | 'dragSources' | 'dropTargets';
+    entry: UnknownRecord & Readonly<{ pluginId: string; occurrenceId?: string }>;
+    localId: string;
+    contributionId: string;
+    client: Readonly<{ artifactId: string; exportName: string }>;
+    source: PluginUiClientExecutableProjectionSource;
+    platform: PluginContributionClientPlatform;
+    action?: PluginUiProjectionModel['actionsById'][string];
+    entityDeclaration?: PluginProjectedDragSourceEntryV1['definition'] | PluginProjectedDropTargetEntryV1['definition'];
+}>): ResolvedProjectedClientExecutableContribution | null {
+    const { entry, localId, contributionId, client } = input;
+    if (!entry.occurrenceId) return null;
+    const origin = readCurrentProjectedExecutableOrigin({ entry, source: input.source });
+    if (!origin || !originServesPlugin(origin, entry.pluginId)) return null;
     const bundle = input.source.projection.reactNativeBundlesById[
-        `reactNativeBundle:${action.pluginId}:${action.id}`
+        `reactNativeBundle:${entry.pluginId}:${contributionId}`
     ];
     if (
         !bundle
-        || bundle.pluginId !== action.pluginId
-        || bundle.contributionId !== action.id
+        || bundle.pluginId !== entry.pluginId
+        || bundle.contributionId !== contributionId
         || bundle.generatedOwnerKind !== 'clientContribution'
     ) {
         return null;
@@ -292,9 +316,9 @@ function readActionCandidate(input: Readonly<{
     const runtime = readRuntimeFacts(bundle);
     const cacheIdentity: PluginReactNativeBundleCacheIdentity | null = runtime.artifactDigest
         ? Object.freeze({
-            pluginId: action.pluginId,
-            contributionId: action.id,
-            artifactId: action.execution.client.artifactId,
+            pluginId: entry.pluginId,
+            contributionId,
+            artifactId: client.artifactId,
             artifactDigest: runtime.artifactDigest,
             platform: input.platform,
         })
@@ -305,9 +329,9 @@ function readActionCandidate(input: Readonly<{
         || runtime.source !== 'installedArtifact'
         || cacheIdentity === null
         || artifactGraph.data.tier !== 'reactNative'
-        || artifactGraph.data.artifactId !== action.execution.client.artifactId
-        || cacheIdentity.pluginId !== action.pluginId
-        || cacheIdentity.contributionId !== action.id
+        || artifactGraph.data.artifactId !== client.artifactId
+        || cacheIdentity.pluginId !== entry.pluginId
+        || cacheIdentity.contributionId !== contributionId
         || cacheIdentity.artifactDigest !== artifactGraph.data.digest
         || cacheIdentity.platform !== input.platform
         || (bundle.artifactSelectionOwner !== undefined
@@ -317,27 +341,37 @@ function readActionCandidate(input: Readonly<{
         return null;
     }
     const target = Object.freeze({
-        artifactId: action.execution.client.artifactId,
-        exportName: action.execution.client.exportName,
+        artifactId: client.artifactId,
+        exportName: client.exportName,
         platform: input.platform,
     });
     const moduleReference = readModuleReference({
-        pluginId: action.pluginId,
-        artifactId: action.execution.client.artifactId,
+        pluginId: entry.pluginId,
+        artifactId: client.artifactId,
         target,
         artifactGraph: artifactGraph.data,
     });
     if (!moduleReference) return null;
 
+    const artifactAnchor: PluginUiClientExecutableArtifactAnchor = input.family === 'actions'
+        ? Object.freeze({
+            artifactOwnerKind: 'clientContribution',
+            clientContribution: Object.freeze({ family: 'actions', action: Object.freeze({ pluginId: entry.pluginId, localId }) }),
+        })
+        : Object.freeze({
+            artifactOwnerKind: 'clientContribution',
+            clientContribution: Object.freeze({ family: input.family, contribution: Object.freeze({ pluginId: entry.pluginId, localId }) }),
+        });
+
     return Object.freeze({
-        family: 'actions',
-        localId: action.id,
-        pluginId: action.pluginId,
-        occurrenceId: action.occurrenceId,
-        immutableGenerationId: input.source.projection.installedPackagesById[action.pluginId]?.immutableGenerationId,
-        ...(readInstalledPluginVersion(input.source.projection, action.pluginId) === undefined
+        family: input.family,
+        localId,
+        pluginId: entry.pluginId,
+        occurrenceId: entry.occurrenceId,
+        immutableGenerationId: input.source.projection.installedPackagesById[entry.pluginId]?.immutableGenerationId,
+        ...(readInstalledPluginVersion(input.source.projection, entry.pluginId) === undefined
             ? {}
-            : { pluginVersion: readInstalledPluginVersion(input.source.projection, action.pluginId) }),
+            : { pluginVersion: readInstalledPluginVersion(input.source.projection, entry.pluginId) }),
         target,
         executionOrigin: origin.executionOrigin,
         projectionGeneration: origin.projectionGeneration,
@@ -345,17 +379,12 @@ function readActionCandidate(input: Readonly<{
         artifactGraph: artifactGraph.data,
         cacheIdentity,
         moduleReference,
-        artifactAnchor: Object.freeze({
-            artifactOwnerKind: 'clientContribution' as const,
-            clientContribution: Object.freeze({
-                family: 'actions' as const,
-                action: Object.freeze({ pluginId: action.pluginId, localId: action.id }),
-            }),
-        }),
+        artifactAnchor,
         ...(bundle.artifactSelectionOwner
             ? { artifactSelectionOwner: bundle.artifactSelectionOwner }
             : {}),
-        action,
+        ...(input.action ? { action: input.action } : {}),
+        ...(input.entityDeclaration ? { entityDeclaration: input.entityDeclaration } : {}),
     });
 }
 
@@ -477,6 +506,16 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
 }>): readonly PluginUiProjectedClientExecutableTarget[] {
     const candidates: ResolvedProjectedClientExecutableContribution[] = [];
     if (input.actionProjection) {
+        for (const family of ['dragSources', 'dropTargets'] as const) {
+            const entries = family === 'dragSources' ? input.actionProjection.projection.dragSourcesById : input.actionProjection.projection.dropTargetsById;
+            for (const entry of Object.values(entries ?? {})) {
+                if (!entry.definition.platforms.includes(input.platform)) continue;
+                const candidate = readClientContributionCandidate({ family, entry, localId: entry.definition.id,
+                    contributionId: `${family}/${entry.definition.id}`, client: entry.definition.client,
+                    entityDeclaration: entry.definition, source: input.actionProjection, platform: input.platform });
+                if (candidate) candidates.push(candidate);
+            }
+        }
         for (const action of Object.values(input.actionProjection.projection.actionsById)) {
             const candidate = readActionCandidate({
                 action,
@@ -535,6 +574,8 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
                 candidate.voiceProvider ? [candidate.voiceProvider] : []
             )));
             const contributes = Object.freeze({
+                ...Object.fromEntries((['dragSources', 'dropTargets'] as const).map(family => [family,
+                    Object.freeze(contributions.flatMap(candidate => candidate.family === family && candidate.entityDeclaration ? [candidate.entityDeclaration] : []))])),
                 ...(actions.length > 0 ? { actions } : {}),
                 ...(voiceProviders.length > 0
                     ? { voiceProviders: Object.freeze(voiceProviders.map((provider) => provider.declaration)) }

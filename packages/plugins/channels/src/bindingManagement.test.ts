@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import * as management from './management.js';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { CHANNELS_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
@@ -351,6 +353,17 @@ function context(
 }
 
 describe('Channels target-persisting binding management', () => {
+  it.each(['agent', 'mcp'] as const)('returns the association witness through the contributed Action to a %s caller', async (surface) => {
+    const collection = createCollection([bindingRow(automationTarget)]);
+    expect(PLUGIN_MANIFEST.contributes?.actions?.find((entry) => entry.id === 'binding/read-v1')?.surfaces).toContain(surface);
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: CHANNELS_PLUGIN,
+      services: { storage: context(collection, vi.fn()).services.storage } });
+    try {
+      await expect(kit.invokeAction('binding/read-v1', { automationId: 'automation-1' }, { surface, sessionId: 'session-1' }))
+        .resolves.toEqual({ kind: 'automationAssociation', automationId: 'automation-1', association: 'bound' });
+      expect(collection.batches).toEqual([]);
+    } finally { await kit.dispose(); }
+  });
   it('reads exact Automation associations, including disabled and deleting bindings, without confusing display prefixes', async () => {
     const id = 'automation-with-a-long-common-prefix-one';
     const collection = createCollection([bindingRow({ ...automationTarget, automationId: id }, 5,

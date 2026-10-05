@@ -272,13 +272,13 @@ function readTaskResult(value: unknown): Readonly<{ ok: boolean; code?: string }
  * the app's machine-RPC cadence. No deadline is guessed: the task settles as soon as the updater
  * is spawned. A machine that stops answering first leaves the outcome unknown, never admitted.
  */
-async function awaitRemoteTaskOutcome(serverId: string, machineId: string, taskId: string): Promise<RemoteTaskOutcome> {
+async function awaitRemoteTaskOutcome(scope: ServerAccountScope, machineId: string, taskId: string): Promise<RemoteTaskOutcome> {
     for (;;) {
         const polled = await machineCapabilitiesInvoke(machineId, {
             id: 'tool.systemTasks',
             method: 'poll',
             params: { taskId, cursor: 0 },
-        }, { serverId });
+        }, scope);
         if (!polled.supported || !polled.response.ok) return { kind: 'unknown' };
         const payload = polled.response.result as { result?: unknown } | null;
         const result = readTaskResult(payload?.result);
@@ -293,7 +293,7 @@ async function runRemoteCliUpdate(scope: ServerAccountScope, itemId: string, mac
         id: 'tool.systemTasks',
         method: 'start',
         params: { spec: { protocolVersion: 1, kind: 'cli.update.v1', params: {} } },
-    }, { serverId });
+    }, scope);
     if (!started.supported) {
         // A transport loss may still have reached the machine: unknown (Retry), not a refusal.
         setRecord(serverId, itemId, {
@@ -311,7 +311,7 @@ async function runRemoteCliUpdate(scope: ServerAccountScope, itemId: string, mac
         setRecord(serverId, itemId, { status: 'failed', message: describeRemoteFailure(undefined) });
         return;
     }
-    const outcome = await awaitRemoteTaskOutcome(serverId, machineId, taskId);
+    const outcome = await awaitRemoteTaskOutcome(scope, machineId, taskId);
     if (outcome.kind === 'unknown') {
         setRecord(serverId, itemId, { status: 'failed', message: t('updates.row.outcomeUnknown') });
         return;
@@ -345,7 +345,7 @@ export async function runMachineItemUpdate(
 ): Promise<void> {
     const machineId = item.machineId;
     if (!machineId || item.action.kind !== 'run') return;
-    // Captured once: the run, its polls and its record stay on the server its row came from.
+    // Captured once: mutation and polls authenticate as the account that initiated this row.
     const scope = context.scope;
     const serverId = scope.serverId;
     if (readScope(serverId).get(item.id)?.status === 'running') return;
@@ -383,7 +383,7 @@ export async function runMachineItemUpdate(
             setRecord(serverId, item.id, { status: 'failed', message: t('updates.row.failedGeneric') });
             return;
         }
-        const result = await machineCapabilitiesInvoke(machineId, request, { serverId, timeoutMs: INSTALL_INVOKE_TIMEOUT_MS });
+        const result = await machineCapabilitiesInvoke(machineId, request, { ...scope, timeoutMs: INSTALL_INVOKE_TIMEOUT_MS });
         if (!result.supported) {
             setRecord(serverId, item.id, {
                 status: 'failed',

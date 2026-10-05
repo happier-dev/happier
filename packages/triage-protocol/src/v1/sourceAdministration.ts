@@ -3,6 +3,7 @@ import {
     defineProtocolObject,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageSourceInstanceIdV1Schema } from './identity.js';
@@ -25,9 +26,10 @@ export const TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1 = Object.freeze({
 /**
  * The one caller-bound source-administration ABI.
  *
- * The request carries no source, plugin, or contribution identity: the host
- * derives the caller from the invocation context and requires its admitted V1
- * contribution to agree before the Triage handler runs. `create` never
+ * An optional source names the requested admitted contribution, not provenance.
+ * Host agent/MCP/CLI callers select it for create; existing-instance operations
+ * resolve it from the canonical configured row. Plugin callers remain bound to
+ * their own admitted source even when they supply a requested address. `create` never
  * promotes a discovered candidate automatically, and `reactivate` restores only
  * a preexisting eligible caller-owned row (`CONTRACT.md` §3.0).
  */
@@ -35,22 +37,26 @@ export const TriageSourceAdministrationActionInputV1Schema = defineProtocolUnion
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('create'),
+        source: PluginContributionIdentityV1Schema.optional(),
         draft: TriageSourceInstanceDraftV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('reconfigure'),
+        source: PluginContributionIdentityV1Schema.optional(),
         sourceInstanceId: TriageSourceInstanceIdV1Schema,
         draft: TriageSourceInstanceDraftV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('remove'),
+        source: PluginContributionIdentityV1Schema.optional(),
         sourceInstanceId: TriageSourceInstanceIdV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('reactivate'),
+        source: PluginContributionIdentityV1Schema.optional(),
         sourceInstanceId: TriageSourceInstanceIdV1Schema,
         draft: TriageSourceInstanceDraftV1Schema,
     }, { policy: 'closed' }),

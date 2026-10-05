@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol';
 
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
 import { t } from '@/text';
@@ -10,6 +11,7 @@ export type WorkflowReferenceOption = Readonly<{
     title: string;
     /** "Built-in" for catalog workflows; absent for the person's own. */
     origin?: 'builtin';
+    definition?: WorkflowDefinitionV1;
 }>;
 
 /** The built-in workflows, named by their catalog titles. */
@@ -22,10 +24,20 @@ export function listBuiltinWorkflowReferenceOptions(): readonly WorkflowReferenc
  * read. Mounted only where it is demanded (an open Run a workflow picker, or a
  * block that names a saved workflow), so an editor without either reads nothing.
  */
-export function useWorkflowLibraryReferenceOptions(): readonly WorkflowReferenceOption[] {
-    const library = useWorkflowDefinitionLibrary();
-    return React.useMemo(
-        () => library.definitions.map((definition) => ({ ref: definition.definitionId, title: definition.metadata.title })),
-        [library.definitions],
+export function useWorkflowLibraryReferenceOptions(options?: Readonly<{ enabled?: boolean }>): readonly WorkflowReferenceOption[] {
+    return useWorkflowReferenceLibrary(options).options;
+}
+
+/** Reference presentation borrows pagination/retry from the one library reader. */
+export function useWorkflowReferenceLibrary(options?: Readonly<{ enabled?: boolean }>) {
+    const library = useWorkflowDefinitionLibrary(options);
+    const references = React.useMemo(
+        (): readonly WorkflowReferenceOption[] => [
+            ...library.definitions.map((definition) => ({ ref: definition.definitionId, title: definition.metadata.title })),
+            ...library.pluginWorkflows.map((source) => ({ ref: source.workflow, title: source.title,
+                ...(library.status === 'loaded' ? { definition: source.definition } : {}) })),
+        ],
+        [library.definitions, library.pluginWorkflows, library.status],
     );
+    return { ...library, options: references };
 }

@@ -1,5 +1,8 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import Color from 'color';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { standardCleanup } from '@/dev/testkit';
 
 import { installModalComponentCommonModuleMocks } from '../modalComponentTestHelpers';
 
@@ -48,7 +51,45 @@ installModalComponentCommonModuleMocks({
     },
 });
 
+afterEach(() => standardCleanup());
+
 describe('ModalCardFrame', () => {
+    it.each(['card', 'sheet'] as const)('honors fully transparent floating material in its %s without an opaque shadow underlay', async (presentation) => {
+        const { Platform } = await import('react-native');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const previousOS = Platform.OS;
+        const previousState = storage.getState();
+        Platform.OS = 'android';
+        act(() => storage.setState({ settings: {
+            ...previousState.settings,
+            glassBlurEnabled: true,
+            glassSurfaceMaterials: { ...glassPresetMaterials('auto'), floating: { blur: 'strong', opacity: 0 } },
+        } }));
+        try {
+            const { renderScreen } = await import('@/dev/testkit');
+            const { ModalCardFrame } = await import('./ModalCardFrame');
+            const screen = await renderScreen(<ModalCardFrame title="Material card" presentation={presentation} testID="material-frame">
+                {React.createElement('Child', { testID: 'material-card-child' })}
+            </ModalCardFrame>);
+            const frame = screen.findHostByTestId('material-frame');
+            const surface = frame?.findAllByType('View').find(node => flattenStyle(node.props.style).overflow === 'hidden');
+            const shadowPaint = flattenStyle(frame?.props.style).backgroundColor;
+            const materialPaint = flattenStyle(surface?.props.style).backgroundColor;
+            expect(typeof shadowPaint).toBe('string');
+            expect(typeof materialPaint).toBe('string');
+            expect(Color(String(shadowPaint)).alpha()).toBe(0);
+            expect(Color(String(materialPaint)).alpha()).toBe(0);
+
+            act(() => storage.setState({ settings: { ...previousState.settings, glassBlurEnabled: false, glassSurfaceMaterials: null } }));
+            const solidSurface = frame?.findAllByType('View').find(node => flattenStyle(node.props.style).overflow === 'hidden');
+            expect(Color(String(flattenStyle(solidSurface?.props.style).backgroundColor)).alpha()).toBe(1);
+        } finally {
+            standardCleanup();
+            Platform.OS = previousOS;
+            act(() => storage.setState(previousState, true));
+        }
+    });
     it('gives a phone card’s title the full row and moves wide header actions beneath it', async () => {
         windowState.width = 390;
         windowState.height = 844;
@@ -382,6 +423,6 @@ describe('ModalCardFrame', () => {
 
         expect(flattenStyle(screen.findByTestId('modal-card-footer')?.props.style).borderTopWidth).toBeUndefined();
         const saveLabel = screen.findAllByType('Text').find((node) => node.props.children === 'Save');
-        expect(flattenStyle(saveLabel?.props.style).fontSize).toBe(14);
+        expect(flattenStyle(saveLabel?.props.style).fontSize).toBe(13);
     });
 });

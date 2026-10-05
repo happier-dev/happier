@@ -91,7 +91,7 @@ describe('plugin contribution catalog', () => {
 
   it('accounts for every schema family with executable semantic metadata', () => {
     expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).toEqual([
-      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'transcriptActivities', 'sessionInfoSections',
+      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'inputTypes', 'dragSources', 'dropTargets', 'transcriptActivities', 'sessionInfoSections',
       'sessionHeaderActions', 'browserTargets', 'browserActions', 'settings', 'events',
       'executionRunProfiles', 'roles', 'workflows', 'notifications', 'notificationChannels', 'scmHostingProviders',
       'scmBackends', 'connectedAccountDescriptors', 'managedDependencies', 'systemTools',
@@ -141,6 +141,9 @@ describe('plugin contribution catalog', () => {
     const projectionFamilyIds = listPluginProjectionFamilyIdsV2();
     expect(projectionFamilyIds).toEqual([
       'providers',
+      'inputTypes',
+      'dragSources',
+      'dropTargets',
       'pluginUi',
       'pluginBrowser',
       'roles',

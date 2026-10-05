@@ -1,44 +1,29 @@
 import * as React from 'react';
 
-import { areSessionSplitCanvasScopesCompatible } from '@/sync/domains/session/sessionSplitCanvasScope';
+import { createSessionSplitCanvasRowActionCallbacks, resolveSessionSplitCanvasRowActionMode, type SessionCanvasRowCallbacks } from './sessionSplitCanvasRowActions';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import {
-    getSessionSplitCanvasRuntimeController,
     getSessionSplitCanvasRuntimeSnapshot,
     subscribeSessionSplitCanvasRuntime,
-    type SessionSplitCanvasRuntimeSnapshot,
 } from './sessionSplitCanvasRuntime';
 import { useSessionCanvasEligibility } from './useSessionCanvasEligibility';
 
 export type SessionSplitCanvasRowActionState = Readonly<{
     mode: 'none' | 'open' | 'reveal';
-    openInSplitRight: () => void;
-    openInSplitDown: () => void;
-    revealInSplit: () => void;
-}>;
-
-function resolveSessionSplitCanvasRowActionMode(input: Readonly<{
-    isCanvasEligible: boolean;
-    scope: ReturnType<typeof useSessionCanvasEligibility>['scope'];
-    runtimeSnapshot: SessionSplitCanvasRuntimeSnapshot;
-    sessionId: string;
-}>): SessionSplitCanvasRowActionState['mode'] {
-    if (!input.isCanvasEligible) {
-        return 'none';
-    }
-    if (!areSessionSplitCanvasScopesCompatible(input.scope, input.runtimeSnapshot.scope)) {
-        return 'none';
-    }
-    if (input.runtimeSnapshot.openSessionIds.includes(input.sessionId)) {
-        return 'reveal';
-    }
-    return 'open';
-}
+}> & SessionCanvasRowCallbacks;
 
 function useResolvedSessionSplitCanvasRowActions(input: Readonly<{
     sessionId: string;
     scope: ReturnType<typeof useSessionCanvasEligibility>['scope'];
     isCanvasEligible: boolean;
 }>): SessionSplitCanvasRowActionState {
+    const accountScope = useActiveServerAccountScope();
+    const latest = React.useRef(input);
+    latest.current = input;
+    const callbacks = React.useMemo(() => createSessionSplitCanvasRowActionCallbacks(() => ({
+        ...latest.current, activeEntityScope: getActiveServerAccountScope(),
+    })), []);
     const mode: SessionSplitCanvasRowActionState['mode'] = React.useSyncExternalStore<SessionSplitCanvasRowActionState['mode']>(
         subscribeSessionSplitCanvasRuntime,
         () => resolveSessionSplitCanvasRowActionMode({
@@ -46,43 +31,12 @@ function useResolvedSessionSplitCanvasRowActions(input: Readonly<{
             scope: input.scope,
             runtimeSnapshot: getSessionSplitCanvasRuntimeSnapshot(),
             sessionId: input.sessionId,
+            activeEntityScope: accountScope ? getActiveServerAccountScope() : null,
         }),
         () => 'none',
     );
 
-    const openInSplitRight = React.useCallback(() => {
-        if (mode !== 'open') {
-            return;
-        }
-        getSessionSplitCanvasRuntimeController()?.openSessionInSplit({
-            sessionId: input.sessionId,
-            direction: 'right',
-        });
-    }, [input.sessionId, mode]);
-
-    const openInSplitDown = React.useCallback(() => {
-        if (mode !== 'open') {
-            return;
-        }
-        getSessionSplitCanvasRuntimeController()?.openSessionInSplit({
-            sessionId: input.sessionId,
-            direction: 'down',
-        });
-    }, [input.sessionId, mode]);
-
-    const revealInSplit = React.useCallback(() => {
-        if (mode !== 'reveal') {
-            return;
-        }
-        getSessionSplitCanvasRuntimeController()?.focusSession(input.sessionId);
-    }, [input.sessionId, mode]);
-
-    return React.useMemo(() => ({
-        mode,
-        openInSplitRight,
-        openInSplitDown,
-        revealInSplit,
-    }), [mode, openInSplitDown, openInSplitRight, revealInSplit]);
+    return React.useMemo(() => ({ mode, ...callbacks }), [mode, callbacks]);
 }
 
 export function useSessionSplitCanvasRowActions(input: Readonly<{

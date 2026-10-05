@@ -8,6 +8,7 @@ import type {
   PluginActionDangerLevelV2,
   PluginActionPresentUserAuthorizationFacts,
 } from '@happier-dev/protocol';
+import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import {
   evaluatePluginPolicyExpressionV2,
   type PluginAvailabilityDescriptorV2,
@@ -94,6 +95,8 @@ export type NormalizedTargetActionPolicy = Readonly<{
   hostAccess: readonly TargetActionHostAccessDecision[];
   availability?: Readonly<{ status: 'visible' | 'disabled' | 'denied' | 'unavailable'; code: string }>;
   confirmation?: PluginActionConfirmationV2;
+  /** Host-resolved effective decision; absent means the manifest default. */
+  approvalRequiredByActionSettings?: boolean;
 }>;
 
 export type TargetActionPolicyDecision = PluginActionPolicyDecision;
@@ -153,21 +156,8 @@ export function resolveTargetActionResourceSelectionFacts(
   }));
 }
 
-export function targetActionRequiresCurrentIntent(action: Pick<NormalizedTargetActionPolicy, 'dangerLevel' | 'confirmation'>): boolean {
-  return action.confirmation !== undefined
-    || action.dangerLevel !== 'safe';
-}
-
-function targetActionRequiresCurrentIntentOnInvocationSurface(
-  action: Pick<NormalizedTargetActionPolicy, 'dangerLevel' | 'confirmation'>,
-  invocationSurface: string | undefined,
-): boolean {
-  // Declaration surface answers whether a target may be invoked. Actual execution
-  // surface answers whether the call carries a present-user interaction. These
-  // intentionally differ for a mounted UI action that invokes a plugin target.
-  return invocationSurface !== 'plugin'
-    && invocationSurface !== 'background'
-    && targetActionRequiresCurrentIntent(action);
+export function targetActionRequiresCurrentIntent(action: Pick<NormalizedTargetActionPolicy, 'dangerLevel' | 'confirmation' | 'approvalRequiredByActionSettings'>): boolean {
+  return pluginActionRequiresPresentUserIntent(action, '');
 }
 
 export function evaluateTargetActionCatalogPolicy(params: Readonly<{
@@ -176,9 +166,9 @@ export function evaluateTargetActionCatalogPolicy(params: Readonly<{
   /** Absent for catalog reads, which must never claim a trusted execution origin. */
   invocationSurface?: string;
 }>): TargetActionPolicyDecision {
-  const requiresIntent = targetActionRequiresCurrentIntentOnInvocationSurface(
+  const requiresIntent = pluginActionRequiresPresentUserIntent(
     params.action,
-    params.invocationSurface,
+    params.invocationSurface ?? '',
   );
   return evaluatePluginActionPolicy({
     ...params.authorizationFacts,
@@ -205,7 +195,7 @@ export function evaluateTargetActionPolicy(params: Readonly<{
   sessionId?: string;
 }>): TargetActionPolicyDecision {
   const invocationSurface = params.invocationSurface ?? params.surface;
-  const requiresIntent = targetActionRequiresCurrentIntentOnInvocationSurface(
+  const requiresIntent = pluginActionRequiresPresentUserIntent(
     params.action,
     invocationSurface,
   );

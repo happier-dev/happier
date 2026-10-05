@@ -15,13 +15,16 @@ import type { BundledConversationRuntimeEntry } from '@/voice/registry/bundledCo
 import { storage } from '@/sync/domains/state/storage';
 import { createBuiltinVoiceAdapterAssembly } from './registerBuiltinVoiceAdapters';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
-import {
-  BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES as BUNDLED_FIRST_PARTY_IOS_VOICE_CONVERSATION_RUNTIME_ENTRIES,
-} from '@/voice/registry/generatedBundledVoiceRuntimeEntries.ios';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { createSessionFixture } from '@/dev/testkit';
+import {
+  installDisconnectedServerSocketBoundary,
+  restoreServerAccountForTest,
+} from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+
+installDisconnectedServerSocketBoundary();
 
 const sessionRpcBoundary = vi.hoisted(() => ({
   sessionRpc: vi.fn(),
@@ -43,6 +46,12 @@ const stopLocalVoiceSession = vi.hoisted(() => vi.fn(async () => undefined));
 let activeAudioLeaseCount = 0;
 const initialSettings = structuredClone(storage.getState().settings);
 const installedTestSessionIds = new Set<string>();
+let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+
+function requireTestServerId(): string {
+  if (!accountConnection) throw new Error('Adapter test Account was not applied');
+  return accountConnection.home.id;
+}
 
 vi.mock('@/voice/runtime/voiceAudioMode', () => ({
   acquireVoiceBackgroundCallAudioMode: async () => {
@@ -153,6 +162,10 @@ function readBundledEntryProviderId(entry: BundledConversationRuntimeEntry): str
 
 describe('createBuiltinVoiceAdapterAssembly', () => {
   beforeEach(async () => {
+    accountConnection = await restoreServerAccountForTest({
+      serverUrl: 'https://voice-adapter.example.test',
+      accountId: 'voice-adapter-account',
+    });
     acquiredAudioLeaseRelease.mockClear();
     stopLocalVoiceSession.mockReset();
     stopLocalVoiceSession.mockResolvedValue(undefined);
@@ -171,7 +184,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     }
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await accountConnection?.dispose();
+    accountConnection = null;
     storage.setState((current) => {
       const sessions = { ...current.sessions };
       for (const sessionId of installedTestSessionIds) delete sessions[sessionId];
@@ -274,7 +289,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
   });
 
   it('uses the same OpenAI and Codex public runtimes in native assembly while retaining Local Voice', async () => {
-    expect(BUNDLED_FIRST_PARTY_IOS_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(
+    expect(BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(
       readBundledEntryProviderId,
     )).toEqual([
       'happier.agent.codex/realtime-codex',
@@ -284,7 +299,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     ]);
 
     const assembly = createBuiltinVoiceAdapterAssembly({
-      bundledEntries: BUNDLED_FIRST_PARTY_IOS_VOICE_CONVERSATION_RUNTIME_ENTRIES,
+      bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
     });
 
     expect(assembly.adapters.map((adapter) => adapter.id)).toEqual([
@@ -486,6 +501,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         ...current.sessions,
         [conversationSessionId]: createSessionFixture({
           id: conversationSessionId,
+          serverId: requireTestServerId(),
           active: true,
           encryptionMode: 'plain',
           metadata: {
@@ -501,9 +517,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
       adapterId: providerId,
       controlSessionId,
       conversationSessionId,
-      conversationSessionAddress: { serverId: 'server-a', sessionId: conversationSessionId },
+      conversationSessionAddress: { serverId: requireTestServerId(), sessionId: conversationSessionId },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: 'server-a', sessionId: conversationSessionId },
+      targetSessionAddress: { serverId: requireTestServerId(), sessionId: conversationSessionId },
       updatedAt: Date.now(),
     });
 
@@ -575,6 +591,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
           ...current.sessions,
           [conversationSessionIdA]: createSessionFixture({
             id: conversationSessionIdA,
+            serverId: requireTestServerId(),
             active: true,
             encryptionMode: 'plain',
             metadata: {
@@ -587,6 +604,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
           }),
           [conversationSessionIdB]: createSessionFixture({
             id: conversationSessionIdB,
+            serverId: requireTestServerId(),
             active: true,
             encryptionMode: 'plain',
             metadata: {
@@ -604,9 +622,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
           adapterId: providerId,
           controlSessionId,
           conversationSessionId,
-          conversationSessionAddress: { serverId: 'server-a', sessionId: conversationSessionId },
+          conversationSessionAddress: { serverId: requireTestServerId(), sessionId: conversationSessionId },
           transcriptMode: 'native_session',
-          targetSessionAddress: { serverId: 'server-a', sessionId: conversationSessionId },
+          targetSessionAddress: { serverId: requireTestServerId(), sessionId: conversationSessionId },
           updatedAt,
         });
       };
@@ -768,6 +786,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
           ...current.sessions,
           [conversationSessionId]: createSessionFixture({
             id: conversationSessionId,
+            serverId: requireTestServerId(),
             active: true,
             encryptionMode: 'plain',
             metadata: {
@@ -784,9 +803,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         adapterId: providerId,
         controlSessionId,
         conversationSessionId,
-        conversationSessionAddress: { serverId: 'server-a', sessionId: conversationSessionId },
+        conversationSessionAddress: { serverId: requireTestServerId(), sessionId: conversationSessionId },
         transcriptMode: 'native_session',
-        targetSessionAddress: { serverId: 'server-a', sessionId: conversationSessionId },
+        targetSessionAddress: { serverId: requireTestServerId(), sessionId: conversationSessionId },
         updatedAt: Date.now(),
       });
       const createBoundService = async (

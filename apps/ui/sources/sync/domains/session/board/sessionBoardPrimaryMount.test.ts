@@ -18,7 +18,7 @@ function readyState(kind: SessionSurfaceItemV1['source']['kind']): SessionBoardI
             height: { mode: 'auto', fallback: 'regular' },
             source: kind === 'declarative'
                 ? { kind: 'declarative', document: { version: 1, root: { kind: 'stack', children: [] } } }
-                : { kind: 'installedSurface', surface: { pluginId: 'acme', localId: 'panel' } },
+                : { kind: 'widget', instance: { v: 1, id: 'instance-1', definition: { kind: 'installed', surface: { pluginId: 'acme', localId: 'panel' } }, bindings: {} } },
         } as unknown as SessionSurfaceItemV1,
     };
 }
@@ -66,6 +66,13 @@ describe('resolveSessionBoardPrimaryMountHost', () => {
     });
 });
 describe('resolveSessionBoardMountMode', () => {
+    it('keeps the host walkthrough projection readable without executable plugin custody', () => {
+        const state: SessionBoardItemState = { kind: 'ready', item: {
+            v: 1, title: 'Walkthrough', frame: 'card', height: { mode: 'auto', fallback: 'compact' },
+            source: { kind: 'walkthrough', comparison: 'session' },
+        } };
+        expect(resolveSessionBoardMountMode({ host: 'sidebar', primaryHost: null, state })).toBe('executable');
+    });
     it('renders declarative content live in every visible placement', () => {
         const state = readyState('declarative');
         expect(resolveSessionBoardMountMode({ host: 'sidebar', primaryHost: 'details', state })).toBe('executable');
@@ -73,7 +80,7 @@ describe('resolveSessionBoardMountMode', () => {
     });
 
     it('gives an executable source exactly one interactive placement and previews the rest', () => {
-        const state = readyState('installedSurface');
+        const state = readyState('widget');
         expect(resolveSessionBoardMountMode({ host: 'details', primaryHost: 'details', state })).toBe('executable');
         expect(resolveSessionBoardMountMode({ host: 'sidebar', primaryHost: 'details', state })).toBe('preview');
         expect(resolveSessionBoardMountMode({ host: 'details', primaryHost: null, state })).toBe('preview');

@@ -21,13 +21,13 @@ export type NormalizedResultPreview = Readonly<{
 /** Hard character cap on the normalized display, guarding against runaway payloads. */
 export const RESULT_PREVIEW_MAX_CHARS = 2000;
 
-function clampChars(value: string, maxChars: number): { display: string; truncated: boolean } {
-    if (value.length <= maxChars) return { display: value, truncated: false };
+function clampChars(value: string, maxChars: number | null): { display: string; truncated: boolean } {
+    if (maxChars === null || value.length <= maxChars) return { display: value, truncated: false };
     // Trim to the cap and append an ellipsis marker so the truncation is visible.
     return { display: `${value.slice(0, maxChars).trimEnd()}…`, truncated: true };
 }
 
-export function normalizeResultPreview(raw: string, maxChars: number = RESULT_PREVIEW_MAX_CHARS): NormalizedResultPreview {
+export function normalizeResultPreview(raw: string, maxChars: number | null = RESULT_PREVIEW_MAX_CHARS): NormalizedResultPreview {
     const trimmed = raw.trim();
     if (trimmed.length === 0) return { kind: 'text', display: '', truncated: false };
 

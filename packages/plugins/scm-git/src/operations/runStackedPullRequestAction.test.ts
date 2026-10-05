@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner } from '../testkit/scmRuntime.test-support.js';
 
 import type {
   ScmBranchCreateResponse,
@@ -57,6 +62,39 @@ function createSnapshot(input?: Partial<ScmWorkingSnapshot['branch']>): ScmWorki
 }
 
 describe('run stacked pull request action', () => {
+    it('preserves a landed commit after post-publication process failure and stops before push', async () => {
+        const cwd = mkdtempSync(join(tmpdir(), 'happier-stacked-publication-'));
+        const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+        try {
+            git(['init', '-q']);
+            git(['config', 'user.name', 'Happier Test']);
+            git(['config', 'user.email', 'test@example.com']);
+            writeFileSync(join(cwd, 'a.txt'), 'base\n');
+            git(['add', 'a.txt']); git(['commit', '-qm', 'base']);
+            mkdirSync(join(cwd, '.git', 'hooks'), { recursive: true });
+            writeFileSync(join(cwd, '.git', 'hooks', 'post-commit'), '#!/bin/sh\nexit 0\n');
+            chmodSync(join(cwd, '.git', 'hooks', 'post-commit'), 0o755);
+            writeFileSync(join(cwd, 'a.txt'), 'selected\n');
+            const runtime = createRealGitScmBackendRuntimeServices();
+            let postPublicationFailure = false;
+            let pushed = false;
+            const response = await runWithGitScmCommandRunner(async (input) => {
+                if (input.args[0] === 'push') pushed = true;
+                const result = await runtime.runCommand(input);
+                // The process boundary loses its terminal observation after the real effect.
+                if (input.args[0] === 'commit' || (input.args[0] === 'hook' && input.args.includes('post-commit'))) {
+                    postPublicationFailure = true;
+                    return { ...result, success: false, timedOut: true, exitCode: -1, stderr: 'post-commit observer timed out' };
+                }
+                return result;
+            }, () => createGitRunStackedPullRequestAction().runStacked({ context: { cwd, projectKey: 'test', detection: { isRepo: true, rootPath: cwd, mode: '.git' } }, request: { action: 'commitAndPush', commitMessage: 'selected', filePaths: ['a.txt'] } }));
+            expect({ postPublicationFailure, response }).toMatchObject({ postPublicationFailure: true });
+            const landed = git(['rev-parse', 'HEAD']);
+            expect(git(['show', 'HEAD:a.txt'])).toBe('selected');
+            expect(response).toMatchObject({ success: false, commitSha: landed, outcome: { kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: landed } } });
+            expect(pushed).toBe(false);
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
     it('records ordered progress and returns the validated nextAction from open-or-reuse on success', async () => {
         const commit = vi.fn(async (): Promise<ScmCommitCreateResponse> => ({ success: true, commitSha: 'abc123' }));
         const push = vi.fn(async (): Promise<ScmRemoteResponse> => ({ success: true, stdout: '', stderr: '' }));

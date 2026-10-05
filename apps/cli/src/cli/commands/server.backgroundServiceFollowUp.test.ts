@@ -79,7 +79,7 @@ function createDaemonServiceListEntry(overrides: Partial<DaemonServiceListEntry>
     return {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.service',
         platform: 'linux',
         releaseChannel: 'stable',

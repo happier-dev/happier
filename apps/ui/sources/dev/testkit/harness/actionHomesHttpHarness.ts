@@ -35,6 +35,15 @@ function accountOf(init: RequestInit | undefined): string | null {
     }
 }
 
+/** Bridges Metro's call-time require to the real Vitest executor; substitutes no Action logic. */
+export async function installRealActionExecutorModuleLoader(): Promise<() => void> {
+    const bridge = await loadVitestModuleForNodeRequire(
+        new URL('../../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
+        () => import('@/sync/ops/actions/defaultActionExecutor'),
+    );
+    return bridge.dispose;
+}
+
 /**
  * Real Homes behind a fake network: every Home is a real server profile and every Action, account
  * context, scoped transport and credential reader runs for real. Only the HTTP boundary (one
@@ -45,10 +54,10 @@ export async function serveActionHomes(params: Readonly<{
     homes: readonly HomeSpec[];
     route: (request: ServedHomeRequest) => Response | Promise<Response> | undefined;
 }>) {
-    const executorBridge = await loadVitestModuleForNodeRequire(
-        new URL('../../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
-        () => import('@/sync/ops/actions/defaultActionExecutor'),
-    );
+    // Metro's call-time require must resolve to the SAME real executor module as Vitest's imports.
+    // Node's loader otherwise bypasses the workspace aliases and transport fixtures (vitestRnShim).
+    // This bridges module loading only; no Action logic or front-door result is substituted.
+    const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
     const [{ upsertAndActivateServer }, { TokenStorage }, { setRuntimeFetch, resetRuntimeFetch }, { getStorage }] = await Promise.all([
         import('@/sync/domains/server/serverRuntime'),
         import('@/auth/storage/tokenStorage'),
@@ -99,7 +108,7 @@ export async function serveActionHomes(params: Readonly<{
             accounts.set(key, accountId);
         },
         dispose() {
-            executorBridge.dispose();
+            restoreExecutorModuleLoader();
             resetRuntimeFetch();
             credentials.mockRestore();
         },

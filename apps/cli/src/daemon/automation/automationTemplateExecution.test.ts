@@ -56,6 +56,15 @@ function buildClaimedRun(override?: Readonly<{ automation?: AutomationTemplateEx
 }
 
 describe('parseAutomationTemplateExecution', () => {
+  it('parses the retained E2EE Session branch without changing the authoritative plain Account mode', () => {
+    const input = { targetType: 'existing_session' as const, templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED };
+    const retainedSession = { sessionId: 'session-old', encryptionMode: 'e2ee' as const,
+      material: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
+    expect(parseAutomationTemplateExecution(input, undefined, 'plain', retainedSession))
+      .toMatchObject({ ok: true, value: { existingSessionId: 'session-old', prompt: 'Review the release' } });
+    expect(parseAutomationTemplateExecution(input, retainedSession.material, 'plain'))
+      .toMatchObject({ ok: false, code: 'session_key_required' });
+  });
   it.each([AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_ENCRYPTED, AUTOMATION_TEMPLATE_V02_RAW_ENCRYPTED])('executes exact 0.2 new-session writer bytes', (templateCiphertext) => {
     const parsed = parseAutomationTemplateExecution(buildClaimedRun({ automation: {
       id: 'a1', name: '0.2', enabled: true, targetType: 'new_session', templateCiphertext,

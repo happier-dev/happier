@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { DesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
+import type { BrowserAutomationControlService } from '../automation/controlService';
 import { selectBrowserTargetAdapter } from '../adapters/selection';
 import { LOCAL_BROWSER_PROFILE_ID } from '../profiles/localBrowserProfile';
 import { isClientRenderedBrowserEngine } from './lifecycle';
@@ -42,7 +43,7 @@ export type BrowserControlCommandEffect =
     | Readonly<{
         kind: 'commandRejected';
         command: BrowserCommandV1;
-        reasonCode: 'adapter_unavailable' | 'view_not_found';
+        reasonCode: 'adapter_unavailable' | 'view_not_found' | 'automation_busy';
       }>;
 
 export type BrowserControlCommandDispatchResult = Readonly<{
@@ -51,6 +52,7 @@ export type BrowserControlCommandDispatchResult = Readonly<{
 }>;
 
 export type BrowserControlCommandDispatchOptions = Readonly<{
+    clientControlService?: Pick<BrowserAutomationControlService, 'recordHumanInput' | 'releaseHumanControl'>;
     sendDaemonCommand?: (command: BrowserCommandV1) => void;
     targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
@@ -351,7 +353,14 @@ export function dispatchBrowserControlCommand(
 
     if (command.kind === 'takeControl' || command.kind === 'handBack') {
         if (!isDaemonAuthoritativeView(state, command.viewId)) {
-            return { state, effects: [{ kind: 'commandRejected', command, reasonCode: 'adapter_unavailable' }] };
+            const controller = options.clientControlService;
+            if (!controller) return { state, effects: [{ kind: 'commandRejected', command, reasonCode: 'adapter_unavailable' }] };
+            if (command.kind === 'takeControl') {
+                controller.recordHumanInput({ ...command, inputKind: 'takeControl', occurredAtMs: Date.now() });
+            } else if (!controller.releaseHumanControl(command)) {
+                return { state, effects: [{ kind: 'commandRejected', command, reasonCode: 'automation_busy' }] };
+            }
+            return { state, effects: [] };
         }
         options.sendDaemonCommand?.(command);
         return { state, effects: [{ kind: 'daemonCommand', command }] };

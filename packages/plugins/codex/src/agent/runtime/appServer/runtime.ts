@@ -704,7 +704,7 @@ function buildCodexAppServerTurnFailureIssue(
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: isCodexAppServerContextWindowExhaustedError(error)
+    code: isCodexAppServerContextWindowExhaustedError(error, { structuredOnly: true })
       ? 'agent_context_window_exceeded'
       : CODEX_APP_SERVER_TURN_FAILURE_CODE,
     source: resolveCodexRuntimeIssueSource(error),
@@ -1924,7 +1924,9 @@ export function createCodexAppServerRuntime(
       ...(agentTurnId ? { agentTurnId } : {}),
       issue: buildCodexAppServerTurnFailureIssue(terminalPendingTurnFailure, activeTurn),
     });
-    if (!isCodexAppServerContextWindowExhaustedError(terminalPendingTurnFailure)) {
+    // Structured context rejection settles this input, while the native thread
+    // remains available for a distinct host-admitted turn.
+    if (!isCodexAppServerContextWindowExhaustedError(terminalPendingTurnFailure, { structuredOnly: true })) {
       publishRuntimeEvent({
         kind: 'backend-error',
         error: {

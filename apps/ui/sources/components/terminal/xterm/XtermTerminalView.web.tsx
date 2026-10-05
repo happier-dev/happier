@@ -2,10 +2,12 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { FitAddon } from '@xterm/addon-fit';
-import type { EmbeddedTerminalCursorRow, EmbeddedTerminalWriteOptions } from '../embedded/embeddedTerminalRendererHandle';
+import type { FindEngine, EmbeddedTerminalCursorRow, EmbeddedTerminalWriteOptions } from '../embedded/embeddedTerminalRendererHandle';
 import { Terminal } from '@xterm/xterm';
 
 import '@xterm/xterm/css/xterm.css';
+import { XTERM_READABILITY_OPTIONS } from './readability';
+import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import {
     buildTerminalRendererInteractionContract,
     readRendererSelection,
@@ -15,9 +17,11 @@ import {
 } from '@/components/terminal/interaction/rendererContract';
 import {
     createXtermFitAddon,
+    loadXtermSearchAddon,
     loadXtermWebLinksAddon,
     tryLoadXtermWebglAddon,
 } from './addons';
+import { resolveXtermFindColors } from './findColors';
 import {
     buildXtermWriteCompleteEvent,
     copyTerminalBytes,
@@ -34,6 +38,7 @@ import {
 } from './writeQueue';
 
 export type XtermTerminalHandle = Readonly<{
+    find?: FindEngine;
     write: (data: string, options?: EmbeddedTerminalWriteOptions) => boolean;
     writeBytes: (input: XtermWriteBytesInput) => boolean | Readonly<{ status: 'queued' }>;
     clear: () => void;
@@ -43,6 +48,7 @@ export type XtermTerminalHandle = Readonly<{
 }>;
 
 export type XtermTerminalViewProps = Readonly<{
+    onFindEngine?: (engine: FindEngine | null) => void;
     onInput: (data: string) => void;
     onPaste?: (data: string) => void | Promise<unknown>;
     onCopySelection?: (text: string) => void;
@@ -54,6 +60,7 @@ export type XtermTerminalViewProps = Readonly<{
     onCursorRowChange?: (row: EmbeddedTerminalCursorRow | null) => void;
     maxPendingWriteBytes?: number;
     fontSize: number;
+    lineHeight?: number;
     testID?: string;
 }>;
 
@@ -102,8 +109,17 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
     ref,
 ) {
     const { theme } = useUnistyles();
+    const backgroundColor = useGlassSurfaceColor(theme.colors.surface.base, 'content');
+    const selectionBackgroundColor = useGlassSurfaceColor(theme.colors.surface.selected, 'content', false);
+    const backgroundColorRef = React.useRef(backgroundColor);
+    backgroundColorRef.current = backgroundColor;
+    const selectionBackgroundColorRef = React.useRef(selectionBackgroundColor);
+    selectionBackgroundColorRef.current = selectionBackgroundColor;
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const terminalRef = React.useRef<Terminal | null>(null);
+    const findRef = React.useRef<ReturnType<typeof loadXtermSearchAddon> | null>(null);
+    const onFindEngineRef = React.useRef(props.onFindEngine);
+    onFindEngineRef.current = props.onFindEngine;
     const fitAddonRef = React.useRef<FitAddon | null>(null);
     const writeQueueRef = React.useRef<XtermWriteQueue | null>(null);
     const replayWritesInFlightRef = React.useRef(0);
@@ -310,6 +326,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             term.write('\x1b[2J\x1b[H');
         },
         focus: () => terminalRef.current?.focus(),
+        get find() { return findRef.current ?? undefined; },
         hasSelection: () => terminalRef.current?.hasSelection() ?? false,
         getSelectionText: () => terminalRef.current?.getSelection() ?? '',
     }), [enqueueWrite, enqueueWriteBytes, resetWriteState]);
@@ -321,16 +338,20 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         }
 
         const term = new Terminal({
+            allowProposedApi: true,
+            allowTransparency: true,
             cursorBlink: true,
             fontFamily: DEFAULT_FONT_FAMILY,
             fontSize: Math.max(8, Math.round(props.fontSize)),
+            lineHeight: props.lineHeight ?? 1.35,
+            ...XTERM_READABILITY_OPTIONS,
             scrollback: 5000,
             screenReaderMode: XTERM_INTERACTION_CONTRACT.screenReaderMode,
             theme: {
-                background: theme.colors.surface.base,
+                background: backgroundColorRef.current,
                 foreground: theme.colors.text.primary,
                 cursor: theme.colors.text.primary,
-                selectionBackground: theme.colors.surface.selected,
+                selectionBackground: selectionBackgroundColorRef.current,
             },
         });
         terminalRef.current = term;
@@ -344,6 +365,9 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
         replayWritesInFlightRef.current = 0;
         term.open(container);
+        const find = loadXtermSearchAddon(term, resolveXtermFindColors(theme.colors.find, backgroundColorRef.current));
+        findRef.current = find;
+        onFindEngineRef.current?.(find);
 
         const reportCursorRow = () => {
             if (!onCursorRowChangeRef.current) return;
@@ -387,6 +411,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         container.addEventListener('paste', handlePaste, true);
 
         term.attachCustomKeyEventHandler((event) => {
+            if (event.defaultPrevented) return false;
             if (event.type !== 'keydown') {
                 return true;
             }
@@ -498,6 +523,9 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         resizeObserver?.observe(container);
 
         return () => {
+            find.dispose();
+            findRef.current = null;
+            onFindEngineRef.current?.(null);
             dataDisposable.dispose();
             cursorDisposable.dispose();
             scrollDisposable.dispose();
@@ -549,18 +577,20 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
         try {
             term.options.fontSize = Math.max(8, Math.round(props.fontSize));
+            term.options.lineHeight = props.lineHeight ?? 1.35;
             term.options.theme = {
-                background: theme.colors.surface.base,
+                background: backgroundColor,
                 foreground: theme.colors.text.primary,
                 cursor: theme.colors.text.primary,
-                selectionBackground: theme.colors.surface.selected,
+                selectionBackground: selectionBackgroundColor,
             };
+            findRef.current?.setColors(resolveXtermFindColors(theme.colors.find, backgroundColor));
         } catch {
             // ignored
         }
 
         fitTerminal('resize');
-    }, [fitTerminal, props.fontSize, theme.colors.surface.base, theme.colors.surface.selected, theme.colors.text.primary]);
+    }, [backgroundColor, selectionBackgroundColor, fitTerminal, props.fontSize, props.lineHeight, theme.colors.text.primary, theme.colors.find]);
 
     return (
         <div

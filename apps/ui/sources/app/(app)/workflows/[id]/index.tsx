@@ -8,7 +8,7 @@ import {
 import { WorkflowMissingDefinitionState } from '@/components/workflows/screens/WorkflowMissingDefinitionState';
 import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows';
-import { WorkflowPluginSourceScreen } from '@/components/workflows/screens/WorkflowPluginSourceScreen';
+import { WorkflowPluginEditorHostScreen, WorkflowBuiltinEditorHostScreen } from '@/components/workflows/screens/WorkflowCatalogEditorHostScreen';
 
 /**
  * Saved workflow detail. The row, this detail and the edit route share one
@@ -26,7 +26,7 @@ function readSavedEntryIntent(raw: string | string[] | undefined): WorkflowSaved
 
 export function SavedWorkflowRoute(): React.ReactElement {
     const router = useRouter();
-    const params = useLocalSearchParams<{ id?: string | string[]; intent?: string | string[] }>();
+    const params = useLocalSearchParams<{ id?: string | string[]; intent?: string | string[]; agentRevisionSeedId?: string; authoringSessionId?: string }>();
     const definitionId = Array.isArray(params.id) ? params.id[0] : params.id;
     const intent = readSavedEntryIntent(params.intent);
     if (definitionId === undefined || definitionId.length === 0) {
@@ -42,11 +42,15 @@ export function SavedWorkflowRoute(): React.ReactElement {
     return (
         <WorkflowsGate>
             {parseWorkflowDefinitionRefV1(definitionId)?.kind === 'plugin' ? (
-                <WorkflowPluginSourceScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
+                <WorkflowPluginEditorHostScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
+            ) : parseWorkflowDefinitionRefV1(definitionId)?.kind === 'builtin' ? (
+                <WorkflowBuiltinEditorHostScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
             ) : <WorkflowEditorHostScreen source={{
                 kind: 'saved',
                 definitionId,
                 ...(intent === undefined ? {} : { intent }),
+                ...(typeof params.agentRevisionSeedId === 'string' ? { agentRevisionSeedId: params.agentRevisionSeedId } : {}),
+                ...(typeof params.authoringSessionId === 'string' ? { authoringSessionId: params.authoringSessionId } : {}),
             }} />}
         </WorkflowsGate>
     );

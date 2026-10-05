@@ -11,8 +11,8 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import { t } from '@/text';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
-
-export const HAPPIER_ACTION_REQUEST_SOURCE = 'happier_action';
+import { markTranscriptPromptAnswered } from '@/components/tools/shell/permissions/usePendingPromptPrimaryFocus';
+import { isSessionActionConfirmationRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 type ActionConfirmationPresentation = Readonly<{
     actionId: string;
@@ -31,10 +31,6 @@ function readNonEmptyString(record: Readonly<Record<string, unknown>>, key: stri
 function readPreviewSummary(preview: unknown): string | null {
     if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
     return readNonEmptyString(preview as Readonly<Record<string, unknown>>, 'summary');
-}
-
-export function isSessionActionConfirmationRequest(request: PendingPermissionRequest): boolean {
-    return request.source === HAPPIER_ACTION_REQUEST_SOURCE;
 }
 
 function buildPresentation(
@@ -98,13 +94,14 @@ export const SessionActionConfirmationPromptCard = React.memo(function SessionAc
             } else {
                 await actions.respondToPermission({ id: props.request.id, approved: false, decision: 'denied', turnId });
             }
+            markTranscriptPromptAnswered(source, props.request.id);
         } catch {
             Modal.alert(t('common.error'), t('approvals.decisionError'));
         } finally {
             decisionInFlightRef.current = false;
             setIsDeciding(false);
         }
-    }, [actions, disabled, presentation, props.request.id, props.request.turnId]);
+    }, [actions, disabled, presentation, props.request.id, props.request.turnId, source]);
 
     if (props.disabledReason === 'inactive') return null;
 
@@ -140,6 +137,7 @@ export const SessionActionConfirmationPromptCard = React.memo(function SessionAc
 
             <View style={styles.actions}>
                 <ApprovalDecisionFooter
+                    requestId={props.request.id}
                     testIDPrefix="action-confirmation"
                     disabled={disabled}
                     disabledReason={props.disabledReason}

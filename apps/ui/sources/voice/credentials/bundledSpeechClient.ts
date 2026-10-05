@@ -85,6 +85,7 @@ export class BundledSpeechDaemonClient {
     source: LocalUploadSource;
     mimeType: 'audio/wav' | 'audio/mpeg' | 'audio/mp4' | 'audio/webm' | 'audio/ogg';
     fileName: string;
+    capturePurpose?: 'conversation' | 'dictation';
     /** Target captured when the originating attempt started, if it had one. */
     originMachineId?: string | null;
     signal?: AbortSignal | null;
@@ -130,6 +131,7 @@ export class BundledSpeechDaemonClient {
           requestId: randomUUID(),
           mimeType: params.mimeType,
           uploadId: uploaded.uploadId,
+          ...(params.capturePurpose ? { capturePurpose: params.capturePurpose } : {}),
         },
         params.signal,
       ));

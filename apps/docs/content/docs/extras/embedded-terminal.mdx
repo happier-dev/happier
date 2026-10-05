@@ -66,11 +66,29 @@ When a terminal prints a local address, the strip shows it as a pill — for exa
 `localhost:5173 · Open`. **Local services** lists the same address. Package scripts from Local
 services run in a new terminal tab.
 
+### Find in terminal output
+
+In the unreleased development build, use **Find…** from the focused terminal's tab menu,
+or use your configured [Find shortcut](/apps/keyboard-shortcuts) while that terminal is focused.
+Find searches the rendered output the terminal still retains, not earlier process output.
+The bar shows the retained line count and marks results as limited when scrollback or
+highlight capacity has been exhausted.
+
+This is available in the web terminal and the native xterm WebView fallback. Native
+Ghostty and Termux views do not offer Find. On phones, the Find bar replaces the terminal
+key rail; **Done** restores the keys and terminal focus. Closing Find keeps the current
+terminal selection.
+
 ### Jump to a terminal
 
 **⌘J** (⌥J on the web) opens the command palette in its **Terminals** scope: this session's
 terminals first, then terminals other sessions left running on the same machine (read-only), then
 **New**. Typing filters them and offers matching package scripts.
+
+In the development phone Terminal page, long-press a terminal chip to open this
+grouped Jump directly. The **⋯** beside the chips keeps the active tab's verbs;
+**Split right** is unavailable there because the phone uses a pager rather than
+a measured side-by-side split layout.
 
 ## Bottom panel behavior
 
@@ -98,6 +116,7 @@ The embedded terminal is meant to feel like one session-owned terminal, even if 
 What to expect:
 
 - Hiding the bottom panel, switching tabs or opening a terminal in Details keeps its process running; it replays when shown again.
+- In the development build, closing a terminal also removes its retained Details view; reopening Details does not restart a closed terminal.
 - Refreshing the page with the terminal open restores the open panel and reconnects to the same terminal for that session.
 - Returning to a session restores that session’s terminal state.
 - A different session does **not** automatically inherit another session’s terminal state.

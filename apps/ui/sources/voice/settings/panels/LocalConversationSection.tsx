@@ -1,5 +1,5 @@
-import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -12,11 +12,14 @@ import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/co
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { SettingAnchor, SettingRow, useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Modal } from '@/modal';
 import {
   readLocalConversationVoiceSettings,
   voiceSettingsParse,
@@ -24,51 +27,75 @@ import {
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
-import { fireAndForget } from '@/utils/system/fireAndForget';
-import { parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
+import { parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
+import { VoiceHearControls } from '@/voice/settings/panels/VoiceHearControls';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { resolveVoiceSttCapturePlan } from '@/voice/runtime/input/resolveVoiceSttCapturePlan';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
-import {
-  DaemonVoiceModelCatalogSection,
-  type DaemonVoiceModelCatalogController,
-} from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogSection';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
-import { resetGlobalVoiceAgentPersistence } from '@/voice/agent/resetGlobalVoiceAgentPersistence';
-import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { useAllMachines } from '@/sync/store/hooks';
-import { useSetting, useSettings } from '@/sync/domains/state/storage';
-import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { useSettings } from '@/sync/domains/state/storage';
+import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
+import { VoiceGreetingItem } from '@/voice/settings/panels/VoiceGreetingItem';
+import { applyVoiceAgentSelection } from '@/voice/settings/voiceAgentSelection';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
-  completeLegacyVoiceOpenAiChatAgentSelection,
   LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
 } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
 
+
+/** The rows inside "Advanced agent behaviour": search opening one of them opens the disclosure. */
+const ADVANCED_AGENT_SETTINGS = [
+  VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy,
+  VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots,
+  VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds,
+  VOICE_CONVERSATIONS_SETTINGS.settings.prewarmOnConnect,
+  VOICE_CONVERSATIONS_SETTINGS.settings.teleportEnabled,
+  VOICE_CONVERSATIONS_SETTINGS.settings.stayInVoiceHome,
+  VOICE_CONVERSATIONS_SETTINGS.settings.commitModelSource,
+  VOICE_CONVERSATIONS_SETTINGS.settings.commitModelId,
+  VOICE_CONVERSATIONS_SETTINGS.settings.commitIsolation,
+  VOICE_CONVERSATIONS_SETTINGS.settings.streamingEnabled,
+  VOICE_CONVERSATIONS_SETTINGS.settings.streamingTtsEnabled,
+  VOICE_CONVERSATIONS_SETTINGS.settings.ttsChunkChars,
+] as const;
 
 export function LocalConversationSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
-  daemonModelCatalog?: DaemonVoiceModelCatalogController;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const { theme } = useUnistyles();
-  const voiceAgentEnabled = useFeatureEnabled('voice.agent');
+  const router = useRouter();
+  const voiceAgentDecision = useFeatureDecision('voice.agent');
+  const voiceAgentEnabled = voiceAgentDecision?.state === 'enabled';
+  const voiceAgentAvailability = resolveFeatureAvailabilityArm(voiceAgentDecision);
+  const missingFeature = voiceAgentDecision?.diagnostics.includes('dependency:execution.runs:disabled')
+    ? t('settingsFeatures.expExecutionRuns')
+    : voiceAgentDecision?.diagnostics.includes('dependency:voice:disabled')
+      ? t('settingsFeatures.voice') : t('settingsFeatures.expVoiceAgent');
+  const voiceAgentUnavailableReason = voiceAgentEnabled ? undefined
+    : voiceAgentAvailability === 'policy_disabled'
+      ? t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: missingFeature })
+      : voiceAgentAvailability === 'server_disabled'
+        ? t('voice.readiness.server_feature_disabled')
+        : t('voice.readiness.runtime_unknown');
   const enabledAgentIds = useEnabledAgentIds();
   const settings = useSettings();
   // "Custom…" in a model or agent menu opens an inline field under that menu, not a prompt.
+  const [advancedAgentExpanded, setAdvancedAgentExpanded] = React.useState(false);
   const [customEntry, setCustomEntry] = React.useState<null | 'agentId' | 'chatModelId' | 'commitModelId'>(null);
   const [openMenu, setOpenMenu] = React.useState<
     | null
     | 'mediatorAgentId'
     | 'providerChatAgentSelection'
-    | 'mediatorResumabilityMode'
-    | 'mediatorReplayStrategy'
     | 'mediatorChatModelId'
     | 'mediatorCommitModelId'
   >(null);
@@ -76,10 +103,23 @@ export function LocalConversationSection(props: {
   const voice = voiceSettingsParse(props.voice);
   const cfg = readLocalConversationVoiceSettings(voice);
   const hasConfiguredProviderChat = cfg.agent.providerChat?.status === 'configured';
-  const executionMachine = voice.executionMachine;
+  const executionMachine = useVoiceExecutionMachinePresentation();
   const enabled = resolveVoiceProviderIdFromSettings(voice) === 'local_conversation';
-  const machines = useAllMachines();
-  const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
+  const customAgentRequested = useSettingRevealRequested([VOICE_CONVERSATIONS_SETTINGS.settings.customAgent]);
+  const customChatModelRequested = useSettingRevealRequested([VOICE_CONVERSATIONS_SETTINGS.settings.chatModelId]);
+  const customCommitModelRequested = useSettingRevealRequested([VOICE_CONVERSATIONS_SETTINGS.settings.commitModelId]);
+  React.useEffect(() => {
+    if (customAgentRequested && enabled && cfg.conversationMode === 'agent'
+      && !hasConfiguredProviderChat && cfg.agent.agentSource === 'agent') {
+      setCustomEntry('agentId');
+    }
+  }, [customAgentRequested, enabled, cfg.conversationMode, hasConfiguredProviderChat, cfg.agent.agentSource]);
+  React.useEffect(() => {
+    if (!enabled || cfg.conversationMode !== 'agent' || hasConfiguredProviderChat) return;
+    if (customChatModelRequested && cfg.agent.chatModelSource === 'custom') setCustomEntry('chatModelId');
+    if (customCommitModelRequested && cfg.agent.commitModelSource === 'custom') setCustomEntry('commitModelId');
+  }, [customChatModelRequested, customCommitModelRequested, enabled, cfg.conversationMode,
+    hasConfiguredProviderChat, cfg.agent.chatModelSource, cfg.agent.commitModelSource]);
 
   const selectedAgentIdForDropdown = React.useMemo(() => {
     const raw = String(cfg.agent.agentId ?? '').trim();
@@ -96,17 +136,7 @@ export function LocalConversationSection(props: {
   }, [cfg.agent.agentId, cfg.agent.agentSource]);
   const effectiveAgentIdForModelOptions = selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID;
 
-  const preflightMachineId = React.useMemo(() => {
-    if (executionMachine.mode === 'fixed') {
-      const machineId = String(executionMachine.machineId ?? '').trim();
-      return machineId.length > 0 ? machineId : null;
-    }
-
-    return resolvePreferredMachineId({
-      machines,
-      recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
-    });
-  }, [executionMachine.machineId, executionMachine.mode, machines, recentMachinePaths]);
+  const preflightMachineId = executionMachine.machineId;
 
   const capabilityServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
@@ -188,6 +218,7 @@ export function LocalConversationSection(props: {
     runtimeCarrierAgentId: effectiveAgentIdForModelOptions as AgentId,
     selectedMachineId: preflightMachineId,
     capabilityServerId,
+    enabled: Boolean(preflightMachineId),
   });
 
   const selectableModelMenuItems = React.useMemo(() => {
@@ -229,13 +260,6 @@ export function LocalConversationSection(props: {
     },
   ], []);
 
-  const providerResumeSupportedByAgent = React.useMemo(() => {
-    if (!enabled) return true;
-    if (cfg.agent.agentSource !== 'agent') return true;
-    const agentId = String(cfg.agent.agentId ?? '').trim();
-    if (!agentId) return false;
-    return canAgentResume(agentId, { accountSettings: settings as any });
-  }, [cfg.agent.agentId, cfg.agent.agentSource, enabled, settings]);
 
   if (!enabled) return null;
 
@@ -246,40 +270,9 @@ export function LocalConversationSection(props: {
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
   const setStreaming = (patch: Partial<typeof cfg.streaming>) => setCfg({ streaming: { ...cfg.streaming, ...patch } });
 
-  const parsedStt = parseLocalVoiceSttSettings(cfg.stt);
-  const parsedTts = parseLocalVoiceTtsSettings(cfg.tts);
-  const sttProvider = parsedStt.provider;
-
-  // Canonical per-kind default pack id. The daemon-local model catalog reuses the
-  // existing local-neural `assetId` field as the selected-default selector rather
-  // than introducing a parallel settings key.
-  const selectedSttPackId = parsedStt.localNeural?.assetId ?? null;
-  const selectedTtsPackId = parsedTts.localNeural?.assetId ?? null;
-
-  const selectModelDefault = (kind: 'stt_sherpa' | 'tts_sherpa', packId: string) => {
-    if (kind === 'stt_sherpa') {
-      setCfg({ stt: { ...parsedStt, localNeural: { ...parsedStt.localNeural, assetId: packId } } });
-      return;
-    }
-    setCfg({ tts: { ...parsedTts, localNeural: { ...parsedTts.localNeural, assetId: packId } } });
-  };
 
   return (
     <>
-      <ItemGroup title={t('settingsVoice.local.title')} description={t('settingsVoice.local.footer')}>
-        <SegmentedChoiceItem
-          title={t('settingsVoice.local.conversationMode')}
-          subtitleLines={0}
-          testIDPrefix="settings.voice.local.conversationMode"
-          value={cfg.conversationMode}
-          onChange={(next) => setCfg({ conversationMode: next })}
-          options={[
-            { id: 'agent', label: t('settingsFeatures.expVoiceAgent'), description: t('settingsVoice.local.conversation.mode.voiceAgentSubtitle') },
-            { id: 'direct_session', label: t('settingsVoice.local.conversation.mode.directTitle'), description: t('settingsVoice.local.conversation.mode.directSubtitle') },
-          ]}
-        />
-      </ItemGroup>
-
       <LocalVoiceSttGroup
         cfgStt={cfg.stt}
         setStt={(next) => setCfg({ stt: next })}
@@ -287,301 +280,54 @@ export function LocalConversationSection(props: {
         setVoice={props.setVoice}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-      />
+      >
+        <VoiceHearControls
+          handsFree={cfg.handsFree}
+          handsFreeSupported={resolveVoiceSttCapturePlan({ voice }).provider !== 'recorded_audio'}
+          setHandsFree={(handsFree) => setCfg({ handsFree })}
+          bargeInEnabled={parseLocalVoiceTtsSettings(cfg.tts).bargeInEnabled}
+          setBargeInEnabled={(bargeInEnabled) => setCfg({ tts: { ...parseLocalVoiceTtsSettings(cfg.tts), bargeInEnabled } })}
+          testIDPrefix="settings.voice.local"
+        />
+      </LocalVoiceSttGroup>
 
-      {sttProvider === 'device' ? (
-        <ItemGroup title={t('settingsVoice.local.conversation.handsFree.title')}>
-          <Item
-            title={t('settingsVoice.local.conversation.handsFree.enableTitle')}
-            rightElement={
-              <Switch
-                accessibilityLabel={t('settingsVoice.local.conversation.handsFree.enableTitle')}
-                value={cfg.handsFree.enabled}
-                onValueChange={(v) => setCfg({ handsFree: { ...cfg.handsFree, enabled: v } })}
-              />
-            }
-          />
-          <FieldValueItem
-            title={t('settingsVoice.local.conversation.handsFree.silenceTitle')}
-            fieldTestID="settings.voice.local.handsFree.silenceMs.field"
-            kind="integer"
-            value={String(cfg.handsFree.endpointing.silenceMs)}
-            onCommit={(draft) => {
-              const next = Math.max(0, Math.min(5000, Math.floor(Number(draft))));
-              setCfg({ handsFree: { ...cfg.handsFree, endpointing: { ...cfg.handsFree.endpointing, silenceMs: next } } });
-              return String(next);
-            }}
-          />
-          <FieldValueItem
-            title={t('settingsVoice.local.conversation.handsFree.minSpeechTitle')}
-            fieldTestID="settings.voice.local.handsFree.minSpeechMs.field"
-            kind="integer"
-            value={String(cfg.handsFree.endpointing.minSpeechMs)}
-            onCommit={(draft) => {
-              const next = Math.max(0, Math.min(5000, Math.floor(Number(draft))));
-              setCfg({ handsFree: { ...cfg.handsFree, endpointing: { ...cfg.handsFree.endpointing, minSpeechMs: next } } });
-              return String(next);
-            }}
-          />
-        </ItemGroup>
-      ) : null}
-
-      <LocalVoiceTtsGroup
-        cfgTts={cfg.tts}
-        setTts={(next) => setCfg({ tts: next })}
-        voice={voice}
-        setVoice={props.setVoice}
-        networkTimeoutMs={cfg.networkTimeoutMs}
-        popoverBoundaryRef={props.popoverBoundaryRef}
-        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-      />
-
-      <DaemonVoiceModelCatalogSection
-        selectedSttPackId={selectedSttPackId}
-        selectedTtsPackId={selectedTtsPackId}
-        onSelectDefault={selectModelDefault}
-        catalogController={props.daemonModelCatalog}
-      />
-
+      <ItemGroup
+        title={t('settingsVoice.pages.conversations.thinkTitle')}
+        description={t('settingsVoice.pages.conversations.thinkDescription')}
+      >
+        <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.conversationMode}>
+        <>
+        <SegmentedChoiceItem
+          title={t(VOICE_CONVERSATIONS_SETTINGS.settings.conversationMode.titleKey)}
+          subtitleLines={0}
+          testIDPrefix="settings.voice.local.conversationMode"
+          value={cfg.conversationMode}
+          onChange={(next) => {
+            if (next === 'agent' && !voiceAgentEnabled) return;
+            setCfg({ conversationMode: next });
+          }}
+          options={[
+            { id: 'direct_session', label: t('settingsVoice.pages.conversations.talkToSession'), description: t('settingsVoice.pages.conversations.talkToSessionDescription') },
+            { id: 'agent', label: t('settingsVoice.pages.conversations.talkToAgent'), description: t('settingsVoice.pages.conversations.talkToAgentDescription'), unavailableReason: voiceAgentUnavailableReason },
+          ]}
+        />
+        {voiceAgentAvailability === 'policy_disabled' ? <Item
+          title={t('settingsFeatures.expVoiceAgent')}
+          subtitle={voiceAgentUnavailableReason}
+          subtitleLines={0}
+          showChevron={false}
+          accessoryLayout="adaptive"
+          rightElementOutsidePressable
+          rightElement={<RoundButton title={t('settingsVoice.pages.conversations.turnOnVoiceAgent')}
+            testID="settings.voice.local.turnOnVoiceAgent" display="secondary" size="small"
+            onPress={() => router.push(SETTINGS_ROUTES.features)} />}
+        /> : null}
+        </>
+        </SettingAnchor>
       {cfg.conversationMode === 'agent' ? (
         <>
-          <ItemGroup title={t('settingsFeatures.expVoiceAgent')}>
-            <SegmentedChoiceItem
-              title={t('settingsVoice.local.conversation.persistence.title')}
-              subtitleLines={0}
-              testIDPrefix="settings.voice.local.mediatorTranscriptPersistence"
-              value={cfg.agent.transcript?.persistenceMode ?? 'ephemeral'}
-              onChange={(next) => setAgent({ transcript: { ...(cfg.agent.transcript ?? {}), persistenceMode: next } })}
-              options={[
-                { id: 'ephemeral', label: t('settingsVoice.local.conversation.persistence.ephemeralTitle'), description: t('settingsVoice.local.conversation.persistence.ephemeralSubtitle') },
-                { id: 'persistent', label: t('settingsVoice.local.conversation.persistence.persistentTitle'), description: t('settingsVoice.local.conversation.persistence.persistentSubtitle') },
-              ]}
-            />
-
-            {(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? (
-              <>
-                <DropdownMenu
-                  open={openMenu === 'mediatorResumabilityMode'}
-                  onOpenChange={(next) => setOpenMenu(next ? 'mediatorResumabilityMode' : null)}
-                  variant="selectable"
-                  search={false}
-                  selectedId={cfg.agent.resumabilityMode ?? 'replay'}
-                  showCategoryTitles={false}
-                  matchTriggerWidth={true}
-                  connectToTrigger={true}
-                  rowKind="item"
-                  popoverBoundaryRef={props.popoverBoundaryRef}
-                  itemTrigger={{
-                    title: t('settingsVoice.local.conversation.resumability.modeTitle'),
-                    subtitleFormatter: () => {
-                      const mode = cfg.agent.resumabilityMode ?? 'replay';
-                      if (mode !== 'provider_resume') return t('settingsVoice.local.conversation.resumability.replaySubtitle');
-                      if (!voiceAgentEnabled) return t('settingsVoice.local.conversation.resumability.disabledVoiceAgent');
-                      if (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent) return t('settingsVoice.local.conversation.resumability.disabledAgentNoProviderResume');
-                      return t('settingsVoice.local.conversation.resumability.providerResumeSubtitle');
-                    },
-                    detailFormatter: () => ((cfg.agent.resumabilityMode ?? 'replay') === 'provider_resume'
-                      ? t('settingsVoice.local.conversation.resumability.providerResumeTitle')
-                      : t('settingsVoice.local.conversation.resumability.replayTitle')),
-                  }}
-                  items={[
-                    {
-                      id: 'replay',
-                      title: t('settingsVoice.local.conversation.resumability.replayTitle'),
-                      subtitle: t('settingsVoice.local.conversation.resumability.replaySubtitle'),
-                      icon: <Icon name="clock" size={20} color={theme.colors.text.secondary} />,
-                    },
-                    {
-                      id: 'provider_resume',
-                      title: t('settingsVoice.local.conversation.resumability.providerResumeTitle'),
-                      subtitle: !voiceAgentEnabled
-                        ? t('settingsVoice.local.conversation.resumability.disabledVoiceAgent')
-                        : cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent
-                            ? t('settingsVoice.local.conversation.resumability.disabledAgentNoProviderResume')
-                            : t('settingsVoice.local.conversation.resumability.providerResumeSubtitle'),
-                      disabled: !voiceAgentEnabled || (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent),
-                      icon: <Icon name="arrow-clockwise" size={20} color={theme.colors.text.secondary} />,
-                    },
-                  ]}
-                  onSelect={(id) => {
-                    setAgent({ resumabilityMode: id as any });
-                    setOpenMenu(null);
-                  }}
-                />
-
-                {(cfg.agent.resumabilityMode ?? 'replay') === 'provider_resume' ? (
-                  <Item
-                    title={t('settingsVoice.local.conversation.providerResumeFallback.title')}
-                    subtitle={t('settingsVoice.local.conversation.providerResumeFallback.subtitle')}
-                    rightElement={
-                      <Switch
-                        accessibilityLabel={t('settingsVoice.local.conversation.providerResumeFallback.title')}
-                        value={cfg.agent.providerResume?.fallbackToReplay !== false}
-                        onValueChange={(v) => setAgent({ providerResume: { ...(cfg.agent.providerResume ?? {}), fallbackToReplay: v } })}
-                      />
-                    }
-                  />
-                ) : null}
-
-                <DropdownMenu
-                  open={openMenu === 'mediatorReplayStrategy'}
-                  onOpenChange={(next) => setOpenMenu(next ? 'mediatorReplayStrategy' : null)}
-                  variant="selectable"
-                  search={false}
-                  selectedId={cfg.agent.replay?.strategy ?? 'recent_messages'}
-                  showCategoryTitles={false}
-                  matchTriggerWidth={true}
-                  connectToTrigger={true}
-                  rowKind="item"
-                  popoverBoundaryRef={props.popoverBoundaryRef}
-                  itemTrigger={{
-                    title: t('settingsSession.replayResume.strategyTitle'),
-                  }}
-                  items={[
-                    {
-                      id: 'recent_messages',
-                      title: t('settingsSession.replayResume.strategy.recentTitle'),
-                      subtitle: t('settingsSession.replayResume.strategy.recentSubtitle'),
-                      icon: <Icon name="chats-circle" size={20} color={theme.colors.text.secondary} />,
-                    },
-                    {
-                      id: 'summary_plus_recent',
-                      title: t('settingsSession.replayResume.strategy.summaryRecentTitle'),
-                      subtitle: t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
-                      icon: <Icon name="file-text" size={20} color={theme.colors.text.secondary} />,
-                    },
-                  ]}
-                  onSelect={(id) => {
-                    setAgent({ replay: { ...(cfg.agent.replay ?? {}), strategy: id as any } });
-                    setOpenMenu(null);
-                  }}
-                />
-
-                <FieldValueItem
-                  title={t('settingsSession.replayResume.recentMessagesTitle')}
-                  subtitle={t('settingsVoice.local.conversation.replayRecentMessagesPromptBody')}
-                  fieldTestID="settings.voice.local.replay.recentMessagesCount.field"
-                  kind="integer"
-                  value={String(cfg.agent.replay?.recentMessagesCount ?? 16)}
-                  onCommit={(draft) => {
-                    const next = Math.max(1, Math.min(100, Math.floor(Number(draft))));
-                    setAgent({ replay: { ...(cfg.agent.replay ?? {}), recentMessagesCount: next } });
-                    return String(next);
-                  }}
-                />
-              </>
-            ) : null}
-
-            <Item
-              title={t('settingsVoice.local.conversation.prewarm.title')}
-              subtitle={t('settingsVoice.local.conversation.prewarm.subtitle')}
-              rightElement={
-                <Switch
-                  accessibilityLabel={t('settingsVoice.local.conversation.prewarm.title')}
-                  value={cfg.agent.prewarmOnConnect === true}
-                  onValueChange={(v) => setAgent({ prewarmOnConnect: v })}
-                />
-              }
-            />
-
-            <SegmentedChoiceItem
-              title={t('settingsVoice.local.conversation.welcome.title')}
-              subtitleLines={0}
-              testIDPrefix="settings.voice.local.mediatorWelcomeMode"
-              value={resolveVoiceWelcomeSelection(voice.welcome)}
-              onChange={(next) => props.setVoice(applyVoiceWelcomeSelection(voice, next))}
-              options={[
-                { id: 'off', label: t('settingsVoice.local.conversation.welcome.offTitle'), description: t('settingsVoice.local.conversation.welcome.offSubtitle') },
-                { id: 'immediate', label: t('settingsVoice.local.conversation.welcome.immediateTitle'), description: t('settingsVoice.local.conversation.welcome.immediateSubtitle') },
-                { id: 'on_first_turn', label: t('settingsVoice.local.conversation.welcome.onFirstTurnTitle'), description: t('settingsVoice.local.conversation.welcome.onFirstTurnSubtitle') },
-              ]}
-            />
-
-              {(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? (
-                <Item
-                  title={t('settingsVoice.local.conversation.resetVoiceAgent.title')}
-                  subtitle={t('settingsVoice.local.conversation.resetVoiceAgent.subtitle')}
-                  destructive
-                onPress={() => {
-                  fireAndForget((async () => {
-                    const confirmed = await Modal.confirm(
-                      t('settingsVoice.local.conversation.resetVoiceAgent.title'),
-                      t('settingsVoice.local.conversation.resetVoiceAgent.confirmBody'),
-                      { confirmText: t('common.reset') },
-                    );
-                    if (!confirmed) return;
-                    await resetGlobalVoiceAgentPersistence();
-                  })(), { tag: 'LocalConversationSection.confirm.resetVoiceAgent' });
-                  }}
-                />
-              ) : null}
-            </ItemGroup>
-
-            <ItemGroup title={t('settingsVoice.local.conversation.agentSettings.title')}>
-              <Item
-                title={t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle')}
-                subtitle={
-                  cfg.agent.stayInVoiceHome
-                    ? t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeEnabledSubtitle')
-                    : t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeDisabledSubtitle')
-                }
-                rightElement={
-                  <Switch
-                    accessibilityLabel={t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle')}
-                    value={cfg.agent.stayInVoiceHome === true}
-                    onValueChange={(v) => setAgent({ stayInVoiceHome: v })}
-                  />
-                }
-                rightElementOutsidePressable
-                onPress={() => setAgent({ stayInVoiceHome: cfg.agent.stayInVoiceHome !== true })}
-                showChevron={false}
-                selected={false}
-              />
-
-              <Item
-                title={t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle')}
-                subtitle={
-                  cfg.agent.teleportEnabled === false
-                    ? t('settingsVoice.local.conversation.agentMachine.teleportDisabledSubtitle')
-                    : t('settingsVoice.local.conversation.agentMachine.teleportEnabledSubtitle')
-                }
-                rightElement={
-                  <Switch
-                    accessibilityLabel={t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle')}
-                    value={cfg.agent.teleportEnabled !== false}
-                    onValueChange={(v) => setAgent({ teleportEnabled: v })}
-                  />
-                }
-                rightElementOutsidePressable
-                onPress={() => setAgent({ teleportEnabled: cfg.agent.teleportEnabled === false })}
-                showChevron={false}
-                selected={false}
-              />
-
-              <SegmentedChoiceItem
-                title={t('settingsVoice.local.conversation.rootSessionPolicy.title')}
-                subtitleLines={0}
-                testIDPrefix="settings.voice.local.mediatorRootSessionPolicy"
-                value={cfg.agent.rootSessionPolicy === 'keep_warm' ? 'keep_warm' : 'single'}
-                onChange={(next) => setAgent({ rootSessionPolicy: next })}
-                options={rootSessionPolicyOptions}
-              />
-
-              {cfg.agent.rootSessionPolicy === 'keep_warm' ? (
-                <FieldValueItem
-                  title={t('settingsVoice.local.conversation.rootSessionPolicy.maxWarmRootsTitle')}
-                  subtitle={t('settingsVoice.local.conversation.rootSessionPolicy.maxWarmRootsSubtitle')}
-                  fieldTestID="settings.voice.local.maxWarmRoots.field"
-                  kind="integer"
-                  value={String(cfg.agent.maxWarmRoots ?? 3)}
-                  onCommit={(draft) => {
-                    const next = Math.max(1, Math.min(10, Math.floor(Number(draft))));
-                    setAgent({ maxWarmRoots: next });
-                    return String(next);
-                  }}
-                />
-              ) : null}
         {cfg.agent.providerChat?.status === 'needs_selection' ? (
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.agent}>
           <DropdownMenu
             open={openMenu === 'providerChatAgentSelection'}
             onOpenChange={(next) => setOpenMenu(next ? 'providerChatAgentSelection' : null)}
@@ -604,24 +350,19 @@ export function LocalConversationSection(props: {
               icon: <Icon name="person" size={20} color={theme.colors.text.secondary} />,
             }]}
             onSelect={(id) => {
-              const providerChat = completeLegacyVoiceOpenAiChatAgentSelection(
-                cfg.agent.providerChat as Extract<NonNullable<typeof cfg.agent.providerChat>, { status: 'needs_selection' }>,
-                String(id),
-              );
-              if (!providerChat) return;
-              setAgent({
-                agentSource: 'agent',
-                agentId: LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
-                providerChat,
-              });
+              const nextVoice = applyVoiceAgentSelection(voice, { kind: 'legacy_provider_chat', agentId: String(id) });
+              if (nextVoice === voice) return;
+              props.setVoice(nextVoice);
               setOpenMenu(null);
             }}
           />
+          </SettingAnchor>
         ) : null}
         {!hasConfiguredProviderChat ? (
           <>
+        <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.agentSource}>
         <SegmentedChoiceItem
-          title={t('settingsVoice.local.mediatorAgentSource')}
+          title={t(VOICE_CONVERSATIONS_SETTINGS.settings.agentSource.titleKey)}
           subtitleLines={0}
           testIDPrefix="settings.voice.local.mediatorAgentSource"
           value={cfg.agent.agentSource}
@@ -631,8 +372,10 @@ export function LocalConversationSection(props: {
             { id: 'agent', label: t('settingsVoice.local.conversation.agentSource.fixedAgentTitle'), description: t('settingsVoice.local.conversation.agentSource.fixedAgentSubtitle') },
           ]}
         />
+        </SettingAnchor>
         {cfg.agent.agentSource === 'agent' ? (
           <>
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.agent}>
           <DropdownMenu
             open={openMenu === 'mediatorAgentId'}
             onOpenChange={(next) => setOpenMenu(next ? 'mediatorAgentId' : null)}
@@ -659,12 +402,15 @@ export function LocalConversationSection(props: {
               }
 
               const next = String(id ?? '').trim();
-              if (!next) return;
-              setAgent({ agentId: next });
+              const entry = resolvedAgentEntries.find((candidate) => candidate.agentId === next);
+              if (!entry) return;
+              props.setVoice(applyVoiceAgentSelection(voice, { kind: 'catalog', entry }));
               setOpenMenu(null);
             }}
           />
+          </SettingAnchor>
           {customEntry === 'agentId' ? (
+            <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.customAgent}>
             <FieldValueItem
               title={t('settingsVoice.local.mediatorAgentId')}
               subtitle={t('settingsVoice.local.mediatorAgentIdSubtitle')}
@@ -674,33 +420,37 @@ export function LocalConversationSection(props: {
               value={String(cfg.agent.agentId ?? '')}
               onCommit={(draft) => {
                 setCustomEntry(null);
-                if (!draft) return String(cfg.agent.agentId ?? '');
-                setAgent({ agentId: draft });
+                const nextVoice = applyVoiceAgentSelection(voice, { kind: 'custom', agentId: draft });
+                if (nextVoice === voice) return String(cfg.agent.agentId ?? '');
+                props.setVoice(nextVoice);
               }}
             />
+            </SettingAnchor>
           ) : null}
           </>
         ) : null}
           </>
         ) : null}
+        <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.permissionIntent}>
         <SegmentedChoiceItem
-          title={t('settingsVoice.local.mediatorPermissionPolicy')}
+          title={t(VOICE_CONVERSATIONS_SETTINGS.settings.permissionIntent.titleKey)}
           subtitleLines={0}
           testIDPrefix="settings.voice.local.mediatorPermissionPolicy"
           value={cfg.agent.permissionIntent}
           onChange={(next) => setAgent({ permissionIntent: next })}
           options={[
-            { id: 'default', label: t('agentInput.permissionMode.default'), description: t('settingsActions.spawnPolicy.permissionCeiling.options.default.subtitle') },
-            { id: 'read-only', label: t('agentInput.permissionMode.readOnly'), description: t('settingsActions.spawnPolicy.permissionCeiling.options.read-only.subtitle') },
-            { id: 'safe-yolo', label: t('agentInput.permissionMode.safeYolo'), description: t('settingsActions.spawnPolicy.permissionCeiling.options.safe-yolo.subtitle') },
-            { id: 'yolo', label: t('agentInput.permissionMode.yolo'), description: t('settingsActions.spawnPolicy.permissionCeiling.options.yolo.subtitle') },
+            { id: 'read-only', label: t('settingsVoice.pages.conversations.itMayReadOnly'), description: t('settingsVoice.pages.conversations.itMayReadOnlyDescription') },
+            { id: 'default', label: t('settingsVoice.pages.conversations.itMayAsk'), description: t('settingsVoice.pages.conversations.itMayAskDescription') },
+            { id: 'safe-yolo', label: t('settingsVoice.pages.conversations.itMaySafe'), description: t('settingsVoice.pages.conversations.itMaySafeDescription') },
+            { id: 'yolo', label: t('settingsVoice.pages.conversations.itMayAnything'), description: t('settingsVoice.pages.conversations.itMayAnythingDescription') },
           ]}
         />
-
+        </SettingAnchor>
         {!hasConfiguredProviderChat ? (
           <>
+        <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.chatModelSource}>
         <SegmentedChoiceItem
-          title={t('settingsVoice.local.mediatorChatModelSource')}
+          title={t(VOICE_CONVERSATIONS_SETTINGS.settings.chatModelSource.titleKey)}
           subtitleLines={0}
           testIDPrefix="settings.voice.local.mediatorChatModelSource"
           value={cfg.agent.chatModelSource}
@@ -710,7 +460,9 @@ export function LocalConversationSection(props: {
             { id: 'custom', label: t('settingsVoice.local.mediatorChatModelSourceCustom'), description: t('settingsVoice.local.conversation.chatModelSource.customSubtitle') },
           ]}
         />
+        </SettingAnchor>
         {cfg.agent.chatModelSource === 'custom' ? (
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.chatModelId}>
           <>
           <DropdownMenu
             open={openMenu === 'mediatorChatModelId'}
@@ -770,179 +522,295 @@ export function LocalConversationSection(props: {
             />
           ) : null}
           </>
-        ) : null}
-        <SegmentedChoiceItem
-          title={t('settingsVoice.local.mediatorCommitModelSource')}
-          subtitleLines={0}
-          testIDPrefix="settings.voice.local.mediatorCommitModelSource"
-          value={cfg.agent.commitModelSource}
-          onChange={(next) => setAgent({ commitModelSource: next })}
-          options={[
-            { id: 'chat', label: t('settingsVoice.local.mediatorCommitModelSourceChat'), description: t('settingsVoice.local.conversation.commitModelSource.chatSubtitle') },
-            { id: 'session', label: t('settingsVoice.local.mediatorCommitModelSourceSession'), description: t('settingsVoice.local.conversation.commitModelSource.sessionSubtitle') },
-            { id: 'custom', label: t('settingsVoice.local.mediatorCommitModelSourceCustom'), description: t('settingsVoice.local.conversation.commitModelSource.customSubtitle') },
-          ]}
-        />
-        {cfg.agent.commitModelSource === 'custom' ? (
-          <>
-          <DropdownMenu
-            open={openMenu === 'mediatorCommitModelId'}
-            onOpenChange={(next) => setOpenMenu(next ? 'mediatorCommitModelId' : null)}
-            variant="selectable"
-            search={true}
-            searchPlaceholder={t('settingsVoice.local.conversation.searchModelsPlaceholder')}
-            selectedId={String(cfg.agent.commitModelId ?? '').trim()}
-            showCategoryTitles={false}
-            matchTriggerWidth={true}
-            connectToTrigger={true}
-            rowKind="item"
-              popoverBoundaryRef={props.popoverBoundaryRef}
-              itemTrigger={{
-                title: t('settingsVoice.local.conversation.commitModelId.title'),
-                subtitleFormatter: () => (
-                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.subtitle
-                  ?? t('settingsVoice.local.conversation.commitModelId.subtitle')
-                ),
-                detailFormatter: () => (
-                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.title
-                  ?? String(cfg.agent.commitModelId)
-                ),
-              }}
-            items={modelIdMenuItems}
-            onSelect={(id) => {
-              if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                preflightModels.probe.onRefresh?.();
-                setOpenMenu(null);
-                return;
-              }
-              if (id === '__custom__') {
-                setOpenMenu(null);
-                setCustomEntry('commitModelId');
-                return;
-              }
-
-              const next = String(id ?? '').trim();
-              if (!next) return;
-              setAgent({ commitModelId: next });
-              setOpenMenu(null);
-            }}
-          />
-          {customEntry === 'commitModelId' ? (
-            <FieldValueItem
-              title={t('settingsVoice.local.conversation.commitModelId.title')}
-              subtitle={t('settingsVoice.local.conversation.commitModelId.subtitle')}
-              fieldTestID="settings.voice.local.commitModelId.custom.field"
-              monospace
-              autoFocus
-              value={String(cfg.agent.commitModelId ?? '')}
-              onCommit={(draft) => {
-                setCustomEntry(null);
-                if (!draft) return String(cfg.agent.commitModelId ?? '');
-                setAgent({ commitModelId: draft });
-              }}
-            />
-          ) : null}
-          </>
+          </SettingAnchor>
         ) : null}
           </>
         ) : null}
-        {voiceAgentEnabled ? (
-          <Item
-            title={t('settingsVoice.local.conversation.commitIsolation.title')}
-            subtitle={t('settingsVoice.local.conversation.commitIsolation.subtitle')}
-            rightElement={
-              <Switch
-                accessibilityLabel={t('settingsVoice.local.conversation.commitIsolation.title')}
-                value={cfg.agent.commitIsolation === true}
-                onValueChange={(v) => setAgent({ commitIsolation: v })}
-              />
-            }
-            rightElementOutsidePressable
-            onPress={() => {
-              setAgent({ commitIsolation: cfg.agent.commitIsolation !== true });
-            }}
-            showChevron={false}
-            selected={false}
-          />
-        ) : null}
-        <FieldValueItem
-          title={t('settingsVoice.local.mediatorIdleTtl')}
-          subtitle={t('settingsVoice.local.mediatorIdleTtlDescription')}
-          fieldTestID="settings.voice.local.idleTtlSeconds.field"
-          kind="integer"
-          value={String(cfg.agent.idleTtlSeconds)}
-          onCommit={(draft) => {
-            const next = Math.max(60, Math.min(21600, Math.floor(Number(draft))));
-            setAgent({ idleTtlSeconds: next });
-            return String(next);
-          }}
-        />
+        <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.verbosity}>
         <SegmentedChoiceItem
-          title={t('settingsVoice.local.mediatorVerbosity')}
+          title={t(VOICE_CONVERSATIONS_SETTINGS.settings.verbosity.titleKey)}
           subtitleLines={0}
           testIDPrefix="settings.voice.local.mediatorVerbosity"
           value={cfg.agent.verbosity}
           onChange={(next) => setAgent({ verbosity: next })}
           options={[
-            { id: 'short', label: t('settingsVoice.local.mediatorVerbosityShort'), description: t('settingsVoice.local.conversation.verbosity.shortSubtitle') },
-            { id: 'balanced', label: t('settingsVoice.local.mediatorVerbosityBalanced'), description: t('settingsVoice.local.conversation.verbosity.balancedSubtitle') },
+            { id: 'short', label: t('settingsVoice.pages.conversations.repliesShort'), description: t('settingsVoice.local.conversation.verbosity.shortSubtitle') },
+            { id: 'balanced', label: t('settingsVoice.pages.conversations.repliesBalanced'), description: t('settingsVoice.local.conversation.verbosity.balancedSubtitle') },
           ]}
         />
-      </ItemGroup>
+        </SettingAnchor>
+            <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.greeting}>
+            <VoiceGreetingItem
+              value={resolveVoiceWelcomeSelection(voice.welcome)}
+              onChange={(next) => props.setVoice(applyVoiceWelcomeSelection(voice, next))}
+            />
+            </SettingAnchor>
+        <SettingAnchor settings={ADVANCED_AGENT_SETTINGS}>
+          <ExpandableItem
+            testID="settings.voice.local.advancedAgent"
+            expanded={advancedAgentExpanded}
+            onExpandedChange={setAdvancedAgentExpanded}
+            header={(state) => (
+              <Item
+                testID="settings.voice.local.advancedAgent.header"
+                {...state.headerProps}
+                title={t('settingsVoice.pages.conversations.advancedAgentTitle')}
+                subtitle={t('settingsVoice.pages.conversations.advancedAgentDescription')}
+                rightElement={<Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={14} color={theme.colors.text.secondary} />}
+                showChevron={false}
+              />
+            )}
+          >
+                <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy}>
+                <SegmentedChoiceItem
+                  title={t(VOICE_CONVERSATIONS_SETTINGS.settings.rootSessionPolicy.titleKey)}
+                  subtitleLines={0}
+                  testIDPrefix="settings.voice.local.mediatorRootSessionPolicy"
+                  value={cfg.agent.rootSessionPolicy === 'keep_warm' ? 'keep_warm' : 'single'}
+                  onChange={(next) => setAgent({ rootSessionPolicy: next })}
+                  options={rootSessionPolicyOptions}
+                />
+                </SettingAnchor>
 
-      <ItemGroup title={t('settingsVoice.local.conversation.streaming.title')}>
-        <Item
-          title={t('settingsVoice.local.conversation.streaming.enableTitle')}
-          subtitle={t('settingsVoice.local.conversation.streaming.enableSubtitle')}
-          rightElement={(
-            <Switch
-              accessibilityLabel={t('settingsVoice.local.conversation.streaming.enableTitle')}
-              value={cfg.streaming.enabled}
-              onValueChange={(v) => setStreaming({ enabled: v })}
+                {cfg.agent.rootSessionPolicy === 'keep_warm' ? (
+                  <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots}>
+                  <FieldValueItem
+                    title={t(VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots.titleKey)}
+                    subtitle={t('settingsVoice.local.conversation.rootSessionPolicy.maxWarmRootsSubtitle')}
+                    fieldTestID="settings.voice.local.maxWarmRoots.field"
+                    kind="integer"
+                    value={String(cfg.agent.maxWarmRoots ?? 3)}
+                    onCommit={(draft) => {
+                      const next = Math.max(1, Math.min(10, Math.floor(Number(draft))));
+                      setAgent({ maxWarmRoots: next });
+                      return String(next);
+                    }}
+                  />
+                  </SettingAnchor>
+                ) : null}
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds}>
+          <FieldValueItem
+            title={t(VOICE_CONVERSATIONS_SETTINGS.settings.idleTtlSeconds.titleKey)}
+            subtitle={t('settingsVoice.local.mediatorIdleTtlDescription')}
+            fieldTestID="settings.voice.local.idleTtlSeconds.field"
+            kind="integer"
+            value={String(cfg.agent.idleTtlSeconds)}
+            onCommit={(draft) => {
+              const next = Math.max(60, Math.min(21600, Math.floor(Number(draft))));
+              setAgent({ idleTtlSeconds: next });
+              return String(next);
+            }}
+          />
+          </SettingAnchor>
+              <SettingRow
+                setting={VOICE_CONVERSATIONS_SETTINGS.settings.prewarmOnConnect}
+                subtitle={t('settingsVoice.local.conversation.prewarm.subtitle')}
+                rightElement={
+                  <Switch
+                    accessibilityLabel={t('settingsVoice.local.conversation.prewarm.title')}
+                    value={cfg.agent.prewarmOnConnect === true}
+                    onValueChange={(v) => setAgent({ prewarmOnConnect: v })}
+                  />
+                }
+              />
+                <SettingRow
+                  setting={VOICE_CONVERSATIONS_SETTINGS.settings.teleportEnabled}
+                  subtitle={
+                    cfg.agent.teleportEnabled === false
+                      ? t('settingsVoice.local.conversation.agentMachine.teleportDisabledSubtitle')
+                      : t('settingsVoice.local.conversation.agentMachine.teleportEnabledSubtitle')
+                  }
+                  rightElement={
+                    <Switch
+                      accessibilityLabel={t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle')}
+                      value={cfg.agent.teleportEnabled !== false}
+                      onValueChange={(v) => setAgent({ teleportEnabled: v })}
+                    />
+                  }
+                  rightElementOutsidePressable
+                  onPress={() => setAgent({ teleportEnabled: cfg.agent.teleportEnabled === false })}
+                  showChevron={false}
+                  selected={false}
+                />
+                <SettingRow
+                  setting={VOICE_CONVERSATIONS_SETTINGS.settings.stayInVoiceHome}
+                  subtitle={
+                    cfg.agent.stayInVoiceHome
+                      ? t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeEnabledSubtitle')
+                      : t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeDisabledSubtitle')
+                  }
+                  rightElement={
+                    <Switch
+                      accessibilityLabel={t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle')}
+                      value={cfg.agent.stayInVoiceHome === true}
+                      onValueChange={(v) => setAgent({ stayInVoiceHome: v })}
+                    />
+                  }
+                  rightElementOutsidePressable
+                  onPress={() => setAgent({ stayInVoiceHome: cfg.agent.stayInVoiceHome !== true })}
+                  showChevron={false}
+                  selected={false}
+                />
+
+          {!hasConfiguredProviderChat ? (
+            <>
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.commitModelSource}>
+          <SegmentedChoiceItem
+            title={t(VOICE_CONVERSATIONS_SETTINGS.settings.commitModelSource.titleKey)}
+            subtitleLines={0}
+            testIDPrefix="settings.voice.local.mediatorCommitModelSource"
+            value={cfg.agent.commitModelSource}
+            onChange={(next) => setAgent({ commitModelSource: next })}
+            options={[
+              { id: 'chat', label: t('settingsVoice.local.mediatorCommitModelSourceChat'), description: t('settingsVoice.local.conversation.commitModelSource.chatSubtitle') },
+              { id: 'session', label: t('settingsVoice.local.mediatorCommitModelSourceSession'), description: t('settingsVoice.local.conversation.commitModelSource.sessionSubtitle') },
+              { id: 'custom', label: t('settingsVoice.local.mediatorCommitModelSourceCustom'), description: t('settingsVoice.local.conversation.commitModelSource.customSubtitle') },
+            ]}
+          />
+          </SettingAnchor>
+          {cfg.agent.commitModelSource === 'custom' ? (
+            <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.commitModelId}>
+            <>
+            <DropdownMenu
+              open={openMenu === 'mediatorCommitModelId'}
+              onOpenChange={(next) => setOpenMenu(next ? 'mediatorCommitModelId' : null)}
+              variant="selectable"
+              search={true}
+              searchPlaceholder={t('settingsVoice.local.conversation.searchModelsPlaceholder')}
+              selectedId={String(cfg.agent.commitModelId ?? '').trim()}
+              showCategoryTitles={false}
+              matchTriggerWidth={true}
+              connectToTrigger={true}
+              rowKind="item"
+                popoverBoundaryRef={props.popoverBoundaryRef}
+                itemTrigger={{
+                  title: t('settingsVoice.local.conversation.commitModelId.title'),
+                  subtitleFormatter: () => (
+                    modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.subtitle
+                    ?? t('settingsVoice.local.conversation.commitModelId.subtitle')
+                  ),
+                  detailFormatter: () => (
+                    modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.title
+                    ?? String(cfg.agent.commitModelId)
+                  ),
+                }}
+              items={modelIdMenuItems}
+              onSelect={(id) => {
+                if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
+                  preflightModels.probe.onRefresh?.();
+                  setOpenMenu(null);
+                  return;
+                }
+                if (id === '__custom__') {
+                  setOpenMenu(null);
+                  setCustomEntry('commitModelId');
+                  return;
+                }
+
+                const next = String(id ?? '').trim();
+                if (!next) return;
+                setAgent({ commitModelId: next });
+                setOpenMenu(null);
+              }}
             />
-          )}
-        />
-        <Item
-          title={t('settingsVoice.local.conversation.streaming.enableTtsTitle')}
-          subtitle={t('settingsVoice.local.conversation.streaming.enableTtsSubtitle')}
-          rightElement={(
-            <Switch
-              accessibilityLabel={t('settingsVoice.local.conversation.streaming.enableTtsTitle')}
-              value={cfg.streaming.ttsEnabled}
-              onValueChange={(v) => setStreaming({ ttsEnabled: v })}
+            {customEntry === 'commitModelId' ? (
+              <FieldValueItem
+                title={t('settingsVoice.local.conversation.commitModelId.title')}
+                subtitle={t('settingsVoice.local.conversation.commitModelId.subtitle')}
+                fieldTestID="settings.voice.local.commitModelId.custom.field"
+                monospace
+                autoFocus
+                value={String(cfg.agent.commitModelId ?? '')}
+                onCommit={(draft) => {
+                  setCustomEntry(null);
+                  if (!draft) return String(cfg.agent.commitModelId ?? '');
+                  setAgent({ commitModelId: draft });
+                }}
+              />
+            ) : null}
+            </>
+            </SettingAnchor>
+          ) : null}
+            </>
+          ) : null}
+          {voiceAgentEnabled ? (
+            <SettingRow
+              setting={VOICE_CONVERSATIONS_SETTINGS.settings.commitIsolation}
+              subtitle={t('settingsVoice.local.conversation.commitIsolation.subtitle')}
+              rightElement={
+                <Switch
+                  accessibilityLabel={t('settingsVoice.local.conversation.commitIsolation.title')}
+                  value={cfg.agent.commitIsolation === true}
+                  onValueChange={(v) => setAgent({ commitIsolation: v })}
+                />
+              }
+              rightElementOutsidePressable
+              onPress={() => {
+                setAgent({ commitIsolation: cfg.agent.commitIsolation !== true });
+              }}
+              showChevron={false}
+              selected={false}
             />
-          )}
-        />
-        <FieldValueItem
-          title={t('settingsVoice.local.conversation.streaming.ttsChunkCharsTitle')}
-          subtitle={t('settingsVoice.local.conversation.streaming.ttsChunkCharsPromptBody')}
-          fieldTestID="settings.voice.local.streaming.ttsChunkChars.field"
-          kind="integer"
-          value={String(cfg.streaming.ttsChunkChars)}
-          onCommit={(draft) => {
-            const next = Math.max(32, Math.min(2000, Math.floor(Number(draft))));
-            setStreaming({ ttsChunkChars: next });
-            return String(next);
-          }}
-        />
-      </ItemGroup>
+          ) : null}
+          <SettingRow
+            setting={VOICE_CONVERSATIONS_SETTINGS.settings.streamingEnabled}
+            subtitle={t('settingsVoice.local.conversation.streaming.enableSubtitle')}
+            rightElement={(
+              <Switch
+                accessibilityLabel={t('settingsVoice.local.conversation.streaming.enableTitle')}
+                value={cfg.streaming.enabled}
+                onValueChange={(v) => setStreaming({ enabled: v })}
+              />
+            )}
+          />
+          <SettingRow
+            setting={VOICE_CONVERSATIONS_SETTINGS.settings.streamingTtsEnabled}
+            subtitle={t('settingsVoice.local.conversation.streaming.enableTtsSubtitle')}
+            rightElement={(
+              <Switch
+                accessibilityLabel={t('settingsVoice.local.conversation.streaming.enableTtsTitle')}
+                value={cfg.streaming.ttsEnabled}
+                onValueChange={(v) => setStreaming({ ttsEnabled: v })}
+              />
+            )}
+          />
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsChunkChars}>
+          <FieldValueItem
+            title={t(VOICE_CONVERSATIONS_SETTINGS.settings.ttsChunkChars.titleKey)}
+            subtitle={t('settingsVoice.local.conversation.streaming.ttsChunkCharsPromptBody')}
+            fieldTestID="settings.voice.local.streaming.ttsChunkChars.field"
+            kind="integer"
+            value={String(cfg.streaming.ttsChunkChars)}
+            onCommit={(draft) => {
+              const next = Math.max(32, Math.min(2000, Math.floor(Number(draft))));
+              setStreaming({ ttsChunkChars: next });
+              return String(next);
+            }}
+          />
+          </SettingAnchor>
+            <Item
+              testID="settings.voice.local.memoryLink"
+              icon={<Icon name="shield-check" />}
+              title={t('settingsVoice.pages.conversations.memoryLinkTitle')}
+              subtitle={t('settingsVoice.pages.conversations.memoryLinkDescription')}
+              onPress={() => router.push(SETTINGS_ROUTES.voicePrivacy as never)}
+            />
+          </ExpandableItem>
+        </SettingAnchor>
         </>
       ) : null}
-
-      <ItemGroup title={t('settingsVoice.local.conversation.network.title')}>
-        <FieldValueItem
-          title={t('settingsVoice.local.conversation.network.timeoutTitle')}
-          subtitle={t('settingsVoice.local.conversation.network.timeoutPromptBody')}
-          fieldTestID="settings.voice.local.networkTimeoutMs.field"
-          kind="integer"
-          value={String(cfg.networkTimeoutMs)}
-          onCommit={(draft) => {
-            const next = Math.max(1000, Math.min(60000, Math.floor(Number(draft))));
-            setCfg({ networkTimeoutMs: next });
-            return String(next);
-          }}
-        />
       </ItemGroup>
+
+      <LocalVoiceTtsGroup
+        cfgTts={cfg.tts}
+        setTts={(next) => setCfg({ tts: next })}
+        voice={voice}
+        setVoice={props.setVoice}
+        networkTimeoutMs={cfg.networkTimeoutMs}
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+      />
+
     </>
   );
 }

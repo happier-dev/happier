@@ -3167,6 +3167,196 @@
             {
               "additionalProperties": false,
               "properties": {
+                "comparisonSource": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "checkpointReceiptId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "evidenceMode": {
+                          "anyOf": [
+                            {
+                              "const": "checkpoint"
+                            },
+                            {
+                              "const": "agent_reported"
+                            },
+                            {
+                              "const": "reconciled"
+                            }
+                          ]
+                        },
+                        "kind": {
+                          "const": "turnCheckpoint"
+                        },
+                        "sessionId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "turnId": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "session"
+                        },
+                        "sessionId": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "sessionId"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "workingTree"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "base": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "head": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "branch"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "head",
+                        "base"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "commit": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "kind": {
+                          "const": "commit"
+                        },
+                        "parent": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "commit"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "pullRequest"
+                        },
+                        "locator": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "baseOid": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "headOid": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "number": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "providerId": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "repository": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "sourceAction": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "action": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "localId": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                      "type": "string"
+                                    },
+                                    "pluginId": {
+                                      "maxLength": 256,
+                                      "minLength": 3,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "type": "object"
+                                },
+                                "input": {}
+                              },
+                              "required": [
+                                "action"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "providerId",
+                            "repository",
+                            "number"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "locator"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
                 "kind": {
                   "const": "present"
                 },
@@ -8225,6 +8415,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "comparison": {
+              "const": true
+            },
             "continuation": {
               "minLength": 1,
               "type": "string"
@@ -8452,6 +8645,161 @@
             {
               "additionalProperties": false,
               "properties": {
+                "comparison": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "baseOid": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "beforeOid": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "content": {
+                      "anyOf": [
+                        {
+                          "const": "complete"
+                        },
+                        {
+                          "const": "incomplete"
+                        }
+                      ]
+                    },
+                    "enumeratedFileCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "failure": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "class": {
+                          "anyOf": [
+                            {
+                              "const": "authentication"
+                            },
+                            {
+                              "const": "permission"
+                            },
+                            {
+                              "const": "rateLimit"
+                            },
+                            {
+                              "const": "transient"
+                            },
+                            {
+                              "const": "unsupportedContract"
+                            },
+                            {
+                              "const": "unknown"
+                            }
+                          ]
+                        },
+                        "code": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "detail": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 256
+                        },
+                        "retryNotBeforeMs": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "code"
+                      ],
+                      "type": "object"
+                    },
+                    "freshness": {
+                      "anyOf": [
+                        {
+                          "const": "current"
+                        },
+                        {
+                          "const": "stale"
+                        },
+                        {
+                          "const": "unverified"
+                        }
+                      ]
+                    },
+                    "headOid": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "inventory": {
+                      "anyOf": [
+                        {
+                          "const": "complete"
+                        },
+                        {
+                          "const": "incomplete"
+                        }
+                      ]
+                    },
+                    "locator": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "number": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "providerId": {
+                          "const": "github"
+                        },
+                        "repository": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "providerId",
+                        "repository",
+                        "number"
+                      ],
+                      "type": "object"
+                    },
+                    "reasons": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "totalFileCount": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "locator",
+                    "beforeOid",
+                    "baseOid",
+                    "headOid",
+                    "totalFileCount",
+                    "enumeratedFileCount",
+                    "freshness",
+                    "inventory",
+                    "content",
+                    "reasons"
+                  ],
+                  "type": "object"
+                },
                 "continuation": {
                   "minLength": 1,
                   "type": "string"
@@ -8515,6 +8863,69 @@
                           },
                           {
                             "const": false
+                          }
+                        ]
+                      },
+                      "evidence": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "patch": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "const": "available"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "patch"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "reason": {
+                                "anyOf": [
+                                  {
+                                    "const": "provider_patch_missing"
+                                  },
+                                  {
+                                    "const": "transport_limit"
+                                  }
+                                ]
+                              },
+                              "state": {
+                                "const": "unavailable"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "reason"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "patch": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "const": "provider_patch_truncated"
+                              },
+                              "state": {
+                                "const": "truncated"
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "patch",
+                              "reason"
+                            ],
+                            "type": "object"
                           }
                         ]
                       },

@@ -30,7 +30,7 @@ export function resolveForceWithLeaseTarget(snapshot: ScmWorkingSnapshot | null 
     const target = parseScmUpstreamRef(snapshot.branch.upstream);
     if (!target || !snapshot.branch.upstreamOid) return null;
     const normalized = normalizeScmRemoteRequest({
-        ...target, pushMode: 'force_with_lease', expectedRemoteOid: snapshot.branch.upstreamOid,
+        ...target, branch: target.branch ?? undefined, pushMode: 'force_with_lease', expectedRemoteOid: snapshot.branch.upstreamOid,
     });
     if (!normalized.ok) return null;
     return { ...target, pushMode: 'force_with_lease' as const, expectedRemoteOid: snapshot.branch.upstreamOid };

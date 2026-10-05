@@ -15,6 +15,25 @@ const DESCRIPTOR: HomeConnectionDescriptorV1 = {
 };
 
 describe('terminal connect descriptor link V4', () => {
+  it('appends the route to the pathname while preserving the webapp query and opaque payload', () => {
+    const params = {
+      homeConnectionDescriptor: DESCRIPTOR,
+      publicKeyB64Url: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      pairing: { secretB64Url: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE', createdAtMs: 1_000, expiresAtMs: 61_000 },
+    };
+    const reference = new URL(buildTerminalConnectLinks({ ...params, webappUrl: 'https://app.happier.dev' }).webUrl);
+    const links = buildTerminalConnectLinks({
+      ...params,
+      webappUrl: 'https://app.happier.dev/happier/?server=https%3A%2F%2Fhome.example.test&happier_hmr=0#old',
+    });
+    const web = new URL(links.webUrl);
+    expect(web.pathname).toBe('/happier/terminal/connect');
+    expect(web.searchParams.get('server')).toBe('https://home.example.test');
+    expect(web.searchParams.get('happier_hmr')).toBe('0');
+    expect(web.hash).toBe(reference.hash);
+    expect([...new URLSearchParams(web.hash.slice(1)).keys()]).toEqual(['v4']);
+  });
+
   it('emits only an opaque V4 parameter for descriptor targets', () => {
     const links = buildTerminalConnectLinks({
       webappUrl: 'https://app.happier.dev',

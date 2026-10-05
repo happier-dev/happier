@@ -2,6 +2,7 @@ import type {
     WorkflowDefinitionV1,
     WorkflowRunAcceptedContextV1,
     WorkflowRunSummaryV1,
+    JsonValue,
 } from '@happier-dev/protocol';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
@@ -39,6 +40,16 @@ export type WorkflowReviewedRunSeed = Readonly<{
     inputs: WorkflowRunAcceptedContextV1['inputs'];
     /** Review navigation only, never reusable definition content. */
     sourceRunId: string;
+    /** Exact displayed Plan hold; navigation/admission intent, never saved definition content. */
+    planReview?: Readonly<{
+        /** Explicit changed-proposal admission identity, otherwise the original hold id is used. */
+        runId?: string;
+        invocationId: string;
+        expectedContentRevision: string;
+        value: JsonValue;
+        completeReview: boolean;
+        originSessionId?: string;
+    }>;
     /** Recovery provenance only. Ordinary library copies do not supersede a Run. */
     supersededRunId?: string;
     /** The exact reason code that made in-place recovery impossible. */

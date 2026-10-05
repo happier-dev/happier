@@ -28,6 +28,11 @@ import {
 
 const readerStore = createPluginAccountAvailabilityReaderStore();
 
+/** Imperative Account consumers use the same scoped projection as mounted surfaces. */
+export function readPluginAccountAvailability(scope: ServerAccountScope): PluginAccountAvailabilityReader {
+    return readerStore.bind(scope);
+}
+
 function currentProjectionLifetime(scope: ServerAccountScope): ActiveServerAccountScopeLifetime | null {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (
@@ -129,7 +134,7 @@ export function useActivePluginAccountAvailabilityReader(): PluginAccountAvailab
 
     return React.useMemo(() => {
         if (!scope) return null;
-        return readerStore.bind(scope);
+        return readPluginAccountAvailability(scope);
     }, [accountId, snapshot, scope, serverId]);
 }
 

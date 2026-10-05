@@ -915,6 +915,39 @@ describe('SessionParticipantComposer', () => {
         }));
     });
 
+    it('admits contributed drops on a presented participant without input focus and retires hidden hosts', async () => {
+        const daemon = currentParticipantDaemonProjection({ [issueAttachmentCatalogEntry.id]: issueAttachmentCatalogEntry });
+        const introspection = daemon.inputs.pluginProjectionV2.contributionIntrospection!;
+        participantDaemonProjectionState.current = { ...daemon, inputs: { ...daemon.inputs, pluginProjectionV2: {
+            ...daemon.inputs.pluginProjectionV2, contributionIntrospection: { ...introspection,
+                contributions: introspection.contributions.map(record => ({ ...record, occurrenceId: '7' })),
+            },
+        } } };
+        const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { resolveComposerEntityDrop } = await import('@/components/sessions/composer/composerEntityDrop');
+        const { buildComposerReferenceMentionPayloadV1 } = await import('@happier-dev/protocol');
+        const render = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>
+            <SessionParticipantComposer sessionId="s1" canSendMessages recipient={null} />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(render(true));
+        const input = agentInputSpy.mock.lastCall?.[0] as React.ComponentProps<typeof import('@/components/sessions/agentInput').AgentInput>;
+        if (!input.composerRef) throw new Error('Expected participant composer identity');
+        const scope = { serverId: 'server-1', accountId: 'account-1' };
+        const item = { kind: 'plugin' as const, scope, contribution: { pluginId: 'acme.issues', localId: 'issue-drag' },
+            reference: buildComposerReferenceMentionPayloadV1({ reference: { pluginId: 'acme.issues', localId: 'issues' },
+                candidate: { id: 'issue-42', label: 'Issue #42' } }),
+        };
+        const context = { scope, ref: input.composerRef, snapshot: readComposerPresentationSnapshot(input.composerRef),
+            workspace: null, sessions: [], referenceHost: input.composerReferenceHost,
+            preview: { verb: 'Reference', target: 'Participant' }, reason: (code: string) => code,
+        };
+        expect(context.snapshot?.state.focused).toBe(false);
+        expect(resolveComposerEntityDrop(item, context).status).toBe('allowed');
+        await act(async () => { screen.tree.update(render(false)); });
+        expect(resolveComposerEntityDrop(item, context).status).toBe('refused');
+    });
+
     it('shows provider rows only through the current focused participant scope', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
         const screen = await renderScreen(<SessionParticipantComposer

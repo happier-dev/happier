@@ -10,8 +10,9 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import {
+    describeWidgetDefinitionSummaryV1,
     selectCurrentSessionWidgetCandidates,
-    selectWidgetCandidates,
+    selectWidgetCandidates as selectUniversalWidgetCandidates,
 } from './widgetCatalog';
 
 /**
@@ -25,39 +26,45 @@ import {
  */
 
 const inlineEntry = (input: WidgetFixtureEntry): WidgetFixtureEntry => input;
+const selectWidgetCandidates = (...args: Parameters<typeof selectUniversalWidgetCandidates>) => selectUniversalWidgetCandidates(...args)
+    .filter(candidate => candidate.surface !== undefined);
 
 function selectSessionWidgetCandidates(
     projection: PluginUiProjectionModel | null,
     policyContext?: PluginUiPolicyEvaluationContext,
 ) {
-    return selectWidgetCandidates(projection, 'session', policyContext);
+    return selectWidgetCandidates(projection, policyContext);
 }
 
 describe('Widget Add candidates', () => {
-    it('offers compact Companion glances only when declared, preserving default Board and Home placements', () => {
+    it('names and configures a saved definition from its list projection without needing its body', () => {
+        const candidate = describeWidgetDefinitionSummaryV1({ artifactId: 'checks', name: 'Checks on main',
+            inputs: { fields: [{ path: 'repo', title: 'Repository', widget: 'text' }] },
+            inputSchema: { type: 'object', properties: { repo: { type: 'string' } } }, bodyKind: 'declarative', resources: [] });
+        expect(candidate).toMatchObject({ definition: { kind: 'artifact', artifactId: 'checks' }, title: 'Checks on main',
+            inputs: { fields: [{ path: 'repo' }] }, target: 'app' });
+        expect(candidate.authoredDefinition).toBeUndefined();
+    });
+    it('offers native glances through the universal catalog without a plugin occurrence or a fake plugin identity', () => {
+        const candidates = selectUniversalWidgetCandidates(null);
+        expect(candidates).toMatchObject([
+            { definition: { kind: 'builtin', id: 'session_summary' }, target: 'session', sessionInputPath: 'session' },
+            { definition: { kind: 'builtin', id: 'agent_plan' }, target: 'session', sessionInputPath: 'session' },
+            { definition: { kind: 'builtin', id: 'changes' }, target: 'session', sessionInputPath: 'session' },
+            { definition: { kind: 'builtin', id: 'local_services' }, target: 'session', sessionInputPath: 'session' },
+        ]);
+        expect(candidates.some(candidate => 'surface' in candidate)).toBe(false);
+    });
+    it('offers Session and App widgets together in every physical host catalog', () => {
         const projection = projectionOf([
-            { pluginId: 'acme.review', localId: 'legacy-board' },
-            { pluginId: 'acme.review', localId: 'shared', placements: ['board', 'companion'] },
-            { pluginId: 'acme.review', localId: 'glance', placements: ['companion'] },
-            { pluginId: 'acme.review', localId: 'legacy-home', target: 'app' },
+            { pluginId: 'acme.review', localId: 'session' },
+            { pluginId: 'acme.review', localId: 'app', target: 'app' },
         ], { 'acme.review': installedPackage('acme.review', 'Review') });
-        const keys = (target: 'session' | 'app', placement?: 'board' | 'companion' | 'home') =>
-            selectWidgetCandidates(projection, target, undefined, placement).map((candidate) => candidate.surface.localId);
-        expect(keys('session')).toEqual(['legacy-board', 'shared']);
-        expect(keys('session', 'board')).toEqual(['legacy-board', 'shared']);
-        expect(keys('session', 'companion')).toEqual(['glance', 'shared']);
-        expect(keys('app', 'home')).toEqual(['legacy-home']);
-        expect(keys('app', 'companion')).toEqual([]);
+        expect(selectWidgetCandidates(projection).map((candidate) => [candidate.surface.localId, candidate.target]))
+            .toEqual([['app', 'app'], ['session', 'session']]);
     });
 
-    it('rejects malformed explicit placements without reviving omitted-placement defaults', () => {
-        const projection = projectionOf([
-            { pluginId: 'acme.review', localId: 'wrong-target', placements: ['home'] },
-        ], { 'acme.review': installedPackage('acme.review', 'Review') });
-        expect(selectWidgetCandidates(projection, 'session')).toEqual([]);
-    });
-
-    it('offers each host only the widgets made for its target, with the Home default each declares', () => {
+    it('retains execution targets and declared Home defaults in universal candidates', () => {
         const projection = projectionOf(
             [
                 inlineEntry({ pluginId: 'acme.review', localId: 'board-status', title: 'Board status' }),
@@ -66,10 +73,8 @@ describe('Widget Add candidates', () => {
             ],
             { 'acme.review': installedPackage('acme.review', 'Review Assistant') },
         );
-        expect(selectWidgetCandidates(projection, 'session').map((candidate) => candidate.key))
-            .toEqual(['acme.review/board-status']);
-        expect(selectWidgetCandidates(projection, 'app').map((candidate) => [candidate.key, candidate.homeDefault]))
-            .toEqual([['acme.review/latest', 'shown'], ['acme.review/queue', 'available']]);
+        expect(selectWidgetCandidates(projection).map((candidate) => [candidate.key, candidate.target, candidate.homeDefault]))
+            .toEqual([['acme.review/board-status', 'session', 'available'], ['acme.review/latest', 'app', 'shown'], ['acme.review/queue', 'app', 'available']]);
     });
 
     it('names each candidate by its contribution title and installed plugin', () => {
@@ -137,15 +142,14 @@ describe('Widget Add candidates', () => {
         expect(candidates.map((candidate) => candidate.sharedPluginName)).toEqual([true, true]);
     });
 
-    it('rejects duplicate identities even when placement or availability hides one from the picker', () => {
+    it('rejects duplicate identities even when availability hides one from the picker', () => {
         const projection = projectionOf([
-            { pluginId: 'acme.review', localId: 'split', placements: ['board'] },
-            { pluginId: 'acme.review', localId: 'split', placements: ['companion'], entryId: 'split-companion' },
+            { pluginId: 'acme.review', localId: 'split' },
+            { pluginId: 'acme.review', localId: 'split', target: 'app', entryId: 'split-app' },
             { pluginId: 'acme.review', localId: 'hidden' },
             { pluginId: 'acme.review', localId: 'hidden', availability: 'unavailable', entryId: 'hidden-unavailable' },
         ], { 'acme.review': installedPackage('acme.review', 'Review') });
-        expect(selectWidgetCandidates(projection, 'session')).toEqual([]);
-        expect(selectWidgetCandidates(projection, 'session', undefined, 'companion')).toEqual([]);
+        expect(selectWidgetCandidates(projection)).toEqual([]);
     });
 
     it('omits a projected contribution whose installed package row is absent', () => {
@@ -172,14 +176,14 @@ describe('Widget Add candidates', () => {
             refused: { platform: 'web', isFeatureEnabled: () => false },
         },
         {
-            gate: 'the exact Session permission decision',
+            gate: 'the exact Session capability decision',
             entry: inlineEntry({
                 pluginId: 'acme.review',
                 localId: 'permission-widget',
-                requiredPermissionIds: ['session.records.read'],
+                capabilityIds: ['session.records.read'],
             }),
-            admitted: { platform: 'web', isPermissionGranted: (id: string) => id === 'session.records.read' },
-            refused: { platform: 'web', isPermissionGranted: () => false },
+            admitted: { platform: 'web', isCapabilityEnabled: (id: string) => id === 'session.records.read' },
+            refused: { platform: 'web', isCapabilityEnabled: () => false },
         },
         {
             gate: 'the current host platform',
@@ -213,7 +217,7 @@ describe('Widget Add candidates', () => {
         { label: 'Session editor permission is absent', boardFeatureEnabled: true, canEdit: false, phase: 'current', interactionEnabled: true },
         { label: 'plugin projection is retained offline', boardFeatureEnabled: true, canEdit: true, phase: 'retainedOffline', interactionEnabled: false },
         { label: 'plugin projection is establishing', boardFeatureEnabled: true, canEdit: true, phase: 'establishing', interactionEnabled: false },
-    ] as const)('returns the exact empty Add/picker array when $label', (state) => {
+    ] as const)('keeps native candidates independent of plugin currentness but preserves Board admission when $label', (state) => {
         const pluginUiProjection = projectionOf(
             [inlineEntry({ pluginId: 'acme.review', localId: 'review-status-widget' })],
             { 'acme.review': installedPackage('acme.review', 'Review Assistant') },
@@ -228,11 +232,13 @@ describe('Widget Add candidates', () => {
             interactionEnabled: state.interactionEnabled,
         } satisfies SessionPluginRuntimeState;
 
-        expect(selectCurrentSessionWidgetCandidates({
+        const candidates = selectCurrentSessionWidgetCandidates({
             runtime,
             boardFeatureEnabled: state.boardFeatureEnabled,
             canEdit: state.canEdit,
             policyContext: { platform: 'web' },
-        })).toEqual([]);
+        });
+        expect(candidates.filter(candidate => candidate.surface)).toEqual([]);
+        expect(candidates).toHaveLength(state.boardFeatureEnabled && state.canEdit ? 4 : 0);
     });
 });

@@ -4,6 +4,7 @@ import {
     defineProtocolObject,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
@@ -34,18 +35,17 @@ export const TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 = Object.freeze({
  * configured, so it could not offer to change or remove it, and three quarters
  * of the approved lifecycle was unreachable from the product.
  *
- * The request carries no source, plugin, or contribution identity, for the same
- * reason the administration request does not: the host stamps the caller and
- * the target resolves its currently admitted V1 contribution. A caller sees ONLY
- * the instances its own contribution owns — never another source's — and the
- * result is deliberately unfilterable, because a caller-supplied scope would be
- * a second authority over the same question.
+ * Plugin callers see only their own currently admitted source's instances.
+ * Host agent/MCP/CLI callers may discover all admitted configured sources or
+ * select an exact admitted source address. Selection never establishes caller
+ * provenance or lets a plugin cross its own scope.
  *
  * This is a read. `sources/administer-v1` remains the sole writer; nothing here
  * creates, retires, reactivates, or reorders a row.
  */
 export const TriageReadConfiguredSourceInstancesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
+    source: PluginContributionIdentityV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageReadConfiguredSourceInstancesInputV1 = ReturnType<
     typeof TriageReadConfiguredSourceInstancesInputV1Schema.parse

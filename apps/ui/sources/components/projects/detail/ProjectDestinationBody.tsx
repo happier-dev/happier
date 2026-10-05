@@ -15,6 +15,7 @@ import {
     buildProjectRouteHref,
     readProjectRouteStringParam,
     readProjectRouteWorktreeSelection,
+    resolveProjectCockpitIndexRedirectHref,
     resolveProjectRouteSelectionQuery,
     resolveProjectRouteSegment,
     replaceProjectRouteSelection,
@@ -188,21 +189,15 @@ export const ProjectDestinationBody = React.memo(() => {
         })
         : { rawWorktreeId: null, rawActiveRootPath: null };
     const canonicalWorktreeQueryValue = canonicalRouteSelectionQuery.rawWorktreeId;
-    const shouldCanonicalizeCockpitIndexRoute = Boolean(
-        isFocused
-        && workspaceRef
-        && cockpitEnabled
-        && (
-            rootMobileSurface !== 'overview'
-            || routeSelection.requestedRootPath !== canonicalActiveRootPath
-            || (routeSelection.requestedWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL) !== (canonicalWorktreeQueryValue ?? PROJECT_ROUTE_ROOT_SENTINEL)
-        ),
-    );
-    const canonicalCockpitHref = workspaceRef
-        ? resolveProjectRoutePathForSurface({
+    const canonicalCockpitRedirectHref = isFocused && workspaceRef && cockpitEnabled
+        ? resolveProjectCockpitIndexRedirectHref({
             workspaceRefId: workspaceRef.id,
             surface: rootMobileSurface,
-            ...canonicalRouteSelectionQuery,
+            explicitMobileSurfaceHint,
+            ...routeSelection,
+            activeRootPath: canonicalActiveRootPath,
+            defaultRootPath: workspaceRef.rootPath,
+            activeWorktreeId,
         })
         : null;
     const handleSelectCockpitRootPath = React.useCallback((path: string) => {
@@ -268,8 +263,8 @@ export const ProjectDestinationBody = React.memo(() => {
         && cockpitEnabled
         && workspaceRefId
     ) {
-        if (shouldCanonicalizeCockpitIndexRoute && canonicalCockpitHref) {
-            return <Redirect href={canonicalCockpitHref as Href} />;
+        if (canonicalCockpitRedirectHref) {
+            return <Redirect href={canonicalCockpitRedirectHref as Href} />;
         }
         return (
             <>

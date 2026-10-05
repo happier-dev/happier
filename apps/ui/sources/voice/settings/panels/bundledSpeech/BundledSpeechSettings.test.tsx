@@ -7,7 +7,7 @@ import {
   type VoiceProviderSettingsJsonValueV1,
 } from '@happier-dev/protocol';
 
-import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, renderScreen } from '@/dev/testkit';
 import { getStorage as getActualStorage } from '@/sync/domains/state/storageStore';
 import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import {
@@ -15,14 +15,18 @@ import {
   readVoiceProviderSettingsConfig,
   voiceSettingsDefaults,
   writeLocalConversationVoiceSettings,
+  writeVoiceProviderSettingsConfig,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { installLocalSttProviderCommonModuleMocks } from '../localStt/providers/localSttProviderTestHelpers';
+import { PLUGIN_MANIFEST as OPENAI_COMPAT_MANIFEST } from '../../../../../../../packages/plugins/openai-compat/src/manifest';
+import { VOICE_PROVIDER_PRESENTATIONS as OPENAI_COMPAT_PRESENTATIONS } from '../../../../../../../packages/plugins/openai-compat/src/ui/voice/entries';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import {
   commitExternalVoiceProviderRegistration,
   removeExternalVoiceProviderRegistration,
+  replaceExternalVoiceProviderProjectionAuthority,
   type ExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
 
@@ -30,6 +34,7 @@ import {
 
 const prompt = vi.hoisted(() => vi.fn());
 const alert = vi.hoisted(() => vi.fn());
+const confirm = vi.hoisted(() => vi.fn(async () => true));
 const synthesize = vi.hoisted(() => vi.fn());
 const executeSettingsAction = vi.hoisted(() => vi.fn());
 const playAudioBytesWithStopper = vi.hoisted(() => vi.fn());
@@ -38,12 +43,13 @@ const settingsActionState = vi.hoisted(() => ({
   voice: null as unknown,
   settingsVersion: 4,
   mutationApplied: false,
+  settingsScope: { serverId: 'server-1', accountId: 'account-1' },
 }));
 
 installLocalSttProviderCommonModuleMocks({
   modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ spies: { alert, prompt } }).module;
+    return createModalModuleMock({ spies: { alert, prompt, confirm } }).module;
   },
 });
 
@@ -282,18 +288,30 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+vi.mock('@/sync/domains/state/storage', async () => {
   const {
     createLiveStorageStoreMock,
-    createPartialStorageModuleMock,
+    createStorageModuleStub,
   } = await import('@/dev/testkit/mocks/storage');
-  return await createPartialStorageModuleMock(importOriginal, {
+  return createStorageModuleStub({
     storage: createLiveStorageStoreMock(() => ({
       settings: { voice: settingsActionState.voice } as never,
-      settingsScope: { serverId: 'server-1', accountId: 'account-1' },
+      settingsScope: settingsActionState.settingsScope,
       settingsVersion: settingsActionState.settingsVersion,
+      machines: executionMachine.machineId ? {
+        [executionMachine.machineId]: createMachineFixture({
+          id: executionMachine.machineId, activeAt: 0,
+          metadata: { ...createMachineFixture().metadata!, displayName: executionMachine.machineLabel ?? undefined },
+        }),
+      } : {},
     })),
   });
+});
+
+// Mounted scope hooks and async readers share the same persisted Account boundary.
+vi.mock('@/sync/domains/state/storageStore', async () => {
+  const { storage } = await import('@/sync/domains/state/storage');
+  return { storage, getStorage: () => storage };
 });
 
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
@@ -353,10 +371,6 @@ vi.mock('../realtime/VoiceCredentialSourceField', () => ({
   },
 }));
 
-vi.mock('@/voice/credentials/useExecutionMachinePresentation', () => ({
-  useVoiceExecutionMachinePresentation: () => ({ ...executionMachine }),
-}));
-
 vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: object) => React.createElement('Item', props),
 }));
@@ -394,7 +408,78 @@ async function typeIntoRow(rendered: Awaited<ReturnType<typeof renderScreen>>, t
   await act(async () => { await Promise.all(fireAndForgetPromises); });
 }
 
+// Initialize the real settings graph outside individual interaction budgets.
+await import('./BundledSpeechSettings');
+
 describe('BundledSpeechSettings', () => {
+  it.each(['execution machine', 'Account', 'provider', 'retired provider', 'retired projection', 'unrelated settings'] as const)('applies an endpoint approval only to its current context while retaining unrelated changes: %s', async (change) => {
+    const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
+    const entry = createVoiceProviderRegistry({
+      bundledContributions: (OPENAI_COMPAT_MANIFEST.contributes.voiceProviders ?? []).map((value) => VoiceProviderContributionSchema.parse(value)).map((declaration) => ({
+        pluginId: OPENAI_COMPAT_MANIFEST.id, providerId: `${OPENAI_COMPAT_MANIFEST.id}/${declaration.id}`, declaration,
+      })), bundledPresentations: OPENAI_COMPAT_PRESENTATIONS,
+    }).get(OPENAI_COMPAT_TTS_ID);
+    if (!entry?.providerSettings) throw new Error('missing canonical speech entry');
+    const registrationToken = {};
+    commitExternalVoiceProviderRegistration({
+      token: registrationToken, pluginId: entry.pluginId, localId: 'tts', providerId: entry.providerId,
+      descriptor: entry, adapter: null, occurrenceId: 'speech-occurrence',
+    });
+    onTestFinished(() => removeExternalVoiceProviderRegistration(registrationToken));
+    if (change === 'retired projection') replaceExternalVoiceProviderProjectionAuthority(
+      null, registrationToken, new Map([[entry.providerId, 'speech-occurrence']]),
+    );
+    const spec = createBundledLocalTtsProviderSpec(entry);
+    if (!spec) throw new Error('missing real speech settings panel');
+    const voice = { ...voiceWithRootProviderConfig(OPENAI_COMPAT_TTS_ID, {
+      ...entry.providerSettings.defaultConfig,
+      baseUrl: 'https://speech.example/v1', insecureLocalOriginConsent: '', insecureLocalConsentMachineId: '',
+      model: 'tts-1', voiceName: 'alloy', format: 'mp3',
+    }), executionMachine: { mode: 'fixed' as const, machineId: 'machine-a', autoMachineId: null } };
+    settingsActionState.voice = voice;
+    const setVoice = vi.fn();
+    const rendered = await renderScreen(React.createElement(spec.Settings, {
+      cfgTts: VoiceLocalTtsSchema.parse({ provider: OPENAI_COMPAT_TTS_ID }), setTts: vi.fn(), voice, setVoice, popoverBoundaryRef: null, networkTimeoutMs: 15_000,
+    }));
+    const pending = createDeferred<boolean>();
+    confirm.mockImplementationOnce(() => pending.promise);
+    expect(rendered.tree.root.findAllByType('VoiceCredentialItem' as never)[0]?.props.machineId).toBe('machine-a');
+    await act(async () => { rowField(rendered, 'settingsVoice.local.ttsBaseUrl').props.onChangeText('http://localhost:11434/v1'); });
+    expect(rowField(rendered, 'settingsVoice.local.ttsBaseUrl').props.value).toBe('http://localhost:11434/v1');
+    await act(async () => { rowField(rendered, 'settingsVoice.local.ttsBaseUrl').props.onBlur(); });
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+    if (change === 'execution machine') {
+      executionMachine.machineId = 'machine-b';
+      executionMachine.machineLabel = 'Machine B';
+    } else if (change === 'Account') {
+      settingsActionState.settingsScope = { serverId: 'server-1', accountId: 'account-2' };
+    } else if (change === 'provider') {
+      const other = createBundledLocalTtsProviderSpec(createDefaultVoiceProviderRegistry().get(GOOGLE_CLOUD_TTS_ID)!);
+      if (!other) throw new Error('missing other real speech provider');
+      await rendered.update(React.createElement(other.Settings, {
+        cfgTts: VoiceLocalTtsSchema.parse({ provider: GOOGLE_CLOUD_TTS_ID }), setTts: vi.fn(), voice, setVoice, popoverBoundaryRef: null, networkTimeoutMs: 15_000,
+      }));
+    } else if (change === 'retired provider') {
+      // Retire the real activation record without rerendering the pending field.
+      await act(async () => removeExternalVoiceProviderRegistration(registrationToken));
+    } else if (change === 'retired projection') {
+      // Retire admission while retaining the same activation registration.
+      await act(async () => replaceExternalVoiceProviderProjectionAuthority(null, registrationToken, new Map()));
+    } else {
+      settingsActionState.voice = writeVoiceProviderSettingsConfig(voice, OPENAI_COMPAT_TTS_ID, {
+        ...entry.providerSettings.defaultConfig, baseUrl: 'https://speech.example/v1', model: 'new-model',
+      });
+    }
+    await act(async () => { pending.resolve(true); await Promise.all(fireAndForgetPromises); });
+    if (change === 'unrelated settings') {
+      expect(setVoice).toHaveBeenLastCalledWith(expect.objectContaining({ providers: expect.objectContaining({
+        [OPENAI_COMPAT_TTS_ID]: expect.objectContaining({ config: expect.objectContaining({
+          baseUrl: 'http://localhost:11434/v1', insecureLocalOriginConsent: 'http://localhost:11434',
+          insecureLocalConsentMachineId: 'machine-a', model: 'new-model',
+        }) }),
+      }) }));
+    } else expect(setVoice.mock.calls.length).toBe(0);
+  });
   beforeEach(() => {
     executionMachine.machineId = 'machine-a';
     executionMachine.machineLabel = 'Machine A';
@@ -408,6 +493,8 @@ describe('BundledSpeechSettings', () => {
       : [{ id: 'en-US-Test-A', name: 'English Test', metadata: {} }]);
     prompt.mockReset();
     alert.mockReset();
+    confirm.mockReset();
+    confirm.mockResolvedValue(true);
     synthesize.mockReset();
     synthesize.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), mimeType: 'audio/mpeg' });
     executeSettingsAction.mockReset();
@@ -415,6 +502,7 @@ describe('BundledSpeechSettings', () => {
     settingsActionState.voice = voiceSettingsDefaults;
     settingsActionState.settingsVersion = 4;
     settingsActionState.mutationApplied = false;
+    settingsActionState.settingsScope = { serverId: 'server-1', accountId: 'account-1' };
     playAudioBytesWithStopper.mockReset();
     playAudioBytesWithStopper.mockResolvedValue(undefined);
   });
@@ -918,9 +1006,16 @@ describe('BundledSpeechSettings', () => {
 
   it('validates descriptor-configured OpenAI-compatible TTS settings without carrying them over RPC', async () => {
     const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
-    const spec = createBundledLocalTtsProviderSpec(openAiCompatTtsEntry);
+    const entry = createVoiceProviderRegistry({
+      bundledContributions: (OPENAI_COMPAT_MANIFEST.contributes.voiceProviders ?? []).map((value) => VoiceProviderContributionSchema.parse(value)).map((declaration) => ({
+        pluginId: OPENAI_COMPAT_MANIFEST.id, providerId: `${OPENAI_COMPAT_MANIFEST.id}/${declaration.id}`, declaration,
+      })), bundledPresentations: OPENAI_COMPAT_PRESENTATIONS,
+    }).get(OPENAI_COMPAT_TTS_ID);
+    if (!entry?.providerSettings) throw new Error('missing canonical speech entry');
+    const spec = createBundledLocalTtsProviderSpec(entry);
 
     const voiceSettings = voiceWithRootProviderConfig(OPENAI_COMPAT_TTS_ID, {
+      ...entry.providerSettings.defaultConfig,
       baseUrl: 'https://speech.example/v1',
       insecureLocalOriginConsent: '',
       insecureLocalConsentMachineId: '',
@@ -949,7 +1044,7 @@ describe('BundledSpeechSettings', () => {
     });
 
     expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({
-      entry: openAiCompatTtsEntry,
+      entry,
       input: 'Hello',
     }));
     expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('model');

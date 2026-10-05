@@ -18,7 +18,7 @@ export function useSessionCanvasEligibility(
         routeServerId?: string | null;
     }>,
 ): SessionCanvasEligibility {
-    const workspaceTarget = useSessionWorkspaceTarget(sessionId);
+    const workspaceTarget = useSessionWorkspaceTarget(sessionId, options?.routeServerId);
     const normalizedRouteServerId = React.useMemo(() => {
         return typeof options?.routeServerId === 'string' ? options.routeServerId.trim() : '';
     }, [options?.routeServerId]);

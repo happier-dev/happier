@@ -11,6 +11,9 @@ import type { ScmWriteOperation, ScmWriteTerminalOperation } from '@/scm/operati
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
 import { t } from '@/text';
+import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
+import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
+import { useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
 
 /** What the pane knew when an operation started, so its outcome can say how much moved (Pushed 3 commits). */
 export type GitOutcomeFacts = Readonly<{
@@ -29,6 +32,7 @@ export type GitOutcomeRecovery = Readonly<{
     retry?: (action: ScmProjectOperationKind) => void;
     /** Re-read the working tree (a refresh that failed after a commit landed, or a machine that came back). */
     refresh?: () => void;
+    openTerminal?: () => void;
     /** Bring the conflicted files into view. */
     showConflicts?: () => void;
     /** Put this branch on origin (an upstream is required). */
@@ -39,6 +43,8 @@ export type GitOutcomeRecovery = Readonly<{
      * Absent when the backend cannot honour a policy (`writeRemotePolicies`).
      */
     pullWith?: (policy: Readonly<{ dirtyPolicy?: 'autostash' | 'allow_git'; reconcile?: 'rebase' | 'merge' }>) => void;
+    /** An explicitly chosen reconciliation, followed by a push only when the remote owner confirms success. */
+    pullThenPush?: (policy: Readonly<{ reconcile: 'rebase' | 'merge' }>) => void;
     /** The branch is a feature branch (not the repository's default): rebase is the highlighted reconcile. */
     preferRebase?: boolean;
     /** Undo exactly the commit displayed by this result; the daemon rejects a changed HEAD. */
@@ -49,7 +55,7 @@ export type GitOutcomeRecovery = Readonly<{
 const SUCCESS_LINE_VISIBLE_MS = 6_000;
 
 /** Actions whose progress already lives in the control that started them (the header action, the commit button). */
-const PROGRESS_SHOWN_IN_CONTROL: ReadonlySet<ScmProjectOperationKind> = new Set(['commit', 'push', 'pull', 'fetch', 'create_pr']);
+const PROGRESS_SHOWN_IN_CONTROL: ReadonlySet<ScmProjectOperationKind> = new Set(['commit', 'fetch', 'create_pr']);
 
 /**
  * The Git pane's one outcome (Git lab C/S/SX): progress for work that has no control of its own, one quiet line
@@ -63,11 +69,17 @@ export const GitOutcomeLine = React.memo(function GitOutcomeLine(props: Readonly
     machineName: string | null;
     /** The session's machine answers right now (an unreachable machine is said as such, never as a Git failure). */
     machineReachable?: boolean;
+    machineId?: string | null;
+    serverId?: string;
+    machineLastSeenAt?: number | null;
+    authenticationCommand?: string | null;
     recovery: GitOutcomeRecovery;
     /** Phones get one light haptic when a write lands and one warning haptic on failure. */
     haptics: boolean;
 }>) {
     const { operation } = props;
+    const runningRemote = operation && (operation.phase === 'running' || operation.phase === 'queued') && (operation.action === 'push' || operation.action === 'pull');
+    const elapsedSeconds = useElapsedTime(runningRemote ? operation.at : null);
     const factsAtStartRef = React.useRef(new Map<string, GitOutcomeFacts>());
     const [dismissedId, setDismissedId] = React.useState<string | null>(null);
 
@@ -106,7 +118,10 @@ export const GitOutcomeLine = React.memo(function GitOutcomeLine(props: Readonly
                     testID="session-git-outcome-running"
                     size="line"
                     kind="loading"
-                    title={runningTitle(operation.action)}
+                    title={operation.action === 'push' || operation.action === 'pull'
+                        ? t(operation.action === 'push' ? 'sessionGitPane.fidelity.pushing' : 'sessionGitPane.fidelity.pulling', { count: operation.action === 'push' ? props.facts.ahead : props.facts.behind, target: props.facts.upstream ?? t('sessionGitPane.flow.failed.origin') })
+                        : runningTitle(operation.action)}
+                    reason={runningRemote ? [operation.progressText, t('sessionGitPane.fidelity.elapsed', { seconds: elapsedSeconds })].filter(Boolean).join(' · ') : operation.progressText || undefined}
                     accessibilitySemantics="status"
                 />
             </OutcomeFrame>
@@ -121,9 +136,11 @@ export const GitOutcomeLine = React.memo(function GitOutcomeLine(props: Readonly
             </OutcomeFrame>
         );
     }
+    const Notice = props.machineReachable === false ? OfflineAttentionNotice : AttentionNotice;
     return (
         <OutcomeFrame>
-            <AttentionNotice
+            <Notice
+                key={operation.id}
                 operation={operation}
                 machineName={props.machineName}
                 machineReachable={props.machineReachable !== false}
@@ -131,6 +148,10 @@ export const GitOutcomeLine = React.memo(function GitOutcomeLine(props: Readonly
                 facts={factsAtStart}
                 recovery={props.recovery}
                 onDismiss={dismiss}
+                authenticationCommand={props.authenticationCommand}
+                machineId={props.machineId}
+                serverId={props.serverId}
+                machineLastSeenAt={props.machineLastSeenAt}
             />
         </OutcomeFrame>
     );
@@ -167,17 +188,18 @@ type NoticeAction = { label: string; onPress: () => void };
 /** Two explicit choices the owner asks for (`choose_dirty_policy`, `choose_reconcile`), highlighted one first. */
 function choicesFor(operation: AttentionOperation, recovery: GitOutcomeRecovery): readonly [NoticeAction, NoticeAction] | null {
     const pullWith = recovery.pullWith;
-    if (!pullWith) return null;
     const kinds = new Set(operation.outcome.nextActions.map((next) => next.kind));
-    if (kinds.has('choose_dirty_policy')) {
+    if (kinds.has('choose_dirty_policy') && pullWith) {
         return [
             { label: t('sessionGitPane.flow.choices.keepAsideAndPull'), onPress: () => pullWith({ dirtyPolicy: 'autostash' }) },
             { label: t('sessionGitPane.flow.choices.pullIfNoOverlap'), onPress: () => pullWith({ dirtyPolicy: 'allow_git' }) },
         ];
     }
     if (kinds.has('choose_reconcile')) {
-        const rebase = { label: t('sessionGitPane.flow.choices.rebase'), onPress: () => pullWith({ reconcile: 'rebase' }) };
-        const merge = { label: t('sessionGitPane.flow.choices.merge'), onPress: () => pullWith({ reconcile: 'merge' }) };
+        const reconcile = operation.action === 'push' && recovery.pullThenPush ? recovery.pullThenPush : pullWith;
+        if (!reconcile) return null;
+        const rebase = { label: t('sessionGitPane.flow.choices.rebase'), onPress: () => reconcile({ reconcile: 'rebase' }) };
+        const merge = { label: t('sessionGitPane.flow.choices.merge'), onPress: () => reconcile({ reconcile: 'merge' }) };
         return recovery.preferRebase === false ? [merge, rebase] : [rebase, merge];
     }
     return null;
@@ -222,18 +244,26 @@ function AttentionNotice(props: Readonly<{
     facts: GitOutcomeFacts | null;
     recovery: GitOutcomeRecovery;
     onDismiss: () => void;
+    authenticationCommand?: string | null;
+    machineId?: string | null;
+    serverId?: string;
+    machineLastSeenAt?: number | null;
 }>) {
     const { operation, recovery } = props;
+    const { theme } = useUnistyles();
+    const [reconcileOpen, setReconcileOpen] = React.useState(false);
     const outcome = operation.outcome;
     const errorCode = 'errorCode' in outcome ? outcome.errorCode : undefined;
     const machine = operation.machine ?? props.machineName ?? t('sessionGitPane.flow.failed.thisMachine');
     const target = props.upstream ?? t('sessionGitPane.flow.failed.origin');
     let title: string;
     let description: string;
-    let tone: 'warning' | 'neutral' = 'warning';
-    const choices = choicesFor(operation, recovery);
+    let tone: 'warning' | 'neutral' | 'danger' = 'warning';
+    const deferredPushReconcile = operation.action === 'push' && recovery.pullThenPush && operation.outcome.nextActions.some((next) => next.kind === 'choose_reconcile');
+    const choices = !deferredPushReconcile || reconcileOpen ? choicesFor(operation, recovery) : null;
     let action = choices ? choices[0] : recoveryFor(operation, recovery);
     let secondaryAction: NoticeAction | null = choices ? choices[1] : null;
+    if (deferredPushReconcile && !reconcileOpen) action = { label: t('sessionGitPane.fidelity.pullThenPush'), onPress: () => setReconcileOpen(true) };
     if (operation.phase === 'effect_applied_with_warning') {
         // The write happened; something after it did not. Say what landed first.
         title = operation.action === 'commit' ? t('sessionGitPane.flow.failed.refreshTitle') : successCopy(operation, props.facts).title;
@@ -246,7 +276,7 @@ function AttentionNotice(props: Readonly<{
     } else if (!props.machineReachable) {
         tone = 'neutral';
         title = t('sessionGitPane.flow.failed.offlineTitle', { machine });
-        description = t('sessionGitPane.flow.failed.offlineBody');
+        description = props.machineLastSeenAt ? t('sessionGitPane.fidelity.lastSeen', { when: formatHappierAsOfTime(props.machineLastSeenAt) }) : t('sessionGitPane.flow.failed.offlineBody');
         action = recovery.refresh ? { label: t('sessionGitPane.flow.recover.checkAgain'), onPress: recovery.refresh } : null;
     } else if (operation.phase === 'conflicted' || errorCode === 'CONFLICTING_WORKTREE' || errorCode === 'BRANCH_OPERATION_IN_PROGRESS') {
         title = t('sessionGitPane.flow.failed.conflictTitle');
@@ -262,9 +292,10 @@ function AttentionNotice(props: Readonly<{
             ? (operation.action === 'push' ? t('sessionGitPane.flow.choices.divergedPushBody') : t('sessionGitPane.flow.choices.divergedPullBody'))
             : t('sessionGitPane.flow.failed.rejectedBody');
     } else if (errorCode === 'REMOTE_AUTH_REQUIRED') {
+        tone = 'danger';
         title = t('sessionGitPane.flow.failed.authTitle', { provider: operation.provider ?? target, machine });
-        description = t('sessionGitPane.flow.failed.authBody', { machine });
-        action = action ?? (recovery.retry && RETRYABLE.has(operation.action) ? { label: t('sessionGitPane.flow.recover.tryAgain'), onPress: () => recovery.retry?.(operation.action) } : null);
+        description = props.authenticationCommand ? t('sessionGitPane.fidelity.authenticationHint', { command: props.authenticationCommand, machine }) : t('sessionGitPane.flow.failed.authBody', { machine });
+        action = recovery.openTerminal ? { label: t('sessionGitPane.fidelity.openTerminal'), onPress: recovery.openTerminal } : action ?? (recovery.retry && RETRYABLE.has(operation.action) ? { label: t('sessionGitPane.flow.recover.tryAgain'), onPress: () => recovery.retry?.(operation.action) } : null);
     } else if (errorCode === 'REMOTE_NETWORK_FAILED') {
         title = t('sessionGitPane.flow.failed.networkTitle', { target });
         description = t('sessionGitPane.flow.failed.networkBody');
@@ -276,17 +307,28 @@ function AttentionNotice(props: Readonly<{
     return (
         <View>
             <AttentionBanner
+                placement="inline"
                 testID={`session-git-outcome-${operation.phase}`}
                 tone={tone}
                 title={title}
                 description={description}
-                action={action}
-                secondaryAction={secondaryAction}
+                icon={!props.machineReachable ? <Icon name="wifi-slash" size={16} color={theme.colors.state.neutral.foreground} /> : errorCode === 'REMOTE_AUTH_REQUIRED' ? <Icon name="lock" size={16} color={theme.colors.state.danger.foreground} /> : undefined}
+                action={action ? { ...action, display: 'default' } : null}
+                secondaryAction={secondaryAction ? { ...secondaryAction, display: 'inverted' } : null}
                 announce="alert"
                 onDismiss={props.onDismiss}
             />
         </View>
     );
+}
+
+/** The machine heartbeat subscription exists only while this offline notice is mounted. */
+function OfflineAttentionNotice(props: React.ComponentProps<typeof AttentionNotice>) {
+    const id = props.machineId ?? '';
+    const scoped = useServerScopedMachine(props.serverId, props.serverId ? id : '');
+    const legacy = useMachine(props.serverId ? '' : id);
+    const machine = props.serverId ? scoped : legacy;
+    return <AttentionNotice {...props} machineLastSeenAt={props.machineLastSeenAt ?? machine?.activeAt ?? null} />;
 }
 
 const RETRYABLE: ReadonlySet<ScmProjectOperationKind> = new Set(['push', 'pull', 'fetch']);

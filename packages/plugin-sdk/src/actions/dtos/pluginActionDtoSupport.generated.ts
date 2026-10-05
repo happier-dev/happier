@@ -141,25 +141,91 @@ export type ActionInputFieldHint = {
     path: string;
     widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
     title: string;
+    inputType?: {
+        pluginId: string;
+        localId: string;
+    } | undefined;
     required?: boolean | undefined;
     requireExplicitSelection?: boolean | undefined;
     listSeparator?: 'comma' | 'newline' | undefined;
     maxSelections?: number | undefined;
-    visibleWhen?: ActionInputPredicate | undefined;
-    requiredWhen?: ActionInputPredicate | undefined;
-    disabledWhen?: ActionInputPredicate | undefined;
+    visibleWhen?: InputPredicate | undefined;
+    requiredWhen?: InputPredicate | undefined;
+    disabledWhen?: InputPredicate | undefined;
     optionsSourceId?: string | undefined;
     connectedAccountOptions?: true | undefined;
     resolvedEmptyConnectedAccountOptions?: true | undefined;
     description?: string | undefined;
     placeholder?: string | undefined;
     options?: readonly {
-        value: ActionInputOptionValue;
+        value: JsonValue;
         label: string;
         description?: string | undefined;
         disabled?: boolean | undefined;
     }[] | undefined;
 };
+export type InputPredicate = Readonly<{
+    op: 'truthy';
+    path: string;
+}> | Readonly<{
+    op: 'eq';
+    path: string;
+    value: string | number | boolean | null;
+}> | Readonly<{
+    op: 'includes';
+    path: string;
+    value: string;
+}> | Readonly<{
+    op: 'not';
+    predicate: InputPredicate;
+}> | Readonly<{
+    op: 'and';
+    all: readonly InputPredicate[];
+}> | Readonly<{
+    op: 'or';
+    any: readonly InputPredicate[];
+}>;
+export type ActionInputHints = {
+    fields: readonly {
+        path: string;
+        widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+        title: string;
+        inputType?: {
+            pluginId: string;
+            localId: string;
+        } | undefined;
+        required?: boolean | undefined;
+        requireExplicitSelection?: boolean | undefined;
+        listSeparator?: 'comma' | 'newline' | undefined;
+        maxSelections?: number | undefined;
+        visibleWhen?: InputPredicate | undefined;
+        requiredWhen?: InputPredicate | undefined;
+        disabledWhen?: InputPredicate | undefined;
+        optionsSourceId?: string | undefined;
+        connectedAccountOptions?: true | undefined;
+        resolvedEmptyConnectedAccountOptions?: true | undefined;
+        description?: string | undefined;
+        placeholder?: string | undefined;
+        options?: readonly {
+            value: JsonValue;
+            label: string;
+            description?: string | undefined;
+            disabled?: boolean | undefined;
+        }[] | undefined;
+    }[];
+    title?: string | undefined;
+    description?: string | undefined;
+    submitLabel?: string | undefined;
+};
+export type ActionInputOption = {
+    value: JsonValue;
+    label: string;
+    description?: string | undefined;
+    disabled?: boolean | undefined;
+};
+export type ActionInputOptionValue = string | number | boolean | readonly JsonValue[] | {
+    readonly [key: string]: JsonValue;
+} | null;
 export type ActionInputPredicate = Readonly<{
     op: 'truthy';
     path: string;
@@ -173,73 +239,36 @@ export type ActionInputPredicate = Readonly<{
     value: string;
 }> | Readonly<{
     op: 'not';
-    predicate: ActionInputPredicate;
+    predicate: InputPredicate;
 }> | Readonly<{
     op: 'and';
-    all: readonly ActionInputPredicate[];
+    all: readonly InputPredicate[];
 }> | Readonly<{
     op: 'or';
-    any: readonly ActionInputPredicate[];
+    any: readonly InputPredicate[];
 }>;
-export type ActionInputOptionValue = string | {
-    service: {
-        pluginId: string;
-        localId: string;
-    };
-    accountId: string;
-};
-export type ActionInputHints = {
-    fields: readonly {
-        path: string;
-        widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-        title: string;
-        required?: boolean | undefined;
-        requireExplicitSelection?: boolean | undefined;
-        listSeparator?: 'comma' | 'newline' | undefined;
-        maxSelections?: number | undefined;
-        visibleWhen?: ActionInputPredicate | undefined;
-        requiredWhen?: ActionInputPredicate | undefined;
-        disabledWhen?: ActionInputPredicate | undefined;
-        optionsSourceId?: string | undefined;
-        connectedAccountOptions?: true | undefined;
-        resolvedEmptyConnectedAccountOptions?: true | undefined;
-        description?: string | undefined;
-        placeholder?: string | undefined;
-        options?: readonly {
-            value: ActionInputOptionValue;
-            label: string;
-            description?: string | undefined;
-            disabled?: boolean | undefined;
-        }[] | undefined;
-    }[];
-    title?: string | undefined;
-    description?: string | undefined;
-    submitLabel?: string | undefined;
-};
-export type ActionInputOption = {
-    value: ActionInputOptionValue;
-    label: string;
-    description?: string | undefined;
-    disabled?: boolean | undefined;
-};
 export type EffectiveActionInputField = {
     path: string;
     widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
     title: string;
+    inputType?: {
+        pluginId: string;
+        localId: string;
+    } | undefined;
     required?: boolean | undefined;
     requireExplicitSelection?: boolean | undefined;
     listSeparator?: 'comma' | 'newline' | undefined;
     maxSelections?: number | undefined;
-    visibleWhen?: ActionInputPredicate | undefined;
-    requiredWhen?: ActionInputPredicate | undefined;
-    disabledWhen?: ActionInputPredicate | undefined;
+    visibleWhen?: InputPredicate | undefined;
+    requiredWhen?: InputPredicate | undefined;
+    disabledWhen?: InputPredicate | undefined;
     optionsSourceId?: string | undefined;
     connectedAccountOptions?: true | undefined;
     resolvedEmptyConnectedAccountOptions?: true | undefined;
     description?: string | undefined;
     placeholder?: string | undefined;
     options?: readonly {
-        value: ActionInputOptionValue;
+        value: JsonValue;
         label: string;
         description?: string | undefined;
         disabled?: boolean | undefined;
@@ -320,13 +349,17 @@ export type PluginActionContributionV2 = {
                 key: string;
                 fallback: string;
             };
+            inputType?: {
+                pluginId: string;
+                localId: string;
+            } | undefined;
             required?: boolean | undefined;
             requireExplicitSelection?: boolean | undefined;
             listSeparator?: 'comma' | 'newline' | undefined;
             maxSelections?: number | undefined;
-            visibleWhen?: ActionInputPredicate | undefined;
-            requiredWhen?: ActionInputPredicate | undefined;
-            disabledWhen?: ActionInputPredicate | undefined;
+            visibleWhen?: InputPredicate | undefined;
+            requiredWhen?: InputPredicate | undefined;
+            disabledWhen?: InputPredicate | undefined;
             connectedAccountOptions?: true | undefined;
             description?: string | {
                 key: string;
@@ -424,13 +457,17 @@ export type PluginToolContributionV2 = {
                 key: string;
                 fallback: string;
             };
+            inputType?: {
+                pluginId: string;
+                localId: string;
+            } | undefined;
             required?: boolean | undefined;
             requireExplicitSelection?: boolean | undefined;
             listSeparator?: 'comma' | 'newline' | undefined;
             maxSelections?: number | undefined;
-            visibleWhen?: ActionInputPredicate | undefined;
-            requiredWhen?: ActionInputPredicate | undefined;
-            disabledWhen?: ActionInputPredicate | undefined;
+            visibleWhen?: InputPredicate | undefined;
+            requiredWhen?: InputPredicate | undefined;
+            disabledWhen?: InputPredicate | undefined;
             description?: string | {
                 key: string;
                 fallback: string;
@@ -641,6 +678,10 @@ export type PluginActionWorkflowDefinitionV1 = {
         } | null | undefined;
         description?: string | undefined;
         optionsSourceId?: string | undefined;
+        inputType?: {
+            pluginId: string;
+            localId: string;
+        } | undefined;
     }[];
     readonly defaults: {
         agentTarget?: {
@@ -715,7 +756,7 @@ export type PluginActionWorkflowDefinitionV1 = {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -725,12 +766,12 @@ export type PluginActionWorkflowDefinitionV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -919,7 +960,7 @@ export type PluginActionWorkflowBlockV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -1007,7 +1048,7 @@ export type PluginActionWorkflowBlockV1 = {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1017,12 +1058,12 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -1222,7 +1263,7 @@ export type PluginActionWorkflowBlockV1 = {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1232,12 +1273,12 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -1426,7 +1467,7 @@ export type PluginActionWorkflowBlockV1 = {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1436,12 +1477,12 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -1576,7 +1617,7 @@ export type PluginActionWorkflowBlockV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -1664,7 +1705,7 @@ export type PluginActionWorkflowBlockV1 = {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1674,12 +1715,12 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -1860,7 +1901,7 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             }[];
@@ -1948,7 +1989,7 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
             } | null | undefined;
             transcriptStorage?: 'persisted' | 'direct' | null | undefined;
             terminal?: {
-                mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                 tmux?: {
                     sessionName?: string | undefined;
                     isolated?: boolean | undefined;
@@ -1958,12 +1999,12 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                     sessionName?: string | undefined;
                 } | undefined;
                 windows?: {
-                    launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                    launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                     console?: 'visible' | 'hidden' | undefined;
                     windowName?: string | undefined;
                 } | undefined;
             } | null | undefined;
-            windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+            windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
             windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
             windowsTerminalWindowName?: string | null | undefined;
             runtimeDescriptorV1?: {
@@ -2163,7 +2204,7 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
             } | null | undefined;
             transcriptStorage?: 'persisted' | 'direct' | null | undefined;
             terminal?: {
-                mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                 tmux?: {
                     sessionName?: string | undefined;
                     isolated?: boolean | undefined;
@@ -2173,12 +2214,12 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                     sessionName?: string | undefined;
                 } | undefined;
                 windows?: {
-                    launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                    launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                     console?: 'visible' | 'hidden' | undefined;
                     windowName?: string | undefined;
                 } | undefined;
             } | null | undefined;
-            windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+            windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
             windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
             windowsTerminalWindowName?: string | null | undefined;
             runtimeDescriptorV1?: {
@@ -2376,7 +2417,7 @@ export type PluginActionWorkflowSessionAuthoringSelectionV1 = {
     } | null | undefined;
     transcriptStorage?: 'persisted' | 'direct' | null | undefined;
     terminal?: {
-        mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+        mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
         tmux?: {
             sessionName?: string | undefined;
             isolated?: boolean | undefined;
@@ -2386,12 +2427,12 @@ export type PluginActionWorkflowSessionAuthoringSelectionV1 = {
             sessionName?: string | undefined;
         } | undefined;
         windows?: {
-            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
             console?: 'visible' | 'hidden' | undefined;
             windowName?: string | undefined;
         } | undefined;
     } | null | undefined;
-    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
     windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
     windowsTerminalWindowName?: string | null | undefined;
     runtimeDescriptorV1?: {
@@ -2479,7 +2520,7 @@ export type PluginActionWorkflowStepExecutionSelectionV1 = {
     } | null | undefined;
     transcriptStorage?: 'persisted' | 'direct' | null | undefined;
     terminal?: {
-        mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+        mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
         tmux?: {
             sessionName?: string | undefined;
             isolated?: boolean | undefined;
@@ -2489,12 +2530,12 @@ export type PluginActionWorkflowStepExecutionSelectionV1 = {
             sessionName?: string | undefined;
         } | undefined;
         windows?: {
-            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
             console?: 'visible' | 'hidden' | undefined;
             windowName?: string | undefined;
         } | undefined;
     } | null | undefined;
-    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
     windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
     windowsTerminalWindowName?: string | null | undefined;
     runtimeDescriptorV1?: {
@@ -2599,7 +2640,7 @@ export type PluginActionWorkflowStepV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -2687,7 +2728,7 @@ export type PluginActionWorkflowStepV1 = {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -2697,12 +2738,12 @@ export type PluginActionWorkflowStepV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -2848,7 +2889,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -2936,7 +2977,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -2946,12 +2987,12 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -3151,7 +3192,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -3161,12 +3202,12 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -3355,7 +3396,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -3365,12 +3406,12 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -3505,7 +3546,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -3593,7 +3634,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | null | undefined;
         transcriptStorage?: 'persisted' | 'direct' | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'plain' | 'integrated' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -3603,12 +3644,12 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                 console?: 'visible' | 'hidden' | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
         windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
@@ -3832,20 +3873,24 @@ export type ActionSpec = {
             path: string;
             widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
             title: string;
+            inputType?: {
+                pluginId: string;
+                localId: string;
+            } | undefined;
             required?: boolean | undefined;
             requireExplicitSelection?: boolean | undefined;
             listSeparator?: 'comma' | 'newline' | undefined;
             maxSelections?: number | undefined;
-            visibleWhen?: ActionInputPredicate | undefined;
-            requiredWhen?: ActionInputPredicate | undefined;
-            disabledWhen?: ActionInputPredicate | undefined;
+            visibleWhen?: InputPredicate | undefined;
+            requiredWhen?: InputPredicate | undefined;
+            disabledWhen?: InputPredicate | undefined;
             optionsSourceId?: string | undefined;
             connectedAccountOptions?: true | undefined;
             resolvedEmptyConnectedAccountOptions?: true | undefined;
             description?: string | undefined;
             placeholder?: string | undefined;
             options?: readonly {
-                value: ActionInputOptionValue;
+                value: JsonValue;
                 label: string;
                 description?: string | undefined;
                 disabled?: boolean | undefined;
@@ -3856,33 +3901,296 @@ export type ActionSpec = {
         submitLabel?: string | undefined;
     } | undefined;
 };
-export type JSONType = string | number | boolean | JSONType[] | {
-    [key: string]: JSONType;
-} | null;
-export type SessionTerminalLayoutV1 = {
-    kind: 'leaf';
-    terminalId: string;
-} | {
-    kind: 'split';
-    id: string;
-    ratio: number;
-    first: SessionTerminalLayoutV1;
-    second: SessionTerminalLayoutV1;
-};
-export type QualifiedAudienceSelection = Readonly<{
-    serverId: string;
-}> & SessionAudienceSelectionV1;
-export type SessionAudienceSelectionV1 = Readonly<{
-    kind: 'outside_teams';
+export type EntityDragItemV1 = Readonly<{
+    kind: 'session';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    address: {
+        serverId: string;
+        sessionId: string;
+    };
 }> | Readonly<{
-    kind: 'team';
-    teamId: string;
+    kind: 'session-folder';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    folderId: string;
 }> | Readonly<{
-    kind: 'group';
-    teamId: string;
-    groupId: string;
+    kind: 'session-workspace';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    workspaceId: string;
+}> | Readonly<{
+    kind: 'workspace-tab';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    tabId: string;
+}> | Readonly<{
+    kind: 'destination';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    href: string;
+}> | Readonly<{
+    kind: 'repository-file';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    machineId: string;
+    path: string;
+    workspaceId?: string | undefined;
+}> | Readonly<{
+    kind: 'session-board-item';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    address: {
+        serverId: string;
+        sessionId: string;
+    };
+    viewId: string;
+    itemId: string;
+}> | Readonly<{
+    kind: 'work-board-item';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    boardId: string;
+    item: {
+        kind: 'machine' | 'session' | 'workflow' | 'workflow_run';
+        qualifiedId: {
+            serverId: string;
+            id: string;
+        };
+    };
+}> | Readonly<{
+    kind: 'work-board-widget';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    boardId: string;
+    instanceId: string;
+}> | Readonly<{
+    kind: 'companion-item';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    address: {
+        serverId: string;
+        sessionId: string;
+    };
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'instance';
+        instance: {
+            v: 1;
+            id: string;
+            definition: {
+                kind: 'installed';
+                surface: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'builtin';
+                id: string;
+            } | {
+                kind: 'artifact';
+                artifactId: string;
+            } | {
+                kind: 'inline';
+                definition: {
+                    provenance: {
+                        source: {
+                            kind: 'authored';
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                            itemId: string;
+                        };
+                        authorAccountId?: string | undefined;
+                    };
+                    name: string;
+                    body: {
+                        kind: 'declarative';
+                        document: Readonly<{
+                            version: 1;
+                            root: PluginDeclarativeNodeV2;
+                        }>;
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    inputs: {
+                        fields: readonly {
+                            path: string;
+                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                            title: string;
+                            inputType?: {
+                                pluginId: string;
+                                localId: string;
+                            } | undefined;
+                            required?: boolean | undefined;
+                            requireExplicitSelection?: boolean | undefined;
+                            listSeparator?: 'comma' | 'newline' | undefined;
+                            maxSelections?: number | undefined;
+                            visibleWhen?: InputPredicate | undefined;
+                            requiredWhen?: InputPredicate | undefined;
+                            disabledWhen?: InputPredicate | undefined;
+                            optionsSourceId?: string | undefined;
+                            connectedAccountOptions?: true | undefined;
+                            resolvedEmptyConnectedAccountOptions?: true | undefined;
+                            description?: string | undefined;
+                            placeholder?: string | undefined;
+                            options?: readonly {
+                                value: JsonValue;
+                                label: string;
+                                description?: string | undefined;
+                                disabled?: boolean | undefined;
+                            }[] | undefined;
+                        }[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        submitLabel?: string | undefined;
+                    };
+                    inputSchema: PluginJsonSchemaV2;
+                    v: 1;
+                    id: string;
+                    description?: string | undefined;
+                    sessionInputPath?: string | undefined;
+                    connectedAccountPurposeBindings?: {
+                        path: string;
+                        purpose: string;
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    }[] | undefined;
+                };
+            };
+            bindings: Record<string, {
+                kind: 'value';
+                value: string | number | boolean | readonly JsonValue[] | {
+                    readonly [key: string]: JsonValue;
+                } | null;
+            } | {
+                kind: 'context';
+                slot: string;
+            } | {
+                kind: 'viewer';
+                purpose: string;
+            }>;
+            displayName?: string | undefined;
+        };
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+}> | Readonly<{
+    kind: 'home-section';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    sectionId: string;
+}> | Readonly<{
+    kind: 'pool-member';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    pool: {
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+        groupId: string;
+    };
+    member: {
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+        accountId: string;
+    };
+}> | Readonly<{
+    kind: 'pending-input';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    address: {
+        serverId: string;
+        sessionId: string;
+    };
+    localId: string;
+}> | Readonly<{
+    kind: 'todo';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    todoId: string;
+}> | Readonly<{
+    kind: 'plugin';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    contribution: {
+        pluginId: string;
+        localId: string;
+    };
+    reference: JsonValue;
 }>;
-export type PluginDeclarativeNodeV2 = Readonly<{
+export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
+    kind: 'dragSource';
+    sourceId: string | {
+        pluginId: string;
+        localId: string;
+    };
+    reference: PluginJsonValueV2;
+    organizing?: boolean | undefined;
+    children: readonly PluginDeclarativeNodeV2[];
+}> | Readonly<{
+    kind: 'dropTarget';
+    targetId: string | {
+        pluginId: string;
+        localId: string;
+    };
+    input?: PluginJsonValueV2 | undefined;
+    children: readonly PluginDeclarativeNodeV2[];
+}> | Readonly<{
+    kind: 'widgetArea';
+    area: string;
+    context?: Readonly<Record<string, PluginJsonValueV2>> | undefined;
+}> | Readonly<{
     kind: 'text';
     text: string | {
         key: string;
@@ -3898,7 +4206,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
 }> | Readonly<{
     kind: 'stack';
     direction?: 'vertical' | 'horizontal' | undefined;
-    gap?: 'small' | 'medium' | 'large' | undefined;
+    gap?: 'medium' | 'small' | 'large' | undefined;
     children: readonly PluginDeclarativeNodeV2[];
 }> | Readonly<{
     kind: 'group';
@@ -4016,7 +4324,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -4048,7 +4356,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -4074,7 +4382,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -4092,7 +4400,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
 } | {
     kind: 'section';
     children: ({
@@ -4109,7 +4417,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -4127,7 +4435,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -4153,7 +4461,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -4171,7 +4479,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -4188,7 +4496,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -4206,7 +4514,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -4250,7 +4558,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | undefined;
 } | {
     kind: 'metadata';
@@ -4332,7 +4640,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -4364,7 +4672,7 @@ export type PluginDeclarativeNodeV2 = Readonly<{
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -4441,8 +4749,1460 @@ export type PluginDeclarativeNodeV2 = Readonly<{
         };
     })[] | undefined;
 };
+export type PluginDeclarativeDataNodeV1 = {
+    kind: 'metric';
+    label: string | {
+        key: string;
+        fallback: string;
+    };
+    data: {
+        kind: 'resource';
+        resource: {
+            pluginId: string;
+            localId: string;
+        };
+        inputSchema: PluginJsonSchemaV2;
+        outputSchema: PluginJsonSchemaV2;
+        input?: PluginJsonValueV2 | undefined;
+    } | {
+        kind: 'value';
+        value: PluginJsonValueV2;
+    };
+    value: {
+        path: string[];
+        type: 'string' | 'number' | 'boolean';
+    };
+    unit?: string | {
+        key: string;
+        fallback: string;
+    } | undefined;
+    comparison?: {
+        value: {
+            path: string[];
+            type: 'string' | 'number' | 'boolean';
+        };
+        label: string | {
+            key: string;
+            fallback: string;
+        };
+        meaning: 'neutral' | 'good' | 'bad';
+    } | undefined;
+} | {
+    kind: 'table';
+    data: {
+        kind: 'resource';
+        resource: {
+            pluginId: string;
+            localId: string;
+        };
+        inputSchema: PluginJsonSchemaV2;
+        outputSchema: PluginJsonSchemaV2;
+        input?: PluginJsonValueV2 | undefined;
+    } | {
+        kind: 'value';
+        value: PluginJsonValueV2;
+    };
+    rows: string[];
+    columns: {
+        label: string | {
+            key: string;
+            fallback: string;
+        };
+        field: {
+            path: string[];
+            type: 'string' | 'number' | 'boolean';
+        };
+        priority?: 'primary' | 'secondary' | undefined;
+        proportion?: boolean | undefined;
+    }[];
+    label?: string | {
+        key: string;
+        fallback: string;
+    } | undefined;
+    incomplete?: boolean | undefined;
+    mark?: {
+        field: {
+            path: string[];
+            type: 'string' | 'number' | 'boolean';
+        };
+        whenTrue: {
+            label: string | {
+                key: string;
+                fallback: string;
+            };
+            meaning: 'neutral' | 'good' | 'bad';
+        };
+        whenFalse: {
+            label: string | {
+                key: string;
+                fallback: string;
+            };
+            meaning: 'neutral' | 'good' | 'bad';
+        };
+    } | undefined;
+} | {
+    data: {
+        kind: 'resource';
+        resource: {
+            pluginId: string;
+            localId: string;
+        };
+        inputSchema: PluginJsonSchemaV2;
+        outputSchema: PluginJsonSchemaV2;
+        input?: PluginJsonValueV2 | undefined;
+    } | {
+        kind: 'value';
+        value: PluginJsonValueV2;
+    };
+    rows: string[];
+    columns: {
+        label: string | {
+            key: string;
+            fallback: string;
+        };
+        field: {
+            path: string[];
+            type: 'string' | 'number' | 'boolean';
+        };
+        priority?: 'primary' | 'secondary' | undefined;
+        proportion?: boolean | undefined;
+    }[];
+    kind: 'rows';
+    label?: string | {
+        key: string;
+        fallback: string;
+    } | undefined;
+    incomplete?: boolean | undefined;
+    mark?: {
+        field: {
+            path: string[];
+            type: 'string' | 'number' | 'boolean';
+        };
+        whenTrue: {
+            label: string | {
+                key: string;
+                fallback: string;
+            };
+            meaning: 'neutral' | 'good' | 'bad';
+        };
+        whenFalse: {
+            label: string | {
+                key: string;
+                fallback: string;
+            };
+            meaning: 'neutral' | 'good' | 'bad';
+        };
+    } | undefined;
+} | {
+    kind: 'chart';
+    label: string | {
+        key: string;
+        fallback: string;
+    };
+    style: 'bar' | 'line';
+    data: {
+        kind: 'resource';
+        resource: {
+            pluginId: string;
+            localId: string;
+        };
+        inputSchema: PluginJsonSchemaV2;
+        outputSchema: PluginJsonSchemaV2;
+        input?: PluginJsonValueV2 | undefined;
+    } | {
+        kind: 'value';
+        value: PluginJsonValueV2;
+    };
+    rows: string[];
+    x: {
+        path: string[];
+        type: 'string' | 'number' | 'boolean';
+    };
+    y: {
+        path: string[];
+        type: 'string' | 'number' | 'boolean';
+    };
+};
+export type EntityDragScopeV1 = {
+    readonly serverId: string;
+    readonly accountId: string;
+};
+export type EntityDragKindV1 = 'session' | 'session-folder' | 'session-workspace' | 'workspace-tab' | 'destination' | 'repository-file' | 'session-board-item' | 'work-board-item' | 'work-board-widget' | 'companion-item' | 'home-section' | 'pool-member' | 'pending-input' | 'todo' | `plugin:${string}/${string}`;
+export type EntityDropAdmissionV1 = Readonly<{
+    status: 'allowed';
+    effect: {
+        actionId: string;
+        input: JsonValue;
+        preview: {
+            verb: string;
+            target: string;
+            consequence?: string | undefined;
+        };
+    };
+}> | Readonly<{
+    status: 'refused';
+    reason: {
+        code: string;
+        message: string;
+    };
+    preview?: {
+        verb: string;
+        target: string;
+        consequence?: string | undefined;
+    } | undefined;
+}>;
+export type EntityDropEffectV1 = {
+    readonly actionId: string;
+    readonly input: JsonValue;
+    readonly preview: {
+        verb: string;
+        target: string;
+        consequence?: string | undefined;
+    };
+};
+export type EntityDropPreviewV1 = {
+    readonly verb: string;
+    readonly target: string;
+    readonly consequence?: string | undefined;
+};
+export type EntityDropReasonV1 = {
+    readonly code: string;
+    readonly message: string;
+};
+export type EntityDropOutcomeV1 = Readonly<{
+    status: 'applied';
+}> | Readonly<{
+    status: 'refused';
+    reason: {
+        code: string;
+        message: string;
+    };
+}> | Readonly<{
+    status: 'unknown';
+    reason: {
+        code: string;
+        message: string;
+    };
+}>;
+export type PluginUiReadEntityDragItemRequestV1 = {
+    kind: 'session';
+};
+export type PluginUiUpdateEntityDragDropRequestV1 = {
+    kind: 'mountSource';
+    mountId: string;
+    sourceId: string;
+    reference: JsonValue;
+} | {
+    kind: 'mountTarget';
+    mountId: string;
+    targetId: string;
+    bounds: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    viewport: {
+        width: number;
+        height: number;
+    };
+    input?: JsonValue | undefined;
+    parentId?: string | undefined;
+} | {
+    kind: 'layout';
+    mountId: string;
+    bounds: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    viewport: {
+        width: number;
+        height: number;
+    };
+} | {
+    kind: 'unmount';
+    mountId: string;
+} | {
+    kind: 'begin';
+    mountId: string;
+    pointer: {
+        x: number;
+        y: number;
+    };
+    viewport: {
+        width: number;
+        height: number;
+    };
+    input?: 'pointer' | 'keyboard' | undefined;
+} | {
+    kind: 'destinations';
+    mountId: string;
+} | {
+    kind: 'choose';
+    mountId: string;
+    targetId: string;
+    destination?: JsonValue | undefined;
+} | {
+    kind: 'commit';
+    mountId: string;
+} | {
+    kind: 'perform';
+    mountId: string;
+    targetId: string;
+    destination?: JsonValue | undefined;
+} | {
+    kind: 'move';
+    pointer: {
+        x: number;
+        y: number;
+    };
+    viewport: {
+        width: number;
+        height: number;
+    };
+} | {
+    kind: 'release';
+    pointer: {
+        x: number;
+        y: number;
+    };
+    viewport: {
+        width: number;
+        height: number;
+    };
+} | {
+    kind: 'cancel';
+    mountId?: string | undefined;
+    reason?: 'gesture-end' | undefined;
+};
+export type PluginUiUpdateEntityDragDropResultV1 = {
+    accepted: boolean;
+    outcome?: {
+        status: 'applied';
+    } | {
+        status: 'refused';
+        reason: {
+            code: string;
+            message: string;
+        };
+    } | {
+        status: 'unknown';
+        reason: {
+            code: string;
+            message: string;
+        };
+    } | null | undefined;
+    destinations?: {
+        targetId: string;
+        admission: {
+            status: 'allowed';
+            effect: {
+                actionId: string;
+                input: JsonValue;
+                preview: {
+                    verb: string;
+                    target: string;
+                    consequence?: string | undefined;
+                };
+            };
+        } | {
+            status: 'refused';
+            reason: {
+                code: string;
+                message: string;
+            };
+            preview?: {
+                verb: string;
+                target: string;
+                consequence?: string | undefined;
+            } | undefined;
+        };
+        destination?: JsonValue | undefined;
+        label?: string | undefined;
+        group?: string | undefined;
+    }[] | undefined;
+    description?: {
+        title: string;
+        subtitle?: string | undefined;
+    } | null | undefined;
+};
+export type PluginUiWatchEntityDragDropRequestV1 = {
+    mountId: string;
+};
+export type PluginUiEntityDragDropStateV1 = {
+    current: boolean;
+    phase: 'idle' | 'carrying' | 'pending' | 'settled';
+    admission: {
+        status: 'allowed';
+        effect: {
+            actionId: string;
+            input: JsonValue;
+            preview: {
+                verb: string;
+                target: string;
+                consequence?: string | undefined;
+            };
+        };
+    } | {
+        status: 'refused';
+        reason: {
+            code: string;
+            message: string;
+        };
+        preview?: {
+            verb: string;
+            target: string;
+            consequence?: string | undefined;
+        } | undefined;
+    } | null;
+    outcome: {
+        status: 'applied';
+    } | {
+        status: 'refused';
+        reason: {
+            code: string;
+            message: string;
+        };
+    } | {
+        status: 'unknown';
+        reason: {
+            code: string;
+            message: string;
+        };
+    } | null;
+    destinations: {
+        targetId: string;
+        admission: {
+            status: 'allowed';
+            effect: {
+                actionId: string;
+                input: JsonValue;
+                preview: {
+                    verb: string;
+                    target: string;
+                    consequence?: string | undefined;
+                };
+            };
+        } | {
+            status: 'refused';
+            reason: {
+                code: string;
+                message: string;
+            };
+            preview?: {
+                verb: string;
+                target: string;
+                consequence?: string | undefined;
+            } | undefined;
+        };
+        destination?: JsonValue | undefined;
+        label?: string | undefined;
+        group?: string | undefined;
+    }[];
+};
+export type PluginUiEntityDropDestinationV1 = {
+    targetId: string;
+    admission: {
+        status: 'allowed';
+        effect: {
+            actionId: string;
+            input: JsonValue;
+            preview: {
+                verb: string;
+                target: string;
+                consequence?: string | undefined;
+            };
+        };
+    } | {
+        status: 'refused';
+        reason: {
+            code: string;
+            message: string;
+        };
+        preview?: {
+            verb: string;
+            target: string;
+            consequence?: string | undefined;
+        } | undefined;
+    };
+    destination?: JsonValue | undefined;
+    label?: string | undefined;
+    group?: string | undefined;
+};
+export type PluginUiWidgetAreaRequestV1 = {
+    area: string;
+    operation: {
+        actionId: 'widgets.catalog.list';
+        boundSession?: {
+            serverId: string;
+            sessionId: string;
+        } | undefined;
+    } | {
+        actionId: 'widgets.instance.list';
+    } | {
+        instance: {
+            v: 1;
+            id: string;
+            definition: {
+                kind: 'installed';
+                surface: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'builtin';
+                id: string;
+            } | {
+                kind: 'artifact';
+                artifactId: string;
+            } | {
+                kind: 'inline';
+                definition: {
+                    provenance: {
+                        source: {
+                            kind: 'authored';
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                            itemId: string;
+                        };
+                        authorAccountId?: string | undefined;
+                    };
+                    name: string;
+                    body: {
+                        kind: 'declarative';
+                        document: Readonly<{
+                            version: 1;
+                            root: PluginDeclarativeNodeV2;
+                        }>;
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    inputs: {
+                        fields: readonly {
+                            path: string;
+                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                            title: string;
+                            inputType?: {
+                                pluginId: string;
+                                localId: string;
+                            } | undefined;
+                            required?: boolean | undefined;
+                            requireExplicitSelection?: boolean | undefined;
+                            listSeparator?: 'comma' | 'newline' | undefined;
+                            maxSelections?: number | undefined;
+                            visibleWhen?: InputPredicate | undefined;
+                            requiredWhen?: InputPredicate | undefined;
+                            disabledWhen?: InputPredicate | undefined;
+                            optionsSourceId?: string | undefined;
+                            connectedAccountOptions?: true | undefined;
+                            resolvedEmptyConnectedAccountOptions?: true | undefined;
+                            description?: string | undefined;
+                            placeholder?: string | undefined;
+                            options?: readonly {
+                                value: JsonValue;
+                                label: string;
+                                description?: string | undefined;
+                                disabled?: boolean | undefined;
+                            }[] | undefined;
+                        }[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        submitLabel?: string | undefined;
+                    };
+                    inputSchema: PluginJsonSchemaV2;
+                    v: 1;
+                    id: string;
+                    description?: string | undefined;
+                    sessionInputPath?: string | undefined;
+                    connectedAccountPurposeBindings?: {
+                        path: string;
+                        purpose: string;
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    }[] | undefined;
+                };
+            };
+            bindings: Record<string, {
+                kind: 'value';
+                value: string | number | boolean | readonly JsonValue[] | {
+                    readonly [key: string]: JsonValue;
+                } | null;
+            } | {
+                kind: 'context';
+                slot: string;
+            } | {
+                kind: 'viewer';
+                purpose: string;
+            }>;
+            displayName?: string | undefined;
+        };
+        actionId: 'widgets.instance.add';
+        toIndex?: number | undefined;
+    } | {
+        actionId: 'widgets.instance.remove' | 'widgets.instance.inputs.get' | 'widgets.instance.inputs.reset' | 'widgets.instance.refresh';
+        instanceId: string;
+    } | {
+        actionId: 'widgets.instance.move';
+        instanceId: string;
+        toIndex: number;
+    } | {
+        displayName: string | null;
+        actionId: 'widgets.instance.rename';
+        instanceId: string;
+    } | {
+        width: 'half' | 'compact' | 'medium' | 'wide' | 'full';
+        actionId: 'widgets.instance.width.set';
+        instanceId: string;
+    } | {
+        frameStyle: 'plain' | 'card' | null;
+        actionId: 'widgets.instance.frame.set';
+        instanceId: string;
+    } | {
+        bindings: Record<string, {
+            kind: 'value';
+            value: string | number | boolean | readonly JsonValue[] | {
+                readonly [key: string]: JsonValue;
+            } | null;
+        } | {
+            kind: 'context';
+            slot: string;
+        } | {
+            kind: 'viewer';
+            purpose: string;
+        }>;
+        actionId: 'widgets.instance.inputs.validate';
+        instanceId: string;
+    } | {
+        bindings: Record<string, {
+            kind: 'value';
+            value: string | number | boolean | readonly JsonValue[] | {
+                readonly [key: string]: JsonValue;
+            } | null;
+        } | {
+            kind: 'context';
+            slot: string;
+        } | {
+            kind: 'viewer';
+            purpose: string;
+        }>;
+        actionId: 'widgets.instance.inputs.set';
+        instanceId: string;
+    };
+    context?: Record<string, string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null> | undefined;
+};
+export type PluginUiWidgetAreaResultV1 = {
+    ok: false;
+    errorCode: string;
+    error: string;
+    details?: unknown;
+} | {
+    ok: true;
+    result: {
+        kind: 'approval_request_created';
+        artifactId: string;
+        actionId: string;
+    } | {
+        status: 'ready';
+        input: Record<string, string | number | boolean | readonly JsonValue[] | {
+            readonly [key: string]: JsonValue;
+        } | null>;
+    } | {
+        status: 'unavailable' | 'denied' | 'selection_required' | 'invalid';
+        fields: {
+            path: string;
+            status: 'unavailable' | 'denied' | 'selection_required' | 'invalid';
+            reasonCode: string;
+        }[];
+    } | {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+        };
+        instances: {
+            instance: {
+                v: 1;
+                id: string;
+                definition: {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                } | {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    kind: 'artifact';
+                    artifactId: string;
+                } | {
+                    kind: 'inline';
+                    definition: {
+                        provenance: {
+                            source: {
+                                kind: 'authored';
+                            } | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                                itemId: string;
+                            };
+                            authorAccountId?: string | undefined;
+                        };
+                        name: string;
+                        body: {
+                            kind: 'declarative';
+                            document: Readonly<{
+                                version: 1;
+                                root: PluginDeclarativeNodeV2;
+                            }>;
+                        } | {
+                            kind: 'installed';
+                            surface: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        inputs: {
+                            fields: readonly {
+                                path: string;
+                                widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                title: string;
+                                inputType?: {
+                                    pluginId: string;
+                                    localId: string;
+                                } | undefined;
+                                required?: boolean | undefined;
+                                requireExplicitSelection?: boolean | undefined;
+                                listSeparator?: 'comma' | 'newline' | undefined;
+                                maxSelections?: number | undefined;
+                                visibleWhen?: InputPredicate | undefined;
+                                requiredWhen?: InputPredicate | undefined;
+                                disabledWhen?: InputPredicate | undefined;
+                                optionsSourceId?: string | undefined;
+                                connectedAccountOptions?: true | undefined;
+                                resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                description?: string | undefined;
+                                placeholder?: string | undefined;
+                                options?: readonly {
+                                    value: JsonValue;
+                                    label: string;
+                                    description?: string | undefined;
+                                    disabled?: boolean | undefined;
+                                }[] | undefined;
+                            }[];
+                            title?: string | undefined;
+                            description?: string | undefined;
+                            submitLabel?: string | undefined;
+                        };
+                        inputSchema: PluginJsonSchemaV2;
+                        v: 1;
+                        id: string;
+                        description?: string | undefined;
+                        sessionInputPath?: string | undefined;
+                        connectedAccountPurposeBindings?: {
+                            path: string;
+                            purpose: string;
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        }[] | undefined;
+                    };
+                };
+                bindings: Record<string, {
+                    kind: 'value';
+                    value: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null;
+                } | {
+                    kind: 'context';
+                    slot: string;
+                } | {
+                    kind: 'viewer';
+                    purpose: string;
+                }>;
+                displayName?: string | undefined;
+            };
+            width?: 'half' | 'compact' | 'medium' | 'wide' | 'full' | undefined;
+            frameStyle?: 'plain' | 'card' | undefined;
+        }[];
+        canEdit: boolean;
+    } | {
+        ref: {
+            surface: {
+                serverId: string;
+                accountId: string;
+                owner: {
+                    kind: 'home';
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'companion';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
+                } | {
+                    kind: 'project';
+                    projectId: string;
+                } | {
+                    kind: 'pluginArea';
+                    pluginId: string;
+                    pageId: string;
+                    area: string;
+                };
+            };
+            instanceId: string;
+        };
+        instance: {
+            v: 1;
+            id: string;
+            definition: {
+                kind: 'installed';
+                surface: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'builtin';
+                id: string;
+            } | {
+                kind: 'artifact';
+                artifactId: string;
+            } | {
+                kind: 'inline';
+                definition: {
+                    provenance: {
+                        source: {
+                            kind: 'authored';
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                            itemId: string;
+                        };
+                        authorAccountId?: string | undefined;
+                    };
+                    name: string;
+                    body: {
+                        kind: 'declarative';
+                        document: Readonly<{
+                            version: 1;
+                            root: PluginDeclarativeNodeV2;
+                        }>;
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    inputs: {
+                        fields: readonly {
+                            path: string;
+                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                            title: string;
+                            inputType?: {
+                                pluginId: string;
+                                localId: string;
+                            } | undefined;
+                            required?: boolean | undefined;
+                            requireExplicitSelection?: boolean | undefined;
+                            listSeparator?: 'comma' | 'newline' | undefined;
+                            maxSelections?: number | undefined;
+                            visibleWhen?: InputPredicate | undefined;
+                            requiredWhen?: InputPredicate | undefined;
+                            disabledWhen?: InputPredicate | undefined;
+                            optionsSourceId?: string | undefined;
+                            connectedAccountOptions?: true | undefined;
+                            resolvedEmptyConnectedAccountOptions?: true | undefined;
+                            description?: string | undefined;
+                            placeholder?: string | undefined;
+                            options?: readonly {
+                                value: JsonValue;
+                                label: string;
+                                description?: string | undefined;
+                                disabled?: boolean | undefined;
+                            }[] | undefined;
+                        }[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        submitLabel?: string | undefined;
+                    };
+                    inputSchema: PluginJsonSchemaV2;
+                    v: 1;
+                    id: string;
+                    description?: string | undefined;
+                    sessionInputPath?: string | undefined;
+                    connectedAccountPurposeBindings?: {
+                        path: string;
+                        purpose: string;
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    }[] | undefined;
+                };
+            };
+            bindings: Record<string, {
+                kind: 'value';
+                value: string | number | boolean | readonly JsonValue[] | {
+                    readonly [key: string]: JsonValue;
+                } | null;
+            } | {
+                kind: 'context';
+                slot: string;
+            } | {
+                kind: 'viewer';
+                purpose: string;
+            }>;
+            displayName?: string | undefined;
+        } | null;
+    } | {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+        };
+        entries: {
+            definition: {
+                kind: 'installed';
+                surface: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'builtin';
+                id: string;
+            } | {
+                kind: 'artifact';
+                artifactId: string;
+            } | {
+                kind: 'inline';
+                definition: {
+                    provenance: {
+                        source: {
+                            kind: 'authored';
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                            itemId: string;
+                        };
+                        authorAccountId?: string | undefined;
+                    };
+                    name: string;
+                    body: {
+                        kind: 'declarative';
+                        document: Readonly<{
+                            version: 1;
+                            root: PluginDeclarativeNodeV2;
+                        }>;
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    inputs: {
+                        fields: readonly {
+                            path: string;
+                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                            title: string;
+                            inputType?: {
+                                pluginId: string;
+                                localId: string;
+                            } | undefined;
+                            required?: boolean | undefined;
+                            requireExplicitSelection?: boolean | undefined;
+                            listSeparator?: 'comma' | 'newline' | undefined;
+                            maxSelections?: number | undefined;
+                            visibleWhen?: InputPredicate | undefined;
+                            requiredWhen?: InputPredicate | undefined;
+                            disabledWhen?: InputPredicate | undefined;
+                            optionsSourceId?: string | undefined;
+                            connectedAccountOptions?: true | undefined;
+                            resolvedEmptyConnectedAccountOptions?: true | undefined;
+                            description?: string | undefined;
+                            placeholder?: string | undefined;
+                            options?: readonly {
+                                value: JsonValue;
+                                label: string;
+                                description?: string | undefined;
+                                disabled?: boolean | undefined;
+                            }[] | undefined;
+                        }[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        submitLabel?: string | undefined;
+                    };
+                    inputSchema: PluginJsonSchemaV2;
+                    v: 1;
+                    id: string;
+                    description?: string | undefined;
+                    sessionInputPath?: string | undefined;
+                    connectedAccountPurposeBindings?: {
+                        path: string;
+                        purpose: string;
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    }[] | undefined;
+                };
+            };
+            title: string;
+            fields: {
+                path: string;
+                widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                title: string;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
+                required?: boolean | undefined;
+                requireExplicitSelection?: boolean | undefined;
+                listSeparator?: 'comma' | 'newline' | undefined;
+                maxSelections?: number | undefined;
+                visibleWhen?: InputPredicate | undefined;
+                requiredWhen?: InputPredicate | undefined;
+                disabledWhen?: InputPredicate | undefined;
+                optionsSourceId?: string | undefined;
+                connectedAccountOptions?: true | undefined;
+                resolvedEmptyConnectedAccountOptions?: true | undefined;
+                description?: string | undefined;
+                placeholder?: string | undefined;
+                options?: readonly {
+                    value: JsonValue;
+                    label: string;
+                    description?: string | undefined;
+                    disabled?: boolean | undefined;
+                }[] | undefined;
+            }[];
+            availability: 'unavailable' | 'denied' | 'available';
+            instanceCount: number;
+        }[];
+    } | {
+        ref: {
+            surface: {
+                serverId: string;
+                accountId: string;
+                owner: {
+                    kind: 'home';
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'companion';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
+                } | {
+                    kind: 'project';
+                    projectId: string;
+                } | {
+                    kind: 'pluginArea';
+                    pluginId: string;
+                    pageId: string;
+                    area: string;
+                };
+            };
+            instanceId: string;
+        };
+        bindings: Record<string, {
+            kind: 'value';
+            value: string | number | boolean | readonly JsonValue[] | {
+                readonly [key: string]: JsonValue;
+            } | null;
+        } | {
+            kind: 'context';
+            slot: string;
+        } | {
+            kind: 'viewer';
+            purpose: string;
+        }>;
+    } | {
+        ref: {
+            surface: {
+                serverId: string;
+                accountId: string;
+                owner: {
+                    kind: 'home';
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'companion';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
+                } | {
+                    kind: 'project';
+                    projectId: string;
+                } | {
+                    kind: 'pluginArea';
+                    pluginId: string;
+                    pageId: string;
+                    area: string;
+                };
+            };
+            instanceId: string;
+        };
+        status: 'refreshed';
+    };
+};
+export type PluginUiWidgetAreaOperationV1 = {
+    actionId: 'widgets.catalog.list';
+    boundSession?: {
+        serverId: string;
+        sessionId: string;
+    } | undefined;
+} | {
+    actionId: 'widgets.instance.list';
+} | {
+    instance: {
+        v: 1;
+        id: string;
+        definition: {
+            kind: 'installed';
+            surface: {
+                pluginId: string;
+                localId: string;
+            };
+        } | {
+            kind: 'builtin';
+            id: string;
+        } | {
+            kind: 'artifact';
+            artifactId: string;
+        } | {
+            kind: 'inline';
+            definition: {
+                provenance: {
+                    source: {
+                        kind: 'authored';
+                    } | {
+                        kind: 'session';
+                        serverId: string;
+                        sessionId: string;
+                        itemId: string;
+                    };
+                    authorAccountId?: string | undefined;
+                };
+                name: string;
+                body: {
+                    kind: 'declarative';
+                    document: Readonly<{
+                        version: 1;
+                        root: PluginDeclarativeNodeV2;
+                    }>;
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                inputs: {
+                    fields: readonly {
+                        path: string;
+                        widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
+                        title: string;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
+                        required?: boolean | undefined;
+                        requireExplicitSelection?: boolean | undefined;
+                        listSeparator?: 'comma' | 'newline' | undefined;
+                        maxSelections?: number | undefined;
+                        visibleWhen?: InputPredicate | undefined;
+                        requiredWhen?: InputPredicate | undefined;
+                        disabledWhen?: InputPredicate | undefined;
+                        optionsSourceId?: string | undefined;
+                        connectedAccountOptions?: true | undefined;
+                        resolvedEmptyConnectedAccountOptions?: true | undefined;
+                        description?: string | undefined;
+                        placeholder?: string | undefined;
+                        options?: readonly {
+                            value: JsonValue;
+                            label: string;
+                            description?: string | undefined;
+                            disabled?: boolean | undefined;
+                        }[] | undefined;
+                    }[];
+                    title?: string | undefined;
+                    description?: string | undefined;
+                    submitLabel?: string | undefined;
+                };
+                inputSchema: PluginJsonSchemaV2;
+                v: 1;
+                id: string;
+                description?: string | undefined;
+                sessionInputPath?: string | undefined;
+                connectedAccountPurposeBindings?: {
+                    path: string;
+                    purpose: string;
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                }[] | undefined;
+            };
+        };
+        bindings: Record<string, {
+            kind: 'value';
+            value: string | number | boolean | readonly JsonValue[] | {
+                readonly [key: string]: JsonValue;
+            } | null;
+        } | {
+            kind: 'context';
+            slot: string;
+        } | {
+            kind: 'viewer';
+            purpose: string;
+        }>;
+        displayName?: string | undefined;
+    };
+    actionId: 'widgets.instance.add';
+    toIndex?: number | undefined;
+} | {
+    actionId: 'widgets.instance.remove' | 'widgets.instance.inputs.get' | 'widgets.instance.inputs.reset' | 'widgets.instance.refresh';
+    instanceId: string;
+} | {
+    actionId: 'widgets.instance.move';
+    instanceId: string;
+    toIndex: number;
+} | {
+    displayName: string | null;
+    actionId: 'widgets.instance.rename';
+    instanceId: string;
+} | {
+    width: 'half' | 'compact' | 'medium' | 'wide' | 'full';
+    actionId: 'widgets.instance.width.set';
+    instanceId: string;
+} | {
+    frameStyle: 'plain' | 'card' | null;
+    actionId: 'widgets.instance.frame.set';
+    instanceId: string;
+} | {
+    bindings: Record<string, {
+        kind: 'value';
+        value: string | number | boolean | readonly JsonValue[] | {
+            readonly [key: string]: JsonValue;
+        } | null;
+    } | {
+        kind: 'context';
+        slot: string;
+    } | {
+        kind: 'viewer';
+        purpose: string;
+    }>;
+    actionId: 'widgets.instance.inputs.validate';
+    instanceId: string;
+} | {
+    bindings: Record<string, {
+        kind: 'value';
+        value: string | number | boolean | readonly JsonValue[] | {
+            readonly [key: string]: JsonValue;
+        } | null;
+    } | {
+        kind: 'context';
+        slot: string;
+    } | {
+        kind: 'viewer';
+        purpose: string;
+    }>;
+    actionId: 'widgets.instance.inputs.set';
+    instanceId: string;
+};
+export type SessionCompanionPresentationItem = {
+    kind: 'builtin';
+    id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+    frameStyle?: 'plain' | 'card' | undefined;
+} | {
+    kind: 'widget';
+    widgetId: string;
+    frameStyle?: 'plain' | 'card' | undefined;
+} | {
+    kind: 'pane';
+    paneId: string;
+    frameStyle?: 'plain' | 'card' | undefined;
+};
+export type CurrentSessionPresentationIntentV1 = {
+    kind: 'chat.return';
+} | {
+    kind: 'board.open';
+    mode: 'beside_chat' | 'focus';
+} | {
+    kind: 'board.view.select';
+    viewId: string;
+} | {
+    kind: 'board.item.reveal';
+    widgetId: string;
+    viewId?: string | undefined;
+} | {
+    kind: 'companion.show';
+} | {
+    kind: 'companion.hide';
+} | {
+    kind: 'companion.edge.set';
+    edge: 'leading' | 'trailing';
+} | {
+    kind: 'companion.collapse.set';
+    collapsed: boolean;
+} | {
+    kind: 'companion.density.set';
+    density: 'compact' | 'comfortable';
+} | {
+    kind: 'companion.open_full';
+} | {
+    kind: 'companion.item.add';
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+    index?: number | undefined;
+} | {
+    kind: 'companion.item.remove';
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+} | {
+    kind: 'companion.item.move';
+    toIndex: number;
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+} | {
+    kind: 'companion.item.frameStyle.set';
+    frameStyle: 'plain' | 'card' | null;
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+};
+export type JSONType = string | number | boolean | JSONType[] | {
+    [key: string]: JSONType;
+} | null;
+export type SessionTerminalLayoutV1 = {
+    kind: 'leaf';
+    terminalId: string;
+} | {
+    kind: 'split';
+    id: string;
+    ratio: number;
+    first: SessionTerminalLayoutV1;
+    second: SessionTerminalLayoutV1;
+};
+export type QualifiedAudienceSelection = Readonly<{
+    serverId: string;
+}> & SessionAudienceSelectionV1;
+export type SessionAudienceSelectionV1 = Readonly<{
+    kind: 'outside_teams';
+}> | Readonly<{
+    kind: 'team';
+    teamId: string;
+}> | Readonly<{
+    kind: 'group';
+    teamId: string;
+    groupId: string;
+}>;
 export type PluginUiToneV1 = 'success' | 'danger' | 'info' | 'warning' | 'neutral' | 'accent';
-export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied';
+export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied';
 export type PluginDeclarativeControlV2 = {
     kind: 'text';
     settingId: string;
@@ -4530,7 +6290,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         };
@@ -4562,7 +6322,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation?: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             } | undefined;
         };
@@ -4633,7 +6393,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -4665,7 +6425,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -4692,7 +6452,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -4710,7 +6470,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceReferenceV1 = {
     point: {
@@ -4742,7 +6502,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -4760,7 +6520,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -4777,7 +6537,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -4795,7 +6555,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -4827,7 +6587,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -4845,7 +6605,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -4870,7 +6630,7 @@ export type PluginDeclarativeItemNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -4889,7 +6649,7 @@ export type PluginDeclarativeStateNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceNodeV2 = {
     kind: 'targetedSurface';
@@ -4920,7 +6680,7 @@ export type PluginDeclarativeTargetedSurfaceNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | undefined;
 };
 export type PluginDeclarativeMetadataNodeV2 = {
@@ -5004,7 +6764,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -5036,7 +6796,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -5136,7 +6896,7 @@ export type ComposerContentMimeTypeV1 = 'image/png' | 'image/jpeg' | 'image/webp
 export type ComposerAttachmentAuthorPresentationV1 = {
     readonly label: string;
     readonly description?: string | undefined;
-    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     readonly tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
 };
 export type PluginLocalizedStringV2 = string | {

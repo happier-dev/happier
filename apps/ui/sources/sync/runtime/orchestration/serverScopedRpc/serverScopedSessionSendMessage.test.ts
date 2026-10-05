@@ -16,6 +16,7 @@ import { buildSession, resetPendingQueueState } from '@/sync/engine/pending/pend
 import { createServerScopedSessionSendMessage } from './serverScopedSessionSendMessage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -804,7 +805,7 @@ describe('sendSessionMessageWithServerScope', () => {
       overrides: { serverId: 'server-1', encryptionMode: 'plain' },
     });
     storage.getState().applySessions([session]);
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     sync.onSessionViewportChange('s1', {
       isPinned: false,
       offsetY: 420,

@@ -23,6 +23,14 @@ function expectOk(result: ReturnType<typeof applySessionBoardLayoutOperationV1>)
 }
 
 describe('Session Board semantic layout operations', () => {
+  it('applies the portable frame atomically with a first placement and retains it on omitted-frame upserts', () => {
+    const placement = { tabId: 'metrics', width: 'compact' as const, frameStyle: 'plain' as const, anchor: { side: 'before' as const, itemId: 'chart' } };
+    const added = expectOk(applySessionBoardItemPlacementV1(layout, { itemId: 'copy', placement }));
+    expect(added.tabs[1]?.items).toEqual([{ itemId: 'copy', width: 'compact', frameStyle: 'plain' }, { itemId: 'chart', width: 'full' }]);
+    const edited = expectOk(applySessionBoardItemPlacementV1(added, { itemId: 'copy', placement: { tabId: 'metrics', width: 'wide' } }));
+    expect(edited.tabs[1]?.items[0]).toEqual({ itemId: 'copy', width: 'wide', frameStyle: 'plain' });
+    expect(edited.tabs[0]).toEqual(layout.tabs[0]);
+  });
   it('sets and clears a placement frame override without changing the same item in another view', () => {
     const parsed = SessionBoardLayoutOperationV1Schema.safeParse({
       op: 'item.frameStyle', tabId: 'overview', itemId: 'chart', frameStyle: 'plain',

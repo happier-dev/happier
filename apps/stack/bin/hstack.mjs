@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
+import { runForegroundChild } from '../scripts/utils/execution_host/foreground_child.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -8,6 +8,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../scripts/utils/cli/cli_registry.mjs';
+import { parseBuildSelection } from '../scripts/build/build_targets.mjs';
+import { shouldBuildStackArtifacts } from '../scripts/build/build_mode.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
 import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 import { SANDBOX_PRESERVE_KEYS, STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
@@ -69,7 +71,7 @@ function shouldKeepCurrentCliRootForInvocation(argv) {
   return args.some((a) => a === '--cli-root-dir' || String(a).startsWith('--cli-root-dir='));
 }
 
-function maybeReexecToCliRoot(cliRootDir, argv = []) {
+async function maybeReexecToCliRoot(cliRootDir, argv = []) {
   if ((process.env.HAPPIER_STACK_CLI_REEXEC ?? process.env.HAPPIER_STACK_DEV_REEXEC ?? '') === '1') return;
   if ((process.env.HAPPIER_STACK_CLI_ROOT_DISABLE ?? process.env.HAPPIER_STACK_DEV_CLI_DISABLE ?? '') === '1') return;
   if (shouldKeepCurrentCliRootForInvocation(argv)) return;
@@ -82,7 +84,8 @@ function maybeReexecToCliRoot(cliRootDir, argv = []) {
   if (!existsSync(cliBin)) return;
 
   const passthroughArgv = process.argv.slice(2);
-  const res = spawnSync(process.execPath, [cliBin, ...passthroughArgv], {
+  const res = await runForegroundChild({ command: process.execPath, args: [cliBin, ...passthroughArgv], options: {
+    detached: process.platform !== 'win32',
     stdio: 'inherit',
     cwd: cliRoot,
     env: {
@@ -90,8 +93,9 @@ function maybeReexecToCliRoot(cliRootDir, argv = []) {
       HAPPIER_STACK_CLI_REEXEC: '1',
       HAPPIER_STACK_CLI_ROOT_DIR: cliRoot,
     },
-  });
-  process.exit(res.status ?? 1);
+  } });
+  if (res.signal) process.kill(process.pid, res.signal);
+  else process.exit(res.exitCode ?? 1);
 }
 
 function resolveHomeDir() {
@@ -280,18 +284,20 @@ function usage() {
   return renderhstackRootHelp();
 }
 
-function runNodeScript(cliRootDir, scriptRelPath, args) {
+async function runNodeScript(cliRootDir, scriptRelPath, args) {
   const scriptPath = join(cliRootDir, scriptRelPath);
   if (!existsSync(scriptPath)) {
     console.error(`[hstack] missing script: ${scriptPath}`);
     process.exit(1);
   }
-  const res = spawnSync(process.execPath, [scriptPath, ...args], {
+  const res = await runForegroundChild({ command: process.execPath, args: [scriptPath, ...args], options: {
+    detached: process.platform !== 'win32',
     stdio: 'inherit',
     env: process.env,
     cwd: cliRootDir,
-  });
-  process.exit(res.status ?? 1);
+  } });
+  if (res.signal) process.kill(process.pid, res.signal);
+  else process.exit(res.exitCode ?? 1);
 }
 
 function hasJsonFlag(args) {
@@ -372,12 +378,33 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   const isTuiManaged = String(process.env.HAPPIER_STACK_TUI ?? '').trim() === '1';
   if (isTuiManaged && (command === 'dev' || command === 'start')) return true;
 
+  if (command === 'build') {
+    const buildArgv = preSeparatorArgs.slice(preSeparatorArgs.indexOf(command) + 1);
+    return shouldBuildStackArtifacts({
+      selection: parseBuildSelection({ argv: buildArgv }),
+      argv: buildArgv,
+      env: process.env,
+    });
+  }
+
   if (command !== 'stack') return false;
 
   const commandIndex = args.indexOf(command);
   const rest = commandIndex >= 0 ? args.slice(commandIndex + 1) : [];
   const positionals = rest.filter((arg) => arg !== '--' && !String(arg).startsWith('-'));
   const subcommand = positionals[0] ?? '';
+
+  // Artifact admission belongs to the build owner, which records preparation
+  // failures in the producer projection. A launcher-wide source publication
+  // can fail before that owner runs and hide the requested component's outcome.
+  if (subcommand === 'build' && positionals[1]) {
+    const buildArgv = preSeparatorArgs.slice(commandIndex + 1);
+    if (shouldBuildStackArtifacts({
+      selection: parseBuildSelection({ argv: buildArgv }),
+      argv: buildArgv,
+      env: { ...process.env, HAPPIER_STACK_STACK: positionals[1] },
+    })) return true;
+  }
 
   // Selection only consumes a producer snapshot and the named consumer's stack
   // metadata. Its owner also owns `select --help`, so neither path needs a
@@ -406,7 +433,13 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   if (subcommand === 'info') return Boolean(positionals[1]);
   if (subcommand === 'status') return Boolean(positionals[1]);
   if (subcommand === 'auth') {
-    return Boolean(positionals[1]) && positionals[2] === 'status';
+    if (!positionals[1]) return false;
+    if (positionals[2] === 'status') return true;
+    if (positionals[2] === 'login') {
+      const { envPath } = resolveStackEnvPath(positionals[1], process.env);
+      return dotenvGetQuick(envPath, 'HAPPIER_STACK_RUNTIME_MODE').trim().toLowerCase() === 'require';
+    }
+    return false;
   }
   // Stop owns only stack-recorded lifecycle cleanup. It must remain able to
   // reclaim that stack while an unrelated workspace publication holds the
@@ -534,7 +567,7 @@ async function main() {
 
   if (handleMissingExplicitStackEnvBeforePreflight(argv)) return;
 
-  maybeReexecToCliRoot(cliRootDir, argv);
+  await maybeReexecToCliRoot(cliRootDir, argv);
 
   // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hstack --help`),
   // treat it as root help rather than `help --help` (which would look like
@@ -622,8 +655,9 @@ async function main() {
 
   if (resolved.kind === 'external') {
     const args = resolved.external?.argsFromRest ? resolved.external.argsFromRest(rest) : rest;
-    const res = spawnSync(resolved.external.cmd, args, { stdio: 'inherit', env: process.env });
-    process.exit(res.status ?? 1);
+    const res = await runForegroundChild({ command: resolved.external.cmd, args, options: { stdio: 'inherit', env: process.env, detached: process.platform !== 'win32' } });
+    if (res.signal) process.kill(process.pid, res.signal);
+    else process.exit(res.exitCode ?? 1);
   }
 
   const args = resolved.argsFromRest ? resolved.argsFromRest(rest) : rest;

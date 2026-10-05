@@ -134,6 +134,7 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
         workingDirectory: input.workingDirectory,
         path: request.path,
         asZip: request.asZip,
+        confinedToWorkingDirectory: request.confinedToWorkingDirectory,
         accessPolicy: OS_USER_FILESYSTEM_ACCESS_POLICY,
         sessionRpcTransferMaxBytes: null,
       });

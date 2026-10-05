@@ -17,7 +17,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -1001,9 +1001,9 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 title={group.name}
                 description={group.description ?? undefined}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <Icon name="users" size={22} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
                 meta={[
                     { key: 'team', text: context.team.name },

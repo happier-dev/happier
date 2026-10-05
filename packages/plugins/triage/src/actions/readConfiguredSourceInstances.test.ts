@@ -125,11 +125,13 @@ function pluginCaller(pluginId: string): PluginInvocationCaller {
 function createContext(input: Readonly<{
     collections: CorpusCollectionsV1;
     caller?: PluginInvocationCaller;
+    surface?: PluginInvocationContext['surface'];
     admitted?: readonly TriageAdmittedSourceV1[];
     onInvalidated?: boolean;
 }>): PluginInvocationContext {
     return {
         signal: new AbortController().signal,
+        surface: input.surface ?? 'plugin',
         ...(input.caller === undefined ? {} : { caller: input.caller }),
         services: {
             storage: {
@@ -160,6 +162,23 @@ function createContext(input: Readonly<{
 const INPUT = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1 });
 
 describe('the caller-scoped configured-instance read', () => {
+    it('lets a host agent discover admitted configured sources without granting a plugin the same scope', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));
+        control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: TRACKER, seed: 2 })));
+        const handler = createTriageReadConfiguredSourceInstancesActionHandler();
+        const result = await handler(INPUT, createContext({ collections, surface: 'agent' }));
+        expect(result.kind).toBe('read');
+        if (result.kind !== 'read') return;
+        expect(result.instances.map((record) => record.configured.instance.source)).toEqual([FORGE, TRACKER]);
+        const selected = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1, source: TRACKER });
+        expect(await handler(selected, createContext({ collections, surface: 'agent', caller: pluginCaller(FORGE.pluginId) })))
+            .toEqual({ kind: 'invalidCaller' });
+        const filtered = await handler(selected, createContext({ collections, surface: 'agent' }));
+        expect(filtered.kind === 'read' ? filtered.instances.map((record) => record.configured.instance.source) : filtered)
+            .toEqual([TRACKER]);
+    });
+
     it('returns exactly the calling source instances and no others', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));

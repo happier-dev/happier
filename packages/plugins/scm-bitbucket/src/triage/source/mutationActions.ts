@@ -68,14 +68,9 @@ import type { BitbucketTriageApiClient } from '../apiClient.js';
  * read; there is no generic `mutate({ operation, payload })` and there will not be one
  * (`sources/SCM.md` §3.8).
  *
- * All are declared `surfaces: ['ui']`, and that is the human gate. The gate is
- * **reachability, not a prompt**: omitting `agent` and `mcp` means not one of them is
- * agent-reachable at all — no prompt to approve, no tool to call, no exposure. A danger level
- * alone would only floor an agent invocation to an approval prompt, which is a weaker guarantee
- * than not being reachable. `ui` is the write's whole product reach: this plugin's own mounted
- * detail artifact reaches the daemon as present-user UI authority through the authenticated
- * mounted provenance, while direct plugin code — ActionsService — checks only the `plugin`
- * surface and is refused here.
+ * UI, agent, MCP and CLI invoke the same native write through the shared host
+ * approval policy. Non-safe danger levels and confirmation require approval
+ * by default; exact configured-entry admission and provider preconditions stay here.
  *
  * The shape every write here follows is the same three steps:
  *

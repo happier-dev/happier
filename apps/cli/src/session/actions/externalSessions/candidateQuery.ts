@@ -2174,6 +2174,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
     maxBytes?: number;
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
+    searchTarget?: 'metadata' | 'content';
     /** List the Agent's internal threads too; served from their own index (see `resolvePaths`). */
     includeThreads?: boolean;
     /**
@@ -2192,6 +2193,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
         limit: number;
         searchTerm?: string;
         searchMode?: 'fast' | 'full';
+        searchTarget?: 'metadata' | 'content';
         includeThreads?: boolean;
         readCandidateIndexState?(candidate: Readonly<{
             remoteSessionId: string;
@@ -2266,12 +2268,13 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
         }
     };
 
-    if (params.searchTerm || (params.cursor && !indexCursor)) {
+    if (params.searchTarget === 'content' || params.searchTerm || (params.cursor && !indexCursor)) {
         return publishCandidatePage(await listCandidates({
             ...(params.cursor ? { cursor: params.cursor } : {}),
             limit,
             ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
             ...(params.searchMode ? { searchMode: params.searchMode } : {}),
+            ...(params.searchTarget ? { searchTarget: params.searchTarget } : {}),
             readCandidateIndexState,
         }), limit, maxBytes);
     }

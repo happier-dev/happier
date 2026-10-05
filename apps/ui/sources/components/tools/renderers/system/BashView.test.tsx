@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,6 +37,38 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 installSystemToolRendererCommonModuleMocks();
 
 describe('BashView', () => {
+    it('excludes whitespace-only streams but preserves all whitespace in displayed output', async () => {
+        const { projectBashDisplayText } = await import('./BashView');
+        const blank = projectBashDisplayText(makeToolCall({ name: 'Bash', state: 'completed', result: { stdout: ' \n', stderr: '\t\n' } }));
+        expect(blank.some((block) => block.id === 'tool-stdout' || block.id === 'tool-stderr')).toBe(false);
+        const stdout = ' \nvisible\n ';
+        expect(projectBashDisplayText(makeToolCall({ name: 'Bash', state: 'completed', result: { stdout } })).find((block) => block.id === 'tool-stdout')?.text).toBe(stdout);
+    });
+    it('projects the raw-command explanation that the full body renders', async () => {
+        const { projectBashDisplayText } = await import('./BashView');
+        const blocks = projectBashDisplayText(makeToolCall({ name: 'Bash', input: { command: 'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; echo hi' } }));
+        expect(blocks.find((block) => block.id === 'tool-command-raw-title')?.text).toBe('tools.bashView.commandDiffTitle');
+        expect(blocks.find((block) => block.id === 'tool-command-raw-hint')?.text).toBe('tools.bashView.commandDiffHint');
+    });
+    it('projects decoded standard streams without matching hidden result metadata', async () => {
+        const { projectBashDisplayText } = await import('./BashView');
+        const tool = makeToolCall({ name: 'Bash', state: 'completed', input: { command: 'printf hello' }, result: { stdout: 'visible stdout', stderr: 'visible stderr', _raw: { hidden: 'metadata-only' } } });
+        const blocks = projectBashDisplayText(tool);
+        expect(blocks.find((block) => block.id === 'tool-stdout')?.text).toBe('visible stdout');
+        expect(blocks.find((block) => block.id === 'tool-stderr')?.text).toBe('visible stderr');
+        expect(blocks.some((block) => block.text.includes('metadata-only'))).toBe(false);
+    });
+    it('reveals the full running output and forwards exact source ranges when Find owns a match', async () => {
+        commandViewSpy.mockClear();
+        const { BashView } = await import('./BashView');
+        const stdout = 'needle at beginning\n' + 'x'.repeat(9000);
+        const tool = makeToolCall({ name: 'Bash', state: 'running', input: { command: 'echo hi' }, result: { stdout, stderr: '', hidden: 'metadata-only' } });
+        const store = createTranscriptFindRowStore();
+        const ranges = [{ start: 0, end: 6, current: true }];
+        store.publish(new Map([['find-tool', { blocks: [{ id: 'tool-stdout', sourceRanges: ranges }], reveal: { blockId: 'tool-stdout', requestId: 1 } }]]));
+        await renderScreen(<TranscriptFindProvider store={store}><BashView {...makeToolViewProps(tool, { messageId: 'find-tool' })} /></TranscriptFindProvider>);
+        expect(commandViewSpy).toHaveBeenLastCalledWith(expect.objectContaining({ stdout, stdoutFindRanges: ranges }));
+    });
     it('tails long stdout by default', async () => {
         commandViewSpy.mockClear();
         codeViewSpy.mockClear();

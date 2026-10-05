@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import {
     TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS,
@@ -32,7 +33,7 @@ const TRANSCRIPT_JUMP_HIGHLIGHT_POP_SCALE = 1.012;
  * component only renders what the store says is the landed row.
  */
 export function TranscriptJumpAttention(props: Readonly<{
-    sessionId: string;
+    sessionAddress: SessionAddress | null;
     routeMessageId?: string | null;
     seq?: number | null;
     radius: number;
@@ -42,7 +43,7 @@ export function TranscriptJumpAttention(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const token = useTranscriptJumpHighlight({
-        sessionId: props.sessionId,
+        sessionAddress: props.sessionAddress,
         routeMessageId: props.routeMessageId ?? null,
         seq: props.seq ?? null,
     });

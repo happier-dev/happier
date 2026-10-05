@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import {
     createModelBackedSessionItemTestComponent,
     type ModelBackedSessionItemTestProps,
@@ -104,33 +105,9 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
-}));
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
 }));
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -153,9 +130,6 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 vi.mock('@/components/sessions/canvas/useSessionSplitCanvasRowActions', () => ({
     useSessionSplitCanvasRowActions: () => splitCanvasActionState,
     useSessionSplitCanvasRowActionsForScope: () => splitCanvasActionState,
-}));
-vi.mock('@/components/sessions/canvas/SessionSplitCanvasDragHandle', () => ({
-    SessionSplitCanvasDragHandle: (props: Record<string, unknown>) => React.createElement('SessionSplitCanvasDragHandle', props),
 }));
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
@@ -190,6 +164,7 @@ vi.mock('./sessionTagIcons', () => ({
 
 function createSession(id: string): SessionListRenderableSession {
     return {
+        ...createSessionListRenderableSessionFixture(),
         id,
         seq: 3,
         lastViewedSessionSeq: 2,
@@ -252,9 +227,9 @@ describe('SessionItem split-canvas native context menu', () => {
         expect(itemIds).toEqual(expect.arrayContaining([
             'openInSplitRight',
             'openInSplitDown',
-            'rename',
-            'stop',
-            'archive',
+            'ui.session.rename',
+            'ui.session.stop',
+            'ui.session.archive',
         ]));
 
         await act(async () => {

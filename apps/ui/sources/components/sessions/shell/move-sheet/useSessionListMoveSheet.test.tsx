@@ -4,7 +4,8 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 
-import type { SessionListMoveSheetTarget } from './buildSessionListMoveSheetTargets';
+import type { EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
+import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop';
 import { useSessionListMoveSheet } from './useSessionListMoveSheet';
 
 const modalMock = vi.hoisted(() => {
@@ -28,37 +29,22 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-const rootTarget: SessionListMoveSheetTarget = {
-    id: 'root:workspace-a',
-    kind: 'root',
-    label: 'Workspace root',
-    disabled: false,
-    result: {
-        instruction: {
-            kind: 'move-to-root',
-            containerId: 'workspace-a',
-            rootId: 'workspace-a',
-            depth: 0,
-        },
-        visual: { kind: 'outline', targetId: 'workspace-a' },
-    },
-};
-
 describe('useSessionListMoveSheet', () => {
     beforeAll(async () => {
         await import('./SessionListMoveSheet');
     });
 
-    it('opens a card modal and resolves with the selected target', async () => {
+    it('opens a card modal and resolves with the acknowledged owner outcome', async () => {
         modalMock.show.mockClear();
         modalMock.hide.mockClear();
         const hook = await renderHook(() => useSessionListMoveSheet());
 
-        let selection: Promise<SessionListMoveSheetTarget | null>;
+        let selection: Promise<EntityDropOutcomeV1 | null>;
         await act(async () => {
             selection = hook.getCurrent().openMoveSheet({
                 sourceLabel: 'Planning',
-                targets: [rootTarget],
+                runtime: createEntityDragDropRuntime(),
+                sourceId: 'source',
             });
             await Promise.resolve();
         });
@@ -70,12 +56,12 @@ describe('useSessionListMoveSheet', () => {
         expect(modalMock.show).toHaveBeenCalledWith(expect.objectContaining({
             chrome: expect.objectContaining({ kind: 'card', title: 'sessionsList.moveSheetTitle' }),
         }));
-        const config = modalMock.show.mock.calls[0]?.[0] as { props?: { onSelectTarget?: (target: SessionListMoveSheetTarget) => void } };
+        const config = modalMock.show.mock.calls[0]?.[0] as { props?: { onComplete?: (outcome: EntityDropOutcomeV1) => void } };
         await act(async () => {
-            config.props?.onSelectTarget?.(rootTarget);
+            config.props?.onComplete?.({ status: 'applied' });
         });
 
-        await expect(selection!).resolves.toBe(rootTarget);
+        await expect(selection!).resolves.toEqual({ status: 'applied' });
         expect(modalMock.hide).toHaveBeenCalledWith('move-sheet-modal');
     });
 
@@ -84,11 +70,12 @@ describe('useSessionListMoveSheet', () => {
         modalMock.hide.mockClear();
         const hook = await renderHook(() => useSessionListMoveSheet());
 
-        let selection: Promise<SessionListMoveSheetTarget | null>;
+        let selection: Promise<EntityDropOutcomeV1 | null>;
         await act(async () => {
             selection = hook.getCurrent().openMoveSheet({
                 sourceLabel: 'Planning',
-                targets: [rootTarget],
+                runtime: createEntityDragDropRuntime(),
+                sourceId: 'source',
             });
             await Promise.resolve();
         });

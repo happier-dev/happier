@@ -1,3 +1,4 @@
+import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -104,6 +105,7 @@ function createDiscoveryRunner(): SystemTaskRunner {
         };
     }
     return {
+        ...createManualSystemTaskRunner().runner,
         mode: 'tauri',
         start: vi.fn(async (spec: SystemTaskSpec) => {
             expect(spec.kind).toBe('local.ssh.discoverConfiguredHosts.v1');

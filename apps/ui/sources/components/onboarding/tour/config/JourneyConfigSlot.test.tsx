@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,6 +11,23 @@ import type { OnboardingWizardController } from '../../surfaces/useOnboardingWiz
 import type { JourneyConfigControllerSurface } from './JourneyConfigSlot';
 
 import { JourneyConfigSlot } from './JourneyConfigSlot';
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 afterEach(() => {
     standardCleanup();
@@ -27,7 +44,29 @@ function actionChromeStyle(node: { findAll: (predicate: (candidate: { type: unkn
     return flattenStyle(frames[0]!.props.style);
 }
 
+function actionGroup(node: ReactTestInstance) {
+    let parent = node.parent;
+    while (parent && String(parent.type) !== 'View') parent = parent.parent;
+    return parent;
+}
+
 describe('JourneyConfigSlot', () => {
+    it('fills the phone action rail without putting the primary inside the scrolling body', async () => {
+        const onPrimary = vi.fn();
+        const screen = await renderScreen(<JourneyConfigSlot
+            primarySizing="fill"
+            controller={{ body: <Text>Long configuration body</Text>, primaryLabel: 'Next', onPrimary,
+                onSkip: vi.fn(), showSkip: true }} testID="phone-config"
+        />);
+        const primary = screen.findHostByTestId('phone-config-primary')!;
+        const body = screen.findHostByTestId('phone-config-body')!;
+        expect(body.findAll(node => node === primary)).toHaveLength(0);
+        expect((flattenStyle(primary.props.style) ?? {}).flex).toBe(1);
+        expect(actionChromeStyle(primary).width).toBe('100%');
+        await screen.pressByTestIdAsync('phone-config-primary');
+        expect(onPrimary).toHaveBeenCalledTimes(1);
+    });
+
     it('renders and drives a pre-auth onboarding controller surface', async () => {
         const onPrimary = vi.fn();
         const onBack = vi.fn();
@@ -157,6 +196,11 @@ describe('JourneyConfigSlot', () => {
         // trailing skip row (the ghost affordance owner is killed, F-W12-2).
         expect(screen.findByTestId('journey-config-skip-row')).toBeNull();
         expect(screen.findByTestId('journey-config-skip')).not.toBeNull();
+        // Back is the secondary companion to Continue; Skip stays on the opposite side.
+        const back = screen.findByTestId('journey-config-back')!;
+        expect(actionGroup(back) === actionGroup(screen.findByTestId('journey-config-primary')!)).toBe(true);
+        expect(actionGroup(back) === actionGroup(screen.findByTestId('journey-config-skip')!)).toBe(false);
+        expect(actionChromeStyle(back).borderColor).not.toBe('transparent');
         screen.pressByTestId('journey-config-skip');
         expect(onSkip).toHaveBeenCalledTimes(1);
     });

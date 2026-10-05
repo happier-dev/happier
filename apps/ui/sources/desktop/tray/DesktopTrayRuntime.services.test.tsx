@@ -82,7 +82,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-import { getActiveServerSnapshot, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot, resetServerProfilesRuntimeForTests, resolveSavedServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { AuthProvider } from '@/auth/context/AuthContext';
 
 import { DesktopTrayRuntime } from './DesktopTrayRuntime';
@@ -115,8 +115,8 @@ describe('DesktopTrayRuntime — this computer\'s services (R16 c)', () => {
         seedSavedHomes({
             home: home('home', 'https://home.example.test'),
             work: home('work', 'https://work.example.test'),
-            first: home('first', 'https://shared.example.test', { serverIdentityId: 'srv_first' }),
-            second: home('second', 'https://shared.example.test', { serverIdentityId: 'srv_second' }),
+            first: home('first', 'https://shared.example.test', { serverIdentityId: 'srv_first', canonicalServerUrl: 'https://shared.example.test' }),
+            second: home('second', 'https://shared.example.test', { serverIdentityId: 'srv_second', canonicalServerUrl: 'https://shared.example.test' }),
         }, 'home');
         bridge.statusData = {
             serviceInstalled: true,
@@ -175,6 +175,7 @@ describe('DesktopTrayRuntime — this computer\'s services (R16 c)', () => {
     });
 
     it('switches to the saved Home a row opened, and sends an ambiguous address to where the person can choose (D11-3, A13-05)', async () => {
+        expect(resolveSavedServerProfileByUrl('https://shared.example.test').kind).toBe('ambiguous');
         const screen = await mountTray();
 
         await act(async () => {

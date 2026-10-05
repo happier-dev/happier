@@ -16,7 +16,7 @@ import type { TriageDetailTabV1 } from './tabs.js';
 export type TriageDetailSourceMountV1 = Readonly<{
   surface: PluginUiTargetedContributionSurfaceV1;
   input: TriageDetailSurfaceInputV1;
-  /** The canonical entry+connection key; each panel mount extends it. */
+  /** The canonical entry+connection key, shared by this detail's panels. */
   instanceKey: string;
 }>;
 
@@ -28,6 +28,12 @@ const SHARED_TAB_COPY = Object.freeze({
 });
 
 const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
+
+export type TriageDetailTabSelectionV1 = Readonly<{
+  value: string;
+  onChange(tab: string): void;
+  onAvailableTabsChange(tabs: readonly string[]): void;
+}>;
 
 /** The one panel mount: the source body asked for exactly this tab. */
 export function TriageDetailPanelMount(props: Readonly<{
@@ -43,24 +49,50 @@ export function TriageDetailPanelMount(props: Readonly<{
     <TargetedSurface
       surface={props.mount.surface}
       input={input}
-      // A panel is its own mount: switching tabs must not hand one panel's
-      // state to another, and a refresh of the same entry keeps each panel.
-      instanceKey={`${props.mount.instanceKey}#panel:${props.panel}`}
+      instanceKey={props.mount.instanceKey}
       fallback={props.fallback}
     />
   );
 }
 
+/** Navigation memory only; selected events and settled pages belong to the source. */
+function SourceDetailInstance(props: Readonly<{
+  mount: TriageDetailSourceMountV1;
+  panel: string | null;
+  fallback: React.ReactNode;
+  overviewLead?: React.ReactNode;
+  overviewTail?: React.ReactNode;
+  activityTail?: React.ReactNode;
+}>): React.ReactElement {
+  const [lastPanel, setLastPanel] = React.useState(props.panel ?? 'overview');
+  if (props.panel !== null && props.panel !== lastPanel) setLastPanel(props.panel);
+  const panel = props.panel ?? lastPanel;
+  const overview = panel === 'overview';
+  return (
+    <ScrollArea
+      style={FILL_STYLE}
+      scrollEnabled={overview}
+      contentContainerStyle={overview ? undefined : FILL_STYLE}
+    >
+      <Stack gap={overview ? 'large' : 'medium'} style={overview ? undefined : FILL_STYLE}>
+        {overview ? props.overviewLead : null}
+        <Stack style={overview ? undefined : FILL_STYLE}>
+          <TriageDetailPanelMount mount={props.mount} panel={panel} fallback={props.fallback} />
+        </Stack>
+        {overview ? props.overviewTail : panel === 'activity' ? props.activityTail : null}
+      </Stack>
+    </ScrollArea>
+  );
+}
+
 /**
  * The detail's tabbed body (r0.42): Triage's strip over the shared vocabulary
- * and any source-only tabs, each mounting the owning source's panel.
- *
- * Every panel is `discard`: a panel is a separate source mount, and a hidden
- * retained mount has no way to learn it is hidden, so it could keep live work
- * running. Overview is the story rail — the source's overview panel, then
- * Triage's own agent step.
+ * and any source-only tabs. One source detail instance receives changing panel
+ * input. Source Tabs own their panel intervals; the retained source and Session
+ * slots below withdraw activity when the reader leaves that entire slot.
  */
 export function TriageDetailTabbedBody(props: Readonly<{
+  tabSelection?: TriageDetailTabSelectionV1;
   tabs: readonly TriageDetailTabV1[];
   entry: TriageDetailSourceMountV1;
   /** The linked fix PR's mount, when an issue or error group has one. */
@@ -79,36 +111,18 @@ export function TriageDetailTabbedBody(props: Readonly<{
   fallback: React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const [selected, setSelected] = React.useState<string>('overview');
+  const [localSelected, setLocalSelected] = React.useState<string>('overview');
+  const selected = props.tabSelection?.value ?? localSelected;
+  const setSelected = props.tabSelection?.onChange ?? setLocalSelected;
+  const hasSession = props.session !== undefined && props.session !== null;
+  const availableTabs = React.useMemo(() => [
+    ...props.tabs.map((tab) => tab.id), ...(hasSession ? ['session'] : []),
+  ], [hasSession, props.tabs]);
+  const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
+  React.useLayoutEffect(() => { reportAvailableTabs?.(availableTabs); }, [availableTabs, reportAvailableTabs]);
 
-  const panelFor = (tab: TriageDetailTabV1): React.ReactNode => {
-    const mount = tab.from === 'entry'
-      ? props.entry
-      : tab.from === 'fixPullRequest'
-        ? props.fixPullRequest
-        : null;
-    const sourcePanel = mount === null
-      ? null
-      : <TriageDetailPanelMount mount={mount} panel={tab.id} fallback={props.fallback} />;
-    if (tab.id === 'activity' && props.activityTail !== undefined && props.activityTail !== null) {
-      return (
-        <Stack gap="medium" style={FILL_STYLE}>
-          <Stack style={FILL_STYLE}>{sourcePanel}</Stack>
-          {props.activityTail}
-        </Stack>
-      );
-    }
-    if (tab.id !== 'overview') return sourcePanel;
-    return (
-      <ScrollArea style={FILL_STYLE}>
-        <Stack gap="large">
-          {props.overviewLead}
-          {sourcePanel}
-          {props.overviewTail}
-        </Stack>
-      </ScrollArea>
-    );
-  };
+  const selectedTab = props.tabs.find((tab) => tab.id === selected);
+  const slot = selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
 
   return (
     <Stack style={FILL_STYLE}>
@@ -118,6 +132,38 @@ export function TriageDetailTabbedBody(props: Readonly<{
         ariaLabel={text('plugins.triage.surface.detail.tabs', 'Entry detail')}
         // Panels are bounded regions (the Overview rail scrolls itself; Session hosts the live chat).
         layout="fill"
+        sharedPanel={(
+          <Tabs value={slot} onValueChange={() => {}} ariaLabel="" tabList="host" layout="fill">
+            <Tabs.Item value="entry" title="" retention="retain">
+              <SourceDetailInstance
+                key={props.entry.instanceKey}
+                mount={props.entry}
+                panel={slot === 'entry' ? selected : null}
+                fallback={props.fallback}
+                overviewLead={props.overviewLead}
+                overviewTail={props.overviewTail}
+                activityTail={props.activityTail}
+              />
+            </Tabs.Item>
+            <Tabs.Item value="fixPullRequest" title="" retention="retain">
+              {props.fixPullRequest === null ? props.fallback : (
+                <SourceDetailInstance
+                  key={props.fixPullRequest.instanceKey}
+                  mount={props.fixPullRequest}
+                  panel={slot === 'fixPullRequest' ? selected : null}
+                  fallback={props.fallback}
+                />
+              )}
+            </Tabs.Item>
+            <Tabs.Item value="session" title="" retention="retain">{props.session}</Tabs.Item>
+            <Tabs.Item value="none" title="">
+              <ScrollArea style={FILL_STYLE}>
+                <Stack gap="large">{props.overviewLead}{props.overviewTail}</Stack>
+              </ScrollArea>
+            </Tabs.Item>
+            <Tabs.Item value="unavailable" title="">{props.fallback}</Tabs.Item>
+          </Tabs>
+        )}
       >
         {props.tabs.map((tab) => (
           <Tabs.Item
@@ -125,22 +171,15 @@ export function TriageDetailTabbedBody(props: Readonly<{
             value={tab.id}
             title={tab.kind === 'shared'
               ? text(SHARED_TAB_COPY[tab.id].key, SHARED_TAB_COPY[tab.id].fallback)
-              : tab.title}
-            retention="discard"
-          >
-            {panelFor(tab)}
-          </Tabs.Item>
+              : tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title)}
+          />
         ))}
         {props.session === undefined || props.session === null ? null : (
           <Tabs.Item
             key="session"
             value="session"
             title={text('plugins.triage.surface.detail.tab.session', 'Session')}
-            // Tabs retains the draft; its activity context withdraws hidden command targets.
-            retention="retain"
-          >
-            {props.session}
-          </Tabs.Item>
+          />
         )}
       </Tabs>
     </Stack>

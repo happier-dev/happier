@@ -281,6 +281,17 @@ Field names below match on-wire payloads.
 
 - `rpc-register`
   - `{ method }` -> server emits `rpc-registered`
+  - In 0.3 development source, rejection emits `rpc-error` with
+    `{ type: "register", error, method?, retryable }`. `method` is the validated
+    registration name; malformed names are omitted. The server alone classifies
+    static namespace/scope refusals as non-retryable, while current authority,
+    Machine availability, and internal failures remain retryable.
+  - The CLI suppresses registration replay after an explicitly non-retryable,
+    correlated rejection within the current relay connection. Each new connection
+    clears that suppression and submits the handler for fresh admission; explicit
+    handler replacement also clears it. Missing correlation or retry classification
+    retains ordinary retry behavior. Rejection logs contain only known method
+    names and bounded error labels, not arbitrary server response fields.
 
 - `rpc-unregister`
   - `{ method }` -> server emits `rpc-unregistered`

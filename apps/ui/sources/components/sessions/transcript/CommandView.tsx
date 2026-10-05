@@ -3,6 +3,8 @@ import { View, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import type { TranscriptFindSourceRange } from './find/transcriptFindRowStore';
 
 
 interface CommandViewProps {
@@ -16,6 +18,10 @@ interface CommandViewProps {
     maxHeight?: number;
     fullWidth?: boolean;
     hideEmptyOutput?: boolean;
+    commandFindRanges?: readonly TranscriptFindSourceRange[];
+    stdoutFindRanges?: readonly TranscriptFindSourceRange[];
+    stderrFindRanges?: readonly TranscriptFindSourceRange[];
+    errorFindRanges?: readonly TranscriptFindSourceRange[];
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -89,6 +95,10 @@ export const CommandView = React.memo<CommandViewProps>(({
     maxHeight,
     fullWidth,
     hideEmptyOutput,
+    commandFindRanges,
+    stdoutFindRanges,
+    stderrFindRanges,
+    errorFindRanges,
 }) => {
     // Use legacy output if new props aren't provided
     const hasNewProps = stdout !== undefined || stderr !== undefined || error !== undefined;
@@ -104,24 +114,24 @@ export const CommandView = React.memo<CommandViewProps>(({
             {/* Command Line */}
             <View style={styles.line}>
                 <Text selectable style={styles.promptText}>{prompt} </Text>
-                <Text selectable style={styles.commandText}>{command}</Text>
+                <Text selectable style={styles.commandText}><FindHighlightedText text={command} ranges={commandFindRanges} /></Text>
             </View>
 
             {hasNewProps ? (
                 <>
                     {/* Standard Output */}
                     {stdout && stdout.trim() && (
-                        <Text selectable style={styles.stdout}>{stdout}</Text>
+                        <Text selectable style={styles.stdout}><FindHighlightedText text={stdout} ranges={stdoutFindRanges} /></Text>
                     )}
 
                     {/* Standard Error */}
                     {stderr && stderr.trim() && (
-                        <Text selectable style={styles.stderr}>{stderr}</Text>
+                        <Text selectable style={styles.stderr}><FindHighlightedText text={stderr} ranges={stderrFindRanges} /></Text>
                     )}
 
                     {/* Error Message */}
                     {error && (
-                        <Text selectable style={styles.error}>{error}</Text>
+                        <Text selectable style={styles.error}><FindHighlightedText text={error} ranges={errorFindRanges} /></Text>
                     )}
 
                     {/* Empty output indicator */}

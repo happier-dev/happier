@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -17,7 +16,6 @@ import { readSessionTerminalWorkspaceForScope, subscribeSessionTerminalWorkspace
 import { useTerminalSurfaceSummaries } from '../terminalSurfaceSummary';
 import { buildTerminalJumpModel, readOtherSessionTerminals, selectOtherSessionTerminals, type OtherSessionTerminals } from './terminalJumpSections';
 import type { TerminalJumpTarget } from './terminalJumpTarget';
-import { openSessionTerminalInDetails } from '../embeddedTerminalDocking';
 
 export type TerminalJumpStep = Readonly<{
     step: SelectionListStep;
@@ -43,7 +41,6 @@ function basename(path: string): string {
  */
 export function useTerminalJumpStep(input: Readonly<{ target: TerminalJumpTarget | null; query: string }>): TerminalJumpStep | null {
     const scopeId = input.target?.scopeId ?? '';
-    const pane = useAppPaneScope(scopeId);
     const parsed = scopeId ? parseSessionPaneScopeId(scopeId) : null;
     const sessionId = parsed?.sessionId ?? '';
     const serverId = parsed?.address?.serverId ?? null;
@@ -124,10 +121,13 @@ export function useTerminalJumpStep(input: Readonly<{ target: TerminalJumpTarget
                 : output && typeof output === 'object' && 'terminalId' in output && typeof output.terminalId === 'string'
                     ? output.terminalId : null;
             if (!terminalId) return false;
-            openSessionTerminalInDetails(pane, terminalId);
+            const docked = await actionExecute('session.terminals.open_in_details', { scopeId, terminalId }, {
+                surface: 'ui', defaultSessionId: sessionId, ...(serverId ? { serverId } : {}),
+            });
+            if (!docked.ok || (docked.result && typeof docked.result === 'object' && 'ok' in docked.result && docked.result.ok === false)) return false;
         }
         return true;
-    }, [actionExecute, model.activations, pane, scopeId, serverId, sessionId]);
+    }, [actionExecute, model.activations, scopeId, serverId, sessionId]);
     const hasOption = React.useCallback((optionId: string) => model.activations.has(optionId), [model.activations]);
 
     return React.useMemo(() => (active ? { step: model.step, activate, hasOption } : null), [activate, active, hasOption, model.step]);

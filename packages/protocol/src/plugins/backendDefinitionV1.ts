@@ -221,6 +221,8 @@ function externalSessionInstanceConstantMatchesField(
 
 export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
   sourceKind: z.string().trim().min(1),
+  /** Only positive source evidence admits conversation-content search. */
+  contentSearch: z.boolean().optional(),
   schema: PluginBackendExternalSessionSourceSchemaV1Schema,
   key: PluginBackendExternalSessionSourceKeyV1Schema,
   instances: PluginBackendExternalSessionSourceInstancesV1Schema.optional(),

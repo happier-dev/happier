@@ -5,7 +5,12 @@ import {
     type VoiceAttemptIdleTarget,
 } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { useVoiceEnergyIfMounted } from '@/components/voice/light/useVoiceEnergy';
+import { resolveVoiceMarkPose } from '@/components/voice/presence/resolveVoiceMarkPose';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
+import { useLocalSetting } from '@/sync/domains/state/storage';
+import { Modal } from '@/modal';
+import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
 
 import { VoiceComposerPlanet } from './VoiceComposerPlanet';
 
@@ -59,17 +64,28 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
 }>): React.ReactElement | null {
     const idleTarget = props.target;
     const control = useVoiceAttemptControl(idleTarget);
-    const { availability, canStop, muted, primaryAction, primaryActionHint, primaryActionLabel, stop, onPrimaryAction } = control;
+    const shortcutLabel = useKeyboardShortcutLabel('voice.toggle');
+    const holdEnabled = useLocalSetting('voiceHoldToTalkEnabled');
+    const isActivelyFocused = useHostActivelyFocused();
+    const onHoldUnavailable = React.useCallback(() => {
+        Modal.alert(t('voicePresence.holdToTalkTitle'), t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') }));
+    }, [control.serviceTitle]);
+    const { availability, live, muted, primaryAction, primaryActionHint, primaryActionLabel, onPrimaryAction } = control;
     const startsGlobal = idleTarget.kind === 'global';
+    const holdHint = holdEnabled
+        ? control.canHoldToTalk ? t('voicePresence.holdToTalkHint') : t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') })
+        : null;
 
     // A transport that cannot do anything is worse than no transport (§2.5).
     if (availability === 'unavailable') return null;
 
     return (
         <VoiceComposerPlanet
-            live={canStop}
-            muted={muted}
-            stop={stop}
+            pose={resolveVoiceMarkPose(control)}
+            muted={live && muted}
+            tooltip={[primaryAction === 'start'
+                ? [t('voicePresence.talkWithVoice'), shortcutLabel].filter(Boolean).join(' ')
+                : primaryActionLabel, holdHint].filter(Boolean).join('\n')}
             /*
              * "Start Global Voice" rather than "Start Voice" in New Session: the two do different
              * things and a screen-reader user cannot see which composer they are in (§2.5).
@@ -80,12 +96,15 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
                     : primaryActionLabel ?? ''
             }
             accessibilityHint={
-                primaryAction === 'start' && startsGlobal
+                [primaryAction === 'start' && startsGlobal
                     ? t('voiceSurface.composerGlobalStartHint')
-                    : primaryActionHint ?? ''
+                    : primaryActionHint, holdHint].filter(Boolean).join(' ')
             }
             disabled={primaryAction === null}
+            isActivelyFocused={isActivelyFocused}
             onPress={onPrimaryAction}
+            beginHoldToTalk={holdEnabled ? control.beginHoldToTalk : undefined}
+            onHoldUnavailable={onHoldUnavailable}
         />
     );
 }

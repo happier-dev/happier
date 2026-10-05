@@ -19,6 +19,7 @@ describe('Session workflow-step withdrawal RPC', () => {
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'session-1',
       registerHandlers: (registrar) => registerSessionHandlers(registrar, process.cwd(), {
+        sessionId: 'session-1',
         sessionRuntimeControls: controls,
       }),
     });
@@ -44,6 +45,7 @@ describe('Session workflow-step withdrawal RPC', () => {
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'session-1',
       registerHandlers: (registrar) => registerSessionHandlers(registrar, process.cwd(), {
+        sessionId: 'session-1',
         sessionRuntimeControls: { withdrawWorkflowStepInput: owner.withdrawWorkflowStepInput },
       }),
     });

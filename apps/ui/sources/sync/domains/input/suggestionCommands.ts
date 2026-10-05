@@ -4,7 +4,7 @@
  */
 
 import Fuse from 'fuse.js';
-import { listActionSpecs } from '@happier-dev/protocol';
+import { isPromptInvocationAvailable, listActionSpecs, PromptInvocationsV1Schema } from '@happier-dev/protocol';
 import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { t } from '@/text';
@@ -107,46 +107,21 @@ function buildActionSlashCommands(state: any): CommandItem[] {
     return out;
 }
 
-function buildPromptInvocationSlashCommands(state: any): CommandItem[] {
+function buildPromptInvocationSlashCommands(state: Pick<ReturnType<typeof storage.getState>, 'settings'>, sessionId: string | null): CommandItem[] {
     const out: CommandItem[] = [];
-
-    const entries = (state as any)?.settings?.promptInvocationsV1?.entries;
-    if (!Array.isArray(entries) || entries.length === 0) return out;
-
-    for (const entry of entries) {
-        if (!entry || typeof entry !== 'object') continue;
-        const invocationId = typeof (entry as any).id === 'string' ? String((entry as any).id) : '';
-        if (invocationId.trim().length === 0) continue;
-
-        const token = typeof (entry as any).token === 'string' ? String((entry as any).token) : '';
-        if (!token.startsWith('/')) continue;
-
-        const target = (entry as any).target;
-        const targetArtifactId = target && typeof target === 'object' && typeof target.artifactId === 'string'
-            ? String(target.artifactId)
-            : '';
-        if (targetArtifactId.trim().length === 0) continue;
-
-        const availableIn = typeof (entry as any).availableIn === 'string' ? String((entry as any).availableIn) : 'global';
-        if (availableIn !== 'global') continue;
-
-        const command = token.slice(1);
-        if (command.trim().length === 0) continue;
-
-        const title = typeof (entry as any).title === 'string' ? String((entry as any).title) : '';
-        const rawBehavior = typeof (entry as any).behavior === 'string' ? String((entry as any).behavior) : '';
-        const behavior = rawBehavior === 'insert_and_send' || rawBehavior === 'insert_on_send'
-            ? rawBehavior
-            : 'insert';
+    const parsed = PromptInvocationsV1Schema.removeCatch().safeParse(state.settings?.promptInvocationsV1 ?? {});
+    if (!parsed.success) return out;
+    for (const entry of parsed.data.entries) {
+        if (!isPromptInvocationAvailable(entry, { sessionId })) continue;
         out.push({
-            command,
-            description: title.trim().length > 0 ? title : undefined,
+            command: entry.token.slice(1),
+            description: entry.title,
             promptInvocation: {
-                invocationId,
-                token,
-                targetArtifactId,
-                behavior,
-                allowArgs: (entry as any).allowArgs === true,
+                invocationId: entry.id,
+                token: entry.token,
+                targetArtifactId: entry.target.artifactId,
+                behavior: entry.behavior,
+                allowArgs: entry.allowArgs,
             },
         });
     }
@@ -266,7 +241,7 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
 
 // Get commands from session metadata.
 // `sessionId` is null before a session exists (the new-session composer): action, built-in and
-// default commands plus prompt templates are all still available, and only the session-published
+// default commands plus global prompt templates are still available; session-only templates and session-published
 // commands are absent — which is the truth, not a degraded case.
 function getCommandsFromSession(
     sessionId: string | null,
@@ -281,7 +256,7 @@ function getCommandsFromSession(
     ];
 
     // Add prompt template tokens (never overriding action/default commands).
-    for (const invocation of buildPromptInvocationSlashCommands(state)) {
+    for (const invocation of buildPromptInvocationSlashCommands(state, session ? sessionId : null)) {
         if (commands.find((c) => c.command === invocation.command)) continue;
         commands.push(invocation);
     }

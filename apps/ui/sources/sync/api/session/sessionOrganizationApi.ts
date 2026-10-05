@@ -277,12 +277,14 @@ export async function setSessionAttentionStanding(params: Readonly<{
 export async function reorderSessionOrganization(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     request: ReorderSessionOrganizationRequest;
 }>): Promise<ReorderSessionOrganizationResponse> {
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
         serverUrl: params.serverUrl,
         path: `${SESSION_ORGANIZATION_ROUTE}/order`,
+        requestAtEndpoint: params.requestAtEndpoint,
         init: {
             method: 'PUT',
             headers: authHeaders(params.credentials),
@@ -335,6 +337,7 @@ export async function deleteSessionOrganizationFolder(params: Readonly<{
 export async function setSessionFolderAssignment(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     sessionId: string;
     request: SetSessionFolderAssignmentRequest;
 }>): Promise<SetSessionFolderAssignmentResponse> {
@@ -342,6 +345,7 @@ export async function setSessionFolderAssignment(params: Readonly<{
         credentials: params.credentials,
         serverUrl: params.serverUrl,
         path: `${SESSION_ORGANIZATION_ROUTE}/folder-assignments/${encodeURIComponent(params.sessionId)}`,
+        requestAtEndpoint: params.requestAtEndpoint,
         init: {
             method: 'PUT',
             headers: authHeaders(params.credentials),

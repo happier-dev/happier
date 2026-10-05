@@ -35,6 +35,7 @@ import {
     runReviewSummary,
 } from './daemon.js';
 import { speechToTextRuntime, textToSpeechRuntime } from './voiceSpeechProvider.js';
+import { repositoryInputTypeRef, repositoryInputTypes, repositoryResources } from './inputTypes.js';
 
 /**
  * The single public-authoring source of truth. `happier plugins dev build`
@@ -104,6 +105,10 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
     description: 'Kitchen-sink public SDK example for actions, hooks, native Agent runtime, UI, and descriptor authoring.',
     runtime: { apiVersion: Number(PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.toolchain.runtime) as 1 },
     entrypoints: { daemon: './dist/daemon.js' },
+    inputTypes: repositoryInputTypes,
+    workflows: { 'repository-review': { title: 'Review repository', definition: { version: 1,
+      inputs: [{ name: 'repository', valueType: 'json', required: true, inputType: repositoryInputTypeRef }],
+      defaults: {}, blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review the selected repository.', references: [], attachments: [] }, result: { kind: 'text' } }] } } },
     roles: {
         'security-reviewer': {
             name: 'Security reviewer',
@@ -174,6 +179,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             dangerLevel: 'safe',
             inputSchema: defineProtocolObject({
                 transcript: defineProtocolString().optional(),
+                repository: defineProtocolObject({ repositoryId: defineProtocolString() }, { policy: 'closed' }).optional(),
                 maxBullets: defineProtocolNumber({ integer: true, minimum: 1, maximum: 8 }).optional(),
             }, { policy: 'closed' }),
             resultSchema: defineProtocolObject({
@@ -181,6 +187,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 bullets: defineProtocolArray(defineProtocolString()),
             }, { policy: 'closed' }),
             run: runReviewSummary,
+            inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select', inputType: repositoryInputTypeRef }] },
         },
         'external-session-digest': {
             title: 'Digest external Agent sessions',
@@ -244,6 +251,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
         },
     },
     resources: {
+        ...repositoryResources,
         'review-guide': {
             source: 'packaged',
             kind: 'template',
@@ -494,6 +502,11 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
             {
                 id: 'review-panel',
                 container: 'appPage',
+                widgetAreas: [{ name: 'pinned', contextSchema: {
+                    type: 'object', properties: { session: { type: 'object', properties: {
+                        serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 },
+                    }, required: ['serverId', 'sessionId'], additionalProperties: false } }, additionalProperties: false,
+                } }],
                 target: { kind: 'app' },
                 renderer: 'review-native',
                 fallbackRenderers: ['review-web'],
@@ -612,7 +625,25 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                 // the declared renderer chain owns technical fallback.
                 id: 'review-status-widget',
                 container: 'widget',
+                resources: [{ pluginId: 'examples.public-sdk-review-assistant', localId: 'review-session-status' }],
                 target: { kind: 'session' },
+                inputs: { fields: [
+                    { path: 'session', title: 'Session', widget: 'json', required: true, optionsSourceId: 'sessions' },
+                    { path: 'repository', title: 'Repository', widget: 'select', inputType: repositoryInputTypeRef },
+                    { path: 'view', title: 'View', widget: 'select', options: [
+                        { value: 'summary', label: 'Summary' }, { value: 'detail', label: 'Details' },
+                    ] },
+                ] },
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        session: { type: 'object', properties: { serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 } }, required: ['serverId', 'sessionId'], additionalProperties: false },
+                        repository: repositoryInputTypes.repository.valueSchema,
+                        view: { type: 'string', enum: ['summary', 'detail'] },
+                    },
+                    required: ['session'], additionalProperties: false,
+                },
+                sessionInputPath: 'session',
                 renderer: 'review-native',
                 fallbackRenderers: ['review-web'],
                 title: 'Review status',
@@ -648,6 +679,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                     'publishCurrentUiContext',
                     'readResource',
                     'watchResource',
+                    'settleEphemeralInput',
                 ],
             },
             {

@@ -3,21 +3,26 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
-import { Text } from '@/components/ui/text/Text';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+
+export const projectEnterPlanModeDisplayText: ToolDisplayTextProjector = () => [
+    ...toolTextBlock('tool-plan-title', t('tools.enterPlanMode.title')),
+    ...toolTextBlock('tool-plan-body', t('tools.enterPlanMode.body')),
+];
 
 
-export const EnterPlanModeView = React.memo<ToolViewProps>(({ detailLevel }) => {
-    if (detailLevel === 'title') return null;
+export const EnterPlanModeView = React.memo<ToolViewProps>(({ detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
+    if (detailLevel === 'title' && !find.active) return null;
 
     return (
         <ToolSectionView>
             <View style={styles.container}>
-                <Text style={styles.title}>{t('tools.enterPlanMode.title')}</Text>
-                {detailLevel === 'full' ? (
-                    <Text style={styles.body}>
-                        {t('tools.enterPlanMode.body')}
-                    </Text>
+                <ToolFindText messageId={messageId} blockId="tool-plan-title" text={t('tools.enterPlanMode.title')} style={styles.title} />
+                {detailLevel === 'full' || find.active ? (
+                    <ToolFindText messageId={messageId} blockId="tool-plan-body" text={t('tools.enterPlanMode.body')} style={styles.body} />
                 ) : null}
             </View>
         </ToolSectionView>

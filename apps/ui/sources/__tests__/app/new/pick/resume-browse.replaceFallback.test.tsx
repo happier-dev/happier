@@ -323,7 +323,6 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                 ],
             },
         };
-        externalSessionBrowseSupportState.supportedByProviderId = { 'review-bot': false };
 
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 
@@ -378,7 +377,6 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                 ],
             },
         };
-        externalSessionBrowseSupportState.supportedByProviderId = { 'review-bot': false };
 
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 

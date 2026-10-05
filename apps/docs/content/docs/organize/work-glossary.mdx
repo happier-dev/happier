@@ -1,0 +1,102 @@
+---
+title: Work glossary
+description: Understand sessions, runs, workflows, roles, Boards, triggers and observation in Happier's unified work surfaces.
+---
+
+Use these terms to distinguish the conversation you return to, the work it
+starts, and the reusable instructions behind it.
+
+## Availability
+
+This is the single user glossary for the unified work surfaces in **0.3
+development**. The definitions describe current development source, not a claim
+that every feature is available in a stable release. The feature's own guide
+states its prerequisites. The [plugin glossary](/plugins/glossary) separately
+defines extension-author terms.
+
+## Sessions, runs and reusable work
+
+| Term | Meaning |
+| --- | --- |
+| **Session** | A coding conversation with an Agent on a machine. You can return to its transcript and steer it when your access and its runtime permit. A session can contain several turns and start other work. |
+| **Turn** | One response cycle inside a session. Finishing a turn does not mean the session is archived or the task is complete. |
+| **Background run** | An Agent execution started alongside a session, such as Review, Plan, Delegate or an agent conversation. Its ability to accept follow-up depends on its retained runtime and current permissions. |
+| **Workflow** | A reusable definition of steps, inputs and targets. A saved or plugin-provided workflow is the recipe, not an execution in progress. |
+| **Workflow run** | One accepted execution of a workflow with its inputs and launch context. It can start step sessions and background runs. Sharing its definition is distinct from sharing execution visibility. |
+| **Run** | An execution instance. Read the surrounding kind: a workflow run coordinates steps; a background run executes Agent work. It is not another name for the reusable workflow or the containing session. |
+| **Role** | Instructions, Agent/model selection and attributes used for work. A personal or session override changes that selection in its scope; editing a shared original can affect other users. A Role does not grant access. |
+| **Orchestrator** | A Role for coordinating work through other roles, sessions and workflows. Its starts still follow the same permissions and approval rules. |
+| **Work** | The session's view of related Agent conversations, runs and reporting sessions. Human discussions stay in Collaboration. |
+| **Work Board** | A saved arrangement of references to sessions, workflow runs, workflows and machines, with live summaries. It does not own their execution or grant access to them. |
+| **Session Board / Companion** | The widget surface for one session. It is distinct from the top-level Boards destination. |
+| **Trigger** | A saved rule that starts its configured work when an event or schedule matches. Turning it off prevents future firing; cancelling an observation is a different operation from stopping its work. |
+| **Waiting for your review** | Work has reached a human review point. Inspect the run's offered review/continuation action; an Agent cannot approve on your behalf merely because it can read the request. |
+
+See [Work Boards](/organize/work-boards), [Sharing](/accounts/session-sharing),
+[sub-agents](/extending/subagents) and [automations](/extras/automations) for the
+corresponding workflows and limits.
+
+## Status buckets and state words
+
+The five buckets group different kinds of work. A card or row keeps the more
+specific state word from that item's owner, such as **Completed**, **Failed**,
+**Cancelled** or **Waiting for your review**.
+
+| Bucket | What it tells you |
+| --- | --- |
+| **Needs you** | A current actionable condition needs your attention, such as permission, required input, session failure or a workflow review hold. The item is not necessarily finished. |
+| **Working** | Work is queued, being admitted or executing. Some waiting states remain here until the attention owner identifies them as actionable. |
+| **Finished** | The execution or current session turn has settled. Read its state word: completion, failure and cancellation are different outcomes. This is not confirmation that your whole task is done. |
+| **Idle** | No current work or actionable condition is reported; a paused run or unused workflow can be here. Idle does not prove success. |
+| **Offline** | The relevant runtime or machine is reported unreachable. A board also groups unavailable-Home references here with an **Unavailable** word; that is not proof the machine itself is offline. |
+
+Status is a summary, not permission to send, resume or approve. Use the actions
+the item actually offers. A human task's **Done** choice is separate from these
+work buckets; linking a session does not mark that task done automatically.
+
+## Wait, watch and Notify me
+
+**Wait** observes a named target until a supported condition matches or the
+observation times out or is cancelled. **Watch** observes changes passively:
+external MCP clients receive resource-change hints and re-read the resource.
+Neither creates another Agent turn by itself. Ending the observation does not
+cancel the session or run being observed.
+
+Current 0.3 limits matter when choosing a condition:
+
+- Execution/background runs support terminal waits. Waiting for “needs me”,
+  combined terminal-or-attention conditions and passive watching are unsupported.
+- Workflow runs support a combined terminal-or-needs-attention wait. Separate
+  terminal-only or attention-only selectors and passive watching are unsupported.
+- Session observation depends on authorized awareness/turn evidence. Missing
+  presence cannot be treated as proof of idle or readiness. Passive Session
+  resources are an external MCP projection; the session-host HTTP transport does
+  not support them.
+- Plugin conditions require an admitted plugin source and its declared wait
+  Action. They do not supply a generic passive feed.
+
+An unsupported condition is a refusal, not an empty result or a substitute wait.
+A timeout means the observation ended without a match, not that the work failed.
+See [Happier as an MCP server](/extending/happier-as-mcp-server) for transport and
+subscription details.
+
+**Notify me** requests delivery through the existing notification channels. The
+quiet **Notify me when this finishes** and **Notify me when this needs me**
+controls register one-shot triggers; they are acknowledged only after registration
+succeeds. A session's finish control observes its current in-progress turn;
+its needs-me control waits for the next required user action. Workflow runs offer
+finish and needs-me controls while actionable. Execution-run notification sources
+support finishing only. There is no
+execution-run needs-me notification in this development version.
+
+Delivery still follows channel setup, notification preferences, quiet hours and
+privacy. Cancelling a notification registration removes that trigger, not the
+observed work. See [notification setup](/extras/notifications-setup) and
+[notification routing](/extras/notifications-routing).
+
+## Related
+
+- [Work Boards](/organize/work-boards)
+- [Sharing](/accounts/session-sharing)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Session Board and Companion](/sessions/session-board)

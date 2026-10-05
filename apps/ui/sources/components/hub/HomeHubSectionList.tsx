@@ -4,8 +4,7 @@ import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 
-import { isHomeHubCardSection } from './homeHubSections';
-import type { HomeHubSection } from './layout/homeHubLayout';
+import { isHomeHubCardSection, type HomeHubSection } from './layout/homeHubLayout';
 
 /** Widgets and card-like sections sit two to a row (one on a phone). */
 export const HOME_HUB_CARD_ROW_COLUMNS = 2;
@@ -63,7 +62,7 @@ export function HomeHubSectionList(props: Readonly<{
                     // A sheetless group gives the card row the same column edges as every other section.
                     <ItemGroup key={slot.key} surface="none">
                         <CardGrid testID={`home-hub.${slot.key}`} columns={HOME_HUB_CARD_ROW_COLUMNS}>
-                            {slot.entries.map((entry) => (alone ? (
+                            {slot.entries.map((entry) => (alone || (entry.section.kind === 'widget' && entry.section.width === 'full') ? (
                                 <CardGridCell key={entry.section.id} span="row">
                                     {props.renderSection(entry.section, entry.index)}
                                 </CardGridCell>

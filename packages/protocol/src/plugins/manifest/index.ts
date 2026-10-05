@@ -74,6 +74,7 @@ export {
   type PluginTargetedContributionV1,
   type PluginWorkflowContributionV1,
 } from '../contributions/v2.js';
+export * from '../contributions/entityDragDrop.js';
 export {
   // Referenced by `PluginManifestV2Schema`'s public signature, so an author
   // building a declarative tree must be able to name it (r0.10: the schema was

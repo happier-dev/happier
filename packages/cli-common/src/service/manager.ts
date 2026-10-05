@@ -10,6 +10,7 @@ import { mergeServiceEnvWithPath } from './path.js';
 import { renderSystemdServiceUnit } from './systemd.js';
 import {
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
+  buildRegisterWindowsUserScheduledTaskPowerShellCommand,
   buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand,
   buildSetWindowsScheduledTaskEnabledPowerShellCommand,
   buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand,
@@ -411,9 +412,7 @@ export function planServiceAction(params: Readonly<{
     if (action === 'install') {
       if (!definitionPath) throw new Error('definitionPath is required for schtasks install');
       const ps = buildWindowsScheduledTaskPowerShellAction({ definitionPath });
-      const schedule = persistent
-        ? (mode === 'system' ? 'ONSTART' : 'ONLOGON')
-        : 'ONCE';
+      const schedule = persistent ? 'ONSTART' : 'ONCE';
       const args = [
         '/Create',
         '/F',
@@ -427,7 +426,14 @@ export function planServiceAction(params: Readonly<{
         ...(mode === 'system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
       ];
       commands.push(stopIfRunning());
-      commands.push({ cmd: 'schtasks', args });
+      commands.push(mode === 'user'
+        ? {
+          cmd: 'powershell.exe',
+          args: windowsPowerShellCommandArgs(buildRegisterWindowsUserScheduledTaskPowerShellCommand({
+            qualifiedTaskName: name, definitionPath, persistent,
+          })),
+        }
+        : { cmd: 'schtasks', args });
       // schtasks has no restart/keep-alive switch, so the policy is applied to the
       // created task before it is first started.
       commands.push({
@@ -435,6 +441,7 @@ export function planServiceAction(params: Readonly<{
         args: windowsPowerShellCommandArgs(buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand({
           qualifiedTaskName: name,
           restartPolicy: params.restartPolicy ?? 'always',
+          catchUpMissedStart: persistent,
         })),
       });
       commands.push({ cmd: 'schtasks', args: ['/Run', '/TN', name] });

@@ -3,7 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
 
-import { commitSessionListDragIntent } from './commitSessionListDragIntent';
+import { commitSessionListDragIntent, resolveSessionListDragIntent } from './commitSessionListDragIntent';
+import { createSessionListOrganizationActionAdapter, invokeSessionListOrganizationAction,
+    registerMountedSessionListOrganizationAction } from './sessionListOrganizationAction';
+import { resolveSessionListEntityDrop } from './resolveSessionListEntityDrop';
+import { createSessionFixture } from '@/dev/testkit';
+import { resolvePutUnderEligibility } from '@/components/sessions/work/putUnderCandidates';
+import { createSessionReportsToEligibilitySnapshot } from '@/sync/ops/relations/sessionReportsToEligibility';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 import type { SessionListDragIntent } from './_types';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from '../drop-resolution/treeRowId';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
@@ -13,6 +20,8 @@ import {
     sessionProjectGroupingIdentityKey,
 } from '@/sync/domains/session/listing/sessionListProjectGroupingKeys';
 import { buildSessionWorkspaceOrderItemKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
+
+const mutationScope = { credentials: { token: 'domain-boundary-token', secret: 'secret' }, serverId: 'server-a', serverUrl: 'https://home.test', serverIdAliases: [] };
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -86,6 +95,8 @@ function folders(): SessionFoldersV1 {
 }
 
 function makeContext(overrides?: Partial<Parameters<typeof commitSessionListDragIntent>[0]['context']>) {
+    const sessions = Object.fromEntries((overrides?.latestItems ?? items()).flatMap(item => item.type === 'session'
+        ? [[item.sessionId, createSessionFixture({ id: item.sessionId, serverId: item.serverId })] as const] : []));
     const setSessionFoldersV1 = vi.fn();
     const setSessionListGroupOrderV1 = vi.fn();
     const setSessionWorkspaceOrderV1 = vi.fn();
@@ -103,6 +114,13 @@ function makeContext(overrides?: Partial<Parameters<typeof commitSessionListDrag
             setSessionListGroupOrderV1,
             setSessionWorkspaceOrderV1,
             setSessionFolderAssignment,
+            resolvePutSessionUnder: (input: Readonly<{ serverId: string; sessionId: string; leadSessionId: string }>) => {
+                const facts = createSessionReportsToEligibilitySnapshot({ serverId: input.serverId, accountId: 'account',
+                    sessionId: input.sessionId, currentLeadSessionId: null,
+                    candidates: Object.keys(sessions).map(sessionId => ({ sessionId, allowed: true })),
+                    isCurrent: () => true, dispose: () => {} });
+                return resolvePutUnderEligibility(sessions, input.sessionId, input.leadSessionId, facts, { serverId: input.serverId });
+            },
             ...overrides,
         },
         spies: { setSessionFoldersV1, setSessionListGroupOrderV1, setSessionWorkspaceOrderV1, setSessionFolderAssignment },
@@ -124,6 +142,33 @@ describe('commitSessionListDragIntent — putting a Session under a lead', () =>
             sourceSnapshotSignature: 'sig',
         };
     }
+
+    it('projects the canonical current relation verdict and CAS anchor without writing during hover', () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const sessions = { 'root-a': createSessionFixture({ id: 'root-a', serverId: scope.serverId }),
+            'root-b': createSessionFixture({ id: 'root-b', serverId: scope.serverId }) };
+        let current = true;
+        const facts = createSessionReportsToEligibilitySnapshot({ ...scope, sessionId: 'root-b', currentLeadSessionId: null,
+            candidates: [{ sessionId: 'root-a', allowed: true }], isCurrent: () => current, dispose: () => { current = false; } });
+        const putSessionUnder = vi.fn(async () => 'applied' as const);
+        const { context } = makeContext({ scope, putSessionUnder,
+            resolvePutSessionUnder: input => resolvePutUnderEligibility(sessions, input.sessionId, input.leadSessionId, facts, scope) });
+        const params = { item: { kind: 'session' as const, scope, address: { serverId: scope.serverId, sessionId: 'root-b' } },
+            intent: underIntent('root-a'), context, preview: () => ({ verb: 'Put under', target: 'Lead' }),
+            refusedPreview: ({ target }: Readonly<{ target: { sessionId: string | null } | null }>) =>
+                target?.sessionId ? { verb: 'Cannot put under', target: target.sessionId } : undefined,
+            reason: (code: string) => ({ code, message: code }) };
+        expect(resolveSessionListEntityDrop(params)).toMatchObject({ status: 'allowed', effect: {
+            actionId: 'session.reports_to.set', input: { sessionId: 'root-b', leadSessionId: 'root-a', expectedLeadSessionId: null } } });
+        expect(putSessionUnder).not.toHaveBeenCalled();
+        facts.dispose();
+        expect(resolveSessionListEntityDrop(params)).toMatchObject({ status: 'refused', reason: { code: 'unavailable' },
+            preview: { verb: 'Cannot put under', target: 'root-a' } });
+        const latestItems = context.latestItems.filter(item => item.type !== 'session' || item.sessionId !== 'root-a');
+        expect(resolveSessionListEntityDrop({ ...params, context: { ...context, latestItems } }))
+            .toEqual({ status: 'refused', reason: { code: 'target-missing', message: 'target-missing' } });
+        expect(putSessionUnder).not.toHaveBeenCalled();
+    });
 
     it('asks the reportsTo owner and touches no folder or order state', async () => {
         const putSessionUnder = vi.fn(async () => 'applied' as const);
@@ -155,9 +200,151 @@ describe('commitSessionListDragIntent — putting a Session under a lead', () =>
         expect(await commitSessionListDragIntent({ intent: underIntent('root-a'), context: makeContext().context }))
             .toEqual({ ok: false, reason: 'blocked-intent' });
     });
+
+    it('cannot dispatch a relation commit without authoritative current eligibility', async () => {
+        const putSessionUnder = vi.fn(async () => 'applied' as const);
+        const { context } = makeContext({ putSessionUnder, resolvePutSessionUnder: undefined });
+        expect(await commitSessionListDragIntent({ intent: underIntent('root-a'), context }))
+            .toEqual({ ok: false, reason: 'blocked-intent' });
+        expect(putSessionUnder).not.toHaveBeenCalled();
+    });
 });
 
 describe('commitSessionListDragIntent', () => {
+    it('moves into the named folder child container rather than mistaking its parent for the destination', async () => {
+        const targetRowId = treeRowId.folder('server-a', 'folder-a');
+        const intent: SessionListDragIntent = { sourceRowId: treeRowId.session('server-a', 'root-b'),
+            sourceKind: 'leaf', instructionKind: 'nest-into', targetRowId,
+            containerId: targetRowId, parentRowId: targetRowId, depth: 1, edge: null, sourceSnapshotSignature: '' };
+        const { context, spies } = makeContext();
+        expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: true });
+        expect(spies.setSessionFolderAssignment).toHaveBeenCalledWith({ serverId: 'server-a', sessionId: 'root-b', folderId: 'folder-a' });
+    });
+
+    it('refuses a folder nest whose destination no longer belongs to the named target', async () => {
+        const targetRowId = treeRowId.folder('server-a', 'folder-a');
+        const intent: SessionListDragIntent = { sourceRowId: treeRowId.session('server-a', 'inside-a'),
+            sourceKind: 'leaf', instructionKind: 'nest-into', targetRowId,
+            containerId: treeRowId.workspaceRoot(projectGroupKey), parentRowId: targetRowId,
+            depth: 1, edge: null, sourceSnapshotSignature: '' };
+        const { context, spies } = makeContext();
+        expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: false, reason: 'target-missing' });
+        expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(spies.setSessionListGroupOrderV1).not.toHaveBeenCalled();
+    });
+    it('keeps an organization commit pending until its canonical order write acknowledges', async () => {
+        let acknowledge!: () => void;
+        const persisted = new Promise<void>(resolve => { acknowledge = resolve; });
+        const { context } = makeContext({ setSessionListGroupOrderV1: () => persisted });
+        const intent: SessionListDragIntent = { sourceRowId: treeRowId.session('server-a', 'root-b'),
+            sourceKind: 'leaf', instructionKind: 'reorder-before', targetRowId: treeRowId.session('server-a', 'root-a'),
+            containerId: treeRowId.workspaceRoot(projectGroupKey), parentRowId: null, depth: 0,
+            edge: 'top', sourceSnapshotSignature: '' };
+        let settled = false;
+        const commit = commitSessionListDragIntent({ intent, context }).then(result => { settled = true; return result; });
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        expect(settled).toBe(false);
+        acknowledge();
+        expect(await commit).toEqual({ ok: true });
+    });
+
+    it('keeps a dispatched order write with no acknowledgement unknown instead of reporting refusal', async () => {
+        const { context } = makeContext({ scope: { serverId: 'server-a', accountId: 'account' },
+            setSessionListGroupOrderV1: async () => { throw new Error('transport_disconnected'); } });
+        const execute = createSessionListOrganizationActionAdapter(() => context);
+        const input = { scope: context.scope!, sourceRowId: treeRowId.session('server-a', 'root-b'),
+            sourceKind: 'leaf', instructionKind: 'reorder-before', targetRowId: treeRowId.session('server-a', 'root-a'),
+            containerId: treeRowId.workspaceRoot(projectGroupKey), parentRowId: null, depth: 0, edge: 'top' };
+        expect(await execute({ mutationScope, input })).toEqual({ status: 'unknown', reason: 'organization_write_outcome_unknown' });
+    });
+
+    it('uses the same qualified admission and latest membership for the Action and pointer effect', async () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const { context, spies } = makeContext();
+        const live = { ...context, scope, latestTree: buildSessionListTreeRows({ items: context.latestItems }) };
+        const intent: SessionListDragIntent = { sourceRowId: treeRowId.session('server-a', 'root-b'),
+            sourceKind: 'leaf', instructionKind: 'reorder-before', targetRowId: treeRowId.session('server-a', 'root-a'),
+            containerId: treeRowId.workspaceRoot(projectGroupKey), parentRowId: null, depth: 0,
+            edge: 'top', sourceSnapshotSignature: '' };
+        const item = { kind: 'session' as const, scope, address: { serverId: 'server-a', sessionId: 'root-b' } };
+        const indexedAdmission = resolveSessionListDragIntent({ intent, context: live });
+        expect(indexedAdmission.ok && indexedAdmission.effect === 'organization' && indexedAdmission.tree)
+            .toBe(live.latestTree);
+        const preview = () => ({ verb: 'Move', target: 'Root' });
+        const reason = (code: string) => ({ code, message: code });
+        const admission = resolveSessionListEntityDrop({ item, intent, context: live, preview, reason });
+        expect(admission.status).toBe('allowed');
+        expect(spies.setSessionListGroupOrderV1).not.toHaveBeenCalled();
+        expect(resolveSessionListEntityDrop({ item: { ...item, scope: { ...scope, accountId: 'other' } },
+            intent, context: live, preview, reason })).toMatchObject({ status: 'refused', reason: { code: 'scope-mismatch' } });
+        const execute = createSessionListOrganizationActionAdapter(() => live);
+        if (admission.status !== 'allowed') throw new Error('expected organization admission');
+        // The supplied tree becomes stale. Release must rebuild from changed current membership.
+        live.latestItems = [...items(), sessionItem('new-root', projectGroupKey, null, 0)];
+        // This client Action exercises the real mounted adapter and domain owner; no other execution port is reached.
+        const retire = registerMountedSessionListOrganizationAction(execute);
+        const actionExecutor = createActionExecutor({ sessionOrganizationMove: (request: Parameters<typeof invokeSessionListOrganizationAction>[0]) => invokeSessionListOrganizationAction({ ...request, mutationScope }) } as unknown as ActionExecutorDeps);
+        try {
+            expect(await actionExecutor.execute('session.organization.move', admission.effect.input,
+                { surface: 'agent', authority: 'account_automation', serverId: scope.serverId }))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+        } finally { retire(); }
+        expect(await actionExecutor.execute('session.organization.move', admission.effect.input,
+            { surface: 'agent', authority: 'account_automation', serverId: scope.serverId }))
+            .toEqual({ ok: true, result: { status: 'unavailable' } });
+        const tree = buildSessionListTreeRows({ items: live.latestItems });
+        const destination = tree.containerMetadataById.get(intent.containerId!);
+        expect(spies.setSessionListGroupOrderV1.mock.calls[0]?.[0]?.[destination!.groupKey])
+            .toContain(tree.rowMetadataById.get(treeRowId.session('server-a', 'new-root'))!.orderKey);
+        const beforeWrites = spies.setSessionListGroupOrderV1.mock.calls.length;
+        const cancel = new AbortController(); cancel.abort();
+        expect(await execute({ mutationScope, input: admission.effect.input, signal: cancel.signal })).toEqual({ status: 'refused', reason: 'cancelled' });
+        expect(spies.setSessionListGroupOrderV1.mock.calls.length).toBe(beforeWrites);
+        live.scope = { ...scope, accountId: 'replacement' };
+        expect(await execute({ mutationScope, input: admission.effect.input })).toEqual({ status: 'refused', reason: 'scope-mismatch' });
+        await expect(createSessionListOrganizationActionAdapter(() => null)({ mutationScope, input: admission.effect.input }))
+            .resolves.toEqual({ status: 'unavailable' });
+        expect(resolveSessionListDragIntent({ intent: { ...intent, scope }, context: live })).toEqual({ ok: false, reason: 'scope-mismatch' });
+    });
+
+    it('refuses a retained intent after the mounted Account changes', async () => {
+        const intent = {
+            sourceRowId: treeRowId.session('server-a', 'root-b'),
+            sourceKind: 'leaf' as const,
+            instructionKind: 'reorder-before' as const,
+            targetRowId: treeRowId.session('server-a', 'root-a'),
+            containerId: treeRowId.workspaceRoot(projectGroupKey),
+            parentRowId: null, depth: 0, edge: 'top' as const, sourceSnapshotSignature: 'sig',
+            scope: { serverId: 'server-a', accountId: 'account-before' },
+        };
+        const { context, spies } = makeContext();
+        const result = await commitSessionListDragIntent({ intent,
+            context: { ...context, scope: { serverId: 'server-a', accountId: 'account-after' } } });
+        expect(result).toEqual({ ok: false, reason: 'scope-mismatch' });
+        expect(spies.setSessionListGroupOrderV1).not.toHaveBeenCalled();
+    });
+
+    it('treats an anchor moved out of the destination as a missing anchor', async () => {
+        const intent: SessionListDragIntent = {
+            sourceRowId: treeRowId.session('server-a', 'root-b'), sourceKind: 'leaf',
+            instructionKind: 'reorder-after', targetRowId: treeRowId.session('server-a', 'root-a'),
+            containerId: treeRowId.workspaceRoot(projectGroupKey), parentRowId: null,
+            depth: 0, edge: 'bottom', sourceSnapshotSignature: 'sig',
+        };
+        const { context, spies } = makeContext({ latestItems: [projectHeader(),
+            folderHeader('folder-a', folderAGroupKey, 0),
+            sessionItem('root-a', folderAGroupKey, 'folder-a', 1),
+            sessionItem('root-b', projectGroupKey, null, 0),
+            sessionItem('new-root', projectGroupKey, null, 0)],
+        });
+        expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: true });
+        const tree = buildSessionListTreeRows({ items: context.latestItems });
+        const container = tree.containerMetadataById.get(intent.containerId!);
+        expect(spies.setSessionListGroupOrderV1.mock.calls[0]?.[0]?.[container!.groupKey])
+            .toEqual([tree.rowMetadataById.get(treeRowId.session('server-a', 'new-root'))!.orderKey,
+                tree.rowMetadataById.get(intent.sourceRowId)!.orderKey]);
+    });
+
     it('commits a valid reorder intent against the latest tree (moving root-b before root-a)', async () => {
         const intent: SessionListDragIntent = {
             sourceRowId: treeRowId.session('server-a', 'root-b'),

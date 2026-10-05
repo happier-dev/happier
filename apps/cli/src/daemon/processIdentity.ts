@@ -120,15 +120,14 @@ function normalizeExactProcessIdentity(
         !Number.isFinite(processStartTimeMs)
         || !Number.isInteger(processStartTimeMs)
         || (processStartTimeMs ?? -1) < 0
-        || !command
-        || command.toLowerCase() === 'unknown'
     ) {
         return null;
     }
     return {
         ...processIdentity,
         processStartTimeMs,
-        command,
+        // Exec transitions can expose birth evidence before cmdline is available.
+        command: command.toLowerCase() === 'unknown' ? '' : command,
     };
 }
 

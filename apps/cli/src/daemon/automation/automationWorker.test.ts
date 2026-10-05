@@ -21,7 +21,8 @@ const { mockGet, mockPost, mockIsAxiosError, mockCreate } = vi.hoisted(() => ({
 
 vi.mock('axios', () => {
   const client = {
-    get: mockGet,
+    get: (url: string, ...args: unknown[]) => url.endsWith('/worker/run-lifecycle')
+      ? Promise.resolve({ data: { sources: [] } }) : mockGet(url, ...args),
     post: mockPost,
     isAxiosError: mockIsAxiosError,
   };

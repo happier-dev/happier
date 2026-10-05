@@ -12,6 +12,59 @@ import {
   withWorkspaceBundleLockSync,
 } from './workspaceBundleLock.mjs';
 
+test('a contended publication reuses its directory watch across fallback wakes and closes it on admission or cancellation', () => {
+  for (const outcome of ['admission', 'cancellation']) {
+    // Instrument only the native filesystem boundary in an isolated process.
+    const script = `
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      import { tmpdir } from 'node:os';
+      import { join } from 'node:path';
+      const nativeWatch = fs.watch;
+      let opened = 0, closed = 0;
+      fs.watch = (...args) => {
+        opened++;
+        const watcher = nativeWatch(...args);
+        const close = watcher.close.bind(watcher);
+        watcher.close = () => { closed++; return close(); };
+        return watcher;
+      };
+      syncBuiltinESMExports();
+      const { withWorkspaceBundleLock } = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+      const root = fs.mkdtempSync(join(tmpdir(), 'workspace-watch-lifecycle-'));
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      const lockPath = join(root, 'publication.lock');
+      const holder = withWorkspaceBundleLock(() => gate, { lockPath });
+      const controller = new AbortController();
+      let wakes = 0;
+      try {
+        await withWorkspaceBundleLock(() => 'admitted', {
+          lockPath, watchFallbackMs: 10, signal: controller.signal,
+          onWait() {
+            if (++wakes === 4) {
+              if (${JSON.stringify(outcome)} === 'cancellation') controller.abort(new Error('canceled'));
+              else release();
+            }
+          },
+        });
+        if (${JSON.stringify(outcome)} === 'cancellation') throw new Error('cancellation was ignored');
+      } catch (error) {
+        if (${JSON.stringify(outcome)} !== 'cancellation' || error.message !== 'canceled') throw error;
+      } finally {
+        release(); await holder; fs.rmSync(root, { recursive: true, force: true });
+      }
+      console.log(JSON.stringify({ opened, closed, wakes }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const evidence = JSON.parse(result.stdout.trim());
+    assert.ok(evidence.wakes >= 4);
+    assert.equal(evidence.opened, 1, `${outcome}: fallback wakes must not re-register FSEvents clients`);
+    assert.equal(evidence.closed, 1, `${outcome}: the wait must release its native watch`);
+  }
+});
+
 test('workspace publishers get a default contention budget sized for concurrent source-dev builds', () => {
   assert.ok(DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS >= 30 * 60_000);
 });
@@ -169,6 +222,120 @@ for (const mode of ['async', 'sync']) {
         assert.equal(existsSync(`${lockPath}.priority-claim`), false);
       } finally {
         rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+for (const mode of ['async', 'sync']) {
+  for (const releaseObservation of ['absent', 'mid-write', 'unreadable', 'priority-claim']) {
+    test(`workspace bundle ${mode} acquires after an over-budget ${releaseObservation} handover`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'workspace-lock-handover-'));
+      const lockPath = join(root, 'publication.lock');
+      const releasePath = join(root, 'release');
+      const moduleUrl = new URL('./workspaceBundleLock.mjs', import.meta.url).href;
+      let child;
+      let completion;
+      let output = '';
+      try {
+        await withWorkspaceBundleLock(async () => {
+          if (releaseObservation === 'priority-claim') {
+            // An authenticated claimant holds admission ahead of this contender.
+            writeFileSync(`${lockPath}.priority-claim`, readFileSync(lockPath));
+          }
+          // Real owner and contender processes use the canonical lock. Intercept only the
+          // filesystem observation to place release between EEXIST and the owner read.
+          const script = `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const lockPath = ${JSON.stringify(lockPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const partialPath = lockPath + '.partial-observed';
+const observation = ${JSON.stringify(releaseObservation)};
+const originalOpen = fs.openSync;
+const originalRead = fs.readFileSync;
+let pastBudget = false;
+let injected = false;
+let released = false;
+function releaseOwner() {
+  fs.writeFileSync(releasePath, 'release');
+  const deadline = Date.now() + 10_000;
+  while (fs.existsSync(lockPath)) {
+    if (Date.now() > deadline) throw new Error('owner did not release');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+  }
+  released = true;
+}
+fs.openSync = function(path, flags, ...args) {
+  try { return originalOpen.call(this, path, flags, ...args); }
+  catch (error) {
+    if (String(path) === lockPath && flags === 'wx' && error.code === 'EEXIST' && pastBudget && !injected) {
+      injected = true;
+      if (observation === 'absent') releaseOwner();
+    }
+    throw error;
+  }
+};
+fs.readFileSync = function(path, ...args) {
+  if (String(path) === lockPath + '.priority-claim' && observation === 'priority-claim' && released) {
+    const raw = originalRead.call(this, path, ...args);
+    fs.unlinkSync(path);
+    return raw;
+  }
+  if (String(path) === lockPath && observation === 'priority-claim' && pastBudget && !injected) injected = true;
+  if (String(path) === lockPath && injected && !released) {
+    releaseOwner();
+    if (observation === 'mid-write') {
+      fs.writeFileSync(lockPath, '{"pid":');
+      fs.writeFileSync(partialPath, 'partial');
+      return originalRead.call(this, path, ...args);
+    }
+    if (observation === 'priority-claim') return '{"pid":';
+    const error = new Error('transient owner read failure');
+    error.code = 'EIO';
+    throw error;
+  }
+  return originalRead.call(this, path, ...args);
+};
+syncBuiltinESMExports();
+const { withWorkspaceBundleLock, withWorkspaceBundleLockSync } = await import(${JSON.stringify(moduleUrl)});
+const options = {
+  lockPath, timeoutMs: 30, staleAfterMs: 5_000, pollIntervalMs: 5,
+  onWait: ({ waitedMs }) => { if (waitedMs > 30) pastBudget = true; },
+};
+const callback = ({ waited, assertOwned }) => { assertOwned(); assert.equal(waited, true); return 'acquired'; };
+const result = ${JSON.stringify(mode)} === 'async'
+  ? await withWorkspaceBundleLock(callback, options)
+  : withWorkspaceBundleLockSync(callback, options);
+assert.equal(injected, true);
+assert.equal(released, true);
+assert.equal(result, 'acquired');
+assert.equal(fs.existsSync(lockPath), false);
+assert.equal(fs.existsSync(lockPath + '.priority-claim'), false);
+`;
+          child = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          child.stdout.on('data', (chunk) => { output += chunk; });
+          child.stderr.on('data', (chunk) => { output += chunk; });
+          completion = new Promise((resolve, reject) => {
+            child.once('error', reject);
+            child.once('exit', resolve);
+          });
+          await waitForCondition(() => existsSync(releasePath), 'over-budget contender requests release');
+        }, { lockPath, staleAfterMs: 5_000 });
+        if (releaseObservation === 'mid-write') {
+          await waitForCondition(() => existsSync(`${lockPath}.partial-observed`), 'partial handover file');
+          // Keep the partial bytes stable across immediate re-reads, then finish release.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (existsSync(lockPath)) rmSync(lockPath);
+        }
+        const code = await completion;
+        assert.equal(code, 0, output);
+      } finally {
+        if (child?.exitCode === null) child.kill();
+        rmSync(root, { recursive: true, force: true });
       }
     });
   }
@@ -857,6 +1024,68 @@ test('withWorkspaceBundleLock lets waiters reuse a result published by the prior
     assert.equal(enteredWaiterOwner, false);
     await owner;
     assert.equal(existsSync(`${lockPath}.priority-claim`), false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('withWorkspaceBundleLock preserves waiter admission during slow result validation against a re-acquiring holder', async (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-validation-fairness-'));
+  try {
+    const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    let nowMs = Date.now();
+    // Clock and heartbeat scheduling are system boundaries. Admission and filesystem leases stay real.
+    t.mock.method(Date, 'now', () => nowMs);
+    const options = {
+      lockPath,
+      staleAfterMs: 60_000,
+      initializationGraceMs: 0,
+      priorityClaimStaleAfterMs: 50,
+      startWorkspaceLockHeartbeatImpl: () => null,
+    };
+    let releaseOwner;
+    const owner = withWorkspaceBundleLock(
+      () => new Promise((resolve) => { releaseOwner = resolve; }),
+      options,
+    );
+    await waitForCondition(() => typeof releaseOwner === 'function', 'initial holder admission');
+    const order = [];
+    let releaseValidation;
+    let validationStarted;
+    const validating = new Promise((resolve) => { validationStarted = resolve; });
+    const waiter = withWorkspaceBundleLock(
+      () => { order.push('waiter'); },
+      {
+        ...options,
+        tryResolveWaiter: async () => {
+          const pending = new Promise((resolve) => { releaseValidation = resolve; });
+          validationStarted();
+          await pending;
+          return { resolved: false };
+        },
+      },
+    );
+    await waitForCondition(() => existsSync(`${lockPath}.priority-claim`), 'waiter priority claim');
+    releaseOwner();
+    await validating;
+    // An output/currentness probe can outlive the handoff claim budget. A returning holder
+    // must still yield to the admitted waiter rather than taking another publication cycle.
+    nowMs += 100;
+    let holderObserved;
+    const observed = new Promise((resolve) => { holderObserved = resolve; });
+    const reacquirer = (async () => {
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        await withWorkspaceBundleLock(
+          () => { order.push(`holder-${cycle}`); holderObserved(); },
+          { ...options, onWait: () => holderObserved() },
+        );
+      }
+    })();
+    await observed;
+    releaseValidation();
+    await Promise.all([owner, waiter, reacquirer]);
+    assert.deepEqual(order, ['waiter', 'holder-0', 'holder-1', 'holder-2']);
+    assert.deepEqual(readdirSync(tempRoot), []);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -2139,23 +2368,25 @@ test('workspace bundle locks re-observe a matching live pid before reclaiming it
   }
 });
 
-test('workspace bundle locks give young empty owner files a bounded initialization window', () => {
+test('workspace bundle locks preserve initialization grace past the contention budget before reclaiming an empty owner', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-initializing-'));
   try {
     const lockPath = join(tempRoot, 'workspace-bundling.lock');
+    const startedAt = Date.now();
     writeFileSync(lockPath, '', 'utf8');
 
-    assert.throws(
-      () => withWorkspaceBundleLockSync(() => 'must not run', {
-        lockPath,
-        timeoutMs: 30,
-        pollIntervalMs: 5,
-        staleAfterMs: 60_000,
-        initializationGraceMs: 1_000,
-      }),
-      /Timed out waiting for workspace bundle lock/,
-    );
-    assert.equal(existsSync(lockPath), true);
+    const result = withWorkspaceBundleLockSync(() => {
+      assert.ok(Date.now() - startedAt >= 1_000, 'must not reclaim during initialization grace');
+      return 'acquired';
+    }, {
+      lockPath,
+      timeoutMs: 30,
+      pollIntervalMs: 5,
+      staleAfterMs: 60_000,
+      initializationGraceMs: 1_000,
+    });
+    assert.equal(result, 'acquired');
+    assert.equal(existsSync(lockPath), false);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

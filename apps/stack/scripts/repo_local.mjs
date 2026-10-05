@@ -265,10 +265,10 @@ async function main() {
   const repoRoot = dirname(dirname(dirname(scriptsDir))); // <repo>
   const hstackBin = join(repoRoot, 'apps', 'stack', 'bin', 'hstack.mjs');
 
-  const invokedCwd =
-    (process.env.HAPPIER_STACK_INVOKED_CWD ?? '').toString().trim() ||
-    (process.env.INIT_CWD ?? '').toString().trim() ||
-    process.cwd();
+  // This launcher is the caller-scope boundary. Ambient cwd hints can belong
+  // to the parent Agent Session or another checkout; capture the directory
+  // from which this command was actually invoked before entering repoRoot.
+  const invokedCwd = process.cwd();
 
   const subcommand = String(argv[0] ?? '').trim();
   const isStop = subcommand === 'stop';

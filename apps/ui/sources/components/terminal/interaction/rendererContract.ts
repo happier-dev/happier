@@ -48,11 +48,13 @@ export function buildTerminalRendererInteractionContract(
 export function shouldRendererCaptureKeyboard(input: Readonly<{
     key: string;
     modifiers: TerminalKeyboardModifiers;
+    defaultPrevented?: boolean;
 }>): boolean {
     return shouldTerminalCaptureKeyboardEvent({
         terminalFocused: true,
         key: input.key,
         modifiers: input.modifiers,
+        defaultPrevented: input.defaultPrevented,
     });
 }
 

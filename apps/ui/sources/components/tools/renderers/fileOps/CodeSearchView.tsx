@@ -6,6 +6,8 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { coerceToolResultRecord } from '../../legacy/coerceToolResultRecord';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -30,9 +32,9 @@ function getMatches(result: unknown): SearchMatch[] {
         const obj = asRecord(item);
         if (!obj) continue;
         out.push({
-            filePath: typeof (obj as any).filePath === 'string' ? (obj as any).filePath : undefined,
-            line: typeof (obj as any).line === 'number' ? (obj as any).line : undefined,
-            excerpt: typeof (obj as any).excerpt === 'string' ? (obj as any).excerpt : undefined,
+            filePath: typeof obj.filePath === 'string' ? obj.filePath : undefined,
+            line: typeof obj.line === 'number' ? obj.line : undefined,
+            excerpt: typeof obj.excerpt === 'string' ? obj.excerpt : undefined,
         });
     }
     return out;
@@ -51,29 +53,46 @@ function readSearchSummary(result: unknown, matches: readonly SearchMatch[]): Se
     };
 }
 
-export const CodeSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+function matchLabel(match: SearchMatch) {
+    return match.filePath ? `${match.filePath}${typeof match.line === 'number' ? `:${match.line}` : ''}` : null;
+}
+
+export const projectCodeSearchDisplayText: ToolDisplayTextProjector = (tool) => {
+    if (tool.state !== 'completed') return [];
+    const matches = getMatches(tool.result);
+    const summary = readSearchSummary(tool.result, matches);
+    return [
+        ...toolTextBlock('tool-code-search-unavailable', summary.detailsUnavailable ? t('tools.workflowActivityView.unavailable') : null),
+        ...toolTextBlock('tool-code-search-zero', summary.explicitZero ? t('common.noMatches') : null),
+        ...matches.flatMap((match, index) => [
+            ...toolTextBlock(`tool-code-search-${index}-label`, matchLabel(match)),
+            ...toolTextBlock(`tool-code-search-${index}-excerpt`, match.excerpt),
+        ]),
+    ];
+};
+
+export const CodeSearchView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     if (tool.state !== 'completed') return null;
     const matches = getMatches(tool.result);
     const summary = readSearchSummary(tool.result, matches);
     if (matches.length === 0 && !summary.detailsUnavailable && !summary.explicitZero) return null;
 
     const isFullView = detailLevel === 'full';
-    const shown = matches.slice(0, isFullView ? 20 : 6);
+    const shown = find.active ? matches : matches.slice(0, isFullView ? 20 : 6);
     const more = matches.length - shown.length;
 
     return (
         <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
-                {summary.detailsUnavailable ? <Text style={styles.summary}>{t('tools.workflowActivityView.unavailable')}</Text> : null}
-                {summary.explicitZero ? <Text style={styles.summary}>{t('common.noMatches')}</Text> : null}
+                {summary.detailsUnavailable ? <ToolFindText text={t('tools.workflowActivityView.unavailable')} blockId="tool-code-search-unavailable" messageId={messageId} style={styles.summary} /> : null}
+                {summary.explicitZero ? <ToolFindText text={t('common.noMatches')} blockId="tool-code-search-zero" messageId={messageId} style={styles.summary} /> : null}
                 {shown.map((m, idx) => {
-                    const label = m.filePath
-                        ? `${m.filePath}${typeof m.line === 'number' ? `:${m.line}` : ''}`
-                        : null;
+                    const label = matchLabel(m);
                     return (
                         <View key={idx} style={styles.row}>
-                            {label ? <Text style={styles.label} numberOfLines={isFullView ? 2 : 1}>{label}</Text> : null}
-                            {m.excerpt ? <Text style={styles.text} numberOfLines={isFullView ? 6 : 2}>{m.excerpt}</Text> : null}
+                            {label ? <ToolFindText text={label} blockId={`tool-code-search-${idx}-label`} messageId={messageId} style={styles.label} numberOfLines={isFullView ? 2 : 1} /> : null}
+                            {m.excerpt ? <ToolFindText text={m.excerpt} blockId={`tool-code-search-${idx}-excerpt`} messageId={messageId} style={styles.text} numberOfLines={isFullView ? 6 : 2} /> : null}
                         </View>
                     );
                 })}

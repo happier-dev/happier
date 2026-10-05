@@ -1,155 +1,47 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
+import { VoiceUiSection } from './VoiceUiSection';
 
-vi.mock('react-native', async () => {
-  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-  return createReactNativeWebMock();
+// Icons are a native rendering boundary; settings controls and declarations remain real.
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
 });
 
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: (props: any) => React.createElement('Ionicons', props),
-}));
-
-vi.mock('react-native-unistyles', async () => {
-  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-  ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props, props.rightElement),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-  Switch: (props: any) => React.createElement('Switch', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-  DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-describe('VoiceUiSection', () => {
-  it('exposes a stable, labelled activity-feed switch and updates the canonical UI setting', async () => {
-    const setVoice = vi.fn();
-    const { VoiceUiSection } = await import('./VoiceUiSection');
-    const voice = {
-      ...voiceSettingsDefaults,
-      ui: {
-        ...voiceSettingsDefaults.ui,
-        activityFeedEnabled: true,
-        updates: {
-          ...voiceSettingsDefaults.ui.updates,
-          activeSession: 'snippets' as const,
-        },
-      },
-    };
-    const screen = await renderScreen(React.createElement(VoiceUiSection, {
-      voice,
-      setVoice,
-      voiceOrbEnabled: true,
-      setVoiceOrbEnabled: vi.fn(),
-    }));
-
-    const activityFeedSwitch = screen.findByProps({
-      testID: 'settings.voice.ui.activityFeedEnabled',
+describe('VoiceUiSection synced siblings', () => {
+    it('changes the transcript preference through the synced Voice owner', async () => {
+        const setVoice = vi.fn();
+        const voice = { ...voiceSettingsDefaults, ui: { ...voiceSettingsDefaults.ui, activityFeedEnabled: false } };
+        const screen = await renderScreen(<VoiceUiSection voice={voice} setVoice={setVoice}
+            voicePresenceContainer="top_bar" setVoicePresenceContainer={() => {}} />);
+        const toggle = screen.root.findAll((node) => node.props.testID === 'settings.voice.ui.activityFeedEnabled'
+            && typeof node.props.onValueChange === 'function')[0];
+        expect(toggle).toBeDefined();
+        await act(async () => { toggle?.props.onValueChange(true); });
+        expect(setVoice).toHaveBeenCalledWith({ ...voice, ui: { ...voice.ui, activityFeedEnabled: true } });
     });
-    expect(activityFeedSwitch.props.accessibilityLabel).toBe(t('settingsVoice.ui.activityFeedEnabled'));
-    expect(
-      screen.tree.root.findAllByType('Switch' as any)
-        .map((control) => control.props.accessibilityLabel),
-    ).toEqual([
-      t('settingsVoice.ui.activityFeedEnabled'),
-      t('settingsVoice.ui.activityFeedAutoExpandOnStart'),
-      t('settingsVoice.ui.orbEnabled'),
-      t('settingsVoice.ui.updates.includeUserMessagesInSnippetsTitle'),
-    ]);
 
-    activityFeedSwitch.props.onValueChange(true);
-
-    expect(setVoice).toHaveBeenCalledWith({
-      ...voice,
-      ui: {
-        ...voice.ui,
-        activityFeedEnabled: true,
-      },
+    it('retains both start-scope choices without treating scope as placement', async () => {
+        const setVoice = vi.fn();
+        const voice = { ...voiceSettingsDefaults, ui: { ...voiceSettingsDefaults.ui, scopeDefault: 'global' as const } };
+        const screen = await renderScreen(<VoiceUiSection voice={voice} setVoice={setVoice}
+            voicePresenceContainer="island" setVoicePresenceContainer={() => {}} />);
+        const scope = screen.root.findAll((node) => node.props.testIDPrefix === 'settings.voice.ui.scopeDefault')[0];
+        expect(scope?.props.options.map((option: { id: string }) => option.id)).toEqual(['global', 'session']);
+        await act(async () => { scope?.props.onChange('session'); });
+        expect(setVoice).toHaveBeenCalledWith({ ...voice, ui: { ...voice.ui, scopeDefault: 'session' } });
     });
-  });
 
-  it('offers both default scope choices and persists Session through the canonical voice setting', async () => {
-    const setVoice = vi.fn();
-    const { VoiceUiSection } = await import('./VoiceUiSection');
-    const voice = {
-      ...voiceSettingsDefaults,
-      ui: {
-        ...voiceSettingsDefaults.ui,
-        scopeDefault: 'global' as const,
-      },
-    };
-    const screen = await renderScreen(React.createElement(VoiceUiSection, {
-      voice,
-      setVoice,
-      voiceOrbEnabled: true,
-      setVoiceOrbEnabled: vi.fn(),
-    }));
-
-    // Two short, always-visible choices: a segmented row, not a menu.
-    const scopeChoice = screen.tree.root.findAll((node) => node.props?.testIDPrefix === 'settings.voice.ui.scopeDefault')[0];
-    expect(scopeChoice).toBeDefined();
-    expect(scopeChoice?.props.value).toBe('global');
-    expect(scopeChoice?.props.options.map((option: { id: string }) => option.id)).toEqual([
-      'global',
-      'session',
-    ]);
-
-    scopeChoice?.props.onChange('session');
-
-    expect(setVoice).toHaveBeenCalledWith({
-      ...voice,
-      ui: {
-        ...voice.ui,
-        scopeDefault: 'session',
-      },
+    it('keeps "Open it when a conversation starts" visible but locked while the transcript is hidden', async () => {
+        const voice = { ...voiceSettingsDefaults, ui: { ...voiceSettingsDefaults.ui, activityFeedEnabled: false } };
+        const screen = await renderScreen(<VoiceUiSection voice={voice} setVoice={vi.fn()}
+            voicePresenceContainer="top_bar" setVoicePresenceContainer={() => {}} />);
+        const autoOpen = screen.root.findAll((node) => node.props.testID === 'settings.voice.ui.activityFeedAutoExpandOnStart');
+        expect(autoOpen.length).toBeGreaterThan(0);
+        expect(autoOpen.some((node) => node.props.disabled === true)).toBe(true);
     });
-  });
-
-  it('allows Voice Surface and Session updates descriptions to wrap in their settings rows', async () => {
-    const { VoiceUiSection } = await import('./VoiceUiSection');
-    const voice = {
-      ...voiceSettingsDefaults,
-      ui: {
-        ...voiceSettingsDefaults.ui,
-        activityFeedEnabled: true,
-        updates: {
-          ...voiceSettingsDefaults.ui.updates,
-          activeSession: 'snippets' as const,
-          otherSessions: 'snippets' as const,
-        },
-      },
-    };
-    const screen = await renderScreen(React.createElement(VoiceUiSection, {
-      voice,
-      setVoice: vi.fn(),
-      voiceOrbEnabled: true,
-      setVoiceOrbEnabled: vi.fn(),
-    }));
-
-    const descriptiveRows = screen.tree.root.findAllByType('Item' as any)
-      .filter((item) => typeof item.props.subtitle === 'string');
-    // Three switches with their own descriptions, four segmented choices describing the chosen
-    // option, the snippet switch and the other-sessions snippet choice.
-    expect(descriptiveRows).toHaveLength(9);
-    expect(descriptiveRows.every((item) => item.props.subtitleLines === 0)).toBe(true);
-
-    const descriptiveTriggers = screen.tree.root.findAllByType('DropdownMenu' as any)
-      .map((menu) => menu.props.itemTrigger)
-      .filter((trigger) => typeof trigger?.subtitle === 'string');
-    expect(descriptiveTriggers.map((trigger) => trigger.itemProps?.subtitleLines)).toEqual([0]);
-  });
 });

@@ -3,7 +3,18 @@ import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost';
-import type { SessionBoardItemRect } from '@/components/sessions/board/SessionBoardItemMoveHandle';
+import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/protocol/sessions';
+import type { EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useEntityDragDropRuntime, readWindowBounds, measureWindowBounds, type WindowBounds, useTreeDropAutoscroll } from '@/components/ui/treeDragDrop';
+import { useSharedValue } from 'react-native-reanimated';
+import { sessionSurfaceMeasurable, useSessionSurfaceEntityDrag, useSessionSurfaceGeometryRefresh, SessionSurfaceEntityFeedback, type SessionSurfaceEntityBinding } from '@/components/sessions/board/SessionSurfaceEntityDrag';
+import { resolveSessionCompanionEntityDrop, sessionSurfaceDropRefused } from '@/components/sessions/board/sessionSurfaceEntityDrop';
+import { SessionCompanionDestinationSchema } from '@/components/sessions/board/sessionBoardEntityBinding';
+import { resolveSessionSurfaceKeyboardDestination } from '@/components/sessions/board/sessionSurfaceKeyboardDestination';
+import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
+import { executeWidgetEntityMovement } from '@/sync/ops/actions/widgetEntityMovement';
+import type { SessionBoardItemRect } from '@/components/sessions/board/sessionBoardMoveStrategy';
 import {
     defaultSessionBoardSourceAvailability,
     resolveSessionBoardItemTitle,
@@ -31,9 +42,10 @@ import {
     sessionCompanionGlanceLabel,
     type SessionCompanionGlanceItem,
 } from './glances/SessionCompanionGlance';
-import { SessionCompanionItemFrame } from './SessionCompanionItemFrame';
+import { SessionCompanionItemFrame, type SessionCompanionInstanceControls, type SessionCompanionInstanceView } from './SessionCompanionItemFrame';
 import {
     applySessionCompanionMutationWithNotice,
+    applySessionCompanionItemPresentationIntent,
     buildSessionPresentationNoticeKeyPrefix,
 } from './presentation/sessionCompanionPresentationAdapter';
 import { buildSessionCompanionItemActions } from './sessionCompanionMenu';
@@ -55,7 +67,12 @@ import {
     type SessionSummaryDestinationHandlers,
 } from './summary/SessionSummaryCard';
 import { SessionAgentPlanCard, type SessionAgentPlanActivity } from './plan/SessionAgentPlanCard';
+import { VoiceCompanionSection } from '@/components/voice/presence/VoiceCompanionSection';
+import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import { SessionCompanionAddControl, type SessionCompanionAddBinding } from './picker/SessionCompanionAddControl';
+import { useSessionWidgetSurface } from '@/components/widgets/surface/useWidgetInputsEditor';
+import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 import { SessionCompanionDropSlot } from './drop/SessionCompanionDropSlot';
 import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
@@ -226,6 +243,32 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
 ) {
     const styles = stylesheet;
     const testID = props.testID ?? 'session-companion-content';
+    const [voiceViewportTracker] = React.useState(() => createNearViewportTracker({
+        // The tracker publishes leaf eligibility; scrolling never rerenders this content owner.
+        quantum: 1,
+        initialViewportHeight: 0,
+        overscan: false,
+    }));
+    const scrollRef = React.useRef<ScrollView | null>(null);
+    const { binding: dragScope } = useServerCredentialAccountScopeBinding(props.serverId);
+    const dragRuntime = useEntityDragDropRuntime();
+    const scrollOffsetY = React.useRef(0);
+    const scrollWindow = React.useRef<WindowBounds | null>(null);
+    const dragAutoscrollActive = useSharedValue(false);
+    const dragPointerY = useSharedValue<number | null>(null);
+    const viewportTop = useSharedValue(0);
+    const viewportHeight = useSharedValue(0);
+    const scrollOffset = useSharedValue(0);
+    const contentHeight = useSharedValue(0);
+    const scrollToOffset = React.useCallback((y: number) => { scrollRef.current?.scrollTo({ y, animated: false }); }, []);
+    useTreeDropAutoscroll({ isActive: dragAutoscrollActive, pointerY: dragPointerY, viewportTopY: viewportTop,
+        viewportHeight, scrollOffsetY: scrollOffset, contentHeight, scrollToOffset });
+    // Voice leads this scroll content. A mounted section reports reveal success only at its scroll owner.
+    const revealVoice = React.useCallback(() => {
+        if (!scrollRef.current) return false;
+        scrollRef.current.scrollTo({ y: 0, animated: false });
+        return true;
+    }, []);
     const full = props.presentation === 'full';
     const { controller } = props;
     const inventory = resolveSessionCompanionBoardInventory(props.boardBinding);
@@ -237,10 +280,6 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         inventory,
     }), [boardItemsById, controller.preference.items, inventory]);
     const itemMeasurementKeys = React.useMemo(() => items.map(companionItemMeasurementKey), [items]);
-    // Reorder needs a second item to reorder against, and a measurement pass has
-    // no person in front of it. Both halves of the required pair — pointer drag
-    // and the explicit Move commands — appear together or not at all.
-    const reorderable = props.measurementOnly !== true && items.length > 1;
     // One subscription to the Companion's Appearance default; each item resolves against it.
     const frameSurfaceDefault = useWidgetFrameSurfaceDefault('companion');
     const frameStyleOf = (entry: SessionCompanionContentItem): WidgetFrameStyle => resolveWidgetFrameStyle({
@@ -336,13 +375,22 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     }), [controller, noticeKeyPrefix]);
     // One reorder owner for the menu entries and the pointer/keyboard handle, so
     // direct manipulation and the explicit Move commands can never diverge.
-    const moveCompanionItemTo = React.useCallback((entry: SessionCompanionContentItem, toIndex: number) => {
-        mutateCompanion({
-            kind: 'companion.item.move',
-            message: t('sessionBoard.companion.notices.reordered'),
-            apply: (companion) => companion.moveItem(entry.ref, toIndex),
-        });
-    }, [mutateCompanion]);
+    const moveCompanionItemTo = (entry: SessionCompanionContentItem, toIndex: number) => {
+        if (entry.ref.kind === 'instance') {
+            if (!dragScope?.isCurrent()) {
+                publishPresentationNotice({ key: 'widgets.instance.move', severity: 'error', message: t('entityDragDrop.surface.widgetMoveUnavailable') });
+                return;
+            }
+            const surface = { ...dragScope.scope, owner: { kind: 'companion' as const, sessionId: props.session.id } };
+            void executeWidgetEntityMovement({ actionId: 'widgets.instance.move', input: { ref: { surface, instanceId: entry.ref.instance.id }, to: { surface, index: toIndex } },
+                preview: { verb: t('entityDragDrop.organize.title'), target: t('sessionBoard.companion.title') } }, dragScope.scope);
+            return;
+        }
+        // The mounted menu already has its qualified controller and full
+        // mixed-item index, so it uses the incumbent native presentation owner.
+        applySessionCompanionItemPresentationIntent({ companion: controller, publishNotice: publishPresentationNotice,
+            noticeKeyPrefix, canAddCompanionItem: () => false }, { kind: 'companion.item.move', item: entry.ref, toIndex });
+    };
     const setCompanionItemFrameStyle = React.useCallback((entry: SessionCompanionContentItem, style: WidgetFrameStyle | null) => {
         mutateCompanion({
             kind: 'companion.item.frameStyle.set',
@@ -383,11 +431,41 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
             ? <SessionCompanionGlancePreview kind={id} sessionId={sessionId} serverId={glanceServerId} testID={`${testID}-add-preview-${id}`} />
             : null
     ), [glanceServerId, sessionId, testID]);
+    // Set up offers "This session" first: this Companion's Session, named for people (lab dbind X).
+    const companionSurface = useSessionWidgetSurface({ owner: 'companion', serverId: glanceServerId, sessionId, session: props.session });
+    const addContext = companionSurface.context;
+    // A direct personal copy's Edit inputs… and Rename change that copy alone, through the
+    // Companion's own owner (the same intents `widgets.instance.inputs.set`/`.rename` reach).
+    const setInstanceInputs = React.useCallback(async (instanceId: string, bindings: WidgetInputBindingsV1): Promise<WidgetSetupSubmitResult> => {
+        if (controller.availability !== 'ready' || !noticeKeyPrefix) return { ok: false, message: t('widgetAdd.saveFailed') };
+        mutateCompanion({
+            kind: 'companion.instance.inputs.set',
+            message: t('common.done'),
+            apply: (companion) => companion.setInstanceInputs(instanceId, bindings),
+        });
+        return { ok: true };
+    }, [controller.availability, mutateCompanion, noticeKeyPrefix]);
+    const renameInstance = React.useCallback((instanceId: string, displayName: string | null) => {
+        mutateCompanion({
+            kind: 'companion.instance.rename',
+            message: t('common.done'),
+            apply: (companion) => companion.renameInstance(instanceId, displayName),
+        });
+    }, [mutateCompanion]);
+    const instanceControls = (entry: SessionCompanionContentItem): SessionCompanionInstanceControls | undefined => (
+        entry.kind === 'instance' && !props.measurementOnly ? {
+            instance: entry.ref.instance,
+            scope: companionSurface.scope,
+            context: companionSurface.context,
+            setInputs: (bindings) => setInstanceInputs(entry.ref.instance.id, bindings),
+            rename: (displayName) => { renameInstance(entry.ref.instance.id, displayName); },
+        } : undefined
+    );
     const addBinding = React.useMemo<SessionCompanionAddBinding | null>(() => (
         addBindingInput && !props.measurementOnly
-            ? { ...addBindingInput, refs: controller.preference.items, snapshot: board, addItem, renderGlancePreview }
+            ? { ...addBindingInput, refs: controller.preference.items, snapshot: board, addItem, renderGlancePreview, context: addContext }
             : null
-    ), [addBindingInput, addItem, board, controller.preference.items, props.measurementOnly, renderGlancePreview]);
+    ), [addBindingInput, addContext, addItem, board, controller.preference.items, props.measurementOnly, renderGlancePreview]);
 
     // A measurement pass must size the SAME card the live rail shows: compact rows,
     // row destinations and the "More details" overflow all shape its height. It keeps
@@ -404,11 +482,15 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         entry: SessionCompanionContentItem,
         headerAccessory: React.ReactNode,
         frameStyle: WidgetFrameStyle,
+        instanceView?: SessionCompanionInstanceView,
     ): React.ReactNode => {
         if (entry.kind === 'summary') {
             return (
                 <SessionSummaryCard
                     model={summary}
+                    session={props.session}
+                    serverId={props.serverId}
+                    readOnly={props.measurementOnly === true}
                     density={controller.preference.density}
                     testID={`${testID}-summary`}
                     {...(summaryDestinations ? { destinations: summaryDestinations } : {})}
@@ -424,11 +506,13 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         if (isSessionCompanionGlanceItem(entry)) {
             return (
                 <SessionCompanionGlance
+                    session={props.session}
                     entry={entry}
                     sessionId={props.session.id}
                     serverId={props.serverId ?? null}
                     frameStyle={frameStyle}
                     headerAccessory={headerAccessory}
+                    {...(instanceView ? { instanceView } : {})}
                     measurementOnly={props.measurementOnly === true}
                     testID={`${testID}-glance-${companionItemMeasurementKey(entry)}`}
                 />
@@ -549,8 +633,87 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                     : t('sessionBoard.item.untitled')
     );
 
-    return (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.content} testID={testID}>
+    // Geometry and preferences are read at resolution/release, never captured at pickup.
+    const liveDrop = React.useRef({ controller, board, dragScope, noticeKeyPrefix });
+    liveDrop.current = { controller, board, dragScope, noticeKeyPrefix };
+    const address = dragScope ? normalizeSessionAddress(dragScope.serverId, props.session.id) : null;
+    const widgetMovementSurface = React.useMemo(() => dragScope && address ? { ...dragScope.scope, owner: { kind: 'companion' as const, sessionId: address.sessionId } } : null, [dragScope, address]);
+    const widgetMovement = useWidgetMovementAdmission(props.measurementOnly ? null : widgetMovementSurface, controller.preference);
+    const admitWidgetMovement = widgetMovement.admit;
+    const executeDrop = React.useCallback(async (effect: EntityDropEffectV1): Promise<EntityDropOutcomeV1> => {
+        const live = liveDrop.current;
+        if (!live.dragScope?.isCurrent() || effect.actionId !== 'session.presentation.apply') {
+            return { status: 'refused', reason: { code: 'scope-retired', message: t('entityDragDrop.reasons.gone') } };
+        }
+        const input = CurrentSessionPresentationActionInputV1Schema.safeParse(effect.input);
+        const intent = input.success ? input.data.intent : null;
+        if (!intent || (intent.kind !== 'companion.item.add' && intent.kind !== 'companion.item.move')) {
+            return { status: 'refused', reason: { code: 'invalid-placement', message: t('entityDragDrop.reasons.generic') } };
+        }
+        const outcome = applySessionCompanionItemPresentationIntent({ companion: live.controller,
+            publishNotice: publishPresentationNotice, noticeKeyPrefix: live.noticeKeyPrefix,
+            canAddCompanionItem: ref => ref.kind === 'widget' && live.board?.reachability === 'reachable'
+                && live.board.itemsById.get(ref.widgetId)?.state.kind === 'ready' }, intent);
+        return outcome.status === 'applied' ? { status: 'applied' }
+            : { status: 'refused', reason: { code: outcome.status, message: t(outcome.status === 'unchanged' ? 'entityDragDrop.reasons.noChange' : 'entityDragDrop.reasons.gone') } };
+    }, [props.session.id]);
+    const target = (key?: string): NonNullable<SessionSurfaceEntityBinding['target']> => ({
+        acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'],
+        listDestinations: item => {
+            const source = item.kind === 'session-board-item' ? liveDrop.current.board?.itemsById.get(item.itemId)?.state : null;
+            return key === undefined
+                ? [{ destination: { keep: true }, label: source?.kind === 'ready' && source.item.source.kind !== 'widget'
+                    ? t('sessionCompanion.drop.keepBesideChat') : t('sessionBoard.item.moveTargetView', { title: t('sessionBoard.companion.title') }), group: t('sessionBoard.companion.title') }]
+                : (['before', 'after'] as const).map(side => ({ destination: { side, itemKey: key },
+                    label: t(side === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target: label(items.find(entry => companionItemMeasurementKey(entry) === key)!) }), group: t('sessionBoard.companion.title') }));
+        },
+        resolve: ({ item, destination }) => {
+            const live = liveDrop.current;
+            if (!address || !dragScope || !live.dragScope?.isCurrent()) return sessionSurfaceDropRefused('scope-mismatch');
+            const anchor = SessionCompanionDestinationSchema.safeParse(destination);
+            if (key !== undefined && !anchor.success) return sessionSurfaceDropRefused('anchor-gone');
+            const sourceState = item.kind === 'session-board-item' ? live.board?.itemsById.get(item.itemId)?.state : null;
+            const copying = sourceState?.kind === 'ready' && sourceState.item.source.kind !== 'widget';
+            return resolveSessionCompanionEntityDrop({ item, scope: dragScope.scope, address, board: live.board,
+                widgetSourceRef: widgetMovement.sourceRef,
+                items: live.controller.preference.items, ready: live.controller.availability === 'ready',
+                ...(anchor.success ? { anchor: anchor.data } : {}),
+                preview: { verb: copying ? t('sessionCompanion.drop.keepBesideChat') : key === undefined ? t('sessionBoard.item.moveTargetView', { title: t('sessionBoard.companion.title') })
+                    : t(anchor.success && anchor.data.side === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target: key ? label(items.find(entry => companionItemMeasurementKey(entry) === key)!) : t('sessionBoard.companion.title') }),
+                    target: t('sessionBoard.companion.title'),
+                    ...(copying ? { consequence: t('entityDragDrop.surface.copyDetail') } : {}) } });
+        },
+        execute: executeDrop,
+        autoscroll: pointer => { dragPointerY.value = pointer.y; dragAutoscrollActive.value = true; },
+    });
+    const canDrag = !props.measurementOnly && controller.availability === 'ready' && dragScope && address;
+    const surfaceDrag = useSessionSurfaceEntityDrag(canDrag ? { scope: dragScope.scope, isCurrent: () => dragScope.isCurrent(),
+        admitWidgetMovement,
+        title: t('sessionBoard.companion.title'), getItem: () => null, target: target() } : null);
+    const refreshGeometry = React.useCallback(() => {
+        surfaceDrag.refresh();
+        void measureWindowBounds(sessionSurfaceMeasurable(scrollRef.current)).then(bounds => { scrollWindow.current = bounds; viewportTop.value = bounds?.y ?? 0; });
+    }, [surfaceDrag.refresh, viewportTop]);
+    useSessionSurfaceGeometryRefresh(refreshGeometry);
+    React.useEffect(() => {
+        const update = () => {
+            // The selected target's autoscroll callback re-arms this owner. A
+            // changed selection/phase stops the previously selected rail.
+            dragAutoscrollActive.value = false;
+            dragPointerY.value = null;
+        };
+        update(); return dragRuntime.subscribe(update);
+    }, [dragRuntime, dragScope, dragAutoscrollActive, dragPointerY]);
+
+    return <View style={styles.scroll}>
+        <>
+        <ScrollView ref={node => { scrollRef.current = node; surfaceDrag.ref(node); }} style={styles.scroll} contentContainerStyle={styles.content} testID={testID}
+            onScroll={event => { scrollOffsetY.current = event.nativeEvent.contentOffset.y; scrollOffset.value = scrollOffsetY.current;
+                voiceViewportTracker.onScroll(event); dragRuntime.refresh(); }}
+            onContentSizeChange={(_width, height) => { contentHeight.value = height; dragRuntime.refresh(); }}
+            onLayout={event => { voiceViewportTracker.onLayout(event); viewportHeight.value = event.nativeEvent.layout.height; refreshGeometry(); }} scrollEventThrottle={16}>
+            {/* While a Voice conversation runs, its section leads the Companion (lab voice-presence A). */}
+            {props.measurementOnly ? null : <VoiceCompanionSection tracker={voiceViewportTracker} testID={`${testID}-voice`} onReveal={revealVoice} />}
             {items.length === 0 ? (
                 <SurfaceStateCard
                     testID={`${testID}-empty`}
@@ -590,15 +753,31 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                         label={label(entry)}
                         separated={index > 0}
                         {...(framed ? { flush: frameStyle } : {})}
-                        onLayout={props.onMeasuredCardBounds || reorderable
+                        onLayout={props.onMeasuredCardBounds || canDrag
                             ? (event) => reportCardLayout(key, event)
                             : undefined}
-                        {...(reorderable ? {
-                            move: {
-                                itemKey: key,
-                                orderedKeys: itemMeasurementKeys,
-                                rects: cardRectsRef.current,
-                                moveToIndex: (toIndex: number) => { moveCompanionItemTo(entry, toIndex); },
+                        {...(canDrag ? {
+                            entityDrag: {
+                                scope: dragScope.scope, title: label(entry),
+                                admitWidgetMovement,
+                                isCurrent: () => dragScope.isCurrent() && liveDrop.current.controller.preference.items.some(ref => sessionCompanionItemKey(ref) === key),
+                                getItem: () => ({ kind: 'companion-item' as const, scope: dragScope.scope, address, item: entry.ref }),
+                                target: { ...target(key), parentId: surfaceDrag.targetId,
+                                    containsPointer: pointer => {
+                                        const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
+                                        return !!viewport && pointer.y >= viewport.y && pointer.y <= viewport.y + viewport.height && pointer.x >= viewport.x && pointer.x <= viewport.x + viewport.width;
+                                    },
+                                },
+                                pointerDestination: (bounds: WindowBounds, pointer: Readonly<{ x: number; y: number }>) => ({ side: pointer.y < bounds.y + bounds.height / 2 ? 'before' : 'after', itemKey: key }),
+                                getCompanionTarget: () => ({ itemKey: key, items: liveDrop.current.controller.preference.items }),
+                                keyboardDestination: (intent, selected, destinations) => intent === 'previous' || intent === 'next'
+                                    ? resolveSessionSurfaceKeyboardDestination({ itemKey: key, orderedKeys: liveDrop.current.controller.preference.items.map(sessionCompanionItemKey), selected, destinations, direction: intent,
+                                        readAnchor: destination => { const parsed = SessionCompanionDestinationSchema.safeParse(destination.destination); return parsed.success ? { side: parsed.data.side, itemId: parsed.data.itemKey } : null; } }) : null,
+                                getNativeBounds: () => {
+                                    const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
+                                    const rect = cardRectsRef.current.get(key);
+                                    return viewport && rect ? { ...rect, x: viewport.x + rect.x, y: viewport.y + rect.y - scrollOffsetY.current } : null;
+                                },
                             },
                         } : {})}
                         actions={props.measurementOnly ? [] : buildSessionCompanionItemActions({
@@ -611,7 +790,8 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                                 : {}),
                             ...(entry.kind === 'widget' && props.onManageBoardItemPlugin
                                 && entry.item.state.kind === 'ready'
-                                && entry.item.state.item.source.kind === 'installedSurface'
+                                && entry.item.state.item.source.kind === 'widget'
+                                && entry.item.state.item.source.instance.definition.kind === 'installed'
                                 ? { managePlugin: () => props.onManageBoardItemPlugin?.(entry.ref.widgetId) }
                                 : {}),
                             ...(framed ? {
@@ -622,13 +802,14 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                                 },
                             } : {}),
                         })}
+                        instanceControls={instanceControls(entry)}
                     >
-                        {(accessory) => renderBody(entry, accessory, frameStyle)}
+                        {(accessory, instanceView) => renderBody(entry, accessory, frameStyle, instanceView)}
                     </SessionCompanionItemFrame>
                 );
             })}
             {!full && !props.measurementOnly ? (
-                <SessionCompanionDropSlot sessionId={props.session.id} testID={`${testID}-drop`} />
+                <SessionCompanionDropSlot scope={dragScope?.scope ?? null} address={address} targetId={surfaceDrag.targetId} testID={`${testID}-drop`} />
             ) : null}
             {addBinding ? (
                 // Rendered while empty too, so "Choose a widget…" has its anchor; the
@@ -641,5 +822,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                 />
             ) : null}
         </ScrollView>
-    );
+        <SessionSurfaceEntityFeedback kind="companion-item" scope={dragScope?.scope ?? null} address={address} testID={`${testID}-move`} />
+        </>
+    </View>;
 });

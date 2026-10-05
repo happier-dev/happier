@@ -33,7 +33,7 @@ import {
   registerPeerMediationIrohMachineAdmissionRoute,
   type PeerMediationLoopbackIrohMachineAdmissionOptions,
 } from './irohMachineAdmission';
-import { FILES_TRANSFER_CHUNK_CONFIG_MAX_BYTES } from '../../../../configuration/fileTransferLimits';
+import { FILES_TRANSFER_CHUNK_CONFIG_MAX_BYTES } from '@happier-dev/transfers/node';
 
 const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16;
 const MAX_ENCRYPTED_DATA_KEY_ENVELOPE_BYTES = 16 * 1024;

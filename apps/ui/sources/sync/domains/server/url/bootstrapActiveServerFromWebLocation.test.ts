@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { scopedStorageId } from '@/utils/system/storageScope';
 
@@ -11,7 +12,6 @@ function stubWebLocation(href: string) {
         location: { href },
         history: { replaceState: vi.fn() },
     });
-    vi.stubGlobal('document', {});
     const lockTails = new Map<string, Promise<void>>();
     vi.stubGlobal('navigator', {
         locks: {
@@ -34,12 +34,17 @@ async function importFreshServerProfiles() {
     return await import('../serverProfiles');
 }
 
+// Collect the real override graph before case deadlines; each case still reloads its scope.
+await import('./resolveAuthenticatedWebServerUrlOverrideAction');
+
 describe('bootstrapActiveServerFromWebLocation', () => {
     const previousEnv = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
     const previousContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
     const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
     let seededBrowserStorage: ReturnType<typeof installLocalStorageMock> | null = null;
+
+    beforeEach(() => { vi.resetModules(); });
 
     afterEach(() => {
         seededBrowserStorage?.restore();
@@ -96,8 +101,8 @@ describe('bootstrapActiveServerFromWebLocation', () => {
             activeServerIdIsExplicit: true,
             servers: {
                 retained: { id: 'retained', name: 'Retained', serverUrl: 'https://retained.example.test', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
-                first: { id: 'first', name: 'First', serverUrl: 'https://shared.example.test', serverIdentityId: 'srv_first', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
-                second: { id: 'second', name: 'Second', serverUrl: 'https://shared.example.test', serverIdentityId: 'srv_second', createdAt: 2, updatedAt: 2, lastUsedAt: 2 },
+                first: { id: 'first', name: 'First', serverUrl: 'https://shared.example.test', canonicalServerUrl: 'https://shared.example.test', serverIdentityId: 'srv_first', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
+                second: { id: 'second', name: 'Second', serverUrl: 'https://shared.example.test', canonicalServerUrl: 'https://shared.example.test', serverIdentityId: 'srv_second', createdAt: 2, updatedAt: 2, lastUsedAt: 2 },
             },
         }));
         stubWebLocation('https://app.example.test/?server=https%3A%2F%2Fshared.example.test');
@@ -108,6 +113,31 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         expect(resolveUniqueServerProfileByUrl('https://shared.example.test')).toBeNull();
         await bootstrapActiveServerFromWebLocation({ scope: 'device' });
         expect(getActiveServerId()).toBe('retained');
+
+        // URL equality cannot select a stable identity when two saved Homes share it.
+        const { setActiveServer } = await import('../serverRuntime');
+        await setActiveServer({ serverId: 'first', scope: 'device' });
+        const { getActiveServerUrl } = await importFreshServerProfiles();
+        expect(getActiveServerId()).toBe('srv_first');
+        expect(getActiveServerUrl()).toBe('https://shared.example.test');
+        const { resolveWebServerUrlOverrideAction } = await import('./resolveAuthenticatedWebServerUrlOverrideAction');
+        expect(resolveWebServerUrlOverrideAction({})).toMatchObject({
+            kind: 'switch_server',
+            serverUrl: 'https://shared.example.test',
+        });
+    });
+
+    it('refreshes auth for a uniquely saved loopback-equivalent Home without switching it', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:53288';
+        stubWebLocation('https://app.example.test/?server=http%3A%2F%2Fhappier-qa.localhost%3A53288');
+        await importFreshBootstrap();
+        const { upsertServerProfile } = await importFreshServerProfiles();
+        await upsertServerProfile({ serverUrl: 'http://localhost:53288', source: 'manual' });
+        const { resolveWebServerUrlOverrideAction } = await import('./resolveAuthenticatedWebServerUrlOverrideAction');
+        expect(resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: 'http://localhost:53288' })).toEqual({
+            kind: 'refresh_auth', cleanedRelativeUrl: '/',
+        });
     });
 
     it('reuses the same equivalent loopback server profile without rewriting its stored url', async () => {

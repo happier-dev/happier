@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   utimesSync,
@@ -12,9 +14,10 @@ import {
 } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import test from 'node:test';
-
+import { promisify } from 'node:util';
 import { bundleWorkspaceDeps } from '../../apps/cli/scripts/bundleWorkspaceDeps.mjs';
 import { runPluginSdkPreparedScript } from '../../packages/plugin-sdk/scripts/bundleWorkspaceDeps.mjs';
 import {
@@ -32,6 +35,9 @@ import {
   ensureWorkspacePackagesBuiltForComponent,
   readWorkspaceBuildFileDigest,
   readWorkspacePackageInputFingerprint,
+  isWorkspacePackageOutputValid,
+  isWorkspacePackageOutputCurrent,
+  inspectWorkspaceQaStalePackages,
 } from './ensureWorkspacePackagesBuilt.mjs';
 import {
   resolveWorkspaceBundleLockPath,
@@ -39,6 +45,396 @@ import {
 } from './workspaceBundleLock.mjs';
 import { createWorkspaceChildBuildEnv } from './workspaceChildBuildEnv.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
+import { createBundledPluginPublicationFailure } from './bundledPluginPublicationFailure.mjs';
+import { isTerminalBuildFailure } from './buildInputConvergence.mjs';
+import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
+import { resolveRuntimeBuildRequestIdentity } from '../../apps/stack/scripts/build/runtime_build_request_identity.mjs';
+
+test('workspace input identity includes excluded config files reached through extends', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-extended-inputs-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@fixture/extended' }));
+  writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ extends: './tsconfig.tests.json' }));
+  const extended = join(root, 'tsconfig.tests.json');
+  writeFileSync(extended, JSON.stringify({ compilerOptions: { strict: true } }));
+  const before = readWorkspacePackageInputFingerprint({ packageDir: root });
+  writeFileSync(extended, JSON.stringify({ compilerOptions: { strict: false } }));
+  assert.notEqual(readWorkspacePackageInputFingerprint({ packageDir: root }), before);
+});
+
+test('workspace input identity retains origin labels in a dedicated captured checkout', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-relocated-inputs-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const producer = join(root, 'producer');
+  const worker = join(root, 'worker');
+  for (const repo of [producer, worker]) {
+    const dir = join(repo, 'packages/example');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@fixture/relocated' }));
+    writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true } }));
+  }
+  assert.equal(readWorkspacePackageInputFingerprint({ packageDir: join(worker, 'packages/example'), identitySourceRepoDir: worker, identityRepoDir: producer }),
+    readWorkspacePackageInputFingerprint({ packageDir: join(producer, 'packages/example') }));
+});
+
+test('QA runtime builds use coherent last-green package outputs only for compiler diagnostics', async (t) => {
+  for (const scenario of ['last-green', 'forced-last-green', 'no-output', 'strict', 'release', 'damaged', 'process-failure', 'drift']) {
+    await t.test(scenario, async (t) => {
+      const root = mkdtempSync(join(tmpdir(), 'happier-qa-last-green-'));
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+      for (const name of ['cli', 'ui', 'server']) {
+        mkdirSync(join(root, 'apps', name), { recursive: true });
+        writeFileSync(join(root, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+      }
+      const dir = join(root, 'packages', 'example');
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      const source = join(dir, 'src', 'index.ts');
+      writeFileSync(source, `${scenario === 'forced-last-green' ? 'const unused = 1;\n' : ''}export const value: string = "green";\n`);
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/example', type: 'module', main: './dist/index.js', types: './dist/index.d.ts', scripts: { build: 'fixture-compiler' },
+      }));
+      writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+        target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src', declaration: true, strict: true, types: [],
+      }, include: ['src/**/*.ts'] }));
+      const compiler = resolveTypeScriptCliInvocation({});
+      const consumer = join(root, 'packages', 'consumer');
+      if (scenario === 'last-green') {
+        mkdirSync(join(consumer, 'src'), { recursive: true });
+        writeFileSync(join(consumer, 'package.json'), JSON.stringify({ name: '@happier-dev/consumer', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+          dependencies: { '@happier-dev/example': 'workspace:*' }, scripts: { build: 'fixture-compiler' } }));
+        writeFileSync(join(consumer, 'src', 'index.ts'), 'export { value } from "@happier-dev/example";\n');
+        writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+          target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src', declaration: true, strict: true, types: [],
+          paths: { '@happier-dev/example': ['../example/dist/index.d.ts'] },
+        }, include: ['src/**/*.ts'] }));
+      }
+      let attempts = 0;
+      let changeDuringCompile = false;
+      let failForcedCompile = false;
+      const workspaceBuildBoundary = {
+        prepareEnv: async (_dir, env) => ({ ...env }),
+        async runPackageBuild(packageDir, { env }) {
+          attempts++;
+          if (scenario === 'process-failure' && attempts > 1) throw Object.assign(new Error('tool could not start'), { code: 'ENOENT' });
+          await run(compiler.command, [...compiler.argsPrefix, '-p', join(packageDir, 'tsconfig.json'), '--outDir', env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,
+            ...(failForcedCompile ? ['--noUnusedLocals'] : [])], {
+            cwd: packageDir, env, captureFailureDiagnostic: true,
+          });
+          if (changeDuringCompile) {
+            changeDuringCompile = false;
+            writeFileSync(source, 'export const value: string = "settled";\n');
+          }
+        },
+      };
+      const names = [scenario === 'last-green' ? '@happier-dev/consumer' : '@happier-dev/example'];
+      const build = (buildMode = 'qa-runtime', force = false) => ensureWorkspacePackagesBuiltByName(root, names, {
+        quiet: true, workspaceBuildBoundary, buildMode,
+        force,
+        env: { ...process.env, ...(scenario === 'release' ? { npm_lifecycle_event: 'prepack' } : {}) },
+      });
+      if (scenario !== 'no-output') await build('strict');
+      const recordPath = join(dir, 'dist', '.happier-build-inputs.json');
+      const greenRecord = scenario !== 'no-output' ? JSON.parse(readFileSync(recordPath, 'utf8')) : null;
+      if (scenario === 'forced-last-green') {
+        failForcedCompile = true;
+        const result = await build('qa-runtime', true);
+        assert.equal(result.stalePackages.length, 1);
+        assert.equal(isWorkspacePackageOutputCurrent(dir), false, 'failed QA output must never be certified current');
+        failForcedCompile = false;
+        assert.deepEqual((await build()).built, ['@happier-dev/example']);
+        assert.equal(isWorkspacePackageOutputCurrent(dir), true);
+        return;
+      }
+      if (scenario === 'damaged') writeFileSync(join(dir, 'dist', 'index.js'), 'damaged');
+      writeFileSync(source, scenario === 'drift' ? 'export const value: string = "moving";\n' : 'export const value: string = 1;\n');
+      changeDuringCompile = scenario === 'drift';
+      if (scenario === 'last-green') {
+        writeFileSync(join(consumer, 'src', 'index.ts'), 'export { value } from "@happier-dev/example";\nexport const next = true;\n');
+        const result = await build();
+        assert.deepEqual(result.built, ['@happier-dev/consumer']);
+        assert.equal(result.stalePackages.length, 1);
+        assert.equal(result.stalePackages[0].packageName, '@happier-dev/example');
+        assert.equal(result.stalePackages[0].lastGreenBuildRecord.fingerprint, greenRecord.fingerprint);
+        assert.ok(result.stalePackages[0].lastGreenBuiltAt);
+        assert.match(result.stalePackages[0].diagnosticSummary, /TS2322/);
+        assert.match(readFileSync(join(dir, 'dist', 'index.js'), 'utf8'), /green/);
+        assert.equal(isWorkspacePackageOutputValid(dir, { monorepoRoot: root }), true);
+        assert.deepEqual(await inspectWorkspaceQaStalePackages(root, names), result.stalePackages);
+        writeFileSync(join(root, 'apps', 'ui', 'package.json'), JSON.stringify({
+          name: '@fixture/ui', dependencies: { '@happier-dev/consumer': 'workspace:*' },
+        }));
+        const runtimeRequest = (buildMode) => resolveRuntimeBuildRequestIdentity({
+          rootDir: join(root, 'apps', 'stack'), producerStackBaseDir: join(root, 'runtime'),
+          selection: { components: { web: true, server: false, daemon: false }, activateRuntime: true },
+          sourceMetadata: { repoDir: root, serverComponent: 'happier-server-light', dbProvider: 'sqlite' },
+          env: { HAPPIER_WORKSPACE_BUILD_MODE: buildMode },
+        });
+        const qaRequest = await runtimeRequest('qa-runtime');
+        assert.deepEqual(qaRequest.stalePackagesByComponent.web, result.stalePackages);
+        const strictRequest = await runtimeRequest('strict');
+        assert.notEqual(qaRequest.artifactFingerprints.web, strictRequest.artifactFingerprints.web);
+        assert.notEqual(qaRequest.snapshotId, strictRequest.snapshotId);
+        writeFileSync(source, 'export const value: string = "fixed";\n');
+        const fixed = await build();
+        assert.deepEqual(fixed.built, ['@happier-dev/example']);
+        assert.equal(fixed.stalePackages?.length ?? 0, 0);
+        assert.equal(JSON.parse(readFileSync(recordPath, 'utf8')).qaFailure, undefined);
+        assert.deepEqual((await runtimeRequest('qa-runtime')).stalePackagesByComponent.web, []);
+      } else if (scenario === 'drift') {
+        const result = await build();
+        assert.deepEqual(result.built, ['@happier-dev/example']);
+        assert.equal(result.stalePackages?.length ?? 0, 0);
+        assert.match(readFileSync(join(dir, 'dist', 'index.js'), 'utf8'), /settled/);
+        assert.equal(attempts, 3);
+      } else {
+        await assert.rejects(build(scenario === 'strict' ? 'strict' : 'qa-runtime'), scenario === 'process-failure' ? /tool could not start/ : /TS2322/);
+      }
+    });
+  }
+});
+
+// Exercise the SDK-owned bundler dependency at its real system boundary.
+const { build: buildUiBundle } = createRequire(new URL('../../packages/plugin-sdk/package.json', import.meta.url))('esbuild');
+
+test('Stack runtime-only refresh uses its selected package manager without entering the compiler', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-stack-workspace-refresh-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  for (const name of ['cli', 'ui', 'server']) {
+    const dir = join(repoRoot, 'apps', name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  const dependencyDir = join(repoRoot, 'packages', 'dependency');
+  const consumerDir = join(repoRoot, 'packages', 'consumer');
+  for (const [name, dir] of [['dependency', dependencyDir], ['consumer', consumerDir]]) {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'index.ts'), 'export const value = "first";\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: `@fixture/${name}`, type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+      scripts: { build: 'fixture-build', ...(name === 'consumer' ? { 'build:ui': 'fixture-ui' } : {}) },
+      ...(name === 'consumer' ? { dependencies: { '@fixture/dependency': '0.0.0' } } : {}),
+    }));
+  }
+  const entrypointPath = join(repoRoot, 'fixture-yarn.cjs');
+  const callsPath = join(repoRoot, 'calls.jsonl');
+  writeFileSync(entrypointPath, [
+    "const { appendFileSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+    "const { join, basename } = require('node:path');",
+    'const args = process.argv.slice(2);',
+    "if (args.length === 1 && args[0] === '--version') process.exit(0);",
+    "if (args[0] !== '-s') process.exit(91);",
+    `appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify([basename(process.cwd()), args[1]]) + '\\n');`,
+    'const output = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;',
+    "if (args[1] === 'build') {",
+    '  mkdirSync(output, { recursive: true });',
+    "  writeFileSync(join(output, 'index.js'), readFileSync(join(process.cwd(), 'src', 'index.ts')));",
+    "  writeFileSync(join(output, 'index.d.ts'), 'export declare const value: string;\\n');",
+    '} else {',
+    "  writeFileSync(join(output, 'ui.js'), readFileSync(join(process.cwd(), '..', 'dependency', 'dist', 'index.js')));",
+    '}',
+    "if (basename(process.cwd()) === 'consumer') {",
+    "  mkdirSync(join(output, 'happier-plugin-ui'), { recursive: true });",
+    "  writeFileSync(join(output, 'happier-plugin-ui', 'ui-artifacts.json'), '{\"version\":1,\"entries\":[]}\\n');",
+    '}',
+  ].join('\n'));
+  const binDir = join(repoRoot, 'bin');
+  mkdirSync(binDir);
+  const yarnCommandPath = join(binDir, process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  writeFileSync(yarnCommandPath, process.platform === 'win32'
+    ? `@${JSON.stringify(process.execPath)} ${JSON.stringify(entrypointPath)} %*\r\n`
+    : `#!${process.execPath}\nrequire(${JSON.stringify(entrypointPath)});\n`);
+  chmodSync(yarnCommandPath, 0o755);
+  const options = { quiet: true, env: { ...process.env, PATH: binDir, npm_execpath: '' } };
+  await ensureStackWorkspacePackagesBuiltByName(repoRoot, ['@fixture/consumer'], options);
+  writeFileSync(callsPath, '');
+  writeFileSync(join(dependencyDir, 'src', 'index.ts'), 'export const value = "second";\n');
+  const result = await ensureStackWorkspacePackagesBuiltByName(repoRoot, ['@fixture/consumer'], options);
+  assert.deepEqual(result.built, ['@fixture/dependency']);
+  assert.deepEqual(readFileSync(callsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), [
+    ['dependency', 'build'], ['consumer', 'build:ui'],
+  ]);
+  assert.match(readFileSync(join(consumerDir, 'dist', 'ui.js'), 'utf8'), /second/);
+});
+
+test('declaration admission refreshes embedded runtime bytes without recompiling references', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-declaration-admission-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n');
+  for (const app of ['cli', 'ui', 'server']) {
+    const dir = join(repoRoot, 'apps', app);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const dirs = Object.fromEntries(['protocol', 'plugin-sdk', 'references', 'ui-bundle', 'projection'].map((name) => [name, join(repoRoot, 'packages', name)]));
+  for (const [name, dir] of Object.entries(dirs)) {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'index.ts'), 'export const value: string = "first";\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: `@happier-dev/${name}`, type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+      dependencies: name === 'protocol' ? {} : { [`@happier-dev/${name === 'plugin-sdk' || name === 'projection' ? 'protocol' : 'plugin-sdk'}`]: '0.0.0' },
+      ...(name === 'protocol' ? { exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' }, './runtime-helper': './runtime-helper.mjs' } } : {}),
+      ...(name === 'plugin-sdk' ? { bundledDependencies: ['@happier-dev/protocol'] } : {}),
+      scripts: { build: 'fixture-compiler', ...(name === 'ui-bundle' ? { 'build:ui': 'fixture-ui-bundler' } : {}), ...(name === 'projection' ? { prebuild: 'fixture-projection-check' } : {}) },
+    }));
+  }
+  writeFileSync(join(dirs.protocol, 'runtime-helper.mjs'), 'export const helper = "first helper";\n');
+  writeFileSync(join(dirs.protocol, 'runtime-helper.d.mts'), 'export declare const helper: string;\n');
+  const compileCalls = [];
+  const scripts = [];
+  let failUiRefresh = false;
+  const emitUi = async (env) => {
+    const outDir = join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'happier-plugin-ui');
+    mkdirSync(outDir, { recursive: true });
+    await buildUiBundle({ entryPoints: [join(dirs.protocol, 'dist', 'index.js')], bundle: true, format: 'cjs', outfile: join(outDir, 'entry.cjs.bundle') });
+    writeFileSync(join(outDir, 'ui-artifacts.json'), '{"version":1,"entries":[]}\n');
+  };
+  const workspaceBuildBoundary = {
+    async prepareEnv(_dir, env) { return { ...env }; },
+    // Compiler/subprocess boundaries only; graph admission, publication, copies,
+    // integrity and the esbuild runtime-byte consumer remain real.
+    async runPackageBuild(dir, { env }) {
+      compileCalls.push(dir);
+      writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), dir === dirs.protocol ? readFileSync(join(dir, 'src', 'index.ts'), 'utf8').replace(': string', '') : 'export { value } from "@happier-dev/plugin-sdk";\n');
+      writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const value: string;\n');
+      if (dir === dirs['ui-bundle']) await emitUi(env);
+    },
+    async runPackageScript(dir, script, { env }) {
+      scripts.push([dir, script]);
+      if (script === 'build:ui') {
+        if (failUiRefresh) throw new Error('UI compiler failed');
+        await emitUi(env);
+      }
+    },
+  };
+  const prepare = () => ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/references', '@happier-dev/ui-bundle', '@happier-dev/projection'], { workspaceBuildBoundary });
+  assert.equal((await prepare()).skipped.length, 0);
+  for (const name of ['references', 'ui-bundle']) {
+    writeFileSync(join(dirs[name], 'dist', 'retained.js'), 'export const previousGeneration = true;\n');
+  }
+  compileCalls.length = 0;
+  writeFileSync(join(dirs.protocol, 'src', 'index.ts'), 'export const value: string = "second";\n');
+  const refreshed = await prepare();
+  assert.deepEqual(compileCalls, [dirs.protocol], 'runtime-only dependency edits must not enter dependent compilers');
+  assert.deepEqual(refreshed.built, ['@happier-dev/protocol']);
+  assert.match(readFileSync(join(dirs['plugin-sdk'], 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'utf8'), /second/);
+  assert.match(readFileSync(join(dirs['ui-bundle'], 'dist', 'happier-plugin-ui', 'entry.cjs.bundle'), 'utf8'), /second/);
+  for (const name of ['references', 'ui-bundle']) {
+    const record = JSON.parse(readFileSync(join(dirs[name], 'dist', '.happier-build-inputs.json'), 'utf8'));
+    assert.equal(record.files.includes('retained.js'), false, 'refresh must not certify retained live outputs as current artifacts');
+    assert.equal(existsSync(join(dirs[name], 'dist', 'retained.js')), true, 'live readers keep prior outputs');
+  }
+  assert.deepEqual(scripts.sort(([a], [b]) => a.localeCompare(b)), [[dirs.projection, 'prebuild'], [dirs['ui-bundle'], 'build:ui']].sort(([a], [b]) => a.localeCompare(b)));
+  compileCalls.length = 0;
+  scripts.length = 0;
+  assert.deepEqual((await prepare()).built, []);
+  assert.deepEqual(compileCalls, []);
+  assert.deepEqual(scripts, [], 'unchanged runtime outputs must not rebundle or recheck projections');
+  writeFileSync(join(dirs.protocol, 'runtime-helper.mjs'), 'export const helper = "second helper";\n');
+  await prepare();
+  assert.deepEqual(compileCalls, [dirs.protocol]);
+  assert.match(readFileSync(join(dirs['plugin-sdk'], 'node_modules', '@happier-dev', 'protocol', 'runtime-helper.mjs'), 'utf8'), /second helper/);
+  compileCalls.length = 0;
+
+  const uiRecordPath = join(dirs['ui-bundle'], 'dist', '.happier-build-inputs.json');
+  const uiRecord = readFileSync(uiRecordPath, 'utf8');
+  writeFileSync(join(dirs.protocol, 'src', 'index.ts'), 'export const value: string = "third";\n');
+  failUiRefresh = true;
+  await assert.rejects(prepare(), /UI compiler failed/);
+  assert.equal(readFileSync(uiRecordPath, 'utf8'), uiRecord);
+  assert.match(readFileSync(join(dirs['ui-bundle'], 'dist', 'happier-plugin-ui', 'entry.cjs.bundle'), 'utf8'), /second/);
+  failUiRefresh = false;
+  compileCalls.length = 0;
+  await prepare();
+  assert.deepEqual(compileCalls, [], 'failed rebundling retries only the output phase');
+  assert.match(readFileSync(join(dirs['ui-bundle'], 'dist', 'happier-plugin-ui', 'entry.cjs.bundle'), 'utf8'), /third/);
+
+  writeFileSync(join(dirs.protocol, 'dist', 'index.d.ts'), 'export declare const value: "changed";\n');
+  // A valid new declaration publication must invalidate even an indirect
+  // consumer whose immediate dependency still exports the same declaration.
+  const recordPath = join(dirs.protocol, 'dist', '.happier-build-inputs.json');
+  const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+  record.outputs.find((output) => output.path === 'index.d.ts').digest = readWorkspaceBuildFileDigest(join(dirs.protocol, 'dist', 'index.d.ts'));
+  writeFileSync(recordPath, JSON.stringify(record));
+  await prepare();
+  assert.equal(compileCalls.includes(dirs.references), true);
+});
+
+test('declaration-only packages require a current build record instead of bypassing admission', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-declaration-only-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n');
+  for (const app of ['cli', 'ui', 'server']) {
+    const dir = join(repoRoot, 'apps', app);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const packageDir = join(repoRoot, 'packages', 'declarations');
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  mkdirSync(join(packageDir, 'dist'), { recursive: true });
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/declarations', types: './dist/index.d.ts', scripts: { build: 'fixture-compiler' } }));
+  writeFileSync(join(packageDir, 'src', 'index.ts'), 'export interface Value { value: string }\n');
+  writeFileSync(join(packageDir, 'dist', 'index.d.ts'), 'export interface Value { stale: true }\n');
+  const options = { workspaceBuildBoundary: {
+    async prepareEnv(_dir, env) { return { ...env }; },
+    async runPackageBuild(dir, { env }) { writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), readFileSync(join(dir, 'src', 'index.ts'))); },
+  } };
+  assert.deepEqual((await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/declarations'], options)).built, ['@happier-dev/declarations']);
+  assert.match(readFileSync(join(packageDir, 'dist', 'index.d.ts'), 'utf8'), /value: string/);
+  assert.deepEqual((await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/declarations'], options)).built, []);
+});
+
+test('dependency declarations include membership, module variants and the package resolution surface', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-declaration-fingerprint-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packageDir = join(root, 'consumer');
+  const dependencyDir = join(root, 'dependency');
+  mkdirSync(packageDir, { recursive: true });
+  mkdirSync(join(dependencyDir, 'dist', 'nested'), { recursive: true });
+  writeFileSync(join(packageDir, 'package.json'), '{"name":"@fixture/consumer"}');
+  const metadataPath = join(dependencyDir, 'package.json');
+  writeFileSync(metadataPath, JSON.stringify({ name: '@fixture/dependency', types: './dist/index.d.ts', exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } } }));
+  const declaration = join(dependencyDir, 'dist', 'index.d.ts');
+  writeFileSync(declaration, 'export declare const value: string;\n');
+  const fingerprint = () => readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs: [dependencyDir] });
+  const before = fingerprint();
+  writeFileSync(join(dependencyDir, 'dist', 'index.js'), 'export const value = "changed implementation";\n');
+  writeFileSync(join(dependencyDir, 'dist', 'index.d.ts.map'), 'changed declaration map\n');
+  assert.equal(fingerprint(), before);
+  for (const extension of ['d.mts', 'd.cts']) {
+    const path = join(dependencyDir, 'dist', 'nested', `index.${extension}`);
+    const previous = fingerprint();
+    writeFileSync(path, 'export declare const value: number;\n');
+    assert.notEqual(fingerprint(), previous);
+    rmSync(path);
+    assert.equal(fingerprint(), previous);
+  }
+  renameSync(declaration, join(dependencyDir, 'dist', 'nested', 'index.d.ts'));
+  assert.notEqual(fingerprint(), before);
+  rmSync(join(dependencyDir, 'dist', 'nested', 'index.d.ts'));
+  assert.notEqual(fingerprint(), before);
+  writeFileSync(declaration, 'export declare const value: string;\n');
+  assert.equal(fingerprint(), before);
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  metadata.exports['./new'] = { types: './dist/new.d.ts', default: './dist/new.js' };
+  writeFileSync(metadataPath, JSON.stringify(metadata));
+  assert.notEqual(fingerprint(), before);
+  metadata.exports['./lease'] = './workspaceLockLease.mjs';
+  writeFileSync(metadataPath, JSON.stringify(metadata));
+  const beforeRootDeclaration = fingerprint();
+  const rootDeclaration = join(dependencyDir, 'workspaceLockLease.d.mts');
+  writeFileSync(rootDeclaration, 'export declare const lease: string;\n');
+  assert.notEqual(fingerprint(), beforeRootDeclaration, 'TypeScript resolves root .mjs exports through adjacent .d.mts files');
+  const afterRootDeclaration = fingerprint();
+  writeFileSync(join(dependencyDir, 'workspaceLockLease.mjs'), 'export const lease = "runtime-only";\n');
+  assert.equal(fingerprint(), afterRootDeclaration);
+  rmSync(rootDeclaration);
+  assert.equal(fingerprint(), beforeRootDeclaration);
+});
 
 test('component publication retains a valid plugin when another plugin has a missing staged export', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-plugin-isolated-publication-'));
@@ -1045,7 +1441,95 @@ test('package admission follows source content and membership rather than timest
   assert.equal(buildCalls, 11);
 });
 
-test('a concurrent source edit publishes output without marking it current', async (t) => {
+test('workspace phase takes one selective trailing pass for real-process input drift', async (t) => {
+  for (const mode of ['settled', 'forced', 'continuing', 'compile-error', 'sibling-error']) {
+    await t.test(mode, async (t) => {
+      const root = mkdtempSync(join(tmpdir(), 'happier-workspace-convergence-'));
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+      for (const app of ['cli', 'ui', 'server']) {
+        mkdirSync(join(root, 'apps', app), { recursive: true });
+        writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+      }
+      const dirs = Object.fromEntries(['moving', 'reference', 'sibling'].map((name) => [name, join(root, 'packages', name)]));
+      for (const [name, dir] of Object.entries(dirs)) {
+        mkdirSync(join(dir, 'src'), { recursive: true });
+        writeFileSync(join(dir, 'src', 'index.ts'), 'export const value = "first";\n');
+        writeFileSync(join(dir, 'package.json'), JSON.stringify({
+          name: `@happier-dev/${name}`, main: './dist/index.js', types: './dist/index.d.ts',
+          scripts: { build: 'fixture-compiler' },
+          ...(name === 'reference' ? { dependencies: { '@happier-dev/moving': 'workspace:*' } } : {}),
+        }));
+      }
+      // Only the compiler process is substituted; graph admission, locks,
+      // declarations, staging and currentness publication remain real.
+      const child = `
+        import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+        import { join, basename } from 'node:path';
+        const [dir, output, mode] = process.argv.slice(1);
+        const attempts = join(dir, 'attempts');
+        const attempt = existsSync(attempts) ? readFileSync(attempts, 'utf8').trim().split('\\n').length + 1 : 1;
+        appendFileSync(attempts, String(attempt) + '\\n');
+        const input = readFileSync(join(dir, 'src/index.ts'), 'utf8');
+        if (basename(dir) === 'sibling' && attempt === 2 && mode === 'sibling-error') throw new Error('fixture compiler error');
+        if (basename(dir) === 'moving' && attempt >= 2) {
+          if (!readFileSync(join(dir, 'dist/index.js'), 'utf8').includes('first')) throw new Error('incoherent output published');
+          if (attempt === 2 || mode === 'continuing') writeFileSync(join(dir, 'src/index.ts'), 'export const value = "edit-' + attempt + '";\\n');
+          if (mode === 'compile-error') throw new Error('fixture compiler error');
+        }
+        writeFileSync(join(output, 'index.js'), input);
+        writeFileSync(join(output, 'index.d.ts'), 'export declare const value: string;\\n');
+      `;
+      const options = {
+        quiet: true, maxConcurrentBuilds: 2,
+        workspaceBuildBoundary: {
+          prepareEnv: async (_dir, env) => ({ ...env }),
+          runPackageBuild: async (dir, { env }) => {
+            await promisify(execFile)(process.execPath, ['--input-type=module', '-e', child, dir, env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, mode]);
+          },
+        },
+      };
+      const build = (force = false) => ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/reference', '@happier-dev/sibling'], { ...options, force });
+      await build();
+      const record = readFileSync(join(dirs.moving, 'dist/.happier-build-inputs.json'), 'utf8');
+      writeFileSync(join(dirs.moving, 'src/index.ts'), 'export const value = "second";\n');
+      writeFileSync(join(dirs.sibling, 'src/index.ts'), 'export const value = "sibling second";\n');
+      if (mode === 'settled' || mode === 'forced') {
+        const result = await build(mode === 'forced');
+        assert.deepEqual(result.built, mode === 'forced'
+          ? ['@happier-dev/moving', '@happier-dev/reference', '@happier-dev/sibling']
+          : ['@happier-dev/moving', '@happier-dev/sibling']);
+        assert.match(readFileSync(join(dirs.moving, 'dist/index.js'), 'utf8'), /edit-2/u);
+        assert.notEqual(readFileSync(join(dirs.moving, 'dist/.happier-build-inputs.json'), 'utf8'), record);
+        assert.deepEqual((await build()).built, []);
+      } else {
+        await assert.rejects(build(), (error) => {
+          if (mode === 'continuing') {
+            assert.equal(error.code, 'BUILD_INPUTS_CHANGED');
+            assert.equal(error.trailingPassExhausted, true);
+            assert.throws(() => createBundledPluginPublicationFailure({
+              repoRoot: root, packageName: '@happier-dev/plugins-moving', error,
+            }), (failure) => failure === error, 'drift must not become an optional-plugin availability diagnostic');
+          } else assert.match(error.message, /fixture compiler error/u);
+          if (mode === 'compile-error') {
+            assert.throws(() => createBundledPluginPublicationFailure({
+              repoRoot: root, packageName: '@happier-dev/plugins-codex', error,
+            }), (failure) => isTerminalBuildFailure(failure), 'required-plugin policy must preserve compiler failure classification');
+          }
+          return true;
+        });
+        assert.match(readFileSync(join(dirs.moving, 'dist/index.js'), 'utf8'), /first/u);
+        assert.equal(readFileSync(join(dirs.moving, 'dist/.happier-build-inputs.json'), 'utf8'), record);
+      }
+      const attempts = (dir) => readFileSync(join(dir, 'attempts'), 'utf8').trim().split('\n').length;
+      assert.equal(attempts(dirs.moving), mode === 'compile-error' || mode === 'sibling-error' ? 2 : 3);
+      assert.equal(attempts(dirs.reference), mode === 'forced' ? 2 : 1, 'unchanged declarations must not re-enter its compiler unless explicitly forced');
+      assert.equal(attempts(dirs.sibling), 2, 'a sibling that settled on the first pass must be reused');
+    });
+  }
+});
+
+test('continuing concurrent source edits preserve the last coherent output and its built-input fingerprint', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-moving-inputs-'));
   t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
   writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ private: true, workspaces: ['packages/*'] }));
@@ -1070,7 +1554,7 @@ test('a concurrent source edit publishes output without marking it current', asy
     async runPackageBuild(_packageDir, { env }) {
       builds += 1;
       writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), readFileSync(sourcePath));
-      if (builds === 2) writeFileSync(sourcePath, 'third\n');
+      if (builds === 2 || builds === 3) writeFileSync(sourcePath, `edit-${builds}\n`);
     },
   };
   const build = () => ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/moving'], {
@@ -1079,14 +1563,49 @@ test('a concurrent source edit publishes output without marking it current', asy
   assert.deepEqual((await build()).built, ['@happier-dev/moving']);
   assert.equal(readFileSync(distPath, 'utf8'), 'first\n');
   assert.equal(existsSync(recordPath), true);
+  const lastGreenRecord = readFileSync(recordPath, 'utf8');
   writeFileSync(sourcePath, 'second\n');
+  await assert.rejects(build(), /inputs changed while building/u);
+  assert.equal(readFileSync(distPath, 'utf8'), 'first\n');
+  assert.equal(readFileSync(recordPath, 'utf8'), lastGreenRecord);
   assert.deepEqual((await build()).built, ['@happier-dev/moving']);
-  assert.equal(readFileSync(distPath, 'utf8'), 'second\n');
-  assert.equal(existsSync(recordPath), false);
-  assert.deepEqual((await build()).built, ['@happier-dev/moving']);
-  assert.equal(readFileSync(distPath, 'utf8'), 'third\n');
-  assert.equal(builds, 3);
+  assert.equal(readFileSync(distPath, 'utf8'), 'edit-3\n');
+  assert.equal(builds, 4);
   assert.equal(existsSync(recordPath), true);
+});
+
+test('a recorded build remains valid after source edits but not after a dependency output changes', async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-built-dependencies-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ private: true, workspaces: ['packages/*', 'apps/*'] }));
+  writeFileSync(join(repoRoot, 'yarn.lock'), '# fixture\n');
+  for (const app of ['cli', 'ui', 'server']) {
+    const dir = join(repoRoot, 'apps', app);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const leaf = join(repoRoot, 'packages', 'leaf');
+  const parent = join(repoRoot, 'packages', 'parent');
+  for (const [dir, name, dependencies] of [[leaf, 'leaf', {}], [parent, 'parent', { '@happier-dev/leaf': 'workspace:*' }]]) {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'index.ts'), 'export const value = 1;\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: `@happier-dev/${name}`, main: './dist/index.js', scripts: { build: 'fixture-build' }, dependencies,
+    }));
+  }
+  await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/parent'], {
+    workspaceBuildBoundary: {
+      async prepareEnv(_dir, env) { return { ...env }; },
+      async runPackageBuild(dir, { env }) {
+        writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), readFileSync(join(dir, 'src', 'index.ts')));
+      },
+    },
+  });
+  writeFileSync(join(parent, 'src', 'index.ts'), 'export const value = 2;\n');
+  const input = { dependencyDirs: [leaf], monorepoRoot: repoRoot };
+  assert.equal(isWorkspacePackageOutputValid(parent, input), true);
+  writeFileSync(join(leaf, 'dist', 'index.js'), 'export const value = 3;\n');
+  assert.equal(isWorkspacePackageOutputValid(parent, input), false);
 });
 
 test('package input fingerprint changes with the selected compiler bytes', (t) => {

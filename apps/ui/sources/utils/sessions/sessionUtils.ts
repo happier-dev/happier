@@ -107,7 +107,15 @@ type GetSessionStatusOptionsInput = number | GetSessionStatusOptions;
 type UseSessionStatusOptions = Readonly<{
     subscribeToSession?: boolean;
     subscribeToTranscript?: boolean;
+    /** Compact status/announcement consumers use stable words, independent of list-row animation. */
+    workingTextMode?: SessionWorkingTextMode;
 }>;
+
+/** Hook inputs while no Session is bound. Never published as a Session or rendered as a status. */
+const UNBOUND_SESSION_STATUS_SOURCE: SessionListRenderableSession = Object.freeze({
+    id: '', seq: 0, createdAt: 0, updatedAt: 0, active: false, activeAt: 0,
+    metadataVersion: 0, agentStateVersion: 0, metadata: null, thinking: false, thinkingAt: 0,
+});
 
 /**
  * The owner metadata view a display helper may read. A hydrated Session keeps it in its own
@@ -467,9 +475,11 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
 /**
  * Hook wrapper around `getSessionStatus` that keeps vibing text stable while the session is thinking.
  */
-export function useSessionStatus(session: SessionStatusSource, options: UseSessionStatusOptions = {}): SessionStatus {
+export function useSessionStatus(session: SessionStatusSource, options?: UseSessionStatusOptions): SessionStatus;
+export function useSessionStatus(session: SessionStatusSource | null, options?: UseSessionStatusOptions): SessionStatus | null;
+export function useSessionStatus(session: SessionStatusSource | null, options: UseSessionStatusOptions = {}): SessionStatus | null {
     const { theme } = useUnistyles();
-    const sessionId = typeof session.id === 'string' ? session.id : '';
+    const sessionId = typeof session?.id === 'string' ? session.id : '';
     const shouldSubscribeToSession = options.subscribeToSession !== false && sessionId.length > 0;
     const rawSession = useSession(shouldSubscribeToSession ? sessionId : '');
     const sessionListWorkingStatusAnimatedTextEnabled = useSetting('sessionListWorkingStatusAnimatedTextEnabled');
@@ -478,7 +488,7 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
     const pendingMessagesState = useSessionPendingMessages(shouldSubscribeToTranscript ? sessionId : '');
     void transcriptVersion;
 
-    const resolvedSession = rawSession ?? session;
+    const resolvedSession = rawSession ?? session ?? UNBOUND_SESSION_STATUS_SOURCE;
     const isOnline = resolvedSession.presence === "online";
     const hasPermissions = hasPendingPermissionRequests(resolvedSession);
     const hasUserActions = hasPendingUserActionRequests(resolvedSession);
@@ -522,9 +532,10 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
         return Math.floor(Math.random() * vibingMessages.length);
     }, [isOnline, hasPermissions, hasUserActions, runtimePresentation.working]);
 
+    if (!session && !rawSession) return null;
     return getSessionStatus(resolvedSession, now, {
         vibingIndex,
-        workingTextMode: sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated',
+        workingTextMode: options.workingTextMode ?? (sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated'),
         statusColors: theme.colors.status as SessionStatusColors,
         hasPendingUserMessages,
         optimisticPendingUserMessageAt,

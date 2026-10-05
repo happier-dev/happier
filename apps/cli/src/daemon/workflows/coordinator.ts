@@ -1625,6 +1625,7 @@ async function executeActionBlock(
   if (row.lifecycle !== 'pending' && !completionState) return await fail('outcome_uncertain', 'outcome_uncertain');
   let workspace = row.workspace?.descriptor;
   let completed: Awaited<ReturnType<typeof resumeActionCompletionV1>> | undefined;
+  let noRunsLaunched = false;
   if (row.lifecycle === 'pending') {
     const runtime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
     const input: Record<string, WorkflowJsonValue> = { ...frozen.actionInput };
@@ -1670,7 +1671,10 @@ async function executeActionBlock(
     if (phase.kind === 'awaiting') {
       completionState = phase.state;
       row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'running', execution: { ...execution, ...completionState } });
-    } else completed = phase;
+    } else {
+      completed = phase;
+      noRunsLaunched = phase.kind === 'failed' && 'noRunsLaunched' in phase && phase.noRunsLaunched === true;
+    }
   }
   // The one-shot call may have returned exact launch ids after this claim was
   // interrupted. Preserve that correspondence before stopping observation.
@@ -1686,10 +1690,10 @@ async function executeActionBlock(
   if (!completed) return await fail('outcome_uncertain', 'outcome_uncertain');
   assertWorkflowAbortSignal(context);
   if (completed.kind !== 'completed') {
-    // Immediate Actions have finished. Declaring Actions are terminal only
-    // after observation; a launch failure alone cannot prove no Run exists.
+    // Only the native start owner's explicit non-creation evidence proves failure. Otherwise
+    // declaring Actions need persisted correspondence and terminal observation.
     const collectable = completed.kind === 'failed'
-      && (!frozen.actionContract.completion || (completionState !== undefined
+      && (!frozen.actionContract.completion || noRunsLaunched || (completionState !== undefined
         && getActionSpec(actionId.data).completion?.launched(completionState.output).failed.length === 0));
     return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable);
   }

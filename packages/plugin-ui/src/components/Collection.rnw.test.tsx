@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-const scrollCapture = vi.hoisted(() => ({ offsets: [] as number[] }));
+const scrollCapture = vi.hoisted(() => ({ offsets: [] as number[], observe: null as null | ((event: { nativeEvent: { contentOffset: { y: number } } }) => void) }));
 
 /**
  * The platform section virtualizer, fully mounted: every header and row cell renders, keyed exactly as the
@@ -20,7 +20,9 @@ vi.mock('react-native', async () => {
       ListFooterComponent?: React.ReactNode;
       role?: string;
       ref?: React.Ref<unknown>;
+      onScroll?: (event: { nativeEvent: { contentOffset: { y: number } } }) => void;
     }>) {
+      scrollCapture.observe = props.onScroll ?? null;
       React.useImperativeHandle(props.ref, () => ({
         scrollToLocation() {},
         getScrollResponder: () => ({ scrollTo: (input: Readonly<{ y: number }>) => { scrollCapture.offsets.push(input.y); } }),
@@ -61,9 +63,15 @@ import type {
 } from '../presentation/collection/collectionMotion.js';
 import { resolveHappierCollectionTrackStyle } from '../presentation/collection/collectionMotion.js';
 import { useHappierCollection } from '../presentation/collection/useCollection.js';
+import type { HappierCollectionGrouping } from '../presentation/collection/collectionModel.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import { Collection, type CollectionAnatomy, type CollectionProps } from './Collection.js';
 import { Button } from './Button.js';
+import { Heading } from './Foundation.js';
+import { usePluginUiFocusTarget } from './Focus.js';
+import { PageHeader } from './PageHeader.js';
+import { HappierText } from '../presentation/text/Text.js';
+import { createListMultiSelectionStore } from './ListMultiSelection.js';
 import { PluginUiProviderInternal } from './PluginUiProvider.js';
 
 type Entry = Readonly<{ id: string; title: string; group: 'needs' | 'rest'; repo: string; reason: string; age: string }>;
@@ -181,7 +189,7 @@ function createPaneHost() {
       (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
       () => published,
     );
-    return input?.open ? <View testID="host-pane"><Text testID="host-pane-title">{input.title}</Text><Text testID="host-pane-subtitle">{input.subtitle}</Text>{input.actions}{input.children}</View> : null;
+    return input?.open ? <View testID="host-pane"><HappierText accessibilityRole="header" ref={input.headingRef} tabIndex={input.headingRef ? -1 : undefined} testID="host-pane-title">{input.title}</HappierText><Text testID="host-pane-subtitle">{input.subtitle}</Text>{input.actions}{input.children}</View> : null;
   }
   return { binding, Slot, close: () => published?.onClose() };
 }
@@ -204,6 +212,8 @@ type HarnessOptions = Readonly<{
   presentation?: 'table' | 'list' | 'board' | 'grid';
   items?: readonly Entry[];
   grouped?: boolean;
+  grouping?: HappierCollectionGrouping<Entry>;
+  boardLayout?: CollectionProps<Entry>['boardLayout'];
   loading?: boolean;
   anatomy?: CollectionAnatomy<Entry>;
   header?: React.ReactNode;
@@ -213,6 +223,9 @@ type HarnessOptions = Readonly<{
   groupAction?: (groupKey: string) => Readonly<{ label: string; onPress: () => void }> | null;
   detailHeader?: (key: string) => Readonly<{ title: string; subtitle?: string; actions?: React.ReactNode }>;
   useRowActions?: CollectionProps<Entry>['useRowActions'];
+  selection?: CollectionProps<Entry>['selection'];
+  search?: CollectionProps<Entry>['search'];
+  renderDetail?: CollectionProps<Entry>['renderDetail'];
 }>;
 
 type HarnessProps = HarnessOptions & Readonly<{ openKey: string | null; onOpenChange: (key: string | null) => void }>;
@@ -221,7 +234,7 @@ function Harness(props: HarnessProps): ReactElement {
   const model = useHappierCollection({
     items: props.items ?? entries,
     keyOf,
-    ...(props.grouped === false ? {} : { groups }),
+    ...(props.grouped === false ? {} : { groups: props.grouping ?? groups }),
     openKey: props.openKey,
     onOpenChange: props.onOpenChange,
     expandable: true,
@@ -232,14 +245,17 @@ function Harness(props: HarnessProps): ReactElement {
       anatomy={props.anatomy ?? anatomy}
       accessibilityLabel="PRs & Issues"
       presentation={props.presentation ?? 'table'}
+      boardLayout={props.boardLayout}
       detail={props.detail ?? 'auto'}
       {...(props.useRowActions === undefined ? {} : { useRowActions: props.useRowActions })}
+      {...(props.selection === undefined ? {} : { selection: props.selection })}
+      {...(props.search === undefined ? {} : { search: props.search })}
       {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
       {...(props.groupAction === undefined ? {} : { groupAction: props.groupAction })}
       minListWidth={240}
       minDetailWidth={400}
       preferredListRatio={0.3}
-      renderDetail={(key) => <Text testID={`detail:${key}`}>{`Detail ${key}`}</Text>}
+      renderDetail={props.renderDetail ?? ((key) => <Text testID={`detail:${key}`}>{`Detail ${key}`}</Text>)}
       {...(props.detailHeader === undefined ? {} : { detailHeader: props.detailHeader })}
       windowStatement="3 loaded · complete"
       {...(props.loading === undefined ? {} : { loading: props.loading })}
@@ -264,6 +280,7 @@ function mount(options: Readonly<{
   const hostApi = createHostApiStub(context);
   const openChanges: Array<string | null> = [];
   const host = { ...presentationHost(options.motion, options.pane?.binding),
+    focusTarget: (target: { focus: () => void }) => { target.focus(); return true; },
     ...(options.renderDestinationRow === undefined ? {} : { renderDestinationRow: options.renderDestinationRow }),
     ...(options.renderPopover === undefined ? {} : { renderPopover: options.renderPopover }),
   };
@@ -316,6 +333,181 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it('restores the list viewport after visiting a different presentation', async () => {
+    const view = mount({ presentation: 'list', detail: 'none' });
+    view.measure(1440);
+    act(() => { scrollCapture.observe!({ nativeEvent: { contentOffset: { y: 231 } } }); });
+    await view.update({ presentation: 'grid' });
+    const before = scrollCapture.offsets.length;
+    await view.update({ presentation: 'list' });
+    expect(scrollCapture.offsets.slice(before)).toContain(231);
+    view.unmount();
+  });
+  it.each(['board', 'grid'] as const)('shares the complete multi-selection inventory across %s cells and view switches', async (presentation) => {
+    const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
+    const view = mount({ presentation, detail: 'none', selection: { multiple: { store } } });
+    view.measure(1440);
+    const mode = view.query('happier-list-selection-mode');
+    expect(mode).not.toBeNull();
+    expect(store.getSnapshot().visibleOrderedKeys).toEqual(['a', 'b', 'c']);
+    act(() => { mode!.click(); view.query('row:a')!.click(); view.query('row:c')!.click(); });
+    expect([...store.getSnapshot().selectedKeys]).toEqual(['a', 'c']);
+    expect(view.openChanges).toEqual([]);
+    await view.update({ presentation: 'list' });
+    expect([...store.getSnapshot().selectedKeys]).toEqual(['a', 'c']);
+    act(() => { view.query('row:b')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true })); });
+    expect([...store.getSnapshot().selectedKeys].sort()).toEqual(['a', 'b', 'c']);
+    view.unmount();
+  });
+
+  it.each(['list', 'board', 'grid'] as const)('extends selection through the canonical eligible inventory in %s', async (presentation) => {
+    const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
+    const view = mount({ presentation, detail: 'none', selection: {
+      multiple: { store, isItemSelectable: item => item.id !== 'b' },
+    } });
+    try {
+      view.measure(1440);
+      await act(async () => { view.query('happier-list-selection-mode')!.click(); view.query('row:a')!.click(); });
+      await act(async () => { view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', {
+        key: presentation === 'grid' ? 'ArrowRight' : 'ArrowDown', shiftKey: true, bubbles: true, cancelable: true,
+      })); });
+      expect([...store.getSnapshot().selectedKeys]).toEqual(['a', 'c']);
+      expect(document.activeElement).toBe(view.query('row:c'));
+      expect(view.openChanges).toEqual([]);
+    } finally { view.unmount(); }
+  });
+
+  it('lets the canonical selection command take precedence over a table peek', async () => {
+    const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
+    const view = mount({ selection: { multiple: { store } } });
+    try {
+      view.measure(1440);
+      await act(async () => { view.query('row:a')!.focus(); view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', {
+        key: ' ', bubbles: true, cancelable: true,
+      })); });
+      expect([...store.getSnapshot().selectedKeys]).toEqual(['a']);
+      expect(view.query('peek-content:a')).toBeNull();
+      expect(view.openChanges).toEqual([]);
+    } finally { view.unmount(); }
+  });
+
+  it('keeps grid positions when a primary item is inactive', async () => {
+    const view = mount({ presentation: 'grid', grouped: false, detail: 'none',
+      selection: { isItemActivatable: item => item.id !== 'b' } });
+    try {
+      view.measure(700);
+      await act(async () => { view.query('row:a')!.focus(); view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'ArrowDown', bubbles: true, cancelable: true,
+      })); });
+      expect(document.activeElement).toBe(view.query('row:c'));
+      expect(view.openChanges).toEqual([]);
+    } finally { view.unmount(); }
+  });
+
+  it('focuses the actual detail heading on a phone and on same-tree item replacement, then returns to the opener', async () => {
+    const view = mount({ renderDetail: key => <><Heading level={1} testID={`detail-heading:${key}`} value={`Detail ${key}`} /><Heading value="Activity" /></> });
+    view.measure(390);
+    act(() => { view.query('row:b')!.click(); });
+    await view.setOpen('b');
+    expect(document.activeElement).toBe(view.query('detail-heading:b'));
+    await view.setOpen('c');
+    expect(document.activeElement).toBe(view.query('detail-heading:c'));
+    await view.setOpen(null);
+    expect(document.activeElement).toBe(view.query('row:c'));
+    view.unmount();
+  });
+
+  it('focuses a public PageHeader when the detail is inline', async () => {
+    const view = mount({ renderDetail: key => <PageHeader title={`Detail ${key}`} /> });
+    view.measure(1440);
+    await view.setOpen('a');
+    expect(document.activeElement?.getAttribute('role')).toBe('heading');
+    expect(document.activeElement?.textContent).toBe('Detail a');
+    view.unmount();
+  });
+
+  it('keeps an author focus target usable while entering the actual detail heading', async () => {
+    let authorTarget: ReturnType<typeof usePluginUiFocusTarget> | null = null;
+    function Detail() {
+      const target = usePluginUiFocusTarget();
+      authorTarget = target;
+      return <><Heading value="Entry" focusTarget={target} testID="explicit-detail-heading" /><Heading value="Activity" /></>;
+    }
+    const view = mount({ renderDetail: () => <Detail /> });
+    view.measure(390);
+    await view.setOpen('b');
+    expect(document.activeElement).toBe(view.query('explicit-detail-heading'));
+    act(() => { view.query('row:a')?.focus(); authorTarget?.focus(); });
+    expect(document.activeElement).toBe(view.query('explicit-detail-heading'));
+    view.unmount();
+  });
+
+  it('focuses the app pane heading on open and same-title replacement, without stealing focus on refresh', async () => {
+    const pane = createPaneHost();
+    const view = mount({ pane, presentation: 'board', detailHeader: () => ({ title: 'Entry' }) });
+    view.measure(1440);
+    await view.setOpen('a');
+    expect(document.activeElement).toBe(view.query('host-pane-title'));
+    act(() => { view.query('row:b')!.focus(); });
+    await view.update({ items: [...entries] });
+    expect(document.activeElement).toBe(view.query('row:b'));
+    await view.setOpen('b');
+    expect(document.activeElement).toBe(view.query('host-pane-title'));
+    await view.setOpen(null);
+    expect(document.activeElement).toBe(view.query('row:b'));
+    view.unmount();
+  });
+  it.each(['board', 'grid'] as const)('keeps row actions and search available in %s without opening the item', (presentation) => {
+    const actions: string[] = [];
+    const queries: string[] = [];
+    const view = mount({ presentation, detail: 'none',
+      useRowActions: () => ({ secondaryActions: [{ id: 'pin', label: 'Pin' }], onSecondaryAction: id => actions.push(id) }),
+      search: { label: 'Search entries', value: '', onValueChange: value => queries.push(value), testID: 'search' },
+      renderPopover: input => input.content({ maxHeight: 600, requestClose: () => input.onRequestClose() }),
+    });
+    view.measure(1440);
+    expect(view.query('search')).not.toBeNull();
+    if (presentation === 'grid') expect(view.query('row:a')!.closest('[role="grid"]')).not.toBeNull();
+    const input = view.query('search') as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'payments');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(queries).toEqual(['payments']);
+    act(() => { view.query('row:a')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); });
+    const pin = [...view.container.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Pin');
+    expect(pin).toBeDefined();
+    act(() => { pin!.click(); });
+    expect(actions).toEqual(['pin']);
+    expect(view.openChanges).toEqual([]);
+    view.unmount();
+  });
+
+  it('has one board tab stop and retains the logical cursor across presentations and phone pages', async () => {
+    const view = mount({ presentation: 'board', detail: 'none' });
+    view.measure(1440);
+    expect(['a', 'b', 'c'].filter(key => view.query(`row:${key}`)?.tabIndex === 0)).toEqual(['a']);
+    act(() => { view.query('row:b')!.focus(); });
+    act(() => { view.query('row:b')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(view.query('row:c'));
+    act(() => { view.query('row:c')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(view.query('row:a'));
+    act(() => { view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(view.query('row:b'));
+    await view.update({ presentation: 'grid' });
+    expect(view.query('row:b')!.tabIndex).toBe(0);
+    await view.update({ presentation: 'list' });
+    expect(view.query('row:b')!.tabIndex).toBe(0);
+    await view.update({ presentation: 'board' });
+    view.measure(390);
+    const controls = [...view.query('collection:pager')!.querySelectorAll<HTMLElement>('[role="radio"]')];
+    act(() => { controls[1]!.click(); });
+    act(() => { view.query('row:c')!.focus(); });
+    act(() => { controls[0]!.click(); });
+    expect(view.query('row:b')!.tabIndex).toBe(0);
+    expect(view.openChanges).toEqual([]);
+    view.unmount();
+  });
   it('merges host destination actions into the existing row context menu without losing its actions', () => {
     const selected: string[] = [];
     const view = mount({ detail: 'none',
@@ -622,6 +814,43 @@ function within(container: HTMLElement | null, testID: string): boolean {
 }
 
 describe('board', () => {
+  it('keeps five explicit status columns reachable without empty columns taking card width', () => {
+    const view = mount({ presentation: 'board', boardLayout: 'columns', detail: 'none', grouping: {
+      axis: [
+        { key: 'empty-a', title: 'Needs you' },
+        { key: 'empty-b', title: 'Working' },
+        { key: 'empty-c', title: 'Finished' },
+        { key: 'needs', title: 'Idle' },
+        { key: 'rest', title: 'Offline' },
+      ], groupOf: entry => entry.group, retainEmpty: true,
+    } });
+    view.measure(980);
+    const columns = ['empty-a', 'empty-b', 'empty-c', 'needs', 'rest'].map(key => view.query(`collection:column:${key}`)!);
+    expect(columns.every(column => column !== null)).toBe(true);
+    // Explicit columns share the available width; they must not force five 260px tracks into a 980px pane.
+    expect(columns.map(column => getComputedStyle(column).width)).not.toContain('260px');
+    expect(columns[0]!.textContent).toContain('None');
+    expect(getComputedStyle(columns[0]!).flexGrow).toBe('0');
+    expect(getComputedStyle(columns[3]!).flexGrow).toBe('1');
+    expect(view.query('collection:hints')).toBeNull();
+    view.unmount();
+  });
+
+  it('stretches a stacked domain card through its primary gridcell without reserving an accessory column', () => {
+    const view = mount({ presentation: 'board', boardLayout: 'stacked', detail: 'none', anatomy: {
+      ...anatomy, boardContent: entry => <View style={{ width: '100%' }} testID={`body:${entry.id}`}><Text>{entry.title}</Text></View>,
+    } });
+    view.measure(390);
+    const row = view.query('row:a')!;
+    const cell = row.closest<HTMLElement>('[role="gridcell"]')!;
+    // The full-width card must claim the row's remaining width, rather than shrink to its intrinsic title width.
+    expect(getComputedStyle(cell).flexGrow).toBe('1');
+    expect(row.closest('[role="row"]')!.querySelectorAll('[role="gridcell"]')).toHaveLength(1);
+    act(() => row.click());
+    expect(view.openChanges).toEqual(['a']);
+    view.unmount();
+  });
+
   it('draws one labelled column per group of the one axis, each holding exactly its group\'s cards', () => {
     const view = mount({ presentation: 'board' });
     view.measure(1440);
@@ -647,11 +876,11 @@ describe('board', () => {
     // The detail lives in the pane only; the board stays on screen and usable, with the open card marked.
     expect(within(view.query('collection'), 'detail:b')).toBe(false);
     expect(visible(view.query('collection-list'))).toBe(true);
-    expect(view.query('row:b')!.getAttribute('aria-selected')).toBe('true');
+    expect(view.query('row:b')!.closest('[role="row"]')!.getAttribute('aria-selected')).toBe('true');
     await view.setOpen('a');
     expect(view.query('host-pane')).toBe(hostPane);
     expect(within(hostPane, 'detail:a')).toBe(true);
-    expect(view.query('row:a')!.getAttribute('aria-selected')).toBe('true');
+    expect(view.query('row:a')!.closest('[role="row"]')!.getAttribute('aria-selected')).toBe('true');
     view.unmount();
   });
 

@@ -1,4 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { registerNativeThemePreferenceTransitionController } from '@/components/settings/appearance/themePreferenceTransition';
+
+const platformRuntime = vi.hoisted(() => ({
+    setStatusBarStyle: vi.fn(),
+    setTheme: vi.fn(),
+    setRootViewBackgroundColor: vi.fn(),
+}));
+vi.mock('expo-status-bar', () => ({ setStatusBarStyle: platformRuntime.setStatusBarStyle }));
+vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({ runtime: {
+        setTheme: platformRuntime.setTheme,
+        setRootViewBackgroundColor: platformRuntime.setRootViewBackgroundColor,
+    } });
+});
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -299,32 +315,23 @@ describe('theme profile runtime', () => {
 
     it('activates profiles through the theme transition path with forced animation', async () => {
         const saveLocalSettings = vi.fn();
-        const runThemePreferenceChange = vi.fn(async (input: { mutation: () => void; forceAnimate?: boolean; reduceMotion: boolean }) => {
-            input.mutation();
-        });
+        const run = vi.fn(async (mutation: () => void) => mutation());
+        onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
         await activateThemeProfile({
             profileId: 'ocean',
             forceAnimate: true,
             reduceMotion: false,
             systemTheme: 'light',
-            platform: 'web',
+            platform: 'ios',
             loadLocalSettings: () => ({
                 themePreference: 'light',
                 themeProfiles: profileState,
             }),
             saveLocalSettings,
-            runThemePreferenceChange,
-            applySelection: vi.fn(),
-            setStatusBarStyle: vi.fn(),
         });
 
-        expect(runThemePreferenceChange).toHaveBeenCalledWith(expect.objectContaining({
-            currentPreference: 'light',
-            nextPreference: 'light',
-            forceAnimate: true,
-            reduceMotion: false,
-        }));
+        expect(run).toHaveBeenCalledOnce();
         expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
             themeProfiles: expect.objectContaining({
                 activeProfileIds: { light: 'ocean', dark: 'ocean' },
@@ -342,51 +349,51 @@ describe('theme profile runtime', () => {
         const saveLocalSettings = vi.fn((nextSettings: LocalSettings) => {
             currentSettings = nextSettings;
         });
-        const runThemePreferenceChange = vi.fn(async (input: { mutation: () => void }) => {
-            currentSettings = { ...currentSettings, uiFontScale: 1.2 };
-            input.mutation();
+        const run = vi.fn(async (mutation: () => void) => {
+            currentSettings = { ...currentSettings, uiFontScale: 1.2, themePreference: 'dark',
+                themeProfiles: { activeProfileIds: { light: null, dark: null },
+                    profiles: [...profileState.profiles, ...pairedProfileState.profiles] } };
+            mutation();
         });
+        onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
         await activateThemeProfile({
             profileId: 'ocean',
             forceAnimate: true,
             reduceMotion: false,
             systemTheme: 'light',
-            platform: 'web',
+            platform: 'ios',
             loadLocalSettings: () => currentSettings,
             saveLocalSettings,
-            runThemePreferenceChange,
-            applySelection: vi.fn(),
-            setStatusBarStyle: vi.fn(),
         });
 
         expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
             uiFontScale: 1.2,
+            themePreference: 'dark',
             themeProfiles: expect.objectContaining({
-                activeProfileIds: { light: 'ocean', dark: 'ocean' },
+                activeProfileIds: { light: null, dark: 'ocean' },
             }),
         }));
+        expect(currentSettings.themeProfiles.profiles).toHaveLength(3);
+        expect(platformRuntime.setTheme).toHaveBeenLastCalledWith('dark');
+        expect(platformRuntime.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#0a0a0a');
+        expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
     });
 
     it('activates built-in presets without adding them to the custom profile collection', async () => {
         const saveLocalSettings = vi.fn();
-        const runThemePreferenceChange = vi.fn(async (input: { mutation: () => void }) => {
-            input.mutation();
-        });
 
         await activateThemeProfile({
             profileId: 'premiumDark',
             forceAnimate: true,
             reduceMotion: false,
             systemTheme: 'dark',
+            platform: 'ios',
             loadLocalSettings: () => ({
                 themePreference: 'dark',
                 themeProfiles: { activeProfileIds: { light: null, dark: null }, profiles: [] },
             }),
             saveLocalSettings,
-            runThemePreferenceChange,
-            applySelection: vi.fn(),
-            setStatusBarStyle: vi.fn(),
         });
 
         expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
@@ -398,28 +405,22 @@ describe('theme profile runtime', () => {
     });
 
     it('keeps reduced motion authoritative for forced profile activation', async () => {
-        const runThemePreferenceChange = vi.fn(async (input: { mutation: () => void }) => {
-            input.mutation();
-        });
+        const run = vi.fn(async (mutation: () => void) => mutation());
+        onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
         await activateThemeProfile({
             profileId: 'ocean',
             forceAnimate: true,
             reduceMotion: true,
             systemTheme: 'dark',
+            platform: 'ios',
             loadLocalSettings: () => ({
                 themePreference: 'dark',
                 themeProfiles: profileState,
             }),
             saveLocalSettings: vi.fn(),
-            runThemePreferenceChange,
-            applySelection: vi.fn(),
-            setStatusBarStyle: vi.fn(),
         });
 
-        expect(runThemePreferenceChange).toHaveBeenCalledWith(expect.objectContaining({
-            forceAnimate: false,
-            reduceMotion: true,
-        }));
+        expect(run).not.toHaveBeenCalled();
     });
 });

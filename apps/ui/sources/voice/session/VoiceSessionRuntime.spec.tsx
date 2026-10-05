@@ -2,18 +2,21 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { renderScreen as renderRuntimeScreen } from '@/dev/testkit';
+import { createStableStorageReader } from '@/dev/testkit/mocks/storage';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { profileDefaults, tryParseProfile } from '@/sync/domains/profiles/profile';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import type { VoiceSessionSnapshot } from './types';
+import type { VoiceAdapterController, VoiceAdapterEngineKind, VoiceSessionSnapshot } from './types';
 import type { VoiceSessionLifecycleController } from './voiceSessionLifecycleController';
+import type { CurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
 const currentUiContextToolSetMode = vi.hoisted(() => ({
   value: 'on_demand' as 'off' | 'on_demand' | 'automatic',
-}));
-const activeServerAccountScopeFixture = vi.hoisted(() => ({
-  profileScope: null as Readonly<{ serverId: string; accountId: string }> | null,
 }));
 const CODEX_PROVIDER_ID = 'happier.agent.codex/realtime-codex';
 const EXTERNAL_PROVIDER_ID = 'acme.voice.demo/realtime-demo';
@@ -26,18 +29,40 @@ const sessionAddress = (sessionId: string) => ({ serverId: 'server-1', sessionId
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-// The Account lifetime reads the process-global active-server snapshot rather
-// than this component's React hook. Keep that genuine runtime boundary
-// controllable while exercising the lifetime owner itself below.
-vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
-  return {
-    ...actual,
-    getActiveServerSnapshot: () => ({
-      ...actual.getActiveServerSnapshot(),
-      serverId: activeServerAccountScopeFixture.profileScope?.serverId ?? null,
-    }),
-  };
+installDisconnectedServerSocketBoundary();
+
+type RuntimeFixtureModules = {
+  '@/voice/adapters/registerBuiltinVoiceAdapters': () => Pick<typeof import('@/voice/adapters/registerBuiltinVoiceAdapters'), 'createBuiltinVoiceAdapterAssembly'>;
+  './voiceSessionLifecycleController': () => Pick<typeof import('./voiceSessionLifecycleController'), 'createVoiceSessionLifecycleController'>;
+  '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort': () => Pick<typeof import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort'), 'useCurrentUiContextVoiceToolPort'>;
+};
+const runtimeModuleFixtures: Partial<RuntimeFixtureModules> = {};
+function setRuntimeModuleFixture<K extends keyof RuntimeFixtureModules>(path: K, factory: RuntimeFixtureModules[K]) {
+  runtimeModuleFixtures[path] = factory;
+}
+
+// Keep one real Sync graph: restored credential/socket spies retain their original
+// targets, so resetting modules for every mounted case retains whole Sync graphs.
+vi.mock('@/voice/adapters/registerBuiltinVoiceAdapters', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/voice/adapters/registerBuiltinVoiceAdapters')>();
+  return { ...actual, createBuiltinVoiceAdapterAssembly: (...args: Parameters<typeof actual.createBuiltinVoiceAdapterAssembly>) => (
+    runtimeModuleFixtures['@/voice/adapters/registerBuiltinVoiceAdapters']?.().createBuiltinVoiceAdapterAssembly(...args)
+      ?? actual.createBuiltinVoiceAdapterAssembly(...args)
+  ) };
+});
+vi.mock('./voiceSessionLifecycleController', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./voiceSessionLifecycleController')>();
+  return { ...actual, createVoiceSessionLifecycleController: (...args: Parameters<typeof actual.createVoiceSessionLifecycleController>) => (
+    runtimeModuleFixtures['./voiceSessionLifecycleController']?.().createVoiceSessionLifecycleController(...args)
+      ?? actual.createVoiceSessionLifecycleController(...args)
+  ) };
+});
+vi.mock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort')>();
+  return { ...actual, useCurrentUiContextVoiceToolPort: (...args: Parameters<typeof actual.useCurrentUiContextVoiceToolPort>) => (
+    runtimeModuleFixtures['@/components/appShell/currentUiContext/currentUiContextVoiceToolPort']?.().useCurrentUiContextVoiceToolPort(...args)
+      ?? actual.useCurrentUiContextVoiceToolPort(...args)
+  ) };
 });
 
 vi.mock('react-native', async () => {
@@ -88,40 +113,75 @@ const useActiveServerAccountScope = vi.fn<
   () => Readonly<{ serverId: string; accountId: string }> | null
 >(() => null);
 
-vi.mock('@/sync/domains/state/storage', async () => {
-  const {
-    createLiveStorageStoreMock,
-    createStableStorageReader,
-    createStorageModuleStub,
-  } = await import('@/dev/testkit/mocks/storage');
-  // The real hooks read through zustand's `useShallow`, so a re-render without a store
-  // change observes the SAME object identity. Returning a fresh literal per call instead
-  // makes `useVoiceDiagnosticsRuntimeSync` re-run its transition effect on every render,
-  // and that effect publishes into a runtime-status store this same tree subscribes to —
-  // an unbounded render loop that hangs and OOMs the file.
-  const currentUiContextToolSetSettings = {
-    ...settingsDefaults,
-    voice: {
-      ...settingsDefaults.voice,
-      privacy: {
-        ...settingsDefaults.voice.privacy,
-        currentUiContextMode: currentUiContextToolSetMode.value,
-      },
-    },
-  };
-  return createStorageModuleStub({
-    storage: createLiveStorageStoreMock(() => {
-      currentUiContextToolSetSettings.voice.privacy.currentUiContextMode = currentUiContextToolSetMode.value;
-      return {
-        settings: currentUiContextToolSetSettings,
-        profileScope: activeServerAccountScopeFixture.profileScope,
-      };
-    }),
-    useActiveServerAccountScope: createStableStorageReader(() => useActiveServerAccountScope()),
-    useProfile: createStableStorageReader(() => useProfile()),
-    useSetting: createStableStorageReader((key: string) => useSetting(key)),
-  });
+// These readers describe fixture data only. All mounted storage hooks and Sync
+// operations use the real store; unchanged fixture snapshots retain identity.
+function readFixtureVoiceSettings(key: 'voice' | 'voiceSettingsV1') {
+  const voice = voiceSettingsParse(useSetting(key));
+  return { ...voice, privacy: { ...voice.privacy, currentUiContextMode: currentUiContextToolSetMode.value } };
+}
+const readFixtureSettings = createStableStorageReader(() => settingsParse({
+  ...settingsDefaults,
+  voice: readFixtureVoiceSettings('voice'),
+  voiceSettingsV1: readFixtureVoiceSettings('voiceSettingsV1'),
+  secrets: useSetting('secrets') ?? settingsDefaults.secrets,
+  connectedAccountPurposeBindingsV1: useSetting('connectedAccountPurposeBindingsV1')
+    ?? settingsDefaults.connectedAccountPurposeBindingsV1,
+}));
+const readFixtureProfile = createStableStorageReader(() => {
+  const profile = tryParseProfile({ ...profileDefaults, ...useProfile() });
+  if (!profile) throw new Error('Invalid mounted Voice Account profile fixture');
+  return profile;
 });
+let writeFixtureSnapshot: (() => void) | null = null;
+
+async function renderScreen(element: React.ReactElement) {
+  const { storage } = await import('@/sync/domains/state/storage');
+  writeFixtureSnapshot = () => storage.setState({
+    settings: readFixtureSettings(),
+    profile: readFixtureProfile(),
+    profileScope: useActiveServerAccountScope(),
+  });
+  writeFixtureSnapshot();
+  const screen = await renderRuntimeScreen(element);
+  const update = screen.tree.update.bind(screen.tree);
+  screen.tree.update = (next) => {
+    writeFixtureSnapshot?.();
+    update(next);
+  };
+  return screen;
+}
+
+let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const serverUrlsById = new Map<string, string>();
+
+type AccountScope = Readonly<{ serverId: string; accountId: string }>;
+function applyAccountScope(scope: AccountScope): Promise<AccountScope>;
+function applyAccountScope(scope: null): Promise<null>;
+function applyAccountScope(scope: AccountScope | null): Promise<AccountScope | null>;
+async function applyAccountScope(scope: AccountScope | null) {
+  await accountConnection?.dispose();
+  accountConnection = null;
+  const { storage } = await import('@/sync/domains/state/storage');
+  if (!scope) {
+    storage.setState({ profileScope: null });
+    return null;
+  }
+  const serverUrl = serverUrlsById.get(scope.serverId) ?? `https://${scope.serverId}.voice-runtime.example.test`;
+  accountConnection = await restoreServerAccountForTest({ serverUrl, accountId: scope.accountId });
+  serverUrlsById.set(accountConnection.home.id, serverUrl);
+  const appliedScope = { serverId: accountConnection.home.id, accountId: scope.accountId };
+  storage.setState({ profileScope: appliedScope });
+  return appliedScope;
+}
+
+async function setCurrentUiContextToolSetMode(mode: typeof currentUiContextToolSetMode.value) {
+  currentUiContextToolSetMode.value = mode;
+  const { storage } = await import('@/sync/domains/state/storage');
+  const settings = storage.getState().settings;
+  storage.setState({ settings: { ...settings, voice: { ...settings.voice,
+    privacy: { ...settings.voice.privacy, currentUiContextMode: mode },
+  } } });
+}
 
 type Snapshot = VoiceSessionSnapshot;
 
@@ -150,17 +210,10 @@ function LayoutCommitBoundary({
 }
 
 /**
- * `@vitest/spy` records every `vi.fn()` in a module-level `Set` it never prunes, and
- * `vi.restoreAllMocks()` does not clear it either. A spy created inside an `it()` body is
- * therefore retained for the whole file, and with it that body's closure context — which
- * holds the module namespaces the test pulled in after `vi.resetModules()`. One in-test spy
- * pins one whole module generation — measured at ~525 MB here — so the file grew by about a
- * generation per test and exhausted Node's 4192 MB default old-space limit by the eighth of
- * the twenty-two tests below, which took it out of reach of an unconfigured worker fork.
- *
- * Every spy this file uses is consequently built by a module-scope factory: the closure the
- * spy registry keeps alive is then this spec module's own context, which all generations
- * share, and a finished test's generation stays collectable.
+ * This suite reuses one real Sync module graph and resets canonical store/lifecycle
+ * state between cases. Vitest retains spies and their original implementation closures
+ * for the file's lifetime, so module-scope factories keep those closures from retaining
+ * whole test bodies. Mutable adapter hooks and subscribers are released after each case.
  * `voiceSessionRuntimeSpecSpyOwnership.architecture.test.ts` fails if a `vi.fn(` is
  * reintroduced into a test body.
  */
@@ -172,13 +225,15 @@ function createNoopSpy() {
   return vi.fn(() => {});
 }
 
-function createStubAdapterControls() {
+function createStubAdapterControls(engineKind: VoiceAdapterEngineKind = 'local') {
   return {
+    engineKind,
     start: createAsyncNoopSpy(),
     stop: createAsyncNoopSpy(),
     toggle: createAsyncNoopSpy(),
     interrupt: createAsyncNoopSpy(),
     commitInput: createAsyncNoopSpy(),
+    setMuted: createAsyncNoopSpy(),
     sendContextUpdate: createNoopSpy(),
   };
 }
@@ -191,9 +246,11 @@ function createStubLifecycleController(
   rearmAfterCredentialAuthorityChange: VoiceSessionLifecycleController['rearmAfterCredentialAuthorityChange'],
 ) {
   return {
+    observeSyncedConversationMessages: createNoopSpy(),
     bargeIn: createAsyncNoopSpy(),
     dispose: createAsyncNoopSpy(),
     getConfiguredProviderId: vi.fn(() => null),
+    getAttemptTargetSessionAddress: () => null,
     getSnapshot: vi.fn((): Snapshot => ({
       adapterId: null,
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -203,6 +260,8 @@ function createStubLifecycleController(
     })),
     interrupt: createAsyncNoopSpy(),
     commitInput: createAsyncNoopSpy(),
+    beginHoldToTalk: createVoiceSessionManager({}).beginHoldToTalk,
+    finishHoldToTalk: async () => false,
     rearmAfterCredentialAuthorityChange,
     sendContextUpdate: createNoopSpy(),
     setConfiguredProviderId: createNoopSpy(),
@@ -210,6 +269,7 @@ function createStubLifecycleController(
     setMuted: createAsyncNoopSpy(),
     suspendInput: vi.fn(async () => null),
     retry: createAsyncNoopSpy(),
+    dismissFailedAttempt: createAsyncNoopSpy(),
     stop: createAsyncNoopSpy(),
     subscribe: vi.fn(() => createNoopSpy()),
     toggle: createAsyncNoopSpy(),
@@ -226,9 +286,9 @@ type RuntimeAdapterState = {
  * Adapter state lives here rather than in the closures of the spies below. A spy keeps its
  * original implementation forever (`state.getOriginal()` in `@vitest/spy` survives
  * `mockReset()`), so a spy that closed over a caller-supplied `start`/`stop` hook — written
- * in an `it()` body — would pin that test's module generation, and a spy that closed over
- * the subscriber set would pin the generation whose component subscribed. Both are released
- * in `afterEach` via `releaseRuntimeAdapterStates()`.
+ * in an `it()` body — would retain that test's closure and hooks in the reused module
+ * graph, and a subscriber set would retain mounted components. Both are released in
+ * `afterEach` via `releaseRuntimeAdapterStates()`.
  */
 const runtimeAdapterStates = new Set<RuntimeAdapterState>();
 
@@ -244,7 +304,7 @@ function createRuntimeAdapter(
   id: string,
   initial: Snapshot,
   options?: Readonly<{
-    engineKind?: 'local' | 'realtime';
+    engineKind?: VoiceAdapterEngineKind;
     start?: () => Promise<void>;
     stop?: () => Promise<void>;
   }>,
@@ -265,7 +325,7 @@ function createRuntimeAdapter(
   return {
     controller: {
       id,
-      engineKind: options?.engineKind,
+      engineKind: options?.engineKind ?? 'local',
       start: vi.fn(async ({ sessionId }: { sessionId: string }) => {
         await state.hooks?.start?.();
         state.current = {
@@ -282,6 +342,7 @@ function createRuntimeAdapter(
       }),
       toggle: createAsyncNoopSpy(),
       interrupt: createAsyncNoopSpy(),
+      setMuted: createAsyncNoopSpy(),
       sendContextUpdate: createNoopSpy(),
       getSnapshot: () => state.current,
       subscribe: (listener: () => void) => {
@@ -290,7 +351,7 @@ function createRuntimeAdapter(
           state.listeners.delete(listener);
         };
       },
-    },
+    } satisfies VoiceAdapterController,
     setSnapshot(next: Snapshot) {
       state.current = next;
       notify();
@@ -301,12 +362,20 @@ function createRuntimeAdapter(
   };
 }
 
+// Load the shared graph once, outside per-case hooks; cold module transformation
+// is not part of the mounted runtime's lifecycle operation budget.
+await loadSyncSingletonForTests();
+const { createVoiceSessionManager } = await import('./voiceSessionManager');
+
 describe('VoiceSessionRuntime', () => {
   beforeEach(async () => {
     platformOsMock.value = 'ios';
     currentUiContextToolSetMode.value = 'on_demand';
-    activeServerAccountScopeFixture.profileScope = null;
-    vi.resetModules();
+    for (const path of Object.keys(runtimeModuleFixtures) as Array<keyof RuntimeFixtureModules>) {
+      delete runtimeModuleFixtures[path];
+    }
+    serverUrlsById.clear();
+    writeFixtureSnapshot = null;
     useSetting.mockReset();
     useSetting.mockImplementation(defaultUseSetting);
     useProfile.mockReset();
@@ -317,6 +386,7 @@ describe('VoiceSessionRuntime', () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(() => storage.getState());
+    storage.setState({ settings: settingsDefaults, profileScope: null });
 
     const { resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
     await resetVoiceSessionRuntimeStateForTests();
@@ -325,7 +395,9 @@ describe('VoiceSessionRuntime', () => {
   afterEach(async () => {
     const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     retireActiveServerAccountScopeLifetime();
-    activeServerAccountScopeFixture.profileScope = null;
+    await accountConnection?.dispose();
+    accountConnection = null;
+    writeFixtureSnapshot = null;
     const { resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
     await resetVoiceSessionRuntimeStateForTests();
     useSetting.mockReset();
@@ -335,15 +407,16 @@ describe('VoiceSessionRuntime', () => {
     useActiveServerAccountScope.mockReset();
     useActiveServerAccountScope.mockReturnValue(null);
     currentUiContextToolSetMode.value = 'on_demand';
-    vi.doUnmock('./voiceSessionLifecycleController');
-    vi.doUnmock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+    for (const path of Object.keys(runtimeModuleFixtures) as Array<keyof RuntimeFixtureModules>) {
+      delete runtimeModuleFixtures[path];
+    }
     releaseRuntimeAdapterStates();
     // Every spy ever created stays in `@vitest/spy`'s module-level registry, and each one
     // holds its recorded `mock.contexts`/`calls`/`results`. Those records reach the adapter
     // objects a test body built (`{ ...controller, resolveSurfaceCapabilities: () => ... }`),
     // whose arrow functions carry that body's closure context and therefore its whole
-    // `vi.resetModules()` module generation. Clearing the records at the end of the test
-    // releases them; it runs after every assertion, so no guard depends on it.
+    // module namespace. Clearing the records at the end of the test releases them;
+    // it runs after every assertion, so no guard depends on it.
     vi.clearAllMocks();
   });
 
@@ -356,7 +429,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: true,
     };
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: 'local_direct',
@@ -412,10 +485,10 @@ describe('VoiceSessionRuntime', () => {
   it('sends only current-UI tool availability changes to the lifecycle owner', async () => {
     const rearmAfterCredentialAuthorityChange = createRearmSpy();
     const lifecycleController = createStubLifecycleController(rearmAfterCredentialAuthorityChange);
-    vi.doMock('./voiceSessionLifecycleController', () => ({
+    setRuntimeModuleFixture('./voiceSessionLifecycleController', () => ({
       createVoiceSessionLifecycleController: () => lifecycleController,
     }));
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [],
         dispose: createAsyncNoopSpy(),
@@ -428,21 +501,21 @@ describe('VoiceSessionRuntime', () => {
     expect(lifecycleController.setCurrentUiContextToolSetEnabled).toHaveBeenCalledTimes(1);
     expect(lifecycleController.setCurrentUiContextToolSetEnabled).toHaveBeenLastCalledWith(true);
 
-    currentUiContextToolSetMode.value = 'automatic';
     await act(async () => {
+      await setCurrentUiContextToolSetMode('automatic');
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
     expect(lifecycleController.setCurrentUiContextToolSetEnabled).toHaveBeenCalledTimes(1);
 
-    currentUiContextToolSetMode.value = 'off';
     await act(async () => {
+      await setCurrentUiContextToolSetMode('off');
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
     expect(lifecycleController.setCurrentUiContextToolSetEnabled).toHaveBeenCalledTimes(2);
     expect(lifecycleController.setCurrentUiContextToolSetEnabled).toHaveBeenLastCalledWith(false);
 
-    currentUiContextToolSetMode.value = 'on_demand';
     await act(async () => {
+      await setCurrentUiContextToolSetMode('on_demand');
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
     expect(lifecycleController.setCurrentUiContextToolSetEnabled).toHaveBeenCalledTimes(3);
@@ -460,7 +533,7 @@ describe('VoiceSessionRuntime', () => {
 
     let subscribed: (() => void) | null = null;
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: 'local_direct',
@@ -536,7 +609,7 @@ describe('VoiceSessionRuntime', () => {
         configurationReady: true,
         configurationRevision: null,
         revisionSemantics: 'revisioned',
-        credentialRevision: 'csr_initial',
+        credentialRevision: 'csr_initial0000000000000000',
         scopes: [],
       }],
       connectedAccountGroupsV4: [],
@@ -579,7 +652,7 @@ describe('VoiceSessionRuntime', () => {
       errorPresentation: 'error',
     });
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [selected.controller],
         dispose: createAsyncNoopSpy(),
@@ -606,7 +679,7 @@ describe('VoiceSessionRuntime', () => {
       connectedServiceCredentialRevisionsV1: [{
         serviceId: 'openai',
         profileId: 'work',
-        credentialRevision: 'csr_replacement',
+        credentialRevision: 'csr_replacement00000000000',
       }],
       connectedAccountsV4: [{
         ref: {
@@ -618,7 +691,7 @@ describe('VoiceSessionRuntime', () => {
         configurationReady: true,
         configurationRevision: null,
         revisionSemantics: 'revisioned',
-        credentialRevision: 'csr_replacement',
+        credentialRevision: 'csr_replacement00000000000',
         scopes: [],
       }],
       connectedAccountGroupsV4: [],
@@ -662,15 +735,14 @@ describe('VoiceSessionRuntime', () => {
     const accountA = { serverId: 'voice-server', accountId: 'voice-account-a' };
     const accountB = { serverId: 'voice-server', accountId: 'voice-account-b' };
     let accountScope: Readonly<{ serverId: string; accountId: string }> | null = null;
-    activeServerAccountScopeFixture.profileScope = null;
     useActiveServerAccountScope.mockImplementation(() => accountScope);
 
     const rearmAfterCredentialAuthorityChange = createRearmSpy();
     const lifecycleController = createStubLifecycleController(rearmAfterCredentialAuthorityChange);
-    vi.doMock('./voiceSessionLifecycleController', () => ({
+    setRuntimeModuleFixture('./voiceSessionLifecycleController', () => ({
       createVoiceSessionLifecycleController: () => lifecycleController,
     }));
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [],
         dispose: createAsyncNoopSpy(),
@@ -684,8 +756,7 @@ describe('VoiceSessionRuntime', () => {
     const screen = await renderScreen(React.createElement(VoiceSessionRuntime));
 
     const transitionTo = async (nextAccountScope: Readonly<{ serverId: string; accountId: string }> | null) => {
-      activeServerAccountScopeFixture.profileScope = nextAccountScope;
-      accountScope = nextAccountScope;
+      accountScope = await applyAccountScope(nextAccountScope);
       await act(async () => {
         screen.tree.update(React.createElement(VoiceSessionRuntime));
       });
@@ -714,7 +785,7 @@ describe('VoiceSessionRuntime', () => {
     platformOsMock.value = 'web';
     let selectedProviderId = 'happier.voice.openai/realtime-openai';
     let accountScope = { serverId: 'server-a', accountId: 'account-a' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     let credentialBindings: ReadonlyArray<unknown> = [];
     let providerEnvelope: Readonly<Record<string, unknown>> = {
       schemaVersion: 1,
@@ -789,10 +860,10 @@ describe('VoiceSessionRuntime', () => {
       }),
     };
     const lifecycleController = createStubLifecycleController(rearmAfterCredentialAuthorityChange);
-    vi.doMock('./voiceSessionLifecycleController', () => ({
+    setRuntimeModuleFixture('./voiceSessionLifecycleController', () => ({
       createVoiceSessionLifecycleController: () => lifecycleController,
     }));
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [ordinaryOpenAiAdapter, exactSessionCodexAdapter],
         dispose: createAsyncNoopSpy(),
@@ -807,7 +878,7 @@ describe('VoiceSessionRuntime', () => {
     expect(rearmAfterCredentialAuthorityChange).not.toHaveBeenCalled();
 
     accountScope = { serverId: 'server-b', accountId: 'account-b' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
@@ -875,7 +946,7 @@ describe('VoiceSessionRuntime', () => {
       connectedServiceCredentialRevisionsV1: [{
         serviceId: 'openai',
         profileId: 'work',
-        credentialRevision: 'csr_replacement',
+        credentialRevision: 'csr_replacement00000000000',
       }],
     };
     await act(async () => {
@@ -915,7 +986,7 @@ describe('VoiceSessionRuntime', () => {
     rearmAfterCredentialAuthorityChange.mockClear();
 
     accountScope = { serverId: 'server-b', accountId: 'codex-account-b' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
@@ -1020,7 +1091,7 @@ describe('VoiceSessionRuntime', () => {
         bargeInEnabled: false,
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [adapter],
         dispose: createAsyncNoopSpy(),
@@ -1048,14 +1119,14 @@ describe('VoiceSessionRuntime', () => {
     ];
     profile = {
       connectedServicesV2: [{
-        serviceId: 'unrelated-service',
+        serviceId: 'anthropic',
         profiles: [{ profileId: 'unrelated-profile', status: 'connected', kind: 'token' }],
         groups: [],
       }],
       connectedServiceCredentialRevisionsV1: [{
-        serviceId: 'unrelated-service',
+        serviceId: 'anthropic',
         profileId: 'unrelated-profile',
-        credentialRevision: 'revision-2',
+        credentialRevision: 'csr_revision200000000000000',
       }],
     };
     await act(async () => {
@@ -1141,7 +1212,7 @@ describe('VoiceSessionRuntime', () => {
         },
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [adapter],
         dispose: createAsyncNoopSpy(),
@@ -1254,7 +1325,7 @@ describe('VoiceSessionRuntime', () => {
           },
         }),
       };
-      vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+      setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
         createBuiltinVoiceAdapterAssembly: () => ({
           adapters: [adapter],
           dispose: createAsyncNoopSpy(),
@@ -1348,7 +1419,7 @@ describe('VoiceSessionRuntime', () => {
         },
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [adapter],
         dispose: createAsyncNoopSpy(),
@@ -1371,7 +1442,7 @@ describe('VoiceSessionRuntime', () => {
       connectedServiceCredentialRevisionsV1: [{
         serviceId: 'openai',
         profileId: 'unrelated',
-        credentialRevision: 'csr_unrelated',
+        credentialRevision: 'csr_unrelated0000000000000',
       }],
     };
     await act(async () => {
@@ -1404,7 +1475,7 @@ describe('VoiceSessionRuntime', () => {
       },
     };
     let accountScope = { serverId: 'server-a', accountId: 'account-a' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     let profile: Exclude<TestProfileAuthority, null> = {
       connectedServicesV2: [{
         serviceId: 'openai-codex',
@@ -1450,7 +1521,7 @@ describe('VoiceSessionRuntime', () => {
         },
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [adapter],
         dispose: createAsyncNoopSpy(),
@@ -1490,7 +1561,7 @@ describe('VoiceSessionRuntime', () => {
     expect(active.controller.stop).not.toHaveBeenCalled();
 
     accountScope = { serverId: 'server-b', accountId: 'account-b' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
       await Promise.resolve();
@@ -1525,7 +1596,7 @@ describe('VoiceSessionRuntime', () => {
       },
     };
     let accountScope = { serverId: 'server-a', accountId: 'account-a' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     useSetting.mockImplementation((key: string) => (
       key === 'voice' || key === 'voiceSettingsV1' ? voiceSetting : null
     ));
@@ -1557,7 +1628,7 @@ describe('VoiceSessionRuntime', () => {
         bargeInEnabled: false,
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [adapter],
         dispose: createAsyncNoopSpy(),
@@ -1577,7 +1648,7 @@ describe('VoiceSessionRuntime', () => {
     expect(active.controller.stop).not.toHaveBeenCalled();
 
     accountScope = { serverId: 'server-b', accountId: 'account-b' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
       await Promise.resolve();
@@ -1591,10 +1662,9 @@ describe('VoiceSessionRuntime', () => {
   });
 
   it('synchronously retires an ordinary realtime attempt before a retained current-UI handler can reach either Account port', async () => {
-    const accountA = { serverId: 'voice-server', accountId: 'voice-account-a' };
+    const accountA = await applyAccountScope({ serverId: 'voice-server', accountId: 'voice-account-a' });
     const accountB = { serverId: 'voice-server', accountId: 'voice-account-b' };
     let accountScope = accountA;
-    activeServerAccountScopeFixture.profileScope = accountA;
     useActiveServerAccountScope.mockImplementation(() => accountScope);
     useSetting.mockImplementation((key: string) => (
       key === 'voice' || key === 'voiceSettingsV1'
@@ -1653,12 +1723,12 @@ describe('VoiceSessionRuntime', () => {
         currentAccountPort.invokeCurrentUiCommand(input)
       ),
     };
-    vi.doMock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', () => ({
+    setRuntimeModuleFixture('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', () => ({
       useCurrentUiContextVoiceToolPort: () => currentUiContext,
     }));
 
     let attemptLive = false;
-    let assemblyPort: typeof currentUiContext | null = null;
+    let assemblyPort: CurrentUiContextVoiceToolPort | null = null;
     const retainedAttemptHandlerRef: { current: (() => void) | null } = { current: null };
     const runtime = createRuntimeAdapter(
       OPENAI_PROVIDER_ID,
@@ -1676,6 +1746,7 @@ describe('VoiceSessionRuntime', () => {
           retainedAttemptHandlerRef.current = () => {
             if (!attemptLive || !assemblyPort) return;
             assemblyPort.readCurrentUiContext();
+            if (!assemblyPort.invokeCurrentUiCommand) throw new Error('Mounted Voice fixture command port unavailable');
             void assemblyPort.invokeCurrentUiCommand({ commandId: 'retired-account-command' });
           };
         },
@@ -1695,8 +1766,8 @@ describe('VoiceSessionRuntime', () => {
         bargeInEnabled: false,
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
-      createBuiltinVoiceAdapterAssembly: (input?: Readonly<{ currentUiContext?: typeof currentUiContext }>) => {
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+      createBuiltinVoiceAdapterAssembly: (input) => {
         assemblyPort = input?.currentUiContext ?? null;
         return {
           adapters: [adapter],
@@ -1748,8 +1819,7 @@ describe('VoiceSessionRuntime', () => {
 
     // The sibling Account commit remains unable to revive Account A's retained
     // handler after layout/passive effects have had a chance to run.
-    activeServerAccountScopeFixture.profileScope = accountB;
-    accountScope = accountB;
+    accountScope = await applyAccountScope(accountB);
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
@@ -1764,7 +1834,6 @@ describe('VoiceSessionRuntime', () => {
   it('synchronously retires a no-Account realtime attempt during the Account B layout commit before its retained current-UI handler can reach B', async () => {
     const accountB = { serverId: 'voice-server', accountId: 'voice-account-b' };
     let accountScope: Readonly<{ serverId: string; accountId: string }> | null = null;
-    activeServerAccountScopeFixture.profileScope = null;
     useActiveServerAccountScope.mockImplementation(() => accountScope);
     useSetting.mockImplementation((key: string) => (
       key === 'voice' || key === 'voiceSettingsV1'
@@ -1815,12 +1884,12 @@ describe('VoiceSessionRuntime', () => {
         currentAccountPort.invokeCurrentUiCommand(input)
       ),
     };
-    vi.doMock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', () => ({
+    setRuntimeModuleFixture('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', () => ({
       useCurrentUiContextVoiceToolPort: () => currentUiContext,
     }));
 
     let attemptLive = false;
-    let assemblyPort: typeof currentUiContext | null = null;
+    let assemblyPort: CurrentUiContextVoiceToolPort | null = null;
     const retainedAttemptHandlerRef: { current: (() => void) | null } = { current: null };
     const runtime = createRuntimeAdapter(
       OPENAI_PROVIDER_ID,
@@ -1838,6 +1907,7 @@ describe('VoiceSessionRuntime', () => {
           retainedAttemptHandlerRef.current = () => {
             if (!attemptLive || !assemblyPort) return;
             assemblyPort.readCurrentUiContext();
+            if (!assemblyPort.invokeCurrentUiCommand) throw new Error('Mounted Voice fixture command port unavailable');
             void assemblyPort.invokeCurrentUiCommand({ commandId: 'no-account-command' });
           };
         },
@@ -1857,8 +1927,8 @@ describe('VoiceSessionRuntime', () => {
         bargeInEnabled: false,
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
-      createBuiltinVoiceAdapterAssembly: (input?: Readonly<{ currentUiContext?: typeof currentUiContext }>) => {
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+      createBuiltinVoiceAdapterAssembly: (input) => {
         assemblyPort = input?.currentUiContext ?? null;
         return {
           adapters: [adapter],
@@ -1895,8 +1965,7 @@ describe('VoiceSessionRuntime', () => {
     // The parent layout effect runs after Voice's child layout effects but
     // before passive credential reconciliation. A no-Account admission has no
     // previous lifetime callback to retire it.
-    activeServerAccountScopeFixture.profileScope = accountB;
-    accountScope = accountB;
+    accountScope = await applyAccountScope(accountB);
     currentAccountPort = accountBPort;
     await act(async () => {
       screen.tree.update(renderRuntime());
@@ -1926,7 +1995,7 @@ describe('VoiceSessionRuntime', () => {
       },
     };
     let accountScope = { serverId: 'server-a', accountId: 'account-a' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     useSetting.mockImplementation((key: string) => (
       key === 'voice' || key === 'voiceSettingsV1' ? voiceSetting : null
     ));
@@ -1963,7 +2032,7 @@ describe('VoiceSessionRuntime', () => {
         bargeInEnabled: false,
       }),
     };
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [adapter],
         dispose: createAsyncNoopSpy(),
@@ -1983,7 +2052,7 @@ describe('VoiceSessionRuntime', () => {
     await vi.waitFor(() => expect(pending.controller.start).toHaveBeenCalledOnce());
 
     accountScope = { serverId: 'server-b', accountId: 'account-b' };
-    activeServerAccountScopeFixture.profileScope = accountScope;
+    accountScope = await applyAccountScope(accountScope);
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
       await Promise.resolve();
@@ -2027,7 +2096,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: true,
     };
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: 'local_direct',
@@ -2073,7 +2142,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: true,
     };
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: 'local_direct',
@@ -2121,7 +2190,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: false,
     });
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [active.controller, selected.controller], dispose: createAsyncNoopSpy() }),
     }));
 
@@ -2187,7 +2256,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: false,
     });
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [active.controller, idlePeer.controller], dispose: createAsyncNoopSpy() }),
     }));
 
@@ -2248,7 +2317,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: true,
     };
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: 'local_direct',
@@ -2295,11 +2364,11 @@ describe('VoiceSessionRuntime', () => {
       canStop: true,
     };
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: ELEVENLABS_PROVIDER_ID,
-          ...createStubAdapterControls(),
+          ...createStubAdapterControls('realtime'),
           getSnapshot: () => realtimeSnapshot,
           subscribe: () => () => {},
         },
@@ -2334,7 +2403,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: true,
     };
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
           id: 'adapter_a',
@@ -2383,7 +2452,7 @@ describe('VoiceSessionRuntime', () => {
     );
     const assemblyDispose = createAsyncNoopSpy();
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [realtime.controller],
         dispose: assemblyDispose,
@@ -2461,7 +2530,7 @@ describe('VoiceSessionRuntime', () => {
     );
     const assemblyDispose = createAsyncNoopSpy();
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [local.controller],
         dispose: assemblyDispose,
@@ -2533,7 +2602,7 @@ describe('VoiceSessionRuntime', () => {
     const freshAssemblyDispose = createAsyncNoopSpy();
     let assemblyCount = 0;
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => {
         assemblyCount += 1;
         return assemblyCount === 1
@@ -2634,7 +2703,7 @@ describe('VoiceSessionRuntime', () => {
     const freshAssemblyDispose = createAsyncNoopSpy();
     let assemblyCount = 0;
 
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => {
         assemblyCount += 1;
         return assemblyCount === 1
@@ -2701,10 +2770,10 @@ describe('VoiceSessionRuntime', () => {
   it('configures a persisted external provider once its plugin registers', async () => {
     const rearmAfterCredentialAuthorityChange = createRearmSpy();
     const lifecycleController = createStubLifecycleController(rearmAfterCredentialAuthorityChange);
-    vi.doMock('./voiceSessionLifecycleController', () => ({
+    setRuntimeModuleFixture('./voiceSessionLifecycleController', () => ({
       createVoiceSessionLifecycleController: () => lifecycleController,
     }));
-    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+    setRuntimeModuleFixture('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({
         adapters: [],
         dispose: createAsyncNoopSpy(),

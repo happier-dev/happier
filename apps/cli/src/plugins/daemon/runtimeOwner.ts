@@ -55,6 +55,7 @@ import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
+import type { ClientContributedActionExecutor } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type { ResolveSessionResourceAccess } from '@/plugins/runtime/invocation/services/resources';
 import type { PluginGenerationCustodyRetirementRemoteDependencies } from '@/plugins/store/registry/generationCustodyRetirement';
 import {
@@ -102,6 +103,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   startupDeadlineAtMs?: number;
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
+  executeClientAction?: ClientContributedActionExecutor;
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
@@ -208,6 +210,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   ) => developmentRoots?.resolveDevelopmentSourceAuthority(input) ?? null;
   const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
     happyHomeDir: params.happyHomeDir,
+    ...(params.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
     ...(params.resolveCurrentMachineId
       ? { resolveCurrentMachineId: params.resolveCurrentMachineId }
       : {}),
@@ -603,6 +606,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         resolveRuntimeRegistry: async () => {
           const registry = await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir: params.happyHomeDir,
+            ...(params.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
             ...(params.startupDeadlineAtMs === undefined
               ? {} : { startupDeadlineAtMs: params.startupDeadlineAtMs }),
             generation: params.reloadController.getState().generation + 1,

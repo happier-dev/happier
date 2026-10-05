@@ -189,8 +189,14 @@ export const AutomationDefinitionPatchRequestSchema = z.object({
   workflowDefinitionId: WorkflowDefinitionRefV1StringSchema.nullable().optional(),
   scopeSessionId: IDENTIFIER_SCHEMA.nullable().optional(),
   executionRecipe: AutomationDefinitionExecutionRecipeSchema.optional(),
+  /** CAS recovery of an already-stored predecessor template; never a current recipe writer. */
+  templateCiphertext: z.string().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS).optional(),
   assignments: z.array(AutomationAssignmentInputSchema).optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.executionRecipe !== undefined && value.templateCiphertext !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose a current recipe or retained template recovery, not both' });
+  }
+});
 export type AutomationDefinitionPatchRequest = z.infer<
   typeof AutomationDefinitionPatchRequestSchema
 >;
@@ -350,7 +356,7 @@ function requireExactlyOneDefinitionContent(
 }
 
 const AutomationDefinitionDetailContentShape = {
-  /** Direct-reader-only predecessor bytes. Current writers never send this field. */
+  /** Predecessor bytes for direct reads and narrow retained-template recovery; ordinary writes use executionRecipe. */
   templateCiphertext: z.string().min(1).optional(),
   /** Direct-reader-only current recipe; definition lists never disclose it. */
   executionRecipe: AutomationDefinitionExecutionRecipeSchema.optional(),

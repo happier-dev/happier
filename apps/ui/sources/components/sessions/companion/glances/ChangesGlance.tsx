@@ -7,7 +7,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { createSessionScmReviewDetailsTab, type SessionScmReviewTarget } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { buildSessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -44,10 +44,12 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Readonly<{
     state: ChangesGlanceState;
     frameStyle: WidgetFrameStyle;
+    presentation?: 'frame' | 'body';
     menu?: React.ReactNode;
     /** Last-known while the machine is away: the snapshot's own time ("as of 10:42"). */
     asOf?: number | null;
     onReviewChanges?: () => void;
+    onWalkThrough?: () => void;
     testID: string;
 }>) {
     const { theme } = useUnistyles();
@@ -105,6 +107,7 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
     const canReview = state.kind === 'ready' && state.summary.hasAnyChanges && props.onReviewChanges !== undefined;
     return (
         <WidgetFrame
+            presentation={props.presentation}
             testID={props.testID}
             frameStyle={props.frameStyle}
             placement="companion"
@@ -114,7 +117,8 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
             meta={props.asOf ? <SurfaceAsOfLabel at={props.asOf} testID={`${props.testID}.asOf`} /> : null}
             menu={props.menu}
             body={body}
-            footer={canReview ? { kind: 'open', label: t('widgetGlances.reviewChanges'), onPress: props.onReviewChanges! } : null}
+            footer={canReview ? { kind: 'open', label: t('widgetGlances.reviewChanges'), onPress: props.onReviewChanges!,
+                ...(props.onWalkThrough ? { secondary: { label: t('turnChanges.card.walkThrough'), onPress: props.onWalkThrough } } : {}) } : null}
         />
     );
 });
@@ -128,6 +132,9 @@ export function ChangesGlance(props: Readonly<{
     sessionId: string;
     serverId: string | null;
     frameStyle: WidgetFrameStyle;
+    presentation?: 'frame' | 'body';
+    /** Configured copies open their exact Session's existing full destination. */
+    onOpenReview?: (target: SessionScmReviewTarget) => void;
     menu?: React.ReactNode;
     measurementOnly: boolean;
     testID: string;
@@ -143,17 +150,24 @@ export function ChangesGlance(props: Readonly<{
         return summary ? { kind: 'ready', summary } : { kind: 'notRepo' };
     }, [snapshot]);
     const review = React.useCallback(() => {
-        openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' });
-    }, [openDetailsTab]);
+        if (props.onOpenReview) props.onOpenReview({});
+        else openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' });
+    }, [openDetailsTab, props.onOpenReview]);
+    const walkThrough = React.useCallback(() => {
+        const target = { comparison: { kind: 'workingTree' as const }, view: 'walkthrough' as const };
+        if (props.onOpenReview) props.onOpenReview(target);
+        else openDetailsTab(createSessionScmReviewDetailsTab(target), { intent: 'pinned' });
+    }, [openDetailsTab, props.onOpenReview]);
     const away = machine.reachability === 'unreachable';
     return (
         <ChangesGlanceView
+            presentation={props.presentation}
             testID={props.testID}
             state={state}
             frameStyle={props.frameStyle}
             menu={props.menu}
             asOf={away && snapshot ? snapshot.fetchedAt : null}
-            {...(props.measurementOnly ? {} : { onReviewChanges: review })}
+            {...(props.measurementOnly ? {} : { onReviewChanges: review, onWalkThrough: walkThrough })}
         />
     );
 }

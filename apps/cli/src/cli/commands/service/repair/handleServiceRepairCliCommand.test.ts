@@ -334,7 +334,7 @@ describe('handleServiceRepairCliCommand', () => {
     resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, _options?: unknown) => [{
       serverId: 'default',
       name: 'Default background service',
-      installed: true,
+      verification: 'verified' as const, installed: true,
       path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
       platform: 'linux',
       mode: 'user',
@@ -448,6 +448,7 @@ describe('handleServiceRepairCliCommand', () => {
       label: 'happier-daemon.default',
       ring: 'stable',
       targetMode: 'default-following',
+      verification: 'verified',
       installed: true,
       running: false,
       configuredCliVersion: '0.2.5-dev.14.1',
@@ -501,7 +502,7 @@ describe('handleServiceRepairCliCommand', () => {
       const unit = (serverId: string, targetMode: 'pinned' | 'default-following') => ({
         serverId,
         name: serverId,
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: `/tmp/user/.config/systemd/user/happier-daemon.${serverId}.service`,
         platform: 'linux' as const,
         mode: 'user' as const,
@@ -549,7 +550,7 @@ describe('handleServiceRepairCliCommand', () => {
       return [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -583,7 +584,7 @@ describe('handleServiceRepairCliCommand', () => {
         return [{
           serverId: 'default',
           name: 'Default background service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/etc/systemd/system/happier-daemon.default.service',
           platform: 'linux',
           mode: 'system',
@@ -596,7 +597,7 @@ describe('handleServiceRepairCliCommand', () => {
       return [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -646,7 +647,7 @@ describe('handleServiceRepairCliCommand', () => {
         return [{
           serverId: 'default',
           name: 'Default background service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/etc/systemd/system/happier-daemon.default.service',
           platform: 'linux',
           mode: 'system',
@@ -659,7 +660,7 @@ describe('handleServiceRepairCliCommand', () => {
       return [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -705,7 +706,7 @@ describe('handleServiceRepairCliCommand', () => {
         return [{
           serverId: 'default',
           name: 'Default background service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/etc/systemd/system/happier-daemon.default.service',
           platform: 'linux',
           mode: 'system',
@@ -718,7 +719,7 @@ describe('handleServiceRepairCliCommand', () => {
       return [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/user/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -787,7 +788,7 @@ describe('handleServiceRepairCliCommand', () => {
       return [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/etc/systemd/system/happier-daemon.default.service',
         platform: 'linux',
         mode: 'system',
@@ -837,7 +838,7 @@ describe('handleServiceRepairCliCommand', () => {
       return [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/etc/systemd/system/happier-daemon.default.service',
         platform: 'linux',
         mode: 'system',

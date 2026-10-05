@@ -18,7 +18,7 @@ import type { ScopedRpcSessionEncryptionContext } from '@/sync/runtime/orchestra
 import {
     runSessionDataKeyPreparationPass,
     type SessionDataKeyPreparationProgress,
-} from './sessionDataKeyPreparationPass';
+} from '@happier-dev/protocol';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 /**

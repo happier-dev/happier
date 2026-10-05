@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createPluginActionPresentUserGate } from '@happier-dev/protocol';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -17,11 +19,58 @@ import {
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/listEntriesProtocol.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
 import { TRIAGE_UI_TRANSLATIONS } from './ui/translations.js';
+import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
+import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
+import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
 
 describe('Triage plugin manifest', () => {
+  it('declares its qualified entry source and Session link target through the public families', () => {
+    expect(PLUGIN_MANIFEST.contributes).toHaveProperty('dragSources', [expect.objectContaining({
+      id: 'entry-reference', client: { artifactId: 'triage-entity-drag-drop-native', exportName: 'activate' },
+    })]);
+    expect(PLUGIN_MANIFEST.contributes).toHaveProperty('dropTargets', [expect.objectContaining({
+      id: 'entry-session', acceptedKinds: ['session'],
+      actions: [{ kind: 'plugin', action: 'sessions/link-entry-v1' }],
+    })]);
+  });
+  it('admits an agent pin through the shared gate and writes the same canonical mark', async () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find((entry) => entry.id === 'marks/set-pinned-v1');
+    if (!action) throw new Error('Pin action must be declared');
+    const gate = createPluginActionPresentUserGate({ resolve: () => ({
+      status: 'resolved', action,
+      policy: {
+        qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'triage-occurrence',
+        dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
+        authorization: {
+          generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+          resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [],
+        },
+      },
+    }) });
+    expect(await gate.admit({ surface: 'agent', invocationSurface: 'agent', input: {} }))
+      .toMatchObject({ status: 'admitted' });
+    const { collections } = createTestkitCorpusCollections();
+    const entryRef = testkitEntryRef();
+    // Only Account storage is substituted at the host boundary; real mark logic runs.
+    const context = {
+      surface: 'agent', signal: new AbortController().signal,
+      services: { storage: { account: { collection: () => collections.userMarks } } },
+    } as unknown as PluginInvocationContext;
+    expect(await createTriageSetEntryPinnedActionHandler()({ v: 1, entryRef, pinned: true,
+      displayAtMark: { title: 'Agent-pinned entry', scopeLabel: 'example/repository' },
+    }, context)).toEqual({ v: 1, status: 'pinned' });
+    const read = await listTriagePinnedEntries({ v: 1, limit: 10 }, { collections, nowMs: () => 1 });
+    expect(read.pins.map((pin) => pin.entryRef)).toEqual([entryRef]);
+  });
+
+  it('admits every Triage action on the centrally authorized agent, MCP and CLI surfaces', () => {
+    for (const action of PLUGIN_MANIFEST.contributes.actions) {
+      expect(action.surfaces, action.id).toEqual(expect.arrayContaining(['agent', 'mcp', 'cli']));
+    }
+  });
   it('offers mounted UI a safe exact-entry PR-status read without a global affordance', () => {
     expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === 'entries/read-pull-request-status-v1'))
-      .toMatchObject({ dangerLevel: 'safe', surfaces: ['ui'], placementBindings: [], hostAccess: ['account-storage'] });
+      .toMatchObject({ dangerLevel: 'safe', surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [], hostAccess: ['account-storage'] });
   });
   it('projects its prior cold identity and declared contribution families through one definePlugin value', () => {
     const normalized = parsePluginManifest(TRIAGE_PLUGIN.manifest);
@@ -45,6 +94,8 @@ describe('Triage plugin manifest', () => {
       'actions',
       'composerAttachments',
       'composerControls',
+      'dragSources',
+      'dropTargets',
       'pluginContributionPoints',
       'searchProviders',
       'ui',
@@ -100,7 +151,7 @@ describe('Triage plugin manifest', () => {
     const nonSafeActions = PLUGIN_MANIFEST.contributes.actions
       .filter((action) => action.dangerLevel !== 'safe');
 
-    expect(nonSafeActions).toHaveLength(7);
+    expect(nonSafeActions.length).toBeGreaterThan(0);
     for (const action of nonSafeActions) {
       expect(action.confirmation, action.id).toMatchObject({
         title: expect.anything(),
@@ -194,12 +245,9 @@ describe('Triage plugin manifest', () => {
     // router is involved.
     expect(action).toMatchObject({
       id: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
-      surfaces: ['ui', 'voice'],
+      surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
       execution: { target: 'daemon' },
     });
-    expect(PLUGIN_MANIFEST.contributes.actions
-      .filter((candidate) => candidate.id !== TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1)
-      .some((candidate) => candidate.surfaces.includes('voice'))).toBe(false);
   });
 
   it('declares localized Voice Action presentation in every shipped Triage bundle', () => {

@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-
+import { getActionSpec, zodSchemaToJsonSchemaObject } from '@happier-dev/protocol';
 import { compilePluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
@@ -23,15 +22,15 @@ describe('ElevenLabs versioned credential boundary', () => {
       .toMatchTypeOf<Parameters<typeof compilePluginJsonSchema>[0]>();
   });
 
-  it('uses public Voice composition at the raw tool-parameter seam', async () => {
-    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8');
+  it('preserves canonical generated tool metadata at the provisioning boundary', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const tool = {
+      name: String(spec.bindings?.voiceClientToolName),
+      description: 'Create a session.',
+      parameters: zodSchemaToJsonSchemaObject(spec.inputSchema),
+    };
 
-    expect(source).toContain('createVoiceRecordSchema');
-    expect(source).toContain('withVoiceSchemaField');
-    expect(source).toContain('VoiceRealtimeJsonValueSchema');
-    expect(source).not.toContain('JsonValueZodAdapter');
-    expect(source).not.toContain('z.custom');
-    expect(source).not.toContain('@happier-dev/plugin-sdk/protocol-authoring');
+    expect(ElevenLabsProvisionToolSchema.parse(tool)).toEqual(tool);
   });
 
   it('uses the provisioning speed bounds as the canonical settings contract', () => {
@@ -207,22 +206,12 @@ describe('ElevenLabs versioned credential boundary', () => {
     }).success).toBe(false);
   });
 
-  it('uses the canonical Voice JSON bounds without an aggregate quota', () => {
-    const maxVoiceString = 'x'.repeat(64 * 1024);
+  it('keeps authored tool declarations strict around JSON Schema metadata', () => {
     expect(ElevenLabsProvisionToolSchema.safeParse({
       name: 'sendMessage',
       description: 'Send a message.',
-      parameters: {
-        first: maxVoiceString,
-        second: maxVoiceString,
-      },
-    }).success).toBe(true);
-    expect(ElevenLabsProvisionToolSchema.safeParse({
-      name: 'sendMessage',
-      description: 'Send a message.',
-      parameters: {
-        description: 'x'.repeat(64 * 1024 + 1),
-      },
+      parameters: { type: 'object', properties: {} },
+      apiKey: 'not-a-tool-declaration-field',
     }).success).toBe(false);
   });
 

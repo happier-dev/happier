@@ -83,7 +83,7 @@ describe('session transcript RPC handlers', () => {
     const module = await import('./registerSessionHandlers');
     const { handlers, rpcHandlerManager } = createRpcHarness();
 
-    module.registerSessionHandlers(rpcHandlerManager, process.cwd());
+    module.registerSessionHandlers(rpcHandlerManager, process.cwd(), { sessionId: 'session-1' });
 
     expect([...handlers.keys()]).toEqual(expect.arrayContaining(
       TRANSCRIPT_RPC_CASES.map(([method]) => method),

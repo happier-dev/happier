@@ -7,26 +7,41 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { HomeHub } from './HomeHub';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { storage } from '@/sync/domains/state/storage';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import type { HomeHubLayoutValue } from '@happier-dev/protocol/home';
+import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type Layout = { order: string[]; hidden: string[] };
+type Layout = Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'instances' | 'sections'>>;
 
-// The Account Settings document (the synced store boundary): one value plus its subscribers.
+// Initial server-owned layout; subsequent assertions inspect the acknowledged HTTP Artifact.
 const settings = vi.hoisted(() => ({
     layout: { order: [], hidden: [] } as Layout,
-    listeners: new Set<() => void>(),
-    writes: [] as Layout[],
     guidanceKind: 'select_session' as string,
     machineCount: 0,
     machineMounts: 0,
     viewport: { width: 800, height: 600 },
+    positions: {} as Record<string, number>,
+    scrollOffset: 0,
 }));
+installDisconnectedServerSocketBoundary();
+let artifact = createHomeHubArtifactHttpBoundary('account-home');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let restoreActionLoader: (() => void) | undefined;
 
 // Plugin widgets: the app shell's projection, each widget's own data (inside the plugin, behind the
 // surface host boundary), and how often the hub and its sections render.
 const widgets = vi.hoisted(() => ({
-    projection: null as unknown,
+    projection: null as PluginUiProjectionModel | null,
     data: {} as Record<string, number>,
     dataListeners: new Set<() => void>(),
     bodyRenders: {} as Record<string, number>,
@@ -76,7 +91,7 @@ vi.mock('@/components/plugins/surfaces', async () => {
         return () => { widgets.dataListeners.delete(listener); };
     };
     return {
-        PluginInlineSurfaceHost: (props: { placement: { binding: { surface: { localId: string } } } }) => {
+        PluginInlineSurfaceHost: (props: { placement: { binding: { surface: { localId: string } } }; launchInput?: Readonly<Record<string, unknown>> }) => {
             const localId = props.placement.binding.surface.localId;
             const value = ReactModule.useSyncExternalStore(subscribe, () => widgets.data[localId] ?? 0);
             widgets.bodyRenders[localId] = (widgets.bodyRenders[localId] ?? 0) + 1;
@@ -84,7 +99,7 @@ vi.mock('@/components/plugins/surfaces', async () => {
                 widgets.bodyMounts[localId] = (widgets.bodyMounts[localId] ?? 0) + 1;
                 return () => { widgets.bodyMounts[localId] = (widgets.bodyMounts[localId] ?? 0) - 1; };
             }, [localId]);
-            return `widget:${localId}=${value}`;
+            return `widget:${localId}=${value}${props.launchInput?.branch ? ` branch:${String(props.launchInput.branch)}` : ''}`;
         },
     };
 });
@@ -117,29 +132,6 @@ vi.mock('@/modal/components/BaseModal', () => ({
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock().module;
-});
-vi.mock('@/sync/domains/state/storage', async () => {
-    const ReactModule = await import('react');
-    const { createStorageModuleStub, createUseSettingMutableMockFromReader } = await import('@/dev/testkit/mocks/storage');
-    const subscribe = (listener: () => void) => {
-        settings.listeners.add(listener);
-        return () => { settings.listeners.delete(listener); };
-    };
-    // The real `useSettingMutable` setter keeps one identity across renders; so does this one.
-    const writeLayout = (next: Layout) => {
-        settings.writes.push(next);
-        settings.layout = next;
-        for (const listener of [...settings.listeners]) listener();
-    };
-    return createStorageModuleStub({
-        useAllMachines: () => Array.from({ length: settings.machineCount }, (_, index) => ({ id: `m${index}` })),
-        useProfile: () => ({ id: 'p', firstName: null, lastName: null, username: null, linkedProviders: [] }),
-        useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-            if (key !== 'homeHubLayoutV1') throw new Error(`unexpected setting ${String(key)}`);
-            const value = ReactModule.useSyncExternalStore(subscribe, () => settings.layout);
-            return [value, writeLayout] as const;
-        }),
-    });
 });
 
 // Each section is its own owner with its own tests; the home decides only which show, and where.
@@ -192,15 +184,20 @@ vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: () => 'guidance',
 }));
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await connection?.dispose();
+    connection = undefined;
+    restoreActionLoader?.();
+    restoreActionLoader = undefined;
+    artifact = createHomeHubArtifactHttpBoundary('account-home');
     settings.layout = { order: [], hidden: [] };
-    settings.writes = [];
     settings.guidanceKind = 'select_session';
     settings.machineCount = 0;
     settings.machineMounts = 0;
     settings.viewport = { width: 800, height: 600 };
-    settings.listeners.clear();
+    settings.positions = {};
+    settings.scrollOffset = 0;
     usage.summary = { entries: [], asOf: null, source: 'none' };
     usage.listeners.clear();
     widgets.projection = null;
@@ -219,18 +216,27 @@ function RoutedHomeBoundary({ children }: React.PropsWithChildren) {
 }
 
 async function renderHome() {
+    if (!connection) {
+        artifact.seed({ v: 1, instances: [], ...settings.layout });
+        await import('@/sync/syncEngine');
+        restoreActionLoader = await installRealActionExecutorModuleLoader();
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://home-layout.test', accountId: 'account-home', request: artifact.request });
+        const scope = { serverId: connection.home.id, accountId: 'account-home' };
+        storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
+    }
     const element = () => (
         // The route adapter reads navigator presence before consulting useIsFocused.
         // Model a routed Home, rather than a preview that is always focused.
         <RoutedHomeBoundary>
+        <InjectedAuthProvider credentials={connection!.credentials}>
         <AppShellPluginUiProjectionValueProvider
             value={{
-                pluginUiProjection: widgets.projection as never,
+                pluginUiProjection: widgets.projection ?? EMPTY_PLUGIN_UI_PROJECTION,
                 pluginBrowserProjection: null,
                 phase: 'current',
                 interactionEnabled: true,
                 machineId: 'machine-1',
-                serverId: 'server-1',
+                serverId: connection!.home.id,
                 platform: 'web',
                 clientExecutableActivation: { status: 'ready' },
                 reloadClientExecutables: () => {},
@@ -239,9 +245,21 @@ async function renderHome() {
         >
             <HomeHub />
         </AppShellPluginUiProjectionValueProvider>
+        </InjectedAuthProvider>
         </RoutedHomeBoundary>
     );
-    const rendered = await renderScreen(element());
+    const contentNode = { getBoundingClientRect: () => ({ left: 0, top: 56 - settings.scrollOffset, width: 800, height: 800 }) };
+    const rendered = await renderScreen(element(), {
+        createNodeMock: node => {
+            const testID = node.props && typeof node.props === 'object' && 'testID' in node.props ? node.props.testID : undefined;
+            if (testID === 'home-hub') return { getInnerViewNode: () => contentNode, scrollTo: () => {},
+                getBoundingClientRect: () => ({ left: 0, top: 56, width: settings.viewport.width, height: settings.viewport.height }) };
+            const id = typeof testID === 'string' ? testID.slice('home-hub.section.'.length) : '';
+            return typeof testID === 'string' && testID.startsWith('home-hub.section.')
+                ? { getBoundingClientRect: () => ({ left: 0, top: 56 + (settings.positions[id] ?? 0) - settings.scrollOffset, width: settings.positions[id] === undefined ? 0 : 600, height: 200 }) }
+                : null;
+        },
+    });
     const screen = Object.assign(rendered, {
         /** Re-render under the app shell projection currently in `widgets.projection`. */
         rerender: async () => {
@@ -262,7 +280,7 @@ describe('HomeHub', () => {
         settings.guidanceKind = 'loading';
         const loading = await renderHome();
         // Neither the hub nor the getting-started guidance (and its mark) draws until the answer.
-        expect(loading.findByTestId('home-hub.loading')).toBeTruthy();
+        expect(loading.findByTestId('home-hub.loading') ?? loading.findByTestId('home-unreachable')).toBeTruthy();
         expect(loading.getTextContent()).not.toContain('guidance');
         expect(shownSections(loading.getTextContent())).toEqual([]);
         standardCleanup();
@@ -290,25 +308,31 @@ describe('HomeHub', () => {
         // Always shown: no switch.
         expect(screen.findByTestId('home-layout.attention.shown')).toBeNull();
         await act(async () => {
-            screen.findByTestId('home-layout.machines.shown')!.props.onValueChange(true);
+            await screen.findByTestId('home-layout.machines.shown')!.props.onValueChange(true);
         });
         await flushHookEffects({ cycles: 2 });
         // The page behind updates at once.
         expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'setup', 'automations', 'machines', 'usage']);
 
-        // The grip's keyboard/assistive "move up" (⌥↑ on the web) is the drag's accessible twin.
+        // Keyboard reordering stages a move on the real shared Entity drag owner.
         await act(async () => {
-            screen.findByTestId('home-layout.usage.grip')!.props.onAccessibilityAction({ nativeEvent: { actionName: 'decrement' } });
+            screen.findByTestId('home-layout.usage.grip')!.props.onKeyDown({ key: 'Enter', preventDefault() {} });
+        });
+        await act(async () => {
+            screen.findByTestId('home-layout.usage.grip')!.props.onKeyDown({ key: 'ArrowUp', preventDefault() {} });
+        });
+        await act(async () => {
+            screen.findByTestId('home-layout.usage.grip')!.props.onKeyDown({ key: 'Enter', preventDefault() {} });
         });
         await flushHookEffects({ cycles: 2 });
-        expect(settings.writes.at(-1)).toEqual({
+        await vi.waitFor(() => expect(artifact.writes.at(-1)).toMatchObject({
             order: ['start', 'attention', 'setup', 'automations', 'usage', 'machines'],
             hidden: [],
-        });
+        }));
 
         screen.pressByTestId('home-layout.reset');
         await flushHookEffects({ cycles: 2 });
-        expect(settings.layout).toEqual({ order: [], hidden: [] });
+        expect(artifact.layout()).toEqual({ v: 1, instances: [], order: [], hidden: [] });
         expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'setup', 'automations', 'usage']);
 
         // The header button closes it again.
@@ -325,7 +349,8 @@ describe('HomeHub', () => {
 
         screen.pressByTestId('home-layout.hiddenSetupSteps');
         await flushHookEffects({ cycles: 2 });
-        expect(settings.layout.hidden).toEqual([]);
+        expect(artifact.layout().hidden).not.toContain('setup:addPhone');
+        expect(artifact.layout().hidden).not.toContain('setup:addMachine');
         expect(screen.findByTestId('home-layout.hiddenSetupSteps')).toBeNull();
     });
 
@@ -341,11 +366,11 @@ describe('HomeHub', () => {
         const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
         expect(screen.findByType(ModalCardFrame).props.presentation).toBe('sheet');
         await act(async () => {
-            screen.findByTestId('home-layout.machines.shown')!.props.onValueChange(true);
+            await screen.findByTestId('home-layout.machines.shown')!.props.onValueChange(true);
         });
         await flushHookEffects({ cycles: 2 });
         expect(shownSections(screen.getTextContent())).toContain('machines');
-        expect(settings.layout.hidden).not.toContain('machines');
+        expect(artifact.layout().hidden).not.toContain('machines');
 
         await act(async () => modal.props.onClose());
         await flushHookEffects({ cycles: 2 });
@@ -373,16 +398,15 @@ describe('HomeHub', () => {
 });
 
 describe('HomeHub plugin widgets', () => {
-    const LATEST = 'widget:acme.review/latest';
-    const RUNS = 'widget:acme.ci/runs';
-    const CHECKS = 'widget:acme.ci/checks';
+    const LATEST = 'default:acme.review/latest';
+    const CHECKS = 'default:acme.ci/checks';
 
     function installWidgets() {
         widgets.projection = widgetProjectionOf([
             { pluginId: 'acme.review', localId: 'latest', title: 'Latest reviews', target: 'app', homeDefault: 'shown' },
             { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app', homeDefault: 'shown' },
             { pluginId: 'acme.ci', localId: 'runs', title: 'Recent runs', target: 'app' },
-            // A Session widget is the Board's, never Home's.
+            // Session types are available on Home but need an explicitly configured instance.
             { pluginId: 'acme.ci', localId: 'session-log', title: 'Session log', target: 'session' },
         ], {
             'acme.review': widgetInstalledPackage('acme.review', 'Review Assistant'),
@@ -397,13 +421,126 @@ describe('HomeHub plugin widgets', () => {
     /** The page's viewport and each widget section's place in it, as the platform reports them. */
     async function lay(screen: Awaited<ReturnType<typeof renderHome>>, places: Readonly<Record<string, number>>) {
         await act(async () => {
+            settings.positions = { ...places };
             screen.findByTestId('home-hub')!.props.onLayout(layoutEvent(0, 800));
-            for (const [id, y] of Object.entries(places)) {
-                screen.findByTestId(`home-hub.section.${id}`)!.props.onLayout(layoutEvent(y, 200));
+            for (const id of Object.keys(places)) {
+                // Layout y belongs to the grid cell. The native/DOM node supplies content geometry.
+                screen.findByTestId(`home-hub.section.${id}`)!.props.onLayout(layoutEvent(0, 200));
             }
         });
         await flushHookEffects({ cycles: 2 });
     }
+
+    it('renders independently bound stored copies and full width on phone, retaining a missing type until it is removed', async () => {
+        const copy = (id: string, branch: string): WidgetInstanceV1 => ({ v: 1, id, displayName: branch,
+            definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } },
+            bindings: { branch: { kind: 'value', value: branch } } });
+        const first = copy('checks-main', 'main');
+        const second = copy('checks-release', 'release');
+        const missing: WidgetInstanceV1 = { v: 1, id: 'retired-copy', displayName: 'Retired checks',
+            definition: { kind: 'installed', surface: { pluginId: 'removed.plugin', localId: 'checks' } }, bindings: {} };
+        widgets.projection = widgetProjectionOf([{ pluginId: 'acme.ci', localId: 'checks', target: 'app', title: 'Checks',
+            inputs: { fields: [{ path: 'branch', title: 'Branch', widget: 'text', required: true }] },
+            inputSchema: { type: 'object', properties: { branch: { type: 'string' } }, required: ['branch'], additionalProperties: false },
+        }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id, missing.id], hidden: [], instances: [first, second, missing],
+            sections: { [second.id]: { width: 'full' } } };
+        const screen = await renderHome();
+        await lay(screen, { [first.id]: 300, [second.id]: 500, [missing.id]: 700 });
+        expect(screen.getTextContent()).toContain('branch:main');
+        expect(screen.getTextContent()).toContain('branch:release');
+        expect(screen.findByTestId(`home-hub.section.${missing.id}.widget-state`)).not.toBeNull();
+        expect(screen.root.findAllByType(CardGridCell).some(cell => cell.props.span === 'row'
+            && cell.findAll(node => node.props.testID === `home-hub.section.${second.id}`).length > 0)).toBe(true);
+        expect(artifact.writes).toEqual([]);
+
+        settings.viewport = { width: 390, height: 844 };
+        await screen.rerender();
+        expect(artifact.layout().sections?.[second.id]?.width).toBe('full');
+        expect(screen.getTextContent()).toContain('branch:main');
+        expect(screen.getTextContent()).toContain('branch:release');
+        await act(async () => { screen.pressByTestId('home-hub.customize'); });
+        await flushHookEffects({ cycles: 2 });
+        await act(async () => { await screen.findByTestId(`home-layout.${missing.id}.shown`)!.props.onValueChange(false); });
+        await flushHookEffects({ cycles: 3 });
+        expect(artifact.layout().instances).toEqual([first, second]);
+        expect(artifact.layout().sections?.[second.id]?.width).toBe('full');
+        expect(screen.findByTestId(`home-hub.section.${missing.id}`)).toBeNull();
+        expect(screen.getTextContent()).toContain('branch:release');
+    });
+
+    it('moves a configured copy through the mounted chooser to the native first Home position, preserving its sibling', async () => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const first: WidgetInstanceV1 = { v: 1, id: 'checks-first', definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} };
+        const second = { ...first, id: 'checks-second' };
+        settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id], hidden: [], instances: [first, second] };
+        const screen = await renderHome();
+        await lay(screen, { [first.id]: 300, [second.id]: 500 });
+        const move = `home-hub.section.${second.id}.move`;
+        await act(async () => { screen.pressByTestId(move); });
+        const chooser = () => screen.findAllByType(DropdownMenu).find(node => node.props.open === true)!;
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(chooser()?.props.items[0]).toMatchObject({ disabled: false });
+        });
+        expect(artifact.writes).toEqual([]);
+        await act(async () => { chooser().props.onOpenChange(false); });
+        expect(artifact.writes).toEqual([]);
+        await act(async () => { screen.pressByTestId(move); });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(chooser()?.props.items[0]).toMatchObject({ disabled: false });
+        });
+        expect(chooser().props.closeOnSelect).toBe(false);
+        await act(async () => { await chooser().props.onSelect('0'); });
+        await vi.waitFor(() => {
+            expect(artifact.layout().order[0]).toBe(second.id);
+            expect(artifact.layout().instances).toEqual([first, second]);
+        });
+        expect(screen.findAllByType(DropdownMenu).some(node => node.props.open === true)).toBe(false);
+    });
+
+    it('renames one copy in place and repairs another copy’s missing input from its card, each through the Home Artifact', async () => {
+        const main: WidgetInstanceV1 = { v: 1, id: 'checks-main', definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } },
+            bindings: { branch: { kind: 'value', value: 'main' } } };
+        const unbound: WidgetInstanceV1 = { v: 1, id: 'checks-unbound', definition: main.definition, bindings: {} };
+        widgets.projection = widgetProjectionOf([{ pluginId: 'acme.ci', localId: 'checks', target: 'app', title: 'Checks',
+            inputs: { fields: [{ path: 'branch', title: 'Branch', widget: 'text', required: true }] },
+            inputSchema: { type: 'object', properties: { branch: { type: 'string' } }, required: ['branch'], additionalProperties: false },
+        }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        settings.layout = { order: ['start', 'attention', 'setup', main.id, unbound.id], hidden: [], instances: [main, unbound] };
+        const screen = await renderHome();
+        await lay(screen, { [main.id]: 300, [unbound.id]: 500 });
+
+        // ⋯ → Rename: the title becomes a field; Enter keeps the new name for this copy only.
+        const menu = screen.findByTestId(`home-hub.${main.id}.menu`)!.findByType(ItemRowActions);
+        const actionIds = menu.props.actions.map((action: { id: string }) => action.id);
+        expect(actionIds.slice(0, 2)).toEqual(['editInputs', 'rename']);
+        await act(async () => { menu.props.actions.find((action: { id: string }) => action.id === 'rename').onPress(); });
+        await flushHookEffects({ cycles: 2 });
+        const field = screen.findByTestId(`home-hub.section.${main.id}-title-input`)!;
+        await act(async () => { field.props.onChangeText('  Release soak '); });
+        await act(async () => { screen.findByTestId(`home-hub.section.${main.id}-title-input`)!.props.onSubmitEditing(); });
+        await flushHookEffects({ cycles: 3 });
+        expect(artifact.layout().instances).toEqual([{ ...main, displayName: 'Release soak' }, unbound]);
+        expect(screen.findByTestId(`home-hub.section.${main.id}-title-input`)).toBeNull();
+
+        // The copy with nothing bound says so in its card, and its repair opens the same step.
+        await act(async () => { screen.pressByTestId(`home-hub.section.${unbound.id}.widget-inputs-repair`); });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findByTestId(`home-hub.section.${unbound.id}.editInputs`)).not.toBeNull();
+        await act(async () => { screen.changeTextByTestId(`home-hub.section.${unbound.id}.editInputs.field.branch.input`, 'release'); });
+        await flushHookEffects({ cycles: 2 });
+        await act(async () => { screen.pressByTestId(`home-hub.section.${unbound.id}.editInputs.submit`); });
+        await flushHookEffects({ cycles: 4 });
+        expect(artifact.layout().instances).toEqual([
+            { ...main, displayName: 'Release soak' },
+            { ...unbound, bindings: { branch: { kind: 'value', value: 'release' } } },
+        ]);
+        expect(screen.findByTestId(`home-hub.section.${unbound.id}.editInputs`)).toBeNull();
+    });
 
     async function setWidgetData(localId: string, value: number) {
         await act(async () => {
@@ -413,39 +550,29 @@ describe('HomeHub plugin widgets', () => {
         await flushHookEffects({ cycles: 2 });
     }
 
-    it('shows the widgets that declare themselves shown after the built-in sections; the rest wait in Add widgets', async () => {
+    it('projects default widgets without writing an Artifact and keeps all offered types available in the shared catalog', async () => {
         installWidgets();
         const screen = await renderHome();
 
         expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'setup', 'automations', 'usage']);
         expect(screen.findByTestId(`home-hub.section.${LATEST}`)).toBeTruthy();
         expect(screen.findByTestId(`home-hub.section.${CHECKS}`)).toBeTruthy();
-        expect(screen.findByTestId(`home-hub.section.${RUNS}`)).toBeNull();
+        expect(screen.findByTestId('home-hub.section.default:acme.ci/runs')).toBeNull();
         expect(screen.findByTestId('home-hub.section.widget:acme.ci/session-log')).toBeNull();
 
-        // Customize is one list: built-ins, widgets on Home, and the widgets plugins offer, switched off.
+        expect(artifact.writes).toEqual([]);
+        // Customize operates on placed instances, preserving their independent identities.
         screen.pressByTestId('home-hub.customize');
         await flushHookEffects({ cycles: 2 });
         expect(screen.findByTestId(`home-layout.${LATEST}.shown`)!.props.value).toBe(true);
-        expect(screen.findByTestId(`home-layout.${RUNS}.shown`)!.props.value).toBe(false);
-        expect(screen.findByTestId(`home-layout.${RUNS}.grip`)).toBeNull();
-
         await act(async () => {
-            screen.findByTestId(`home-layout.${RUNS}.shown`)!.props.onValueChange(true);
+            await screen.findByTestId(`home-layout.${LATEST}.shown`)!.props.onValueChange(false);
         });
         await flushHookEffects({ cycles: 2 });
-        expect(settings.writes.at(-1)).toEqual({
-            order: ['start', 'attention', 'setup', CHECKS, LATEST, 'automations', 'machines', 'usage', RUNS],
-            hidden: ['machines'],
-        });
-        await act(async () => {
-            screen.findByTestId(`home-layout.${LATEST}.shown`)!.props.onValueChange(false);
-        });
-        await flushHookEffects({ cycles: 2 });
-        expect(settings.writes.at(-1)?.hidden).toEqual(['machines', LATEST]);
-        expect(screen.findByTestId(`home-layout.${LATEST}.shown`)!.props.value).toBe(false);
+        expect(artifact.layout().hidden).toEqual(['machines', LATEST]);
+        expect(screen.findByTestId(`home-layout.${LATEST}.shown`)).toBeNull();
         expect(screen.findByTestId(`home-hub.section.${LATEST}`)).toBeNull();
-        expect(screen.findByTestId(`home-hub.section.${RUNS}`)).toBeTruthy();
+        expect(screen.findByTestId(`home-hub.section.${CHECKS}`)).toBeTruthy();
     });
 
     it('builds a widget body only while Home is focused and the widget is near the viewport', async () => {
@@ -461,6 +588,7 @@ describe('HomeHub plugin widgets', () => {
 
         // Scrolled far down: the first leaves, the second arrives.
         await act(async () => {
+            settings.scrollOffset = 4600;
             screen.findByTestId('home-hub')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 4600 } } });
         });
         await flushHookEffects({ cycles: 2 });
@@ -508,6 +636,7 @@ describe('HomeHub plugin widgets', () => {
 
         // Scrolling moves the window, never the hub.
         await act(async () => {
+            settings.scrollOffset = 300;
             screen.findByTestId('home-hub')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 300 } } });
         });
         await flushHookEffects({ cycles: 2 });

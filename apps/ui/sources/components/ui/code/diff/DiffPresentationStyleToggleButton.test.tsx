@@ -37,6 +37,15 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 describe('DiffPresentationStyleToggleButton', () => {
+    it('offers both view choices explicitly and applies the selected view', async () => {
+        setFilesDiffPresentationStyle.mockClear();
+        styleSettingValue = 'unified';
+        const { DiffPresentationStyleToggleButton } = await import('./DiffPresentationStyleToggleButton');
+        const { DiffPresentationWidthProvider } = await import('./diffPresentationStyle');
+        const screen = await renderScreen(<DiffPresentationWidthProvider widthPx={1100}><DiffPresentationStyleToggleButton presentation="segmented" /></DiffPresentationWidthProvider>);
+        await screen.pressByTestIdAsync('diff-presentation:split');
+        expect(setFilesDiffPresentationStyle).toHaveBeenCalledWith('split');
+    });
     it('toggles unified -> split', async () => {
         setFilesDiffPresentationStyle.mockClear();
         styleSettingValue = 'unified';

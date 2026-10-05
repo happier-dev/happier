@@ -15,7 +15,6 @@ import { readGithubCheckOutcomeV1 } from './checkOutcome.js';
 import { readGithubChecksConditionSurface, type GithubChecksConditionSnapshotV1 } from './checksCondition.js';
 import {
   GITHUB_MAX_PAGE_SIZE_V1,
-  GITHUB_SEARCH_RESULT_CEILING_V1,
   type GithubTriageFailureV1,
 } from './types.js';
 
@@ -34,14 +33,15 @@ import {
  * render alike: the first is "nothing to run", the second is "we cannot tell", and the
  * third is "these rows are real but the list is short".
  *
- * A list is short for two unrelated reasons, and both must reach `knownIncomplete`.
- * The declared one is a `total_count` past the ceiling. The observed one is a walk that
- * exhausted its page budget while a validated `Link rel="next"` was still on offer —
- * the only evidence available for commit statuses, whose envelope carries no total this
- * source can use, and for any check-runs response that omits one. A rollup computed
- * over the pages that fit and reported as `resolved` tells a reader every check passed
- * while unread pages hold the failures.
+ * Follow every validated continuation under the caller's lifetime. GitHub limits this
+ * endpoint to the most recent 1,000 check suites, not 1,000 runs. Saturating that
+ * provider boundary or receiving fewer rows than its declared total makes coverage
+ * incomplete; undecodable rows make it unknown while preserving the readable rows.
  */
+
+// GitHub REST list-check-runs-for-a-git-reference, checked 2026-10-04.
+// Coverage evidence only: never a local paging cutoff.
+const GITHUB_CHECK_SUITE_CEILING_V1 = 1_000;
 
 export type GithubCheckResourceKindV1 = 'check-run' | 'commit-status';
 
@@ -67,6 +67,9 @@ export type GithubCheckObservationV1 = Readonly<{
 
 export type GithubChecksStateV1 = 'none' | 'unknown' | 'knownIncomplete' | 'resolved';
 
+/** Decode omissions belong to the Checks read, not the shared provider classifier. */
+type GithubChecksReadFailureV1 = GithubTriageFailureV1 & Readonly<{ omittedRowCount?: number }>;
+
 export type GithubChecksSurfaceV1 = Readonly<{
   observation?: GithubChecksConditionSnapshotV1;
   state: GithubChecksStateV1;
@@ -75,8 +78,8 @@ export type GithubChecksSurfaceV1 = Readonly<{
   failingCount: number | null;
   runningCount: number | null;
   passingCount: number | null;
-  checkRunsFailure: GithubTriageFailureV1 | null;
-  commitStatusFailure: GithubTriageFailureV1 | null;
+  checkRunsFailure: GithubChecksReadFailureV1 | null;
+  commitStatusFailure: GithubChecksReadFailureV1 | null;
   /** The list row projection, or `null` when the surface cannot answer. */
   rowState: GithubChecksRowStateV1 | null;
 }>;
@@ -163,14 +166,9 @@ function decodeCommitStatus(raw: unknown): GithubCheckObservationV1 | null {
 type CollectionRead = Readonly<{
   observations: readonly GithubCheckObservationV1[];
   totalCount: number | null;
-  /**
-   * The walk stopped at its own page budget while GitHub was still advertising a
-   * validated next page. `total_count` cannot stand in for this: the commit-status
-   * envelope carries no usable total here, and a check-runs response that omits or
-   * understates it would leave a short list looking settled.
-   */
+  /** Provider completeness evidence, independent of a local request budget. */
   truncated: boolean;
-  failure: GithubTriageFailureV1 | null;
+  failure: GithubChecksReadFailureV1 | null;
 }>;
 
 async function readPaginatedCollection(
@@ -180,98 +178,80 @@ async function readPaginatedCollection(
     readPage: (body: unknown) => Readonly<{
       rows: readonly unknown[];
       totalCount: number | null;
+      checkSuiteIds?: readonly string[];
     }> | null;
     decodeRow: (raw: unknown) => GithubCheckObservationV1 | null;
-    maxPages: number;
   }>,
 ): Promise<CollectionRead> {
   const observations: GithubCheckObservationV1[] = [];
   let totalCount: number | null = null;
   let url: string | null = input.initialUrl;
-  let pages = 0;
+  let rowCount = 0;
+  let omittedRows = 0;
+  const checkSuiteIds = new Set<string>();
 
-  while (url !== null && pages < input.maxPages) {
+  const finish = (failure: GithubTriageFailureV1 | null): CollectionRead => {
+    return Object.freeze({
+      observations: Object.freeze([...observations]),
+      totalCount,
+      truncated: checkSuiteIds.size >= GITHUB_CHECK_SUITE_CEILING_V1
+        || (totalCount !== null && rowCount < totalCount),
+      failure: omittedRows === 0 ? failure : Object.freeze({
+        ...(failure ?? { class: 'unsupportedContract' as const, code: 'github_checks_rows_undecodable' }),
+        omittedRowCount: omittedRows,
+      }),
+    });
+  };
+
+  while (url !== null) {
     if (dependencies.signal.aborted) {
-      return Object.freeze({
-        observations: Object.freeze([...observations]),
-        totalCount,
-        truncated: false,
-        failure: Object.freeze({ class: 'transient', code: 'github_request_cancelled' }),
-      });
+      return finish(Object.freeze({ class: 'transient', code: 'github_request_cancelled' }));
     }
     const requestedUrl: string = url;
     let response;
     try {
       response = await dependencies.client.request({ url: requestedUrl });
     } catch (error) {
-      return Object.freeze({
-        observations: Object.freeze([...observations]),
-        totalCount,
-        truncated: false,
-        failure: classifyGithubTransportFailure(error),
-      });
+      return finish(classifyGithubTransportFailure(error));
     }
     if (!isGithubSuccessStatus(response.status)) {
-      return Object.freeze({
-        observations: Object.freeze([...observations]),
-        totalCount,
-        truncated: false,
-        failure: classifyGithubResponseFailure(response, dependencies.now()),
-      });
+      return finish(classifyGithubResponseFailure(response, dependencies.now()));
     }
     let page: ReturnType<typeof input.readPage>;
     try {
       page = input.readPage(decodeGithubJsonResponse(response));
     } catch (error) {
-      return Object.freeze({
-        observations: Object.freeze([...observations]),
-        totalCount,
-        truncated: false,
-        failure: classifyGithubTransportFailure(error),
-      });
+      return finish(classifyGithubTransportFailure(error));
     }
     if (page === null) {
-      return Object.freeze({
-        observations: Object.freeze([...observations]),
-        totalCount,
-        truncated: false,
-        failure: Object.freeze({
-          class: 'unsupportedContract',
-          code: 'github_checks_envelope_invalid',
-        }),
-      });
+      return finish(Object.freeze({
+        class: 'unsupportedContract',
+        code: 'github_checks_envelope_invalid',
+      }));
     }
     if (page.totalCount !== null) totalCount = page.totalCount;
+    rowCount += page.rows.length;
+    for (const id of page.checkSuiteIds ?? []) checkSuiteIds.add(id);
     for (const raw of page.rows) {
       const decoded = input.decodeRow(raw);
       if (decoded !== null) observations.push(decoded);
+      else omittedRows += 1;
     }
 
-    pages += 1;
     const next = readValidatedGithubFollowUpPage(response.headers, requestedUrl);
     if (next.kind === 'next') {
       url = next.url;
     } else if (next.kind === 'invalid') {
-      return Object.freeze({
-        observations: Object.freeze([...observations]),
-        totalCount,
-        truncated: false,
-        failure: Object.freeze({
-          class: 'unsupportedContract',
-          code: 'github_checks_link_invalid',
-        }),
-      });
+      return finish(Object.freeze({
+        class: 'unsupportedContract',
+        code: 'github_checks_link_invalid',
+      }));
     } else {
       url = null;
     }
   }
 
-  return Object.freeze({
-    observations: Object.freeze([...observations]),
-    totalCount,
-    truncated: url !== null,
-    failure: null,
-  });
+  return finish(null);
 }
 
 export async function readGithubPullRequestChecks(
@@ -281,7 +261,6 @@ export async function readGithubPullRequestChecks(
   dependencies: GithubChecksDependenciesV1,
 ): Promise<GithubChecksSurfaceV1> {
   if (input.observation) return readGithubChecksConditionSurface({ ...input, observation: input.observation }, dependencies);
-  const maxPages = Math.ceil(GITHUB_SEARCH_RESULT_CEILING_V1 / GITHUB_MAX_PAGE_SIZE_V1);
   const checkRunsUrl = `${buildGithubApiUrl([
     'repos',
     input.route.owner,
@@ -301,19 +280,22 @@ export async function readGithubPullRequestChecks(
 
   const checkRuns = await readPaginatedCollection(dependencies, {
     initialUrl: checkRunsUrl,
-    maxPages,
     decodeRow: decodeCheckRun,
     readPage: (body) => {
       if (!isRecord(body) || !Array.isArray(body.check_runs)) return null;
       return Object.freeze({
         rows: Object.freeze([...body.check_runs]),
         totalCount: typeof body.total_count === 'number' ? body.total_count : null,
+        checkSuiteIds: body.check_runs.flatMap((raw) => {
+          const id = isRecord(raw) && isRecord(raw.check_suite)
+            ? readPositiveDecimal(raw.check_suite.id) : null;
+          return id === null ? [] : [id];
+        }),
       });
     },
   });
   const commitStatuses = await readPaginatedCollection(dependencies, {
     initialUrl: statusUrl,
-    maxPages,
     decodeRow: decodeCommitStatus,
     readPage: (body) => {
       if (!isRecord(body) || !Array.isArray(body.statuses)) return null;
@@ -333,14 +315,10 @@ export function projectGithubChecksSurface(input: Readonly<{
     ...input.commitStatuses.observations,
   ]);
   const anyFailure = input.checkRuns.failure !== null || input.commitStatuses.failure !== null;
-  // Two independent ways a check list is short, and either one alone is enough: the
-  // suite declares more runs than this walk will ever read, or the walk hit its own
-  // page budget while GitHub was still offering pages. Deriving incompleteness from
-  // `total_count` alone leaves the second case rendering as a settled rollup.
+  // Each reader supplies its own provider completeness evidence. The GraphQL
+  // condition reader uses this same projector without inheriting a REST ceiling.
   const knownIncomplete = input.checkRuns.truncated
-    || input.commitStatuses.truncated
-    || (input.checkRuns.totalCount !== null
-      && input.checkRuns.totalCount > GITHUB_SEARCH_RESULT_CEILING_V1);
+    || input.commitStatuses.truncated;
 
   const state: GithubChecksStateV1 = anyFailure
     ? 'unknown'

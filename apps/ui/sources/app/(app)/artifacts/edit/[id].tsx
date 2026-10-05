@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
+import { Redirect, useLocalSearchParams, type Href } from '@/components/appShell/workspace/destinationRoute';
+import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 
 import { opensInArtifactView, resolveArtifactOpenRoute } from '@/components/artifacts/artifactBrowserModel';
 import { ArtifactEditor } from '@/components/artifacts/ArtifactEditor';
@@ -9,11 +10,14 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-export default function EditArtifactScreen(): React.ReactElement {
+export function EditArtifactScreen(): React.ReactElement {
     const { id } = useLocalSearchParams<{ id: string }>();
     const artifact = useArtifact(id);
     return <EditArtifactContent id={id} artifact={artifact} />;
 }
+
+export { EditArtifactScreen as WorkspaceRouteBody };
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={EditArtifactScreen} />; }
 
 /** A kind with its own editor (a board, a workflow, a prompt…) edits there; a document edits here. */
 export function EditArtifactContent(props: Readonly<{ id: string; artifact: DecryptedArtifact | null }>): React.ReactElement {

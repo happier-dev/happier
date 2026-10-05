@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 
 import {
   type BackendTargetRefV1,
-  ReviewFindingsV1Schema,
   ReviewFindingsV2Schema,
   ReviewFollowUpInputSchema,
   ReviewTriageOverlaySchema,
@@ -15,7 +14,6 @@ import {
   resolveExecutionRunIntentProfileFromCatalog,
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
-import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { buildExecutionRunProfileStartParams } from './profileStart';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
@@ -32,6 +30,7 @@ import type {
   ReviewCommentHostActionMaterializationResult,
 } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -71,6 +70,7 @@ export async function applyExecutionRunAction(args: Readonly<{
   causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   effectiveCallerPermissionMode?: string;
   reviewComments?: ReviewRunCommentService;
+  applyReviewNarrationAction?: (actionId: 'review.walkthrough' | 'review.explain_findings', input: unknown) => Promise<ExecutionRunActionResult>;
 }>): Promise<ExecutionRunActionResult> {
   const run = args.runs.get(args.runId);
   if (args.params.actionId === 'review.triage') {
@@ -79,12 +79,16 @@ export async function applyExecutionRunAction(args: Readonly<{
       return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid triage overlay' };
     }
     if (!args.reviewComments) return { ok: false, errorCode: 'review_comment_persistence_unavailable', error: 'ReviewComment persistence is unavailable' };
-    const retainedPayload = run?.structuredMeta?.kind === 'review_findings.v2'
-      ? ReviewFindingsV2Schema.safeParse(run.structuredMeta.payload)
-      : ReviewFindingsV1Schema.safeParse(run?.structuredMeta?.payload);
-    return await args.reviewComments.triage(args.runId, args.params.input, retainedPayload.success ? retainedPayload.data.findings : undefined);
+    const retainedPayload = run ? readRetainedReviewFindings(run) : null;
+    return await args.reviewComments.triage(args.runId, args.params.input, retainedPayload?.findings);
   }
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+
+  if (args.params.actionId === 'review.walkthrough' || args.params.actionId === 'review.explain_findings') {
+    return args.applyReviewNarrationAction
+      ? await args.applyReviewNarrationAction(args.params.actionId, args.params.input)
+      : { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Review narration host services are unavailable' };
+  }
 
   if (run.intent === 'review' && String(args.params.actionId ?? '').trim() === 'review.follow_up') {
     // This stays runtime-owned because follow-up orchestration needs the live run and
@@ -108,25 +112,7 @@ export async function applyExecutionRunAction(args: Readonly<{
       return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid follow-up input' };
     }
 
-    const existingPayload =
-      run.structuredMeta?.kind === 'review_findings.v2'
-        ? ReviewFindingsV2Schema.parse(run.structuredMeta.payload)
-        : run.structuredMeta?.kind === 'review_findings.v1'
-          ? (() => {
-            const legacy = ReviewFindingsV1Schema.parse(run.structuredMeta.payload);
-            return buildReviewFindingsV2Payload({
-              runId: legacy.runRef.runId,
-              callId: legacy.runRef.callId,
-              backendId: legacy.runRef.backendId,
-              backendTarget: legacy.runRef.backendTarget,
-              summary: legacy.summary,
-              findings: legacy.findings,
-              triage: legacy.triage,
-              limits: legacy.limits,
-              generatedAtMs: legacy.generatedAtMs,
-            });
-          })()
-          : null;
+    const existingPayload = readRetainedReviewFindings(run);
     if (!existingPayload) {
       return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Not a review run' };
     }

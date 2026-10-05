@@ -1,3 +1,7 @@
+import { promptPickerTranslations } from './promptPickerTranslations';
+import { pendingNavigationTranslations } from './pendingNavigationTranslations';
+import { fileContentSearchTranslations } from './fileContentSearchTranslations';
+import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
 import { folderlessSessionTranslations } from './folderlessSessionTranslations';
 import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
 import { sessionAccessTranslations } from './sessionAccessTranslations';
@@ -31,6 +35,7 @@ import { pluginSettingsPresentationTranslations } from './pluginSettingsPresenta
 import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
 import { sessionWorkTranslations } from './sessionWorkTranslations';
+import { entityDragDropTranslations } from './entityDragDropTranslations';
 import { agentStartTranslations } from './agentStartTranslations';
 import { goalControlTranslations } from './goalControlTranslations';
 import { inboxWorkTranslations } from './inboxWorkTranslations';
@@ -42,6 +47,14 @@ import { sessionConversationSurfaceTranslations } from './sessionConversationSur
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 import { sessionDirectoryRecoveryTranslations } from './sessionDirectoryRecoveryTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { committedMessageActionTranslations } from './committedMessageActionTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -76,6 +89,8 @@ import { actionConfirmationTranslations } from './actionConfirmationTranslations
 import { detailPageTranslations } from './detailPageTranslations';
 import { rolesTranslations } from './rolesTranslations';
 import { boardsTranslations } from './boardsTranslations';
+import { findTranslations } from './findTranslations';
+import { transcriptFindTranslations } from './transcriptFindTranslations';
 import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
 import { workStatusTranslations } from './workStatusTranslations';
 import { shareSheetTranslations } from './shareSheetTranslations';
@@ -95,11 +110,16 @@ import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslat
 import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
 import { settingsOverviewTranslations } from './settingsOverviewTranslations';
 import { homeSetupTranslations } from './homeSetupTranslations';
+import { personalizeTranslations } from './personalizeTranslations';
 import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
 import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
+import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
+import { voicePresenceTranslations } from './voicePresenceTranslations';
+import { voiceMomentsTranslations } from './voiceMomentsTranslations';
 import { homeIndexTranslations } from './homeIndexTranslations';
 import { addFlowsTranslations } from './addFlowsTranslations';
 import { machineAddTranslations } from './machineAddTranslations';
@@ -270,6 +290,7 @@ const newSessionMcpTranslationExtension = {
 } as const;
 
 const settingsAppearanceTranslationExtension = {
+  glassControls: glassAppearanceTranslations['zh-Hant'],
   switchToDarkTheme: '切換到深色主題',
   switchToLightTheme: '切換到淺色主題',
   themeToggle: {
@@ -431,6 +452,7 @@ const settingsAppearanceTranslationExtension = {
       syntax: '文法',
       versionControl: '版本控制',
       diff: '差異',
+      find: '尋找相符項目',
       permission: '權限',
       overlay: '疊加層',
     },
@@ -811,11 +833,16 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     homeDeviceApproval: homeDeviceApprovalTranslations['zh-Hant'],
     settingsOverview: settingsOverviewTranslations['zh-Hant'],
     homeSetup: homeSetupTranslations['zh-Hant'],
+    personalize: personalizeTranslations['zh-Hant'],
     connectedServicesSetup: connectedServicesSetupTranslations['zh-Hant'],
     homeWidgets: homeWidgetTranslations['zh-Hant'],
     widgetFrame: widgetFrameTranslations['zh-Hant'],
+    inputPicker: inputPickerTranslations['zh-Hant'],
     widgetAdd: widgetAddTranslations['zh-Hant'],
+    widgetDefinition: widgetDefinitionTranslations['zh-Hant'],
     widgetGlances: widgetGlanceTranslations['zh-Hant'],
+    voicePresence: voicePresenceTranslations['zh-Hant'],
+    voiceMoments: voiceMomentsTranslations['zh-Hant'],
     homeIndex: homeIndexTranslations['zh-Hant'],
     addFlows: addFlowsTranslations['zh-Hant'],
     machineAdd: machineAddTranslations['zh-Hant'],
@@ -831,6 +858,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     detailPages: detailPageTranslations['zh-Hant'],
     roles: rolesTranslations['zh-Hant'],
     boards: boardsTranslations.zhHant,
+    find: findTranslations.zhHant,
+    transcriptFind: transcriptFindTranslations['zh-Hant'],
     workStatus: workStatusTranslations.zhHant,
     shareSheet: shareSheetTranslations['zh-Hant'],
     surfaceState: surfaceStateTranslations['zh-Hant'],
@@ -916,9 +945,11 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     pluginPermissions: pluginPermissionTranslations['zh-Hant'],
     sessionBoard: sessionBoardTranslations['zh-Hant'],
     sessionDrafts: sessionDraftTranslations.zhHant,
+    pendingNavigation: pendingNavigationTranslations.zhHant,
     sessionDirectoryRecovery: sessionDirectoryRecoveryTranslations['zh-Hant'],
     sessionAgentActivity: sessionAgentActivityTranslations.zhHant,
     sessionWork: sessionWorkTranslations.zhHant,
+    entityDragDrop: entityDragDropTranslations.zhHant,
     agentStart: agentStartTranslations.zhHant,
     goalControl: goalControlTranslations.zhHant,
     sessionGitPane: sessionGitPaneTranslations.zhHant,
@@ -927,6 +958,14 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.zhHant,
     sessionConversation: sessionConversationSurfaceTranslations.zhHant,
     ...changedFileEvidenceTranslations['zh-Hant'],
+    ...turnChangesTranslations['zh-Hant'],
+    ...committedMessageActionTranslations['zh-Hant'],
+    ...scmComparisonTranslations['zh-Hant'],
+    ...walkthroughTranslations['zh-Hant'],
+    ...walkthroughStartTranslations['zh-Hant'],
+    ...reviewWalkthroughTranslations['zh-Hant'],
+    ...commitProposalTranslations['zh-Hant'],
+    ...walkthroughSettingsTranslations['zh-Hant'],
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations['zh-Hant'],
   ui: {
     resizableDockedPane: {
@@ -942,11 +981,13 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     pluginUi: {
       loading: '載入中',
       empty: '沒有可顯示的內容',
+      collectionEmpty: '無',
       error: '發生了錯誤',
       moreActions: '更多操作',
     },
   },
   approvals: {
+    decisionAuthorityError: '此登入方式無法核准請求。請使用帳戶復原金鑰登入此 Home，或在已登入帳戶的另一台裝置上核准。',
     proposedComments: ({ count }: { count: number }) => `${count} 則建議的留言`,
     generation: ({ generation }: { generation: string }) => `世代：${generation}`,
     stopWaiting: '停止等待',
@@ -1022,14 +1063,20 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         setShortcutInvalidTitle: '無效的快捷方式',
         setShortcutInvalidMessage: '輸入至少一個非修飾鍵，可以選擇使用 Mod、Ctrl、Shift 或 Alt。',
         resetCommandAccessibility: ({ command }: { command: string }) => `Reset ${command} shortcut`,
-      commands: {
+        commands: {
+            findOpen: transcriptFindTranslations['zh-Hant'].findOpen,
+            findNext: transcriptFindTranslations['zh-Hant'].findNext,
+            findPrevious: transcriptFindTranslations['zh-Hant'].findPrevious,
           ...workspaceTabKeyboardTranslations,
           ...terminalWorkspaceKeyboardTranslations,
           composerAbortConfirm: '確認中止',
           composerFocus: '聚焦輸入框',
+          composerPromptsOpen: promptPickerTranslations['zh-Hant'].open,
+          voiceToggle: '開始或結束語音對話',
           composerSendImmediate: '立即傳送',
           composerSendPending: '傳送到待處理佇列',
           commandPaletteOpen: '開啟搜尋',
+          searchTextInFiles: fileContentSearchTranslations["zh-Hant"].textInFiles,
           browserAddressFocus: '聚焦瀏覽器網址列',
           browserBack: '瀏覽器上一頁',
           browserForward: '瀏覽器下一頁',
@@ -1038,6 +1085,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
           shortcutsHelpOpen: '開啟快捷鍵說明',
           sessionNew: '建立新工作階段',
           sessionMruNext: '下一個最近工作階段',
+          sessionPendingNext: '下一個待處理請求',
           sessionMruPrevious: '上一個最近工作階段',
           sessionVisibleNext: '下一個可見工作階段',
           sessionVisiblePrevious: '上一個可見工作階段',
@@ -1589,6 +1637,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
       thinking: '正在思考…',
       speaking: '正在說話',
       microphonePermissionRequired: '需要麥克風權限',
+      microphoneBlocked: '麥克風被阻擋',
+      connectionError: '無法連線',
       interrupted: '已中斷',
       dictationNoSpeech: '未偵測到語音',
       dictationErrors: {
@@ -2432,12 +2482,19 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
       common: {
+        decrease: "減少",
+        increase: "增加",
           // Simple string constants
+          search: '搜尋',
           cancel: '取消',
           change: '變更',
           decline: '拒絕',
           submit: '提交',
           close: '關閉',
+          minimizeWindow: "最小化視窗",
+          maximizeWindow: "最大化視窗",
+          restoreWindow: "還原視窗",
+          closeWindow: "關閉視窗",
           open: '開啟',
           done: '完成',
           reorder: '重新排序',
@@ -2970,7 +3027,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         systemTaskStartFailed: '無法啟動系統任務。',
         appearance: '外觀',
         appearanceSubtitle: '自訂應用程式外觀',
-        voiceAssistant: '語音助理',
+        voiceAssistant: '語音',
         voiceAssistantSubtitle: '與你的代理對話，並向輸入框口述文字。',
         memorySearch: '本地記憶搜尋',
         memorySearchSubtitle: '在裝置本地搜尋過往對話',
@@ -4242,6 +4299,13 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
 	            desktopDotSubtitle: '在桌面上，當只有非數字的收件匣活動時顯示一個點',
 	        },
         local: {
+            conversation: {
+                handsFree: {
+                    enableTitle: '免持',
+                    silenceTitle: '回答前的停頓',
+                    minSpeechTitle: '忽略短於此時長的聲音',
+                },
+            },
             title: '此裝置的本機通知',
             footer: '這些控制會影響通知在此裝置上的顯示方式。',
             enabledSubtitle: '允許此裝置顯示本機通知',
@@ -6401,6 +6465,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
     universalSearch: {
+        content: fileContentSearchTranslations["zh-Hant"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: '請更新此機器上的 Happier 以搜尋提交。',
         moreResultsAvailable: '還有更多結果。請縮小搜尋範圍。',
@@ -6415,7 +6480,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
     commandPalette: {
-        placeholder: '輸入命令或搜尋...',
+        placeholder: fileContentSearchTranslations["zh-Hant"].placeholder,
         noCommandsFound: '找不到命令',
         activationFailed: '無法完成該命令。',
         shortcutsHelpTitle: '鍵盤快速鍵',
@@ -6866,6 +6931,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
     agentInput: {
+        promptPicker: promptPickerTranslations['zh-Hant'],
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已選擇。`,
         },
@@ -9223,9 +9289,9 @@ settingsSession: {
             },
             messageActions: {
               groupTitle: '訊息操作',
-              groupFooter: '設定逐字稿中的訊息選取與轉送操作。',
+              groupFooter: '選擇每則訊息下方顯示哪些操作。關閉的操作會從操作列和長按選單中移除。',
               selectionEnabled: {
-                title: '啟用訊息選取',
+                title: '選取',
                 subtitle: '在訊息下方顯示選取圖示，以便批次複製或轉送',
               },
               sendToSessionEnabled: {
@@ -9538,6 +9604,7 @@ settingsSession: {
         consoleSubtitle: '在標準的 Windows 主控台視窗中開啟工作階段。',
       },
   settingsVoice: {
+    ...voiceSettingsPagesTranslations['zh-Hant'],
     ...voiceDiagnosticsTranslations['zh-Hant'],
     intents: {
       dictation: { title: '聽寫', subtitle: '將一次口述轉換為輸入框中的文字。' },
@@ -9551,7 +9618,7 @@ settingsSession: {
             sectionFooter: '檢視或刪除無目標和全域語音對話的轉錄。',
             pageDescription: '來自全域語音以及在工作階段之外開始的對話的逐字稿。',
             entryTitle: '語音歷史',
-            entrySubtitle: '搜尋、匯出或清除已儲存的獨立語音轉錄。',
+            entrySubtitle: "搜尋、匯出或清除過去的語音對話。",
             searchTitle: '搜尋已載入的歷史',
             searchFooter: '搜尋僅使用已在此裝置解密的語音訊息。',
             searchPlaceholder: '搜尋轉錄或供應商',
@@ -9567,15 +9634,15 @@ settingsSession: {
             loadOlderFooter: '更早的訊息會保留在伺服器上，直到你載入或清除它們。',
             loadingOlder: '正在載入更早的訊息…',
             loadOlderFailed: '無法載入更早的語音歷史。',
-            exportTitle: '匯出語音歷史',
+            exportTitle: "匯出語音歷史",
             exportSubtitle: '載入其餘歷史並儲存為 JSON。',
             exporting: '正在準備匯出…',
             exportSucceeded: '語音歷史匯出已準備好。',
             exportFailed: '無法匯出語音歷史。',
-            clearTitle: '清除語音歷史',
+            clearTitle: "清除語音歷史",
             clearSubtitle: '刪除此帳戶的全部獨立語音歷史。',
             clearing: '正在清除語音歷史…',
-            clearConfirmTitle: '清除語音歷史？',
+            clearConfirmTitle: "清除語音歷史？",
             clearConfirmBody: '這會永久刪除此帳戶的全部獨立語音歷史，且無法復原。',
             clearConfirmAction: '清除歷史',
             clearSucceeded: '語音歷史已清除。',
@@ -9626,17 +9693,17 @@ settingsSession: {
         modeDescription: '設定語音功能。您可以完全關閉語音、使用 Happier Voice（需要訂閱），或使用您自己的 ElevenLabs 帳戶。',
         mode: {
             off: '關閉',
-            offSubtitle: '關閉所有語音功能',
-            happier: 'Happier Voice',
+            offSubtitle: "語音對話已關閉。聽寫仍可使用。",
+            happier: "Happier",
             happierSubtitle: '使用 Happier Voice（需要訂閱）',
             local: '本機 OSS 語音',
             localSubtitle: '使用本機 OpenAI 相容的 STT/TTS 端點',
-            byo: '使用我的 ElevenLabs',
+            byo: "我的 ElevenLabs 帳戶",
             byoSubtitle: '使用您自己的 ElevenLabs API 金鑰與代理',
             openaiRealtime: 'OpenAI Realtime',
             openaiRealtimeSubtitle: '使用已儲存的 API 金鑰或明確選取的 OpenAI 帳戶',
-            grokRealtime: 'Grok Voice · BYOK',
-            grokRealtimeSubtitle: '使用您自己的 xAI API 金鑰進行即時語音',
+            grokRealtime: "Grok Voice",
+            grokRealtimeSubtitle: "使用你的 xAI API 金鑰",
         },
         realtimeProviders: {
             ...voiceProviderPrivacyTranslations['zh-Hant'],
@@ -9660,6 +9727,13 @@ settingsSession: {
             activityFeedEnabledSubtitle: '使用語音時顯示最近的語音事件',
             activityFeedAutoExpandOnStart: '開始時自動展開',
             activityFeedAutoExpandOnStartSubtitle: '語音開始時自動展開活動流',
+            presenceContainer: {
+                title: "語音位置",
+                subtitle: "選擇語音在此裝置上的顯示位置。",
+                topBar: "頂部列",
+                island: "浮島",
+                orb: "懸浮球",
+            },
             orbEnabled: '懸浮語音球',
             orbEnabledSubtitle: '在此裝置上顯示可拖曳的語音夥伴。關閉後仍可從側欄與輸入框使用語音。',
             scopeTitle: '預設語音範圍',
@@ -9670,7 +9744,7 @@ settingsSession: {
             scopeSessionSubtitle: '在啟動語音的會話中進行控制',
         },
 	            byo: {
-	                title: '使用我的 ElevenLabs',
+	                title: "我的 ElevenLabs 帳戶",
 	                agentReuseDialog: {
 	                    title: 'Happier 代理已存在',
 	                    messageWithId: ({ name, id }: { name: string; id: string }) =>
@@ -9825,8 +9899,8 @@ settingsSession: {
                 },
 
                 provider: {
-                    title: '本機神經（測試版）',
-                    subtitle: 'Web 上使用 daemon 支援的 STT，在支援的環境中可選用原生 Sherpa 串流套件。',
+                    title: "Happier 語音模型",
+                    subtitle: "在你的電腦上執行，音訊留在你這裡。",
                     detail: 'Sherpa 引擎',
                 },},
             executionMachine: {
@@ -9835,7 +9909,7 @@ settingsSession: {
                 title: '執行機器',
                 fallbackSubtitle: '選擇用於本機語音的機器。',
                 autoTitle: '自動',
-                autoSubtitle: '根據最近的活動選擇可用機器。',
+                autoSubtitle: "為此帳戶選擇一次機器並繼續使用它。如果機器離線，請明確選擇另一台。",
                 onlineLabel: '在線',
                 offlineLabel: '離線',
                 unknownMachineLabel: '未知機器',
@@ -9851,9 +9925,9 @@ settingsSession: {
             mediatorPermissionReadOnly: '唯讀',
             mediatorPermissionNoTools: '不使用工具',
             mediatorIdleTtl: '中介閒置 TTL',
-            mediatorIdleTtlSubtitle: '閒置後自動停止（60–3600 秒）',
-            mediatorIdleTtlDescription: '請輸入 60 到 3600 之間的數字。',
-            mediatorIdleTtlInvalid: '請輸入 60 到 3600 之間的數字。',
+            mediatorIdleTtlSubtitle: "閒置後自動停止（60–21600 秒）",
+            mediatorIdleTtlDescription: "請輸入 60 到 21600 之間的數字。",
+            mediatorIdleTtlInvalid: "請輸入 60 到 21600 之間的數字。",
             chatBaseUrl: '聊天基礎 URL',
             chatBaseUrlTitle: '聊天基礎 URL',
             chatBaseUrlDescription: 'OpenAI 相容 chat completion 端點的 Base URL（通常以 /v1 結尾）。',
@@ -9946,9 +10020,9 @@ settingsSession: {
                     },
                 },
             },
-            deviceStt: '裝置 STT（實驗）',
+            deviceStt: "此裝置的語音辨識",
             deviceSttDetail: '裝置',
-            deviceSttSubtitle: '使用裝置端語音辨識，而不是 OpenAI 相容端點',
+            deviceSttSubtitle: "快速且免費。你的裝置或瀏覽器可能會把音訊傳送給其廠商進行辨識。",
             deviceTts: '裝置 TTS（實驗）',
             deviceTtsDetail: '裝置',
             deviceTtsSubtitle: '使用裝置端語音合成，而不是 OpenAI 相容端點',
@@ -10095,9 +10169,9 @@ settingsSession: {
             },
         },
         languageTitle: '語言',
-        languageDescription: '選擇您希望語音助理互動使用的語言。此設定將在您的所有裝置間同步。',
-        preferredLanguage: '偏好語言',
-        preferredLanguageSubtitle: '語音助理回應使用的語言',
+        languageDescription: "選擇語音服務支援的語言。部分服務使用同一種語言進行辨識和回覆。",
+        preferredLanguage: "回覆語言",
+        preferredLanguageSubtitle: "服務支援時使用的偏好回覆語言",
         language: {
             searchPlaceholder: '搜尋語言...',
             title: '語言',
@@ -10116,6 +10190,7 @@ settingsSession: {
     },
 
     settingsAccount: {
+        ...accountEncryptionRecoveryTranslations['zh-Hant'],
         providerCatalogUnavailable: '無法檢查可用的登入連線。',
         securityPageDescription: "此 Home 的登入方式、復原、工作階段與加密。",
         accountServiceUnsupportedTitle: ({ accountService }: { accountService: string }) => `${accountService} 暫時無法尋找 Home`,
@@ -10376,7 +10451,10 @@ settingsSession: {
         },
         defaultTitle: '新功能',
         onboardingShowcase: {
-            details: PRODUCT_STORY_DETAILS_ENGLISH,
+            details: {
+                ...PRODUCT_STORY_DETAILS_ENGLISH,
+                voice: { ...PRODUCT_STORY_DETAILS_ENGLISH.voice, body: "詢問工作階段的情況並討論下一步修改。權限請求仍需你點按核准。" },
+            },
                 "title": "歡迎使用 Happier",
                 "subtitle": "你的 AI 代理，出現在每個工作場景。",
                 "cards": {
@@ -10389,7 +10467,7 @@ settingsSession: {
                         "existingTitle": "既有工作階段，已經在那裡",
                         "existingBody": "任何在你機器上執行的 Claude、Codex 或 OpenCode 工作階段，都可以在 Happier 中即時開啟。",
                         "voiceTitle": "可以一起腦力激盪的語音助理",
-                        "voiceBody": "詢問代理正在做什麼，核准權限請求，並傳送訊息。全程免手動。",
+                        "voiceBody": "詢問代理的工作情況並透過語音傳送訊息。權限請求需要點按核准。",
                         "reviewTitle": "檢視 diff 並留下評論",
                         "reviewBody": "在檔案或 diff 的特定行做標記，選擇要傳送的備註，並直接交給代理。",
                         "subagentsTitle": "跨 provider 的 subagents",
@@ -10451,7 +10529,7 @@ settingsSession: {
                     "voiceAssistant": {
                         "title": "一位可以交談的同事",
                         "wideTitle": "語音助手：一位可以交談的同事",
-                        "body": "語音助理會監控所有正在執行的工作階段。一起腦力激盪下一步修改、核准權限，還有更多，全程免手動。",
+                        "body": "詢問工作階段的情況並討論下一步修改。權限請求仍需你點按核准。",
                         "alt": "語音助理的抽象佔位圖。"
                     },
                     "reviewComments": {
@@ -12180,6 +12258,24 @@ settingsSession: {
         browseActivityUnknown: "未知",
         browseSearchPlaceholder: "搜尋已載入的工作階段…",
         browseSearchAgentPlaceholder: ({ agent }: { agent: string }) => `搜尋 ${agent} 工作階段…`,
+        browseTitles: "標題",
+        browseConversations: "對話",
+        browseSearchTarget: "搜尋範圍",
+        browseContentPlaceholder: "搜尋對話文字…",
+        browseContentSearchPrompt: "輸入詞句，然後搜尋對話。",
+        browseContentSubmit: "搜尋",
+        browseContentUpdateRequired: ({ machine }: { machine: string }) => `請更新 ${machine} 上的 Happier 以搜尋對話。`,
+        browseContentPartial: "部分對話無法搜尋。",
+        browseContentNotSearchable: "無法搜尋",
+        browseContentStopped: "搜尋已停止。結果不完整。",
+        browseContentPaletteSearch: ({ query }: { query: string }) => `在 Claude Code 和 Codex 對話中搜尋「${query}」`,
+        browseContentOnMachine: ({ machine }: { machine: string }) => `${machine} 上的對話`,
+        browseContentOpen: "在 Happier 中開啟",
+        browseContentShow: "在外部工作階段中顯示",
+        browseContentPreviewOpens: ({ query }: { query: string }) => `在此訊息處開啟對話，並尋找「${query}」。`,
+        browseContentPreviewEmpty: "符合的訊息會顯示在這裡。",
+        browseContentMore: "搜尋更多對話",
+        browseContentBack: "返回搜尋",
         browseNoSearchResults: "目前沒有已載入的工作階段符合此搜尋。",
         browseIndexing: "正在為外部工作階段建立索引…",
         browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `已建立索引 ${scanned}/${total} 個工作階段`,
@@ -12258,3 +12354,5 @@ settingsSession: {
 
 export const zhHant = deepMerge(zhHans, zhHantOverrides);
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
+import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
+import { glassAppearanceTranslations } from './glassAppearanceTranslations';

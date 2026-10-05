@@ -14,6 +14,7 @@ export type ThemeColorTokenGroup =
     | 'syntax'
     | 'versionControl'
     | 'diff'
+    | 'find'
     | 'permission'
     | 'overlay';
 
@@ -97,6 +98,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'state.warning.foreground', path: ['state', 'warning', 'foreground'], group: 'state', label: 'Warning foreground', description: 'Warning icons, labels, and caution indicators.', valueKind: 'color', contrastPairs: stateContrast('state.warning.background') }),
     defineEditableThemeColorToken({ id: 'state.warning.background', path: ['state', 'warning', 'background'], group: 'state', label: 'Warning background', description: 'Background for warning badges, notices, and pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.warning.border', path: ['state', 'warning', 'border'], group: 'state', label: 'Warning border', description: 'Border for warning badges, notices, and caution affordances.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'state.attention.foreground', path: ['state', 'attention', 'foreground'], group: 'state', label: 'Needs-you foreground', description: 'Ink for sessions waiting on you: the "N need you" pill, the phone count capsule and the Next capsule\'s dot and Go fill, drawn on a light tint of itself.', valueKind: 'color', contrastPairs: textOnCanvasAndSurface }),
     defineEditableThemeColorToken({ id: 'state.danger.foreground', path: ['state', 'danger', 'foreground'], group: 'state', label: 'Danger foreground', description: 'Danger, destructive, error, and delete icons or labels.', valueKind: 'color', contrastPairs: stateContrast('state.danger.background') }),
     defineEditableThemeColorToken({ id: 'state.danger.background', path: ['state', 'danger', 'background'], group: 'state', label: 'Danger background', description: 'Background for danger badges, error notices, and destructive state pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.danger.border', path: ['state', 'danger', 'border'], group: 'state', label: 'Danger border', description: 'Border for danger badges, error notices, and destructive state affordances.', valueKind: 'color' }),
@@ -172,6 +174,11 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'diff.inlineAdded.foreground', path: ['diff', 'inlineAdded', 'foreground'], group: 'diff', label: 'Inline added foreground', description: 'Foreground for inline added segments in diff views.', valueKind: 'color', contrastPairs: stateContrast('diff.inlineAdded.background') }),
     defineEditableThemeColorToken({ id: 'diff.inlineRemoved.background', path: ['diff', 'inlineRemoved', 'background'], group: 'diff', label: 'Inline removed background', description: 'Background for inline removed segments in diff views.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'diff.inlineRemoved.foreground', path: ['diff', 'inlineRemoved', 'foreground'], group: 'diff', label: 'Inline removed foreground', description: 'Foreground for inline removed segments in diff views.', valueKind: 'color', contrastPairs: stateContrast('diff.inlineRemoved.background') }),
+
+    defineEditableThemeColorToken({ id: 'find.matchAll', path: ['find', 'matchAll'], group: 'find', label: 'Find match', description: 'Tint behind every Find match in chat, terminal, diff and file views; the text keeps its own colour.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'find.matchCurrent', path: ['find', 'matchCurrent'], group: 'find', label: 'Current Find match', description: 'Solid fill behind the current Find match, the one the arrows step from.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'find.matchCurrentForeground', path: ['find', 'matchCurrentForeground'], group: 'find', label: 'Current Find match text', description: 'Text drawn on the current Find match fill.', valueKind: 'color', contrastPairs: stateContrast('find.matchCurrent') }),
+    defineEditableThemeColorToken({ id: 'find.overviewMark', path: ['find', 'overviewMark'], group: 'find', label: 'Find overview mark', description: 'Marks on the transcript scroll track showing where the Find matches are.', valueKind: 'color' }),
 
     defineEditableThemeColorToken({ id: 'permission.default', path: ['permission', 'default'], group: 'permission', label: 'Default permission', description: 'Default permission-mode color.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'permission.acceptEdits', path: ['permission', 'acceptEdits'], group: 'permission', label: 'Accept-edits permission', description: 'Permission-mode color for accepting edits.', valueKind: 'color' }),

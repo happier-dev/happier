@@ -11,12 +11,6 @@ const motionPreference = vi.hoisted(() => ({ reduced: false }));
 const startedAnimations = vi.hoisted(() => ({ count: 0 }));
 
 installNavigationCommonModuleMocks({
-    typography: async () => ({
-        Typography: {
-            default: () => ({}),
-            tabular: () => ({}),
-        },
-    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         const base = await createReactNativeWebMock({});
@@ -52,6 +46,9 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => motionPreference.reduced,
 }));
 
+// Resolve the real graph after boundary options are installed, during suite collection.
+const { TranscriptNavigationEntryList } = await import('./TranscriptNavigationEntryList');
+
 function entry(overrides: Partial<TranscriptNavigationEntry> & Pick<TranscriptNavigationEntry, 'id' | 'seq'>): TranscriptNavigationEntry {
     return {
         id: overrides.id,
@@ -82,7 +79,6 @@ async function renderTimeline(params: Readonly<{
     visibleEntryIds?: readonly string[];
     newestTurn?: 'working' | 'waiting' | null;
 }>) {
-    const { TranscriptNavigationEntryList } = await import('./TranscriptNavigationEntryList');
     return renderScreen(
         <TranscriptNavigationEntryList
             entries={params.entries}
@@ -100,6 +96,21 @@ function atLocal(year: number, month: number, day: number, hour: number): number
 }
 
 describe('TranscriptNavigationEntryList timeline', () => {
+    it('keeps the newest waiting turn present with now and an elapsed counter until it ends', async () => {
+        standardCleanup();
+        const screen = await renderTimeline({
+            entries: [entry({ id: 'waiting', seq: 1, createdAtMs: Date.now() - 134_000, facts: facts({ approvals: [{ outcome: 'pending', label: 'yarn test' }] }) })],
+            newestTurn: 'waiting',
+        });
+        expect(screen.getTextContent()).toContain('session.transcriptNavigation.now');
+        expect(screen.getTextContent()).toMatch(/2:1[4-9]/);
+        standardCleanup();
+        const ended = await renderTimeline({
+            entries: [entry({ id: 'waiting', seq: 1, createdAtMs: Date.now() - 134_000, facts: facts({ approvals: [{ outcome: 'pending', label: 'yarn test' }], endedAtMs: Date.now() - 1_000 }) })],
+        });
+        expect(ended.getTextContent()).not.toContain('session.transcriptNavigation.now');
+        expect(ended.getTextContent()).not.toMatch(/2:1[4-9]/);
+    });
     it('marks the reader position, pinned turns, and plain turns with distinct rail nodes', async () => {
         standardCleanup();
         const screen = await renderTimeline({
@@ -191,7 +202,7 @@ describe('TranscriptNavigationEntryList timeline', () => {
             ],
         });
         expect(screen.findByTestId('nav-entry-facts:known')).toBeTruthy();
-        expect(screen.findByTestId('nav-entry-facts:quiet')).toBeNull();
+        expect(screen.findHostByTestId('nav-entry-facts:quiet')).toBeNull();
         expect(screen.findByTestId('nav-entry-facts:unknown')).toBeNull();
         const text = screen.getTextContent();
         expect(text).toContain('session.transcriptNavigation.toolCount');

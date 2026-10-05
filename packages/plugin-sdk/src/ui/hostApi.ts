@@ -1,3 +1,19 @@
+import type { EntityDragItemV1 } from '../entityDragDrop.js';
+import type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
+export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
+import type {
+    PluginUiReadEntityDragItemRequestV1,
+    PluginUiUpdateEntityDragDropRequestV1,
+    PluginUiUpdateEntityDragDropResultV1,
+    PluginUiWatchEntityDragDropRequestV1, PluginUiEntityDragDropStateV1,
+} from '../entityDragDrop.js';
+export type {
+    PluginUiWatchEntityDragDropRequestV1, PluginUiEntityDragDropStateV1,
+    PluginUiEntityDropDestinationV1,
+    PluginUiReadEntityDragItemRequestV1,
+    PluginUiUpdateEntityDragDropRequestV1,
+    PluginUiUpdateEntityDragDropResultV1,
+} from '../entityDragDrop.js';
 import type {
     PluginActionInputById,
     PluginActionResultById,
@@ -454,6 +470,17 @@ export type OpenConnectedAccountsRequest =
     }>;
 
 export interface PluginUiHostApi {
+    /**
+     * Native/declarative page areas use this shared host binding; the host stamps identity and
+     * delegates to canonical widget Actions. Hosted HTML cannot embed host areas: this method is
+     * unsupported there, and hosted plugins manage widgets through ordinary `widgets.*` Actions.
+     */
+    widgetArea(request: PluginUiWidgetAreaRequestV1, options?: PluginCancellationOptions): Promise<PluginUiWidgetAreaResultV1>;
+    /** Host-built identity for the exact Session this physical mount answers for. */
+    readEntityDragItem(request: PluginUiReadEntityDragItemRequestV1, options?: PluginCancellationOptions): Promise<EntityDragItemV1 | null>;
+    /** Hosted source/target events join the mounted host's shared drag owner. */
+    updateEntityDragDrop(request: PluginUiUpdateEntityDragDropRequestV1, options?: PluginCancellationOptions): Promise<PluginUiUpdateEntityDragDropResultV1>;
+    watchEntityDragDrop(request: PluginUiWatchEntityDragDropRequestV1, listener: (state: PluginUiEntityDragDropStateV1) => void, options?: PluginCancellationOptions): Promise<Disposable>;
     /** Reads a native Session-image artifact from this mount's successfully delivered Action results under Sessions READ scope. */
     readStoredImage(image: StoredImageRefV1, options?: PluginCancellationOptions): Promise<PluginUiReadStoredImageResultV1>;
     version(): Readonly<{
@@ -590,6 +617,9 @@ export interface PluginUiHostApi {
      * Ordinary plugin-local confirmation, delegated to Happier's own interaction
      * owner (§3.4). Declining resolves `false`; it never throws to express the
      * user's answer.
+     * With `action`, a direct UI mutation uses that contributed Action's manifest
+     * default and the user's invoking-surface approval setting. A waiver resolves
+     * true without a dialog; an unavailable Action policy rejects without a write.
      *
      * Withdrawing the question through `signal` is not an answer: the dialog is
      * dismissed, a late answer to it is inert, and the call rejects with a typed
@@ -597,7 +627,7 @@ export interface PluginUiHostApi {
      */
     confirm(
         message: string,
-        options?: Readonly<{ title?: string; signal?: AbortSignal }>,
+        options?: Readonly<{ title?: string; signal?: AbortSignal; action?: PluginReference }>,
     ): Promise<boolean>;
     /**
      * Observe a resource for invalidation (§3.6). Same acknowledged-async

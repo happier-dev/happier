@@ -90,6 +90,26 @@ export function selectVoiceSpeechProvider(
   return seedVoiceProviderSettingsDefault(settings, entry);
 }
 
+/** Dictation's engine selector also owns its explicit-versus-linked binding. */
+export function applyVoiceDictationEngineChoice(
+  settings: VoiceSettings,
+  registry: VoiceProviderRegistry,
+  choice: string,
+): VoiceSettings | null {
+  if (choice === 'same_as_local') return {
+    ...settings, dictation: { ...settings.dictation, sttBinding: 'same_as_local' },
+  };
+  const selected = selectVoiceSpeechProvider(settings, registry, choice, 'dictation_stt');
+  if (!selected) return null;
+  return {
+    ...selected,
+    dictation: {
+      ...settings.dictation, sttBinding: 'explicit',
+      stt: { ...settings.dictation.stt, provider: choice },
+    },
+  };
+}
+
 export function projectVoiceProviderSelectionRows(
   settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
   registry: VoiceProviderRegistry,

@@ -358,6 +358,7 @@ export type SessionLoopLifecycleParams = Readonly<{
   config: HostSessionRuntimeConfig;
   api: HostSessionRuntimeLoopApi;
   session: ApiSessionClient;
+  sessionIsNew?: boolean;
   runtime: RuntimeTurnOperations;
   hookRuntime: HostSessionRuntimeHookRuntime;
   registerProviderAcceptedEffect: (
@@ -519,6 +520,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   }) ?? null;
   const checkpointLifecycle = configuredCheckpointLifecycle ?? createRepositoryCheckpointPromptLifecycle({
     session: params.session,
+    sessionIsNew: params.sessionIsNew,
     runtimeDirectory: params.runtimeDirectory,
     provider: params.config.agentMessageType,
     protocol: toolNormalizationProtocol,

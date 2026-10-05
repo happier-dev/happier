@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor, createUnavailableRuntimeActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 import { createComputerRuntimeActionExecutor, type ComputerMachineRpc } from './runtimeActionExecutor';
 
@@ -12,10 +12,11 @@ const selected = {
 };
 
 function executorWith(machine: ComputerMachineRpc) {
+    // Only the computer transport is used; other host-effect dependencies are outside this fixture.
     // The machine RPC is the network boundary; the canonical Action front door runs for real above it.
     return createActionExecutor({
         runtimeActionExecute: createComputerRuntimeActionExecutor({ executeOnMachine: machine, fallback: createUnavailableRuntimeActionExecutor() }),
-    });
+    } as ActionExecutorDeps);
 }
 
 describe('computer runtime Actions from Happier', () => {

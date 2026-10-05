@@ -134,6 +134,7 @@ function listRequest(overrides: Readonly<{
     deadlineAtMs: overrides.deadlineAtMs ?? Date.now() + 10_000,
     signal: overrides.signal ?? new AbortController().signal,
     exec: services.exec,
+    ripgrep: { run: async () => { throw new Error('ACP sources have no file corpus'); } },
     managedEndpointRead: async () => {
       throw new Error('This ACP listing source reaches its Agent directly');
     },

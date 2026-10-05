@@ -4,11 +4,13 @@ import type { Metadata } from '@/api/types';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import {
   readTerminalHostAttachmentInfo as readDefaultTerminalHostAttachmentInfo,
+  readTerminalHostAttachmentState,
   removeTerminalHostAttachmentInfo as removeDefaultTerminalHostAttachmentInfo,
-  type BoundTerminalHostAttachmentInfo,
+  type ExactTerminalHostAttachmentInfo,
   type TerminalHostAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
+import { readTerminalClientProcessState } from '@/terminal/host/terminalClientCustody';
 import { logger } from '@/ui/logger';
 import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
 
@@ -38,7 +40,16 @@ export type DisconnectedTerminalHostSupervisionResult =
 
 export function resolveDisconnectedTerminalHostResumeGate(
   result: DisconnectedTerminalHostSupervisionResult,
-): Readonly<{ action: 'resume' }> | Readonly<{ action: 'fence'; reason: string }> {
+  recovery?: Readonly<{
+    controlDescriptorAvailable?: boolean;
+    retainedTerminalRecovery?: NonNullable<Awaited<ReturnType<typeof resolveTrackedSessionTerminalPresentation>>>['retainedTerminalRecovery'];
+  }>,
+): Readonly<{ action: 'resume'; retainedTerminalRecovery?: 'adopt' }> | Readonly<{ action: 'fence'; reason: string }> {
+  const admittedRecovery = result.state === 'recoverable_unservable'
+    && result.reason === 'runner_absent'
+    && recovery?.controlDescriptorAvailable === true
+    && recovery.retainedTerminalRecovery === 'adopt';
+  if (admittedRecovery) return { action: 'resume', retainedTerminalRecovery: 'adopt' };
   return result.state === 'stopped' || result.state === 'servable'
     ? { action: 'resume' }
     : { action: 'fence', reason: result.reason };
@@ -52,6 +63,22 @@ export async function shouldRetainTrackedTerminalHostExitMarker(input: Readonly<
   happyHomeDir: string;
 }>): Promise<boolean> {
   const tracked = input.tracked;
+  const sessionId = tracked.happySessionId?.trim();
+  if (sessionId) {
+    const attachment = await readTerminalHostAttachmentState({ happyHomeDir: input.happyHomeDir, sessionId });
+    const presentation = await resolveTrackedSessionTerminalPresentation(
+      tracked, attachment.status === 'present' ? attachment.info.handle.kind : 'plain',
+    );
+    if (presentation?.kind === 'provider_attach') {
+      if (attachment.status === 'unreadable') {
+        logger.infoFile('[DAEMON RUN] Retaining runner-exit marker because terminal custody is unreadable', {
+          sessionId, reason: attachment.reason,
+        });
+        return true;
+      }
+      return attachment.status === 'present' && attachment.info.version !== 3;
+    }
+  }
   if (tracked.publishedTerminalControlServiceabilityAttachmentLifecycle === 'borrowed') return false;
   const terminal = tracked.happySessionMetadataFromLocalWebhook?.terminal ?? tracked.hostedTerminal;
   return Boolean(tracked.publishedTerminalControlServiceabilityAttachmentId)
@@ -104,7 +131,29 @@ export async function superviseTrackedOptionalTerminalPresentation(input: Readon
   const sessionId = input.tracked.happySessionId;
   if (!sessionId || !input.isCurrent()) return;
   const attachment = await readDefaultTerminalHostAttachmentInfo({ happyHomeDir: input.happyHomeDir, sessionId });
-  if (!input.isCurrent() || attachment?.version !== 2) return;
+  if (!input.isCurrent()) return;
+  if (attachment?.version === 3 && attachment.nativeClientProcess) {
+    if (await readTerminalClientProcessState(attachment.nativeClientProcess) !== 'dead' || !input.isCurrent()) return;
+    const terminalMode = resolveDisconnectedTerminalMode({
+      terminal: input.tracked.happySessionMetadataFromLocalWebhook?.terminal ?? input.tracked.hostedTerminal,
+      hostKind: attachment.handle.kind, attachmentId: attachment.attachmentId,
+    });
+    if (!terminalMode) return;
+    const result = await executeTerminalHostDisposition({
+      happyHomeDir: input.happyHomeDir, sessionId, expectedAttachmentId: attachment.attachmentId,
+      intent: { kind: 'release_borrowed_host', reason: 'provider_exit' },
+      beforeDescriptorRetirement: async (fact) => {
+        if (!input.isCurrent()) throw new Error('Optional terminal presentation owner changed');
+        await input.retireExactTerminalControlServiceability({ ...fact, terminalMode });
+      },
+    });
+    if (result.status !== 'retired') logger.infoFile('[DAEMON RUN] Borrowed native presentation retirement is incomplete', {
+      sessionId, attachmentId: attachment.attachmentId, status: result.status,
+      ...(result.status === 'parked' ? { reason: result.reason } : {}),
+    });
+    return;
+  }
+  if (attachment?.version !== 2) return;
   if ((await resolveTrackedSessionTerminalPresentation(input.tracked, attachment.handle.kind))?.kind !== 'provider_attach'
     || !input.isCurrent()) return;
   const adapters = await input.loadTerminalHostAdapters();
@@ -152,7 +201,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   retireExactTerminalControlServiceability?: (input: Readonly<{
     happyHomeDir: string;
     sessionId: string;
-    attachmentInfo: BoundTerminalHostAttachmentInfo;
+    attachmentInfo: ExactTerminalHostAttachmentInfo;
     terminalMode: TerminalMode;
   }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
 }>): Promise<DisconnectedTerminalHostSupervisionResult> {

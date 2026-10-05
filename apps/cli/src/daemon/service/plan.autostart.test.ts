@@ -38,10 +38,19 @@ describe('daemon service login trigger', () => {
   });
   it('registers a Windows task without a login trigger that can still run explicitly', () => {
     const plan = planDaemonServiceInstall({ ...base, platform: 'win32', autostart: 'on-demand' });
-    const create = plan.commands.find(c => c.cmd === 'schtasks' && c.args.includes('/Create'))!;
-    expect(create.args).toContain('ONCE');
-    expect(create.args).not.toContain('ONLOGON');
+    const create = plan.commands.find(c => c.cmd === 'powershell.exe' && String(c.args.at(-1)).includes('RegisterTask'))!;
+    expect(create.args.at(-1)).toContain('<Triggers/>');
+    expect(create.args.at(-1)).toContain('<LogonType>InteractiveToken</LogonType>');
+    expect(create.args.at(-1)).not.toContain('LogonTrigger');
     expect(lines(plan)).toContain('schtasks /Run /TN Happier\\happier-daemon.cloud');
+  });
+  it('scopes the Windows login task to the invoking interactive user', () => {
+    const plan = planDaemonServiceInstall({ ...base, platform: 'win32', managedBy: 'desktop', bundleId: 'dev.happier.app' });
+    const registration = plan.commands.find(c => String(c.args.at(-1)).includes('RegisterTask'))!;
+    expect(registration.args.at(-1)).toContain('$xml.Task.Triggers.LogonTrigger.UserId = $userId');
+    expect(registration.args.at(-1)).toContain('<RunLevel>LeastPrivilege</RunLevel>');
+    expect(plan.files[0]!.content).toContain('HAPPIER_DAEMON_SERVICE_MANAGED_BY');
+    expect(plan.files[0]!.content).toContain('HAPPIER_DAEMON_SERVICE_BUNDLE_ID');
   });
   it('preserves explicit disabled-service convergence independently of the login trigger', () => {
     const plan = planDaemonServiceInstall({ ...base, platform: 'darwin', autostart: 'on-demand', enablement: 'disabled' });

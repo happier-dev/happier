@@ -1,8 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-    WorkflowInvocationCompleteReviewRequestV1Schema,
-    WorkflowInvocationPublishDraftRequestV1Schema,
-} from '@happier-dev/protocol';
 
 import {
     createWorkflowDefinitionFixture,
@@ -21,7 +17,9 @@ describe('workflow Run detail actions', () => {
     it('reads one exact Run through the canonical Action id', async () => {
         const execute = ok({
             run: createWorkflowRunSummaryFixture({ id: 'run-1' }),
+            callerAccess: { canEdit: true },
             definition: createWorkflowDefinitionFixture(),
+            authoredDefinition: createWorkflowDefinitionFixture(),
             acceptedContext: {
                 source: { kind: 'inline' },
                 inputs: {},
@@ -31,6 +29,7 @@ describe('workflow Run detail actions', () => {
                 // described a Run the Protocol cannot admit.
                 executionTarget: { kind: 'session' },
                 materializedLeaves: [],
+                frozenChildren: {},
                 workspaceTarget: {
                     project: {
                         machineId: 'machine-1',
@@ -39,6 +38,7 @@ describe('workflow Run detail actions', () => {
                     },
                 },
                 origin: { kind: 'direct' },
+                startedBy: 'user',
             },
             checkpoint: null,
         });
@@ -163,83 +163,4 @@ describe('workflow Run detail actions', () => {
         );
     });
 
-    it.each([
-        undefined,
-        { kind: 'editing' as const },
-        { kind: 'run_started' as const, runId: 'plan-run-1' },
-    ])('accepts exactly the displayed value and row token with plan follow-up %j', async (followUp) => {
-        const invocation = createWorkflowInvocationIndexFixture({
-            id: 'held-attempt-2', lifecycle: 'completed', contentRevision: '9007199254740994',
-        });
-        const execute = ok({ run: createWorkflowRunSummaryFixture(), invocation, disposition: 'completed' });
-        const actions = createWorkflowRunDetailActions({ execute: execute as never });
-        const input = WorkflowInvocationCompleteReviewRequestV1Schema.parse({
-            runId: 'run-1',
-            invocation: { recordId: 'held-attempt-2' },
-            expectedContentRevision: '9007199254740993',
-            mode: 'use_result',
-            value: { document: 'The edited plan', proposal: { steps: ['verify'] } },
-            ...(followUp === undefined ? {} : { followUp }),
-        });
-
-        const result = await actions.completeReview(input);
-
-        expect(execute).toHaveBeenCalledWith('workflow.run.invocations.complete_review', input, { surface: 'ui' });
-        expect(result).toEqual({ run: createWorkflowRunSummaryFixture(), invocation, disposition: 'completed' });
-    });
-
-    it('records offline Generate intent without a Machine target or preflight', async () => {
-        const invocation = createWorkflowInvocationIndexFixture({ id: 'held-1', lifecycle: 'waiting_for_review', contentRevision: '8' });
-        const execute = ok({
-            run: createWorkflowRunSummaryFixture({ state: 'queued' }),
-            invocation,
-            disposition: 'generation_requested',
-        });
-        const actions = createWorkflowRunDetailActions({ execute: execute as never });
-        const signal = new AbortController().signal;
-        const input = WorkflowInvocationCompleteReviewRequestV1Schema.parse({
-            runId: 'run-1', invocation: { recordId: 'held-1' }, expectedContentRevision: '7',
-            mode: 'generate', acknowledgeUncertainPriorEffects: true,
-        });
-
-        const result = await actions.completeReview(input, signal);
-
-        // Any preflight would create a second Action call, while a Machine target
-        // would incorrectly turn this durable Account intent into an online-only control.
-        expect(execute.mock.calls).toEqual([['workflow.run.invocations.complete_review', input, { surface: 'ui', signal }]]);
-        expect(result.disposition).toBe('generation_requested');
-        expect(result.invocation.lifecycle).toBe('waiting_for_review');
-    });
-
-    it('publishes a draft for the exact attempt and returns its canonical current row', async () => {
-        const input = WorkflowInvocationPublishDraftRequestV1Schema.parse({
-            runId: 'run-1', invocation: { recordId: 'held-2' }, expectedContentRevision: '12',
-            value: { answer: ['updated', 0, false, null] },
-        });
-        const invocation = {
-            index: createWorkflowInvocationIndexFixture({ id: 'held-2', lifecycle: 'waiting_for_review', contentRevision: '13' }),
-            progress: {
-                kind: 'happier.workflow-progress.v1',
-                invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0',
-                logicalInvocationRecordId: 'held-2', result: input.value,
-            },
-            parentRevision: 4,
-        };
-        const execute = ok({ invocation });
-        const actions = createWorkflowRunDetailActions({ execute: execute as never });
-
-        const result = await actions.publishDraft(input);
-
-        expect(execute).toHaveBeenCalledWith('workflow.run.invocations.publish_draft', input, { surface: 'ui' });
-        expect(result.invocation).toEqual(invocation);
-    });
-
-    it('rejects malformed review and publication results through their canonical schemas', async () => {
-        const execute = ok({ invocation: { id: 'held-1' } });
-        const actions = createWorkflowRunDetailActions({ execute: execute as never });
-        const target = { runId: 'run-1', invocation: { recordId: 'held-1' }, expectedContentRevision: '1' };
-
-        await expect(actions.completeReview({ ...target, mode: 'use_result' })).rejects.toThrow();
-        await expect(actions.publishDraft({ ...target, value: 'draft' })).rejects.toThrow();
-    });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { resolveRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/resolveRepoWorktreeSelection';
 
 import {
     PROJECT_ROUTE_ROOT_SENTINEL,
@@ -9,6 +10,7 @@ import {
     resolveProjectOpenHref,
     migrateProjectRouteSegmentToMobileSurface,
     readProjectRouteWorktreeSelection,
+    resolveProjectCockpitIndexRedirectHref,
     resolveProjectRouteSegment,
     resolveProjectRouteHeaderTitle,
 } from './projectRouteState';
@@ -24,6 +26,65 @@ const workspaceRef: WorkspaceRefV1 = {
 };
 
 describe('projectRouteState', () => {
+    it.each(['browser', 'services'] as const)('settles canonical %s index routes and normalizes an omitted surface hint once', (surface) => {
+        const selection = readProjectRouteWorktreeSelection({
+            rawWorktreeId: PROJECT_ROUTE_ROOT_SENTINEL,
+            defaultRootPath: workspaceRef.rootPath,
+        });
+        const input = {
+            workspaceRefId: workspaceRef.id, surface,
+            ...selection,
+            activeRootPath: workspaceRef.rootPath,
+            defaultRootPath: workspaceRef.rootPath,
+            activeWorktreeId: null,
+        };
+        expect(resolveProjectCockpitIndexRedirectHref({ ...input, explicitMobileSurfaceHint: surface })).toBeNull();
+        const href = resolveProjectCockpitIndexRedirectHref({ ...input, explicitMobileSurfaceHint: null });
+        expect(href).toBe(`/projects/wr_1?worktreeId=%40root&mobileSurface=${surface}`);
+        const url = new URL(href!, 'https://app.happier.test');
+        expect(resolveProjectCockpitIndexRedirectHref({
+            ...input,
+            ...readProjectRouteWorktreeSelection({
+                rawWorktreeId: url.searchParams.get('worktreeId') ?? undefined,
+                defaultRootPath: workspaceRef.rootPath,
+            }),
+            explicitMobileSurfaceHint: url.searchParams.get('mobileSurface'),
+        })).toBeNull();
+    });
+
+    it.each([
+        ['git', 'git'], ['browse', 'files'], ['tabs', 'details'], ['terminal', 'terminal'],
+    ] as const)('continues redirecting the persisted %s index surface to its %s leaf', (surface, leaf) => {
+        expect(resolveProjectCockpitIndexRedirectHref({
+            workspaceRefId: workspaceRef.id, surface, explicitMobileSurfaceHint: surface,
+            requestedRootPath: workspaceRef.rootPath, requestedWorktreeId: null,
+            activeRootPath: workspaceRef.rootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId: null,
+        })).toBe(`/projects/wr_1/${leaf}?worktreeId=%40root`);
+    });
+
+    it('repairs an invalid worktree on a hosted index surface and settles the canonical worktree selection', () => {
+        const availableWorktrees = [{ id: 'gitwt_feature', path: '/Users/test/repo/.worktrees/feature-auth' }];
+        const requested = readProjectRouteWorktreeSelection({
+            rawWorktreeId: 'gitwt_deleted', defaultRootPath: workspaceRef.rootPath,
+        });
+        const resolved = resolveRepoWorktreeSelection({ ...requested, defaultRootPath: workspaceRef.rootPath, availableWorktrees });
+        const input = {
+            workspaceRefId: workspaceRef.id, surface: 'browser' as const, explicitMobileSurfaceHint: 'browser',
+            ...requested, activeRootPath: resolved.resolvedRootPath,
+            activeWorktreeId: resolved.resolvedWorktreeId, defaultRootPath: workspaceRef.rootPath,
+        };
+        expect(resolveProjectCockpitIndexRedirectHref(input)).toBe('/projects/wr_1?worktreeId=%40root&mobileSurface=browser');
+        expect(resolveProjectCockpitIndexRedirectHref({ ...input, requestedWorktreeId: null })).toBeNull();
+        const selected = readProjectRouteWorktreeSelection({
+            rawWorktreeId: 'gitwt_feature', defaultRootPath: workspaceRef.rootPath,
+            persistedActiveRootPath: availableWorktrees[0].path, persistedWorktreeId: 'gitwt_feature',
+        });
+        const canonical = resolveRepoWorktreeSelection({ ...selected, defaultRootPath: workspaceRef.rootPath, availableWorktrees });
+        expect(resolveProjectCockpitIndexRedirectHref({
+            ...input, ...selected, activeRootPath: canonical.resolvedRootPath, activeWorktreeId: canonical.resolvedWorktreeId,
+        })).toBeNull();
+    });
+
     it('reads explicit root and persisted route selections', () => {
         expect(readProjectRouteWorktreeSelection({
             rawWorktreeId: PROJECT_ROUTE_ROOT_SENTINEL,

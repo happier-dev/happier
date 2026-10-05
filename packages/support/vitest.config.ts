@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -28,6 +29,7 @@ export default defineConfig({
     },
   ], 'happier-support-workspace-package-sources')],
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
     exclude: ['dist/**', 'node_modules/**'],

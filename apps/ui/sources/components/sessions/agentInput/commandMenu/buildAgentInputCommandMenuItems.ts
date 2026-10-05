@@ -28,8 +28,9 @@ import { t } from '@/text';
  */
 export function buildAgentInputCommandMenuItems(
     suggestions: readonly AutocompleteSuggestion[],
+    options?: Readonly<{ includePromptPicker?: boolean }>,
 ): readonly CommandMenuItem[] {
-    return suggestions.map((suggestion): CommandMenuItem => {
+    const items = suggestions.map((suggestion): CommandMenuItem => {
         const kind = resolveComposerSuggestionKind(suggestion.kind);
         const component = suggestion.component;
 
@@ -44,4 +45,8 @@ export function buildAgentInputCommandMenuItems(
             meta: suggestion,
         };
     });
+    if (options?.includePromptPicker) {
+        items.push({ id: 'prompt-picker', label: t('agentInput.promptPicker.menu'), meta: { kind: 'promptPicker' } });
+    }
+    return items;
 }

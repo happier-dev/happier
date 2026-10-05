@@ -206,9 +206,9 @@ export function useSessionPublicLinkController(input: SessionPublicLinkControlle
         } catch (error) {
             if (!created) {
                 if (error instanceof SessionAccessApprovalPendingError && isCurrent()) {
-                    // Approval settles at its trusted host. That host must have
-                    // local link custody; neither the approval result nor a
-                    // subsequent settings read can return the fragment secret.
+                    // Approval settles at its trusted host and returns the link
+                    // to its caller. This sheet reloads publication settings;
+                    // that read cannot recover the fragment secret.
                     holdForApproval(error, 'session.public_link.create', { sessionId, ...input }, reload);
                     return null;
                 }

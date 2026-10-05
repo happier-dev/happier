@@ -3,6 +3,7 @@ import {
   type ActionExecuteResult,
   type ActionExecutorContext,
   type ActionId,
+  type ActionCaller,
   type ActionExecutorDeps,
   type WorkflowRunStartedByV1,
   resolveWorkflowRunStartedByForActionCallerV1,
@@ -43,6 +44,8 @@ const BUILT_IN_ACTION_IDS = new Set<string>(ACTION_IDS);
 export function createDaemonPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution?: PluginActionExecutionRequestOwner;
+  /** Exact caller bound by the host, never inferred from a requested target or surface. */
+  getInitiatingActionCaller?: () => ActionCaller | null;
   /** Host-stamped descriptive starter; never an authorization principal. */
   startedBy?: WorkflowRunStartedByV1;
 }>): PluginActionExecutor {
@@ -50,6 +53,7 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
     base: params.base,
     requestPluginActionExecution: params.requestPluginActionExecution
       ?? requestDaemonPluginActionExecution,
+    ...(params.getInitiatingActionCaller ? { getInitiatingActionCaller: params.getInitiatingActionCaller } : {}),
     ...(params.startedBy ? { startedBy: params.startedBy } : {}),
   });
 }
@@ -62,12 +66,14 @@ export type PluginActionExecutionRequestOwner = (request: Readonly<{
     /** Bounded host-stamped descriptive fact; never permission ancestry. */
     startedBy?: WorkflowRunStartedByV1;
     expectedContributorOccurrenceId?: string;
+    requiredDangerLevel?: 'safe';
   }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<PluginActionExecutionAttempt>;
 
 /** Routes dynamic/meta Actions to one explicit execution owner before the built-in executor. */
 export function createPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution: PluginActionExecutionRequestOwner;
+  getInitiatingActionCaller?: () => ActionCaller | null;
   /** Host-stamped descriptive fallback; an exact context caller takes precedence. */
   startedBy?: WorkflowRunStartedByV1;
 }>): PluginActionExecutor {
@@ -76,11 +82,17 @@ export function createPluginActionExecutor(params: Readonly<{
   ) => {
     const surface: 'cli' | 'mcp' | 'agent' = context?.surface === 'mcp'
       ? 'mcp' : context?.surface === 'agent' ? 'agent' : 'cli';
-    const startedBy = context?.actionCaller
-      ? resolveWorkflowRunStartedByForActionCallerV1(context.actionCaller)
+    const admittingCaller = context?.actionCaller ?? params.getInitiatingActionCaller?.();
+    if (params.getInitiatingActionCaller && !admittingCaller) return {
+      matched: true as const,
+      result: { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' },
+    };
+    const startedBy = admittingCaller
+      ? resolveWorkflowRunStartedByForActionCallerV1(admittingCaller)
       : params.startedBy;
     const request = {
       actionId, input, surface,
+      ...(context?.requiredContributedActionDangerLevel ? { requiredDangerLevel: context.requiredContributedActionDangerLevel } : {}),
       ...(startedBy ? { startedBy } : {}),
       ...(typeof context?.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
       ...(typeof context?.expectedContributorOccurrenceId === 'string'
@@ -95,7 +107,9 @@ export function createPluginActionExecutor(params: Readonly<{
     invokeContributedAction: async (request) => {
       const attempt = await requestContributed('action.invoke', {
         action: request.action, input: request.input,
-      }, { ...request.context, ...(request.signal ? { signal: request.signal } : {}) });
+      }, { ...request.context,
+        ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
+        ...(request.signal ? { signal: request.signal } : {}) });
       // A nested invocation must never fall back to the same base Action owner.
       return attempt.matched ? attempt.result : {
         ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable',

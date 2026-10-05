@@ -60,13 +60,13 @@ export function useThisComputerCliUpdate(): ThisComputerCliUpdate {
         });
     }, [cliUpdate, errorMessage, keptCliUpdateCommand, machineId, running]);
 
-    const serverId = useActiveServerSnapshot().serverId;
+    const serverSnapshot = useActiveServerSnapshot();
     const activeScope = useActiveServerAccountScope();
-    const startContext = React.useMemo(() => activeScope?.serverId === serverId ? {
+    const startContext = React.useMemo(() => activeScope?.serverId === serverSnapshot.serverId ? {
         scope: activeScope,
         spec: buildLocalDaemonServiceSystemTaskSpec('cli.update.v1'),
         machineId,
-    } : null, [activeScope, machineId, serverId]);
+    } : null, [activeScope, machineId, serverSnapshot]);
     const run = React.useCallback(async () => {
         if (!startContext) return;
         await startLocalCliUpdate(runner, readLocalDaemonStatusData, startContext);

@@ -110,7 +110,9 @@ describe('mounted locale-narrowed daemon projection readers', () => {
             expect(hook.getCurrent().currentness.phase).toBe('current');
             expect(translatedTitle(hook.getCurrent().currentness.pluginUiProjection)).toBe('Bonjour');
             expect(hook.getCurrent().merged.phase).toBe('ready');
-            expect(translatedTitle(normalizePluginUiProjection(hook.getCurrent().merged.inputs?.pluginProjectionV2))).toBe('Bonjour');
+            const projection = hook.getCurrent().merged.inputs?.pluginProjectionV2;
+            if (!projection) throw new Error('Expected ready merged plugin projection');
+            expect(translatedTitle(normalizePluginUiProjection(projection))).toBe('Bonjour');
         });
         expect(hook.getCurrent().merged.inputs).not.toBe(englishInputs);
         expect(hook.getCurrent().currentness.pluginUiProjection).not.toBe(englishUi);

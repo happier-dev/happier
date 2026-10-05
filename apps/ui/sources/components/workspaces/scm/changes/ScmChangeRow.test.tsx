@@ -49,6 +49,7 @@ function createScmChangeRowTheme() {
                 link: '#09f',
             },
             state: {
+                active: { foreground: '#09f', background: '#eaf5ff' },
                 success: { foreground: '#0a0' },
                 danger: { foreground: '#a00' },
                 neutral: { foreground: '#b60' },
@@ -58,6 +59,11 @@ function createScmChangeRowTheme() {
 }
 
 describe('ScmChangeRow', () => {
+  it('keeps the conflict recovery visible without hover', async () => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const screen = await renderScreen(<ScmChangeRow theme={createScmChangeRowTheme()} layout="stacked" onPress={() => {}} trailingElement={<RNPressable testID="conflict-open" />} file={{ fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'conflicted', isIncluded: false, linesAdded: 0, linesRemoved: 0 }} />);
+    expect(screen.findAllHostsByTestId('conflict-open')).toHaveLength(1);
+  });
   it('does not present incomplete statistics as exact zeros', async () => {
     const { ScmChangeRow } = await import('./ScmChangeRow');
     const screen = await renderScreen(<ScmChangeRow theme={createScmChangeRowTheme()} onPress={() => {}} file={{ fileName: 'large.txt', filePath: '', fullPath: 'large.txt', status: 'untracked', isIncluded: false, linesAdded: 0, linesRemoved: 0, isComplete: false }} />);

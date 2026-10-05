@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { selectWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 function sameCandidates(left: readonly WidgetCandidate[], right: readonly WidgetCandidate[]): boolean {
     return left.length === right.length && left.every((candidate, index) => {
@@ -11,7 +12,12 @@ function sameCandidates(left: readonly WidgetCandidate[], right: readonly Widget
             && candidate.pluginName === other.pluginName
             && candidate.sharedPluginName === other.sharedPluginName
             && candidate.icon === other.icon
-            && candidate.homeDefault === other.homeDefault;
+            && candidate.homeDefault === other.homeDefault
+            && candidate.target === other.target
+            && candidate.sessionInputPath === other.sessionInputPath
+            && stableJsonStringify(candidate.inputSchema) === stableJsonStringify(other.inputSchema)
+            && stableJsonStringify(candidate.connectedAccountPurposeBindings) === stableJsonStringify(other.connectedAccountPurposeBindings)
+            && stableJsonStringify(candidate.inputs) === stableJsonStringify(other.inputs);
     });
 }
 
@@ -26,7 +32,7 @@ export function useHomeWidgetCandidates(): readonly WidgetCandidate[] {
     const projection = useAppShellPluginUiProjection().pluginUiProjection;
     const previous = React.useRef<readonly WidgetCandidate[] | null>(null);
     return React.useMemo(() => {
-        const next = selectWidgetCandidates(projection, 'app');
+        const next = selectWidgetCandidates(projection);
         if (previous.current && sameCandidates(previous.current, next)) return previous.current;
         previous.current = next;
         return next;

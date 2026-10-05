@@ -1,14 +1,7 @@
-import React from 'react';
-
-import { AutomationsGate } from '@/components/automations/gating/AutomationsGate';
-import { AutomationDetailScreen } from '@/components/automations/screens/AutomationDetailScreen';
+import { RetiredAutomationRoute } from '@/components/automations/screens/RetiredAutomationRoute';
 
 export function AutomationDetailRoute() {
-    return (
-        <AutomationsGate>
-            <AutomationDetailScreen />
-        </AutomationsGate>
-    );
+    return <RetiredAutomationRoute />;
 }
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 export { AutomationDetailRoute as WorkspaceRouteBody };

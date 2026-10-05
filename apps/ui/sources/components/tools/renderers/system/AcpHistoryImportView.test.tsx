@@ -5,6 +5,8 @@ import type { ToolCall } from "@happier-dev/session-core/messages";
 import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { createTestSessionTranscriptSource, pressTestInstanceAsync, renderWithSessionTranscriptSource } from '@/dev/testkit';
 import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,11 +26,20 @@ installSystemToolRendererCommonModuleMocks({
     },
 });
 
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
 describe('AcpHistoryImportView', () => {
+    it('removes the preview clamp and decorates the full role-prefixed text for Find', async () => {
+        const { AcpHistoryImportView } = await import('./AcpHistoryImportView');
+        const store = createTranscriptFindRowStore();
+        store.publish(new Map([['history', { blocks: [{ id: 'tool-history-remote-0', sourceRanges: [{ start: 11, end: 17, current: true }] }] }]]));
+        const screen = await renderWithSessionTranscriptSource(
+            <TranscriptFindProvider store={store}><AcpHistoryImportView {...makeToolViewProps(makeTool({ input: { remoteTail: [{ role: 'assistant', text: 'needle' }] } }), { sessionId: 's1', messageId: 'history' })} /></TranscriptFindProvider>,
+            createTestSessionTranscriptSource({ sessionId: 's1' }),
+        );
+        const highlighted = screen.tree.findAllHostsByTestId('find-match-current');
+        expect(highlighted).toHaveLength(1);
+        expect(highlighted[0].props.children).toBe('needle');
+        expect(screen.tree.findAllByType('Text').filter((node) => node.props.numberOfLines === 2)).toHaveLength(0);
+    });
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'AcpHistoryImport',

@@ -1,4 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1 as TodoSessionLinkError,
+    resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol';
 import { storage } from '@/sync/domains/state/storage';
 import {
     kvGet,
@@ -8,7 +10,7 @@ import {
     type KvMutation,
 } from '@/sync/api/account/apiKv';
 import type { ServerFetch } from '@/sync/http/client';
-import { areServerAccountScopesEqual, serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { parseToken } from '@/utils/auth/parseToken';
 import { randomUUID } from '@/platform/randomUUID';
 import { AsyncLock } from '@/utils/system/lock';
@@ -590,19 +592,15 @@ export async function toggleTodo(
 }
 
 export type TodoSessionLinkIntent = Readonly<{
-    source: ZenTaskSource;
+    source: Omit<ZenTaskSource, 'title'> & Readonly<{ title?: string }>;
     session: Readonly<{ scope: ServerAccountScope; sessionId: string }>;
 }>;
 
-export class TodoSessionLinkError extends Error {
-    constructor(readonly code: 'task_deleted' | 'task_scope_mismatch' | 'task_link_failed', readonly cause?: unknown) {
-        super(code);
-        this.name = 'TodoSessionLinkError';
-    }
-}
+export { TodoSessionLinkError };
 
 /** Apply one accepted Session to the current task, never a captured replacement map. */
-export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, intent: TodoSessionLinkIntent): Promise<void> {
+export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, intent: TodoSessionLinkIntent,
+    options: Readonly<{ signal?: AbortSignal; request?: ServerFetch }> = {}): Promise<void> {
     const [{ captureActiveServerAccountScopeLifetime }, { getActiveServerSnapshot }, { serverFetch }] = await Promise.all([
         import('@/sync/domains/scope/activeServerAccountScope'),
         import('@/sync/domains/server/serverRuntime'),
@@ -617,16 +615,16 @@ export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, i
         throw new TodoSessionLinkError('task_scope_mismatch', error);
     }
     const requireCurrent = () => {
-        if (!lifetime?.isCurrent() || !areServerAccountScopesEqual(lifetime.scope, intent.source.scope)
+        if (options.signal?.aborted || !lifetime?.isCurrent() || !areServerAccountScopesEqual(lifetime.scope, intent.source.scope)
             || snapshot.serverId !== intent.source.scope.serverId
             || credentialAccountId !== intent.source.scope.accountId) {
             throw new TodoSessionLinkError('task_scope_mismatch');
         }
     };
     requireCurrent();
-    const request: ServerFetch = (path, init, options) => {
+    const request: ServerFetch = (path, init, requestOptions) => {
         requireCurrent();
-        return serverFetch(path, init, { ...options, expectedActiveServer: { serverId: snapshot.serverId, generation: snapshot.generation } });
+        return (options.request ?? serverFetch)(path, { ...init, ...(options.signal ? { signal: options.signal } : {}) }, { ...requestOptions, expectedActiveServer: { serverId: snapshot.serverId, generation: snapshot.generation } });
     };
     try {
         await todoLock.inLock(async () => {
@@ -634,15 +632,25 @@ export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, i
             const context = await resolveTodoAccountStorageContext(credentials, { request });
             requireCurrent();
             const key = getTodoKey(intent.source.taskId);
-            const linkKey = serverAccountScopedResourceKey(intent.session.scope, intent.session.sessionId);
             const encode = await createTodoDataEncoder(context);
-            let row = await kvGet(credentials, key, { request, retry: 'none' });
-            while (true) {
-                requireCurrent();
-                if (!row) throw new TodoSessionLinkError('task_deleted');
-                const todo = await decryptTodoItem(key, row.value, context);
-                requireCurrent();
-                const publish = (item: TodoItem, version: number) => {
+            await applyTodoSessionLinkV1({ scope: intent.source.scope, taskId: intent.source.taskId,
+                session: { ...intent.session.scope, sessionId: intent.session.sessionId } }, {
+                read: async () => {
+                    const row = await kvGet(credentials, key, { request, retry: 'none' });
+                    return { value: row ? await decryptTodoItem(key, row.value, context) : null, version: row?.version ?? -1 };
+                },
+                compareAndSet: async (item, version) => {
+                    const value = await encode(key, item);
+                    requireCurrent();
+                    const result = await kvMutate(credentials, [{ key, value, version }], { request, retry: 'none' });
+                    requireCurrent();
+                    if (result.success) return { success: true, version: result.results[0]!.version };
+                    const conflict = result.errors.find(error => error.key === key);
+                    if (!conflict) throw new TodoSessionLinkError('task_link_failed');
+                    return { success: false, value: conflict.value === null ? null : await decryptTodoItem(key, conflict.value, context), version: conflict.version };
+                },
+            }, { requireCurrent, title: intent.source.title,
+                publish: (item, version) => {
                     requireCurrent();
                     const current = storage.getState().todoState;
                     if (!current?.todos[item.id]) return;
@@ -651,40 +659,8 @@ export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, i
                         todos: { ...current.todos, [item.id]: item },
                         versions: { ...current.versions, [key]: version },
                     });
-                };
-                // The acceptance was already persisted (including after an ambiguous HTTP result).
-                const predecessorLink = todo.linkedSessions?.[intent.session.sessionId];
-                if (todo.linkedSessions?.[linkKey]?.session
-                    || (areServerAccountScopesEqual(intent.source.scope, intent.session.scope)
-                        && predecessorLink && predecessorLink.session === undefined)) {
-                    publish(todo, row.version);
-                    return;
-                }
-                const linkedSessions = { ...todo.linkedSessions };
-                const updated: TodoItem = {
-                    ...todo,
-                    updatedAt: Date.now(),
-                    linkedSessions: {
-                        ...linkedSessions,
-                        [linkKey]: {
-                            title: intent.source.title,
-                            linkedAt: Date.now(),
-                            session: { ...intent.session.scope, sessionId: intent.session.sessionId },
-                        },
-                    },
-                };
-                const value = await encode(key, updated);
-                requireCurrent();
-                const result = await kvMutate(credentials, [{ key, value, version: row.version }], { request, retry: 'none' });
-                requireCurrent();
-                if (result.success) {
-                    publish(updated, result.results[0]!.version);
-                    return;
-                }
-                const conflict = result.errors.find((error) => error.key === key);
-                if (!conflict) throw new TodoSessionLinkError('task_link_failed');
-                row = conflict.value === null ? null : { key, value: conflict.value, version: conflict.version };
-            }
+                },
+            });
         });
     } catch (error) {
         if (error instanceof TodoSessionLinkError) throw error;
@@ -803,149 +779,70 @@ export async function deleteTodo(
 /**
  * Reorder todos
  */
+export class TodoReorderError extends Error {
+    constructor(readonly code: 'todo_reorder_stale' | 'todo_reorder_conflict' | 'todo_reorder_scope_changed') {
+        super(code);
+        this.name = 'TodoReorderError';
+    }
+}
+
+/** Reorder only current undone membership. Completion has its own toggle owner. */
 export async function reorderTodos(
     credentials: AuthCredentials,
     todoId: string,
-    targetIndex: number,
-    targetList: 'done' | 'undone'
+    position: AnchoredListPositionV1,
+    options: Readonly<{ request?: ServerFetch; isCurrent?: () => boolean; signal?: AbortSignal }> = {},
 ): Promise<void> {
-    const currentState = storage.getState();
-    const priorState = currentState.todoState || {
-        todos: {},
-        undoneOrder: [],
-        doneOrder: [],
-        versions: {}
+    const requireCurrent = () => {
+        if (options.signal?.aborted || options.isCurrent?.() === false) {
+            throw new TodoReorderError('todo_reorder_scope_changed');
+        }
     };
-    const { todos, undoneOrder, doneOrder, versions } = priorState;
-
-    const todo = todos[todoId];
-    if (!todo) {
-        console.error(`Todo ${todoId} not found`);
-        return;
-    }
-
-    let updatedTodo = todo;
-    let optimisticUndoneOrder = [...undoneOrder];
-    let optimisticDoneOrder = [...doneOrder];
-
-    // Remove from current position
-    optimisticUndoneOrder = optimisticUndoneOrder.filter(id => id !== todoId);
-    optimisticDoneOrder = optimisticDoneOrder.filter(id => id !== todoId);
-
-    // Add to new position
-    if (targetList === 'done') {
-        if (!todo.done) {
-            updatedTodo = { ...todo, done: true, updatedAt: Date.now() };
-        }
-        optimisticDoneOrder.splice(targetIndex, 0, todoId);
-    } else {
-        if (todo.done) {
-            updatedTodo = { ...todo, done: false, updatedAt: Date.now() };
-        }
-        optimisticUndoneOrder.splice(targetIndex, 0, todoId);
-    }
-
-    // Apply optimistic update immediately
-    storage.getState().applyTodos({
-        todos: { ...todos, [todoId]: updatedTodo },
-        undoneOrder: optimisticUndoneOrder,
-        doneOrder: optimisticDoneOrder,
-        versions
-    });
-
-    // Sync to server inside lock
+    requireCurrent();
     await todoLock.inLock(async () => {
-        try {
-            const context = await resolveTodoAccountStorageContext(credentials);
-            // Fetch current index from backend
-            const indexResponse = await kvGet(credentials, TODO_INDEX_KEY);
-            let currentIndex: TodoIndex = { undoneOrder: [], completedOrder: [] };
-            let indexVersion = -1;
-
-            if (indexResponse) {
-                indexVersion = indexResponse.version;
-                currentIndex = await decryptTodoIndex(indexResponse.value, context);
-            }
-
-            // Apply reordering to server's index
-            let newUndoneOrder = (currentIndex.undoneOrder || []).filter((id: string) => id !== todoId);
-            let newCompletedOrder = (currentIndex.completedOrder || []).filter((id: string) => id !== todoId);
-
-            // Insert at target position
-            if (targetList === 'done') {
-                // Ensure targetIndex is valid for the server's list
-                const validIndex = Math.min(targetIndex, newCompletedOrder.length);
-                newCompletedOrder.splice(validIndex, 0, todoId);
-            } else {
-                // Ensure targetIndex is valid for the server's list
-                const validIndex = Math.min(targetIndex, newUndoneOrder.length);
-                newUndoneOrder.splice(validIndex, 0, todoId);
-            }
-
-            const mergedIndex: TodoIndex = {
-                undoneOrder: newUndoneOrder,
-                completedOrder: newCompletedOrder
-            };
-
-            const mutations: KvMutation[] = [];
-            const encodeTodoData = await createTodoDataEncoder(context);
-
-            // If todo status changed, fetch and update it
-            if (updatedTodo.done !== todo.done) {
-                const todoKey = getTodoKey(todoId);
-                const todoResponse = await kvGet(credentials, todoKey);
-                let todoVersion = -1;
-                let serverTodo = updatedTodo;
-
-                if (todoResponse) {
-                    todoVersion = todoResponse.version;
-                    const existingTodo = await decryptTodoItem(todoKey, todoResponse.value, context);
-                    serverTodo = {
-                        ...existingTodo,
-                        done: updatedTodo.done,
-                        updatedAt: Date.now()
-                    };
-                }
-
-                mutations.push({
-                    key: todoKey,
-                    value: await encodeTodoData(todoKey, serverTodo),
-                    version: todoVersion
-                });
-
-                // Update local reference for final storage update
-                updatedTodo = serverTodo;
-            }
-
-            // Always update index
-            mutations.push({
-                key: TODO_INDEX_KEY,
-                value: await encodeTodoData(TODO_INDEX_KEY, mergedIndex),
-                version: indexVersion
-            });
-
-            const result = await kvMutate(credentials, mutations);
-
-            if (result.success) {
-                // Update versions
-                const newVersions = { ...versions };
-                for (const res of result.results) {
-                    newVersions[res.key] = res.version;
-                }
-
-                storage.getState().applyTodos({
-                    todos: { ...todos, [todoId]: updatedTodo },
-                    undoneOrder: mergedIndex.undoneOrder,
-                    doneOrder: mergedIndex.completedOrder,  // Map completedOrder to doneOrder
-                    versions: newVersions
-                });
-            } else {
-                // On failure, refetch everything as last resort
-                console.error('Todo reorder failed, refetching all todos...');
-                await initializeTodoSync(credentials);
-            }
-        } catch (error) {
-            handleTodoMutationFailure(error, 'Failed to reorder todos:', priorState);
+        requireCurrent();
+        const context = await resolveTodoAccountStorageContext(credentials, { request: options.request });
+        requireCurrent();
+        const indexResponse = await kvGet(credentials, TODO_INDEX_KEY, { request: options.request, retry: 'none' });
+        requireCurrent();
+        if (!indexResponse) throw new TodoReorderError('todo_reorder_stale');
+        const index = await decryptTodoIndex(indexResponse.value, context);
+        const order = resolveAnchoredListMoveV1(index.undoneOrder, todoId, position);
+        if (!order) throw new TodoReorderError('todo_reorder_stale');
+        const source = await kvGet(credentials, getTodoKey(todoId), { request: options.request, retry: 'none' });
+        requireCurrent();
+        if (!source || (await decryptTodoItem(getTodoKey(todoId), source.value, context)).done) {
+            throw new TodoReorderError('todo_reorder_stale');
         }
+        if (position.anchorId !== null && position.anchorId !== todoId) {
+            const anchor = await kvGet(credentials, getTodoKey(position.anchorId), { request: options.request, retry: 'none' });
+            requireCurrent();
+            if (!anchor || (await decryptTodoItem(getTodoKey(position.anchorId), anchor.value, context)).done) {
+                throw new TodoReorderError('todo_reorder_stale');
+            }
+        }
+        requireCurrent();
+        if (order.every((id, offset) => id === index.undoneOrder[offset])) return;
+        const encode = await createTodoDataEncoder(context);
+        const value = await encode(TODO_INDEX_KEY, { ...index, undoneOrder: order });
+        requireCurrent();
+        const result = await kvMutate(credentials, [{
+            key: TODO_INDEX_KEY, value, version: indexResponse.version,
+        }], { request: options.request, retry: 'none' });
+        if (!result.success) throw new TodoReorderError('todo_reorder_conflict');
+        // Publish through the current local membership, never the pre-await snapshot.
+        // A completed/deleted local source or anchor cannot be recreated by the acknowledgement.
+        // Retirement suppresses publication, not the already-confirmed successful save.
+        if (options.signal?.aborted || options.isCurrent?.() === false) return;
+        const current = storage.getState().todoState;
+        if (!current) return;
+        const eligible = current.undoneOrder.filter(id => current.todos[id] && !current.todos[id]!.done);
+        const localOrder = resolveAnchoredListMoveV1(eligible, todoId, position);
+        if (!localOrder) return;
+        storage.getState().applyTodos({
+            ...current,
+            undoneOrder: localOrder,
+            versions: { ...current.versions, [TODO_INDEX_KEY]: result.results.find(row => row.key === TODO_INDEX_KEY)!.version },
+        });
     });
 }

@@ -34,6 +34,7 @@ import {
     isSessionMetadataPrivacyUpgradeRequiredError,
     readSessionMetadataOwnerAccountMode,
     requiresSessionMetadataOwnerAccountMode,
+    listSessionMetadataPrivacyUpgradeIdsInTx,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
@@ -129,6 +130,15 @@ async function findV2SessionByIdRowInTx(tx: Tx, params: Readonly<{
 
 export function registerSessionListingRoutes(app: Fastify) {
     registerSessionFilteredListingRoute(app);
+
+    app.get('/v2/sessions/metadata-upgrades', {
+        preHandler: app.authenticate,
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "sessions.list") },
+        schema: { response: { 200: z.object({ sessionIds: z.array(z.string()) }).strict() } },
+    }, async (request, reply) => {
+        const sessionIds = await inTx(tx => listSessionMetadataPrivacyUpgradeIdsInTx(tx, request.userId));
+        return reply.header("Cache-Control", "no-store").send({ sessionIds });
+    });
 
     app.get('/v1/sessions', {
         preHandler: app.authenticate,

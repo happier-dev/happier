@@ -6,6 +6,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { splitKeybindingLabel } from '@/keyboard/shortcutLabels';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -33,21 +34,6 @@ import {
 } from './keyboardShortcutsSettingsModel';
 import { KEYBOARD_COMMAND_GROUP_TITLE_KEYS, KEYBOARD_SETTINGS, resolveKeyboardCommandSetting } from './keyboardSettings';
 import { showKeyboardShortcutCapturePrompt } from './showKeyboardShortcutCapturePrompt';
-
-/** "Cmd+Shift+Enter" → ["Cmd", "Shift", "Enter"]; a literal "+" key stays one keycap. */
-export function splitKeybindingLabel(label: string): readonly string[] {
-    const parts = label.split('+');
-    const keys: string[] = [];
-    for (let index = 0; index < parts.length; index += 1) {
-        const part = parts[index];
-        if (part === '' && index === parts.length - 1 && keys.length > 0) {
-            keys[keys.length - 1] = '+';
-            continue;
-        }
-        if (part !== '') keys.push(part);
-    }
-    return keys.length > 0 ? keys : [label];
-}
 
 const Keycaps = React.memo(function Keycaps(props: Readonly<{ label: string; testID?: string }>) {
     return (

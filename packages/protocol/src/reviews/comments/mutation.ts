@@ -20,7 +20,7 @@ import {
   validateReviewCommentScopeV1,
   type ReviewCommentActorRefV1, type ReviewCommentV1, type ReviewCommentStateV1,
 } from './v1.js';
-import { ReviewCommentBulkTransitionRequestV1Schema } from './actions.js';
+import { ReviewCommentBulkTransitionRequestV1Schema, ReviewCommentOperationErrorCodeV1Schema } from './actions.js';
 
 const markers = {
   hasReason: z.boolean().optional(),
@@ -80,7 +80,7 @@ export const ReviewCommentPreparedRecordV1Schema = z.object({
 export type ReviewCommentPreparedRecordV1 = z.infer<typeof ReviewCommentPreparedRecordV1Schema>;
 
 export const ReviewCommentMutationFailureV1Schema = z.object({
-  commentId: z.string().min(1), errorCode: z.string().min(1), error: z.string(),
+  commentId: z.string().min(1), errorCode: ReviewCommentOperationErrorCodeV1Schema, error: z.string(),
 }).strict();
 
 export const ReviewCommentPrepareMutationResponseV1Schema = z.object({
@@ -126,7 +126,7 @@ export function projectReviewCommentStructuralMutationV1(actionId: z.input<typeo
 
 export type ReviewCommentMutationRuntimeV1 = Readonly<{ now(): number; createId(prefix: string): string }>;
 
-function mutationError(code: string, message: string): never {
+function mutationError(code: z.infer<typeof ReviewCommentOperationErrorCodeV1Schema>, message: string): never {
   throw Object.assign(new Error(message), { code });
 }
 
@@ -269,7 +269,9 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
     } catch (error) {
       if (mutation.actionId !== 'reviews.comments.bulkTransition') throw error;
       if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
-      failed.push({ commentId: id, errorCode: error.code, error: error.message });
+      const code = ReviewCommentOperationErrorCodeV1Schema.safeParse(error.code);
+      if (!code.success) throw error;
+      failed.push({ commentId: id, errorCode: code.data, error: error.message });
     }
   }
   return { records, failed, ...(bulkActionId ? { bulkActionId } : {}) };

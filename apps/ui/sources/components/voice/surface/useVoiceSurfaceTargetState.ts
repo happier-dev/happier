@@ -1,5 +1,3 @@
-import * as React from 'react';
-
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useSessionListPreferredMetadata } from '@/sync/store/hooks';
@@ -7,6 +5,7 @@ import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoice
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
 import {
     useVoiceTargetStore,
+    resolveVoiceIdleTarget,
     type VoiceAssistantScope,
 } from '@/voice/runtime/voiceTargetStore';
 import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
@@ -38,7 +37,6 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
 }>) {
     const ui = params.voice?.ui ?? {};
     const scopeDefault = ui.scopeDefault === 'session' ? 'session' : 'global';
-    const surfaceLocation = ui.surfaceLocation === 'sidebar' || ui.surfaceLocation === 'session' ? ui.surfaceLocation : 'auto';
     const activityFeedEnabled = params.voice?.ui?.activityFeedEnabled === true;
     const exactFocusedSessionAddress = useFocusedSessionAddress();
     const lastFocusedSessionAddress = useVoiceTargetStore((state) => state.lastFocusedSessionAddress);
@@ -49,25 +47,16 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
         params.sessionAddress?.serverId,
         params.sessionAddress?.sessionId,
     );
-    const exactSessionAddress =
-        params.variant === 'session'
-            ? (params.sessionAddress !== undefined
-                ? statedSessionAddress
-                : normalizeSessionAddress(params.serverId, params.sessionId))
-            : (
-                exactFocusedSessionAddress
-                ?? lastFocusedSessionAddress
-            );
-    // An in-session composer always starts against the exact session it is rendered for. The
-    // global default controls Voice Home/sidebar starts only; applying it here would discard the
-    // direct Codex target before the canonical attempt projection can admit it.
-    const bindingScope: VoiceAssistantScope =
-        params.variant === 'session'
-            ? 'session'
-            : scopeDefault === 'global' && allowsGlobalStart
-                ? 'global'
-                : 'session';
-    const startSessionAddress = bindingScope === 'global' ? null : exactSessionAddress;
+    const target = resolveVoiceIdleTarget({
+        intent: params.variant === 'session'
+            ? { kind: 'session', sessionAddress: params.sessionAddress !== undefined
+                ? statedSessionAddress : normalizeSessionAddress(params.serverId, params.sessionId) }
+            : { kind: 'default' },
+        scopeDefault, allowsGlobalStart,
+        focusedSessionAddress: exactFocusedSessionAddress, lastFocusedSessionAddress,
+    });
+    const bindingScope: VoiceAssistantScope = target.kind;
+    const startSessionAddress = target.kind === 'session' ? target.sessionAddress : null;
     const startSessionId = startSessionAddress?.sessionId ?? null;
     const displayedBindingSessionMetadata = useSessionListPreferredMetadata(startSessionAddress);
     const voiceAgentEnabled = useFeatureEnabled('voice.agent');
@@ -79,16 +68,6 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     const canTeleportToSessionRoot =
         params.variant === 'session'
         && getVoiceAgentSessionTeleportAvailability({ voice: params.voice, sessionId: params.sessionId ?? null }).ok;
-
-    React.useEffect(() => {
-        useVoiceTargetStore.getState().setScope(scopeDefault);
-    }, [scopeDefault]);
-
-    const locationAllowsVariant = (() => {
-        if (surfaceLocation === 'sidebar') return params.variant === 'sidebar';
-        if (surfaceLocation === 'session') return params.variant === 'session';
-        return scopeDefault === 'global' ? params.variant === 'sidebar' : params.variant === 'session';
-    })();
 
     const targetLabel =
         startSessionId
@@ -109,7 +88,6 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
         agentRuntime: surfaceCapabilities?.agentRuntime ?? null,
         canTeleportToSessionRoot,
         daemonLocalVoiceUnavailable,
-        locationAllowsVariant,
         routeSessionId,
         startSessionId,
         startSessionAddress,

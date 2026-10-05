@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { flattenTestStyle, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -139,11 +139,15 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleMock, createLiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     const mutableSetting = createMutableSettingHook(shared.settingsState);
     return createStorageModuleMock({
         importOriginal,
         overrides: {
+            storage: createLiveStorageStoreMock(() => ({
+                localSettings: { ...localSettingsDefaults, ...shared.settingsState },
+                applyLocalSettings: delta => { Object.assign(shared.settingsState, delta); },
+            })),
             useLocalSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
             useLocalSetting: ((key: string) => mutableSetting(key)[0]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
         },
@@ -367,6 +371,34 @@ describe('Theme profile settings screen', () => {
 });
 
 describe('Theme profile editor', () => {
+    it('merges its draft into current settings at commit and applies the saved custom theme', async () => {
+        const edited = baseProfile('ocean', { light: {}, dark: { 'background.canvas': '#123456' } });
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [edited] });
+        const screen = await renderEditorScreen('ocean');
+        shared.setRootViewBackgroundColor.mockClear();
+        shared.setStatusBarStyle.mockClear();
+        vi.stubGlobal('document', {
+            documentElement: { animate: vi.fn() },
+            startViewTransition: (update: () => Promise<void>) => ({
+                ready: Promise.resolve().then(async () => {
+                    shared.settingsState.themePreference = 'dark';
+                    shared.settingsState.uiFontScale = 1.2;
+                    setThemeProfiles({ activeProfileIds: { light: null, dark: null },
+                        profiles: [edited, baseProfile('arrived-during-transition')] });
+                    await update();
+                }),
+            }),
+        });
+        onTestFinished(() => { vi.unstubAllGlobals(); });
+
+        await screen.pressByTestIdAsync('settings-theme-profile-save');
+
+        expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean', 'arrived-during-transition']);
+        expect(shared.settingsState).toMatchObject({ themePreference: 'dark', uiFontScale: 1.2 });
+        expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
+        expect(shared.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#123456');
+        expect(shared.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
+    });
     it('renders token groups and defaults the editing variant to the active app mode', async () => {
         shared.settingsState.themePreference = 'dark';
         setThemeProfiles({ activeProfileIds: { light: null, dark: 'ocean' }, profiles: [baseProfile('ocean')] });

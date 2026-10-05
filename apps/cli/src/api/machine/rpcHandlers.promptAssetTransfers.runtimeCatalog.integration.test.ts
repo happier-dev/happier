@@ -9,7 +9,7 @@ import {
   createEncryptedTransferChunkEnvelope,
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
-} from '@/machines/transfer/transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';
 

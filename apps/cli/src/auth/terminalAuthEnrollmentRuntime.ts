@@ -10,6 +10,7 @@ import {
   type NodeIrohHomeTunnelSession,
 } from '@happier-dev/iroh-native/node';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { borrowServerHttpRuntimeHomeTunnel } from '@/api/client/serverHttpBaseUrl';
 import type { TerminalAuthEnrollmentRuntime } from './terminalAuthEnrollmentClient';
 
@@ -36,10 +37,27 @@ const DEFAULT_DEPS: TerminalAuthEnrollmentRuntimeDeps = {
 };
 
 export async function acquireTerminalAuthEnrollmentRuntime(
-  descriptor: HomeConnectionDescriptorV1,
+  descriptorOrTarget: HomeConnectionDescriptorV1 | ResolvedHomeTarget,
   preferredTransportOrDeps: HomeCarrierPreferredTransport | TerminalAuthEnrollmentRuntimeDeps = DEFAULT_DEPS,
   signal?: AbortSignal,
 ): Promise<AcquiredTerminalAuthEnrollmentRuntime> {
+  if ('descriptor' in descriptorOrTarget && !descriptorOrTarget.descriptor) {
+    // Released URL-only profiles retain their explicitly selected HTTPS or
+    // loopback destination. They gain no descriptor authority from this carrier.
+    const target = descriptorOrTarget;
+    return {
+      ok: true,
+      runtime: {
+        runtimeOrigin: target.applicationUrl,
+        carrier: 'https',
+        authenticatedCredentialDestination: { kind: 'https', applicationUrl: target.applicationUrl },
+      },
+      close: async () => {},
+    };
+  }
+  const descriptor = 'descriptor' in descriptorOrTarget
+    ? descriptorOrTarget.descriptor!
+    : descriptorOrTarget;
   const preferredTransport = typeof preferredTransportOrDeps === 'string'
     ? preferredTransportOrDeps
     : resolveHomeCarrierPreferredTransport(descriptor);

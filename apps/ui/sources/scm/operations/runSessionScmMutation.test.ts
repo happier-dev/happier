@@ -9,6 +9,9 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { alert: vi.fn(), confirm: vi.fn(async () => false), show: vi.fn() } }).module;
 });
+// Session/machine RPC are external boundaries; no index-lock removal is expected here.
+vi.mock('@/sync/ops/sessionScm', () => ({ sessionScmRepositoryRemoveIndexLock: () => { throw new Error('Unexpected index-lock RPC'); } }));
+vi.mock('@/sync/ops/scm/machineScm', () => ({ machineScmRepositoryRemoveIndexLock: () => { throw new Error('Unexpected index-lock RPC'); } }));
 import { projectManager, type ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { selectScmWriteOperation } from './selectScmWriteOperation';
@@ -31,12 +34,39 @@ function createOperationState(options?: { busy?: boolean }) {
 }
 
 describe('runSessionScmMutation', () => {
+    it.each(['conflicted', 'outcome_unknown'] as const)('reconciles %s without replaying or replacing the canonical result', async (kind) => {
+        const state = createOperationState();
+        const outcome: ScmOperationOutcome = kind === 'conflicted'
+            ? { v: 1, kind, errorCode: 'CONFLICTING_WORKTREE', repositoryState: { hasConflicts: true, operation: null }, nextActions: [{ kind: 'resolve_conflicts' }] }
+            : { v: 1, kind, errorCode: 'COMMAND_OUTCOME_UNKNOWN', reconciliation: { kind: 'repository_status' }, nextActions: [{ kind: 'refresh' }] };
+        let readState = 'stale';
+        const run = vi.fn(async () => ({ success: false, outcome }));
+        await runSessionScmMutation({ state, sessionId: 's1', operation: 'branch_merge', cwd: '/repo', fallbackError: 'failed', run,
+            refreshAfterMutation: async () => { readState = 'current'; } });
+        expect(readState).toBe('current');
+        expect(state.log[0]?.outcome).toEqual(outcome);
+        expect(run).toHaveBeenCalledOnce();
+    });
+    it('retains a known conflict when reconciliation fails and does not read for an unapplied refusal', async () => {
+        const state = createOperationState();
+        const outcome: ScmOperationOutcome = { v: 1, kind: 'conflicted', errorCode: 'CONFLICTING_WORKTREE',
+            repositoryState: { hasConflicts: true, operation: null }, nextActions: [{ kind: 'resolve_conflicts' }] };
+        const refresh = vi.fn(async () => { throw new Error('Read unavailable'); });
+        await runSessionScmMutation({ state, sessionId: 's1', operation: 'branch_merge', cwd: '/repo', fallbackError: 'failed',
+            run: async () => ({ success: false, outcome }), refreshAfterMutation: refresh });
+        expect(state.log[0]?.outcome).toEqual(outcome);
+        refresh.mockClear();
+        await runSessionScmMutation({ state, sessionId: 's1', operation: 'commit_undo', cwd: '/repo', fallbackError: 'failed',
+            run: async () => ({ success: false, outcome: { v: 1, kind: 'needs_input', errorCode: 'COMMIT_UNDO_HEAD_CHANGED', nextActions: [{ kind: 'refresh' }] } }),
+            refreshAfterMutation: refresh });
+        expect(refresh).not.toHaveBeenCalled();
+    });
     it('retains an applied effect when its following repository refresh fails, without repeating the write', async () => {
         const state = createOperationState();
         const effect = { kind: 'branch' as const, name: 'feature', headOid: 'a'.repeat(40) };
         const run = vi.fn(async () => ({ success: true, outcome: { v: 1 as const, kind: 'succeeded' as const, effect, nextActions: [] } }));
-        const refreshAfterSuccess = vi.fn(async () => { throw new Error('Repository is unavailable'); });
-        await runSessionScmMutation({ state, sessionId: 's1', operation: 'commit_undo', cwd: '/repo', fallbackError: 'failed', run, refreshAfterSuccess });
+        const refreshAfterMutation = vi.fn(async () => { throw new Error('Repository is unavailable'); });
+        await runSessionScmMutation({ state, sessionId: 's1', operation: 'commit_undo', cwd: '/repo', fallbackError: 'failed', run, refreshAfterMutation });
         expect(selectScmWriteOperation({ inFlight: null, log: state.log, machineReachable: true })).toMatchObject({
             phase: 'effect_applied_with_warning', action: 'commit_undo', outcome: { effect, errorCode: 'REPOSITORY_REFRESH_FAILED', nextActions: [{ kind: 'refresh' }] },
         });
@@ -52,7 +82,7 @@ describe('runSessionScmMutation', () => {
             successDetail: () => 'dev',
         });
 
-        expect(result).toEqual({ started: true, response: { success: true } });
+        expect(result).toEqual({ started: true, response: { success: true, outcome: { v: 1, kind: 'succeeded', nextActions: [] } } });
         expect(state.inFlight).toBeNull();
         expect(selectScmWriteOperation({ inFlight: null, log: state.log, machineReachable: true })).toMatchObject({
             phase: 'succeeded', action: 'branch_switch',

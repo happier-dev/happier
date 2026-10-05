@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { Popover } from '@/components/ui/popover/Popover';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -134,5 +135,31 @@ export const GitDisplayMenu = React.memo(function GitDisplayMenu(props: Readonly
                 </Popover>
             ) : null}
         </>
+    );
+});
+
+/**
+ * The inline list | tree switch of a change list (turn card, comparison rail, narrow comparison header):
+ * the same `scmChangedFilesLayout` choice as Show as above, drawn as two icon segments.
+ */
+export const ChangedFilesLayoutSwitch = React.memo(function ChangedFilesLayoutSwitch(props: Readonly<{ testIDPrefix: string }>) {
+    const { theme } = useUnistyles();
+    const settings = useGitDisplaySettings();
+    const iconColor = theme.colors.text.secondary;
+    const tabs = React.useMemo((): ReadonlyArray<SegmentedTab<GitChangesLayout>> => [
+        { id: 'list', label: t('sessionGitDisplay.showAsList'), icon: <Icon name="list" size={14} color={iconColor} /> },
+        { id: 'tree', label: t('sessionGitDisplay.showAsTree'), icon: <Icon name="tree-structure" size={14} color={iconColor} /> },
+    ], [iconColor]);
+    return (
+        <SegmentedTabBar<GitChangesLayout>
+            testIDPrefix={props.testIDPrefix}
+            role="radiogroup"
+            compact
+            segmentSizing="content"
+            accessibilityLabel={t('sessionGitDisplay.showAs')}
+            tabs={tabs}
+            activeTabId={settings.changesLayout}
+            onSelectTab={settings.setChangesLayout}
+        />
     );
 });

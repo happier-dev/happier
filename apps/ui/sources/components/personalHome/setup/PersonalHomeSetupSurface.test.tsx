@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { hasTranslation, setPreferredLanguageFromSettings, tLoose } from '@/text';
@@ -9,6 +9,18 @@ import { derivePersonalHomeSetupProgress } from './personalHomeSetupProgress';
 import { sanitizePersonalHomeDiagnosticMessage } from './PersonalHomeDiagnosticDetails';
 import type { PersonalHomeBootstrapSnapshot } from '../bootstrap/personalHomeBootstrapTypes';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
+
+const transparency = vi.hoisted(() => ({ reduced: false }));
+
+vi.mock('react-native', async () => {
+    // Import the boundary factory directly: the barrel's render helpers also import react-native.
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        AccessibilityInfo: {
+            isReduceTransparencyEnabled: async () => transparency.reduced,
+        },
+    });
+});
 
 const snapshot: PersonalHomeBootstrapSnapshot = {
     shouldGateShell: true,
@@ -301,14 +313,22 @@ describe('PersonalHomeSetupSurface', () => {
         }
     });
 
-    it('keeps the first-run ground opaque with no translucent material', async () => {
-        const screen = await renderScreen(<PersonalHomeSetupSurface snapshot={snapshot} />);
-
-        const root = screen.findAllHostsByTestId('personal-home-setup-surface')[0];
-        const background = flattenStyle(root?.props.style).backgroundColor;
-        expect(typeof background).toBe('string');
-        expect(background).not.toMatch(/transparent|rgba\([^)]*,\s*0?\.\d+\)/);
-        expect(screen.root.findAll((node) => typeof node.type === 'string' && /blur/i.test(node.type))).toHaveLength(0);
+    it.each([false, true])('uses the Home backdrop material with reduced transparency %s', async (reduced) => {
+        transparency.reduced = reduced;
+        try {
+            const screen = await renderScreen(<PersonalHomeSetupSurface snapshot={snapshot} />);
+            const root = screen.findAllHostsByTestId('personal-home-setup-surface')[0];
+            const material = flattenStyle(root?.props.style);
+            if (reduced) {
+                expect(material.backdropFilter).toBeUndefined();
+                expect(material.backgroundColor).toEqual(expect.any(String));
+                expect(material.backgroundColor).not.toMatch(/transparent|rgba\([^)]*,\s*0?\.\d+\)/);
+            } else {
+                expect(material.backdropFilter).toMatch(/^blur\(/);
+            }
+        } finally {
+            transparency.reduced = false;
+        }
     });
     it('names the erased Home distinctly and never promotes raw diagnostic text to primary copy', async () => {
         const erased: PersonalHomeBootstrapSnapshot = {

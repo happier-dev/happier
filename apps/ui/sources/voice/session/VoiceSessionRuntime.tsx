@@ -40,6 +40,15 @@ import { useForegroundVoiceTextTurnQaBridge } from '@/dev/testkit/harness/useFor
 import { resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { createVoiceContinuationProjection } from '@/voice/transcript/voiceContinuationProjection';
+import { appendVoiceConversationNoteText } from '@/voice/transcript/voiceConversationTranscript';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
+import { readVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -148,8 +157,15 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       ...(currentUiContext ? { currentUiContext } : {}),
     });
     registerVoiceAdapters(assembly.adapters);
+    const continuation = createVoiceContinuationProjection();
     const controller = createVoiceSessionLifecycleController({
       acquireConnectivityLease: () => sync.acquireUserRequestLease(),
+      onSyncedConversationMessages: (address, messages) => {
+        const observed = continuation.observe(address, messages);
+        if (observed && controller.getSnapshot().sessionId === observed.controlSessionId && controller.getSnapshot().canStop) {
+          fireAndForget(controller.stop(observed.controlSessionId, { kind: 'continued_elsewhere', continuation: observed.continuation }), { tag: 'VoiceSessionRuntime.continuedElsewhere' });
+        }
+      },
     });
     const audioSessionCoordinator = getSharedVoiceAudioSessionCoordinator();
     const nativeAudioLifecycleBridge = audioSessionCoordinator
@@ -157,9 +173,23 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       : null;
     controllerRef.current = controller;
     const syncPublishedSnapshot = () => {
-      setVoiceSessionSnapshot(controller.getSnapshot());
+      const snapshot = controller.getSnapshot();
+      const binding = snapshot.sessionId ? voiceSessionBindingStore.getState().getByControlSessionId(snapshot.sessionId) : null;
+      const session = binding ? storage.getState().sessions[binding.conversationSessionId] : null;
+      const lifetime = captureActiveServerAccountScopeLifetime();
+      const exactHome = binding && session?.serverId === binding.conversationSessionAddress.serverId
+        && lifetime?.isCurrent() && lifetime.scope.serverId === binding.conversationSessionAddress.serverId;
+      setVoiceSessionSnapshot(snapshot, binding, exactHome && lifetime ? {
+        accountScope: lifetime.scope, conversationScope: readVoiceConversationScopeMetadata(session?.metadata),
+      } : null);
+      const note = continuation.update({ snapshot, binding, deviceId: snapshot.canStop && exactHome ? getDeviceAnalyticsId() : null,
+        deviceDisplayName: resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS }),
+        sessionSeq: exactHome && typeof session?.seq === 'number' ? session.seq : null });
+      if (note) appendVoiceConversationNoteText({ conversationSessionId: note.conversation.sessionId,
+        text: 'Voice continued.', continuation: note });
     };
     const unsubscribe = controller.subscribe(syncPublishedSnapshot);
+    const unsubscribeBinding = voiceSessionBindingStore.subscribe(syncPublishedSnapshot);
     setVoiceSessionLifecycleController(controller);
     controller.setCurrentUiContextToolSetEnabled(currentUiContextToolSetEnabledRef.current);
     currentUiContextToolSetSyncRef.current = {
@@ -172,6 +202,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
         currentUiContextToolSetSyncRef.current = null;
       }
       unsubscribe();
+      unsubscribeBinding();
       nativeAudioLifecycleBridge?.dispose();
       const controllerDisposal = controller.dispose();
       void (async () => {

@@ -143,8 +143,8 @@ function fileSearchRelevance(file: FileSearchItem, query: string): number {
     return 4;
 }
 
-function rankFileSearchResults(files: FileSearchItem[], query: string, limit: number): FileSearchItem[] {
-    return files.sort((a, b) => fileSearchRelevance(a, query) - fileSearchRelevance(b, query)).slice(0, limit);
+function rankFileSearchResults(files: FileSearchItem[], query: string): FileSearchItem[] {
+    return files.sort((a, b) => fileSearchRelevance(a, query) - fileSearchRelevance(b, query));
 }
 
 function createFuse(files: FileSearchItem[], threshold: number = 0.3): Fuse<FileSearchItem> {
@@ -469,11 +469,13 @@ export const workspaceFileSearchCache = {
  */
 export type WorkspaceFileSearchPage = Readonly<{
     items: readonly FileSearchItem[];
-    /** True when the canonical source could contain additional matching paths. */
-    truncated: boolean;
+    /** The source corpus is incomplete, independently of the visible page size. */
+    corpusTruncated: boolean;
+    /** Additional matches are known, or the source could contain more matching paths. */
+    hasMore: boolean;
 }>;
 
-type WorkspaceFileSearchInput = Readonly<{
+export type WorkspaceFileSearchInput = Readonly<{
     scope: WorkspaceScopeBase;
     query: string;
     limit?: number;
@@ -483,6 +485,9 @@ type WorkspaceFileSearchInput = Readonly<{
     accountLifetime?: WorkspaceFileSearchAccountLifetime;
     signal?: AbortSignal;
     includeCoverage?: boolean;
+    /** Arbitrary directory browsers query the daemon glob directly, without a workspace index. */
+    mode?: 'fuzzy' | 'glob';
+    includeHidden?: boolean;
 }>;
 
 export function searchWorkspaceFiles(
@@ -492,12 +497,35 @@ export function searchWorkspaceFiles(input: WorkspaceFileSearchInput): Promise<F
 export async function searchWorkspaceFiles(
     input: WorkspaceFileSearchInput,
 ): Promise<FileSearchItem[] | WorkspaceFileSearchPage> {
-    const project = (items: readonly FileSearchItem[], truncated: boolean) => input.includeCoverage === true
-        ? Object.freeze({ items: Object.freeze([...items]), truncated })
-        : [...items];
+    const limit = typeof input.limit === 'number' && Number.isFinite(input.limit)
+        ? Math.max(1, Math.min(1000, Math.floor(input.limit)))
+        : input.mode === 'glob' ? Infinity : 10;
+    const project = (items: readonly FileSearchItem[], corpusTruncated: boolean) => {
+        const page = items.slice(0, limit);
+        return input.includeCoverage === true
+            ? Object.freeze({ items: Object.freeze(page), corpusTruncated, hasMore: corpusTruncated || items.length > limit })
+            : page;
+    };
     throwIfWorkspaceFileSearchAborted(input.signal);
     const accountLifetime = resolveWorkspaceFileSearchAccountLifetime(input.accountLifetime);
     throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
+    if (input.mode === 'glob') {
+        const response = await machineWorkspaceFileList(input.scope.machineId, {
+            rootPath: input.scope.rootPath,
+            query: input.query.trim(),
+            includeHidden: input.includeHidden ?? true,
+            ...(input.limit === undefined ? {} : { limit: Math.min(WORKSPACE_FILE_LIST_MAX_RESULTS, Math.max(1, Math.floor(input.limit))) }),
+        }, {
+            serverId: input.scope.serverId,
+            ...(readWorkspaceFileSearchAccountId(accountLifetime) ? { accountId: readWorkspaceFileSearchAccountId(accountLifetime) } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
+        });
+        throwIfWorkspaceFileSearchAborted(input.signal);
+        throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
+        if (!response.ok) throw new WorkspaceFileSearchUnavailableError();
+        const items = buildFileItemsFromPaths(response.paths);
+        return project(input.resultType ? items.filter((item) => item.fileType === input.resultType) : items, response.truncated);
+    }
     const partition = getOrCreateWorkspaceCachePartition(accountLifetime);
     // Fails closed on a scope that names no workspace, exactly as the empty-key guard this
     // replaces did — an unaddressable workspace has no index to search.
@@ -515,9 +543,6 @@ export async function searchWorkspaceFiles(
     throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
 
     const cache = getOrCreateWorkspaceCache(partition, workspaceCacheKey);
-    const limit = typeof input.limit === 'number' && Number.isFinite(input.limit)
-        ? Math.max(1, Math.min(1000, Math.floor(input.limit)))
-        : 10;
 
     if ((!cache.fuse || cache.files.length === 0) && !cache.truncated) {
         return project([], false);
@@ -530,7 +555,7 @@ export async function searchWorkspaceFiles(
     const query = String(input.query ?? '').trim();
     if (!query) {
         throwIfWorkspaceFileSearchAborted(input.signal);
-        return project(searchableFiles.slice(0, limit), cache.truncated);
+        return project(searchableFiles, cache.truncated);
     }
 
     const threshold = typeof input.threshold === 'number' && Number.isFinite(input.threshold)
@@ -545,7 +570,7 @@ export async function searchWorkspaceFiles(
     const cachedResults = fuse?.search(query) ?? [];
     if (cachedResults.length > 0 && !cache.truncated) {
         throwIfWorkspaceFileSearchAborted(input.signal);
-        return project(rankFileSearchResults(cachedResults.map((r) => r.item), query, limit), false);
+        return project(rankFileSearchResults(cachedResults.map((r) => r.item), query), false);
     }
 
     const globResult = await buildFileItemsFromRipgrepGlob(
@@ -558,7 +583,7 @@ export async function searchWorkspaceFiles(
     throwIfWorkspaceFileSearchAborted(input.signal);
     throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
     if (!globResult) {
-        return project(rankFileSearchResults(cachedResults.map((result) => result.item), query, limit), cache.truncated);
+        return project(rankFileSearchResults(cachedResults.map((result) => result.item), query), cache.truncated);
     }
 
     const known = new Set(cache.files.map((f) => f.fullPath));
@@ -587,6 +612,6 @@ export async function searchWorkspaceFiles(
         ? cache.files.filter((item) => item.fileType === input.resultType)
         : cache.files;
     const mergedFuse = createFuse(mergedSearchable, threshold);
-    const merged = rankFileSearchResults(mergedFuse.search(query).map((result) => result.item), query, limit);
+    const merged = rankFileSearchResults(mergedFuse.search(query).map((result) => result.item), query);
     return project(merged, cache.truncated || globResult.truncated);
 }

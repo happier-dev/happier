@@ -7,6 +7,8 @@ import {
     deriveLatestPendingRequestObservedAt,
     derivePendingRequestFlags,
     listPendingRequests,
+    comparePendingRequestsByAge,
+    selectOldestPendingRequest,
     shouldReadTranscriptForPendingRequests,
     type TranscriptRequestState,
     type TranscriptRequestStatesCache,
@@ -45,6 +47,22 @@ const SHARED_ACTION_REQUEST = {
     },
 };
 
+describe('oldest pending request', () => {
+    it('orders questions and permissions by creation time, with unknown last and stable identity ties', () => {
+        const requests = listPendingRequests(createPendingFacts({ active: true, agentState: {
+            requests: {
+                newer: { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 200 },
+                older: { tool: 'AskUserQuestion', kind: 'question', arguments: { questions: [] }, createdAt: 100 },
+                unknown: { tool: 'Bash', arguments: {}, createdAt: null },
+                tie: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 100 },
+            },
+        } }), []);
+        expect(selectOldestPendingRequest(requests)?.id).toBe('older');
+        expect([...requests].sort(comparePendingRequestsByAge).map((r) => r.id)).toEqual(['older', 'tie', 'newer', 'unknown']);
+        expect(selectOldestPendingRequest([])).toBeNull();
+    });
+});
+
 describe('shared Action confirmation projection', () => {
     it('renders an Action-only request without exposing owner AgentState', () => {
         const session = createPendingFacts({
@@ -71,8 +89,8 @@ describe('shared Action confirmation projection', () => {
             }),
         ]);
         expect(derivePendingRequestFlags(session, [])).toEqual({
-            hasPendingPermissionRequests: false,
-            hasPendingUserActionRequests: true,
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: false,
         });
     });
 
@@ -252,6 +270,9 @@ describe('derivePendingRequestFlags', () => {
                 kind: 'user_action',
             }),
         ]);
+        expect(derivePendingRequestFlags(session, [])).toEqual({
+            hasPendingPermissionRequests: true, hasPendingUserActionRequests: false,
+        });
     });
 
     it('surfaces live agentState user-action requests even while the session is inactive', () => {
@@ -259,6 +280,12 @@ describe('derivePendingRequestFlags', () => {
             active: false,
             agentState: {
                 requests: {
+                    inactive_permission: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'pwd' },
+                        createdAt: 123,
+                    },
                     claude_resume_choice: {
                         tool: 'AskUserQuestion',
                         kind: 'user_action',

@@ -20,7 +20,7 @@ import {
   createEncryptedTransferChunkEnvelope,
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
-} from '@/machines/transfer/transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 
 const runtimeLeaseMocks = vi.hoisted(() => ({
   acquire: vi.fn(),

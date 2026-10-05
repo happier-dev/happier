@@ -30,7 +30,7 @@ export type WorkflowSaveStatusState =
     | Readonly<{ kind: 'unsaved' }>
     | Readonly<{ kind: 'saving' }>
     /** `savedAtMs` is when this editor saved it; `null` when the time is not known (an opened revision). */
-    | Readonly<{ kind: 'saved'; savedAtMs: number | null }>
+    | Readonly<{ kind: 'saved'; savedAtMs: number | null; byAgent?: boolean }>
     | Readonly<{ kind: 'failed'; reason: string | null }>
     | Readonly<{ kind: 'conflict'; conflict: WorkflowSaveConflict }>;
 
@@ -223,7 +223,11 @@ export function WorkflowSaveStatus(props: Readonly<{
         case 'saving': statusText = t('workflows.page.saveStatus.saving'); break;
         case 'failed': statusText = t('workflows.page.saveStatus.failed'); break;
         case 'saved':
-            statusText = state.savedAtMs === null
+            statusText = state.byAgent === true
+                ? state.savedAtMs !== null && nowMs - state.savedAtMs >= MINUTE_MS
+                    ? t('workflows.authoring.savedAge', { age: formatRelativeTimeShort(state.savedAtMs, nowMs) })
+                    : t('workflows.authoring.saved')
+                : state.savedAtMs === null
                 ? t('workflows.page.saveStatus.saved')
                 : nowMs - state.savedAtMs < MINUTE_MS
                     ? t('workflows.page.saveStatus.savedJustNow')

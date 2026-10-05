@@ -78,7 +78,7 @@ import {
   type BitbucketDetailOverviewV1,
 } from '../triage/source/detail.js';
 
-import { TriageDetailPanel } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPanel, TriageDetailStory, TriageDetailChanges, TriageDetailChecks, TriageDetailActivity } from '@happier-dev/triage-sources/ui';
 import {
   BitbucketCommentResolutionControls,
   BitbucketMutationControls,
@@ -237,6 +237,31 @@ function BitbucketActionsPanel({ input }: Readonly<{ input: TriageDetailSurfaceI
   return <BitbucketMutationControls input={effectiveInput} overview={overview} />;
 }
 
+function BitbucketStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const controller = useBitbucketDiff(input);
+  const { state } = controller;
+  return <TriageDetailChanges>
+    {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.bitbucket.ui.readingDiff" />
+      : state.kind === 'unavailable' ? <ErrorState title="The diff is unavailable" titleKey="plugins.bitbucket.ui.diffUnavailable"
+        description={failureDescription(state.failure, text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'))} />
+      : <><PageFailureBanner state={state} />
+        <Metadata title="Changed files" titleKey="plugins.bitbucket.ui.changedFiles" entries={state.rows.map((row) => ({ label: row.path, value: `${row.status} · +${row.linesAdded} −${row.linesRemoved}` }))} />
+        <PagedFooter state={state} onLoadMore={controller.loadMore} onRefresh={controller.refresh}
+          loadMoreTitle="Show more changed files" loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
+          refreshLabel="Re-read this diff from Bitbucket" refreshLabelKey="plugins.bitbucket.ui.rereadDiff"
+          summary={`${state.rows.length} changed file(s) read.`} summaryKey="plugins.bitbucket.ui.diffFilesRead" summaryValues={{ count: state.rows.length }} />
+      </>}
+  </TriageDetailChanges>;
+}
+
+function BitbucketStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
+  const { state, rollup } = useBitbucketBuilds(input);
+  return <TriageDetailChecks title="Builds" titleKey="plugins.bitbucket.ui.tabs.builds" rollup={state.kind === 'ready' ? rollup : null}>
+    <PageFailureBanner state={state} />
+  </TriageDetailChecks>;
+}
+
 function OverviewPanel({
   input,
   locale,
@@ -267,8 +292,9 @@ function OverviewPanel({
   });
 
   return (
-    <ScrollArea>
-      <Stack gap="large">
+      <TriageDetailStory kind={withWrites ? undefined : 'ask'}
+        changes={withWrites ? null : <BitbucketStoryChanges input={input} />}
+        checks={withWrites ? null : <BitbucketStoryChecks input={input} />}>
         {controller.failure === null ? null : (
           <Banner
             tone="warning"
@@ -347,8 +373,7 @@ function OverviewPanel({
           accessibilityLabel="Re-read this overview from Bitbucket"
           accessibilityLabelKey="plugins.bitbucket.ui.rereadOverview"
         />
-      </Stack>
-    </ScrollArea>
+      </TriageDetailStory>
   );
 }
 
@@ -847,13 +872,16 @@ function BitbucketDetailBody({
         <TriageDetailPanel
           panel={input.panel}
           ariaLabel={text('plugins.bitbucket.ui.detailLabel', 'Bitbucket pull request detail')}
+          retention={Object.fromEntries(BITBUCKET_DETAIL_TABS_V1
+            .filter((declaration) => declaration.id !== 'comments')
+            .map((declaration) => [declaration.id === 'diff' ? 'files' : declaration.id === 'builds' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
             overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} withWrites={false} />,
             activity: (
-              <Stack gap="large" style={{ flex: 1, minHeight: 0 }}>
+              <TriageDetailActivity>
                 <Stack style={{ flex: 1, minHeight: 0 }}>{panels.comments}</Stack>
                 <Stack style={{ flex: 1, minHeight: 0 }}>{panels.activity}</Stack>
-              </Stack>
+              </TriageDetailActivity>
             ),
             files: panels.diff,
             checks: panels.builds,

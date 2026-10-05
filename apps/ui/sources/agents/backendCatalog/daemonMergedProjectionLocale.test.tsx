@@ -17,6 +17,7 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
 }));
 
 import type { StorageState } from '@/sync/store/types';
+import { storage } from '@/sync/domains/state/storageStore';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
@@ -69,9 +70,10 @@ describe('locale-narrowed daemon projection readers', () => {
         // The bridge is populated with the exact fixture fields this owner reads;
         // the cache and Account lifetime still use their real reader logic.
         const state = {
+            ...storage.getState(),
             profileScope: accountScope,
             machines: { 'machine-1': createMachineFixture({ activeAt: Date.now() }) },
-        } as StorageState;
+        } satisfies StorageState;
         registerStorageStateReader(() => state);
         setPreferredLanguageFromSettings('en');
         machineRpc.mockReset();

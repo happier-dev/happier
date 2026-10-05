@@ -52,7 +52,7 @@ export const MeterBar = React.memo<MeterBarProps>((props) => {
     // Read the token directly — never apply a runtime opacity/rgba transform to a
     // theme token (web var-ification turns such transforms into silent no-ops).
     const fillColor = props.fillColor ?? theme.colors.state[props.tone].foreground;
-    const trackColor = props.trackColor ?? theme.colors.surface.pressedOverlay;
+    const trackColor = props.trackColor ?? (theme.dark ? theme.colors.surface.pressedOverlay : theme.colors.border.default);
 
     return (
         <View

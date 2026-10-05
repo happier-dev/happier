@@ -30,6 +30,13 @@ export type TranscriptSessionCommonSettings = Pick<Settings,
     | 'toolViewTimelineChromeMode'
     | 'transcriptMessageTimestampDisplayMode'
     | 'transcriptMessageSelectionEnabled'
+    | 'transcriptMessageCopyActionEnabled'
+    | 'transcriptMessageForkActionEnabled'
+    | 'transcriptMessageRollbackActionEnabled'
+    | 'transcriptMessagePinActionEnabled'
+    | 'transcriptMessageSavePromptActionEnabled'
+    | 'transcriptMessageMakeRepeatableActionEnabled'
+    | 'transcriptMessagePluginActionsEnabled'
     | 'transcriptMessageSendToSessionEnabled'
     | 'transcriptStreamingMarkdownRenderingEnabled'
     | 'transcriptStreamingPartialOutputEnabled'
@@ -45,6 +52,13 @@ export type TranscriptMessageDisplayCommon = Pick<TranscriptSessionCommonSetting
     | 'sessionThinkingInlinePresentation'
     | 'transcriptMessageTimestampDisplayMode'
     | 'transcriptMessageSelectionEnabled'
+    | 'transcriptMessageCopyActionEnabled'
+    | 'transcriptMessageForkActionEnabled'
+    | 'transcriptMessageRollbackActionEnabled'
+    | 'transcriptMessagePinActionEnabled'
+    | 'transcriptMessageSavePromptActionEnabled'
+    | 'transcriptMessageMakeRepeatableActionEnabled'
+    | 'transcriptMessagePluginActionsEnabled'
     | 'transcriptMessageSendToSessionEnabled'
     | 'transcriptStreamingMarkdownRenderingEnabled'
     | 'transcriptStreamingPartialOutputEnabled'
@@ -185,6 +199,13 @@ export function useTranscriptSessionCommon(): TranscriptSessionCommon {
     const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
     const transcriptMessageTimestampDisplayMode = useSetting('transcriptMessageTimestampDisplayMode');
     const transcriptMessageSelectionEnabled = useSetting('transcriptMessageSelectionEnabled');
+    const transcriptMessageCopyActionEnabled = useSetting('transcriptMessageCopyActionEnabled');
+    const transcriptMessageForkActionEnabled = useSetting('transcriptMessageForkActionEnabled');
+    const transcriptMessageRollbackActionEnabled = useSetting('transcriptMessageRollbackActionEnabled');
+    const transcriptMessagePinActionEnabled = useSetting('transcriptMessagePinActionEnabled');
+    const transcriptMessageSavePromptActionEnabled = useSetting('transcriptMessageSavePromptActionEnabled');
+    const transcriptMessageMakeRepeatableActionEnabled = useSetting('transcriptMessageMakeRepeatableActionEnabled');
+    const transcriptMessagePluginActionsEnabled = useSetting('transcriptMessagePluginActionsEnabled');
     const transcriptMessageSendToSessionEnabled = useSetting('transcriptMessageSendToSessionEnabled');
     const transcriptStreamingMarkdownRenderingEnabled = useSetting('transcriptStreamingMarkdownRenderingEnabled');
     const transcriptStreamingPartialOutputEnabled = useSetting('transcriptStreamingPartialOutputEnabled');
@@ -222,6 +243,13 @@ export function useTranscriptSessionCommon(): TranscriptSessionCommon {
         sessionThinkingInlinePresentation,
         transcriptMessageTimestampDisplayMode,
         transcriptMessageSelectionEnabled,
+        transcriptMessageCopyActionEnabled,
+        transcriptMessageForkActionEnabled,
+        transcriptMessageRollbackActionEnabled,
+        transcriptMessagePinActionEnabled,
+        transcriptMessageSavePromptActionEnabled,
+        transcriptMessageMakeRepeatableActionEnabled,
+        transcriptMessagePluginActionsEnabled,
         transcriptMessageSendToSessionEnabled,
         transcriptStreamingMarkdownRenderingEnabled,
         transcriptStreamingPartialOutputEnabled,
@@ -236,6 +264,13 @@ export function useTranscriptSessionCommon(): TranscriptSessionCommon {
         sessionThinkingInlinePresentation,
         transcriptMessageTimestampDisplayMode,
         transcriptMessageSelectionEnabled,
+        transcriptMessageCopyActionEnabled,
+        transcriptMessageForkActionEnabled,
+        transcriptMessageRollbackActionEnabled,
+        transcriptMessagePinActionEnabled,
+        transcriptMessageSavePromptActionEnabled,
+        transcriptMessageMakeRepeatableActionEnabled,
+        transcriptMessagePluginActionsEnabled,
         transcriptMessageSendToSessionEnabled,
         transcriptStreamingMarkdownRenderingEnabled,
         transcriptStreamingPartialOutputEnabled,

@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -119,6 +120,7 @@ function runtimeRegistry(input: Readonly<{
     ...(input.runManagedProviderExplicitStart
       ? { runManagedProviderExplicitStart: input.runManagedProviderExplicitStart }
       : {}),
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: input.addRuntimeDisposable,
     createAgentInvocationServices: async () => createUnavailablePluginServices(),

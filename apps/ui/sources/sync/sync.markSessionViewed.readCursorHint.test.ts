@@ -179,7 +179,7 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         emitReadCursorWithServerScopeMock.mockClear();
         requestMock.mockReset();
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         sync.disconnectServer();
         Object.assign(sync, { credentials: undefined });
     });

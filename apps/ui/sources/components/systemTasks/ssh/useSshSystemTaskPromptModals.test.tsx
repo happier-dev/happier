@@ -1,3 +1,4 @@
+import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -37,6 +38,7 @@ function createRunnerStub() {
     const respond = vi.fn(async (_taskId: string, _answer: unknown) => {});
     const cancel = vi.fn(async (_taskId: string) => {});
     const runner: SystemTaskRunner = {
+        ...createManualSystemTaskRunner('dev').runner,
         mode: 'dev',
         start: async () => 'task-1',
         cancel,

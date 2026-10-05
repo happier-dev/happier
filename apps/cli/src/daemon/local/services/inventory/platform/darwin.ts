@@ -111,14 +111,14 @@ function parseDarwinPsProcessOutput(
 ): ReadonlyMap<number, LocalServiceProcessFact> {
     const processes = new Map<number, LocalServiceProcessFact>();
     for (const line of output.split(/\r?\n/u)) {
-        const withLstart = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+?)\s*$/u.exec(line);
+        const withLstart = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})(?:\s+(.*?))?\s*$/u.exec(line);
         const legacy = withLstart ? null : /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/u.exec(line);
         const pidRaw = withLstart?.[1] ?? legacy?.[1];
         const ppidRaw = withLstart?.[2] ?? legacy?.[2];
         const uidRaw = withLstart?.[3] ?? legacy?.[3];
         const processStartTimeMs = withLstart?.[4] ? parseDarwinLstartDate(withLstart[4]) : undefined;
-        const command = withLstart?.[5] ?? legacy?.[4];
-        if (!pidRaw || !command) continue;
+        const command = withLstart ? (withLstart[5] ?? '').trim() : legacy?.[4] ?? '';
+        if (!pidRaw || (!withLstart && !command)) continue;
         const pid = Number(pidRaw);
         const ppid = Number(ppidRaw);
         if (!Number.isInteger(pid) || pid <= 0) continue;

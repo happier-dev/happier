@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveParticipantRoutingDescriptor, resolveParticipantRoutedSend } from './resolveParticipantRoutedSend';
+import { buildReviewCommentsOutboundMessage } from '../reviewComments/buildReviewCommentsOutboundMessage';
 
 describe('resolveParticipantRoutedSend', () => {
+    it('carries exact review-comment context and attachments to the selected Run without overwriting the content envelope', () => {
+        const comment = {
+            id: 'comment-1', filePath: 'src/a.ts', source: 'diff' as const,
+            anchor: { kind: 'diffLine' as const, startLine: 1, side: 'after' as const, oldLine: 1, newLine: 1 },
+            snapshot: { selectedLines: ['+const value = 2;'], beforeContext: [], afterContext: [] },
+            body: 'Explain this change', createdAt: 1,
+        };
+        const message = buildReviewCommentsOutboundMessage({ sessionId: 'session-1', drafts: [comment],
+            additionalMessage: 'Why does this stop change the value?',
+            metaOverrides: { happier: { kind: 'attachments.v1', payload: { attachments: [{ name: 'note.txt', path: '/repo/note.txt' }] } } } });
+        const outbound = resolveParticipantRoutedSend({ ...message, recipient: { kind: 'execution_run', runId: 'writer' } });
+        expect(outbound.recipient).toEqual({ kind: 'execution_run', runId: 'writer' });
+        expect(outbound.text).toContain(comment.body);
+        expect(outbound.displayText).toBe(message.displayText);
+        expect(outbound.metaOverrides).toMatchObject({
+            happier: { kind: 'review_comments.v1', payload: { comments: [expect.objectContaining({ id: comment.id })] } },
+            happierAttachments: { kind: 'attachments.v1' },
+        });
+    });
     it('preserves an exact selected target when the local roster has no evidence', () => {
         const descriptor = resolveParticipantRoutingDescriptor({
             recipient: { kind: 'execution_run', runId: 'run_1' },

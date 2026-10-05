@@ -14,6 +14,23 @@ vi.mock('react-native', async () => {
 });
 
 describe('NewSessionLaunchSurface', () => {
+    it('retains an embedded draft while the launch card replaces its footprint without a bounded overlay scroll', async () => {
+        let mounts = 0;
+        function Authoring() {
+            React.useEffect(() => { mounts += 1; }, []);
+            return <ViewFixture testID="retained-embedded-authoring" />;
+        }
+        const screen = await renderScreen(<NewSessionLaunchSurface
+            presentation="embedded"
+            overlay={<ViewFixture testID="launch-card" />}
+            onRequestClose={() => undefined}
+        ><Authoring /></NewSessionLaunchSurface>);
+        expect(mounts).toBe(1);
+        expect(screen.findByTestId('new-session-launch-authoring')?.props.inert).toBe(true);
+        expect(screen.findByTestId('launch-card')).not.toBeNull();
+        expect(screen.findByTestId('new-session-launch-overlay-scroll')).toBeNull();
+        await screen.unmount();
+    });
     it('keeps authoring renders and mounts stable while its launch leaf refreshes progress', async () => {
         let renders = 0;
         let mounts = 0;

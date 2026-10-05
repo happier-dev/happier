@@ -298,11 +298,13 @@ export function createInjectedPageAutomationOwner(
                         ? {
                             status: 'succeeded',
                             durationMs: parsed.result.durationMs,
+                            resultSummary: parsed.result.data,
                         }
                         : {
                             status: resultStatusForError(parsed.result.errorCode, parsed.result.stale),
                             errorCode: parsed.result.errorCode ?? 'runtime_unavailable',
                             durationMs: parsed.result.durationMs,
+                            resultSummary: parsed.result.data,
                         });
                 });
 

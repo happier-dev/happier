@@ -144,8 +144,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     nodeWaiting: {
         width: 10,
         height: 10,
-        borderWidth: 0,
-        backgroundColor: theme.colors.state.warning.foreground,
+        borderColor: theme.colors.state.warning.foreground,
     },
     nodeFailed: {
         borderWidth: 2,
@@ -168,8 +167,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         gap: 8,
         borderRadius: 10,
-        paddingTop: 8,
-        paddingBottom: 10,
+        paddingTop: 6,
+        paddingBottom: 8,
         paddingHorizontal: 8,
         marginStart: 4,
     },
@@ -198,6 +197,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     primaryText: {
         color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
+        fontSize: 13,
+        lineHeight: 18,
     },
     pinnedLabel: {
         flexDirection: 'row',
@@ -207,9 +208,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     pinnedLabelText: {
         color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
+        fontSize: 12,
+        lineHeight: 17,
     },
     secondaryText: {
         color: theme.colors.text.secondary,
+        fontSize: 12,
+        lineHeight: 17,
     },
     failedText: {
         color: theme.colors.state.danger.foreground,
@@ -224,6 +229,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         color: theme.colors.state.warning.foreground,
         ...Typography.default('semiBold'),
+        fontSize: 12,
+        lineHeight: 17,
     },
     pendingText: {
         color: theme.colors.text.tertiary,
@@ -244,7 +251,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
     },
     time: {
-        width: 40,
+        minWidth: 34,
+        flexShrink: 0,
+        fontSize: 11,
+        lineHeight: 16,
         textAlign: 'right',
         paddingTop: 1,
         color: theme.colors.text.tertiary,
@@ -528,6 +538,7 @@ const TimelineEntryRow = React.memo((props: TimelineEntryRowProps) => {
     const live = node === 'live';
     const pendingApproval = facts?.approvals.find((approval) => approval.outcome === 'pending') ?? null;
     const waiting = node === 'waiting' || pendingApproval !== null;
+    const present = live || (props.isNewestEntry && waiting && facts?.endedAtMs === null);
     const answer = isPinnedAnswer(entry);
     const primaryText = resolveTranscriptNavigationEntryPrimaryText(entry);
     const secondaryText = answer ? null : resolveTranscriptNavigationEntrySecondaryText(entry);
@@ -618,7 +629,7 @@ const TimelineEntryRow = React.memo((props: TimelineEntryRowProps) => {
                             <TranscriptNavigationTurnFactsStrip
                                 facts={facts}
                                 createdAtMs={entry.createdAtMs}
-                                live={live}
+                                live={present}
                                 showApprovalCounts={!props.showApprovals}
                                 testID={`${props.testIDPrefix}-entry-facts:${entry.id}`}
                             />
@@ -650,7 +661,7 @@ const TimelineEntryRow = React.memo((props: TimelineEntryRowProps) => {
                         />
                     ) : (
                         <Text numberOfLines={1} style={[styles.time, live || waiting ? styles.timeLive : null]}>
-                            {live
+                            {present
                                 ? t('session.transcriptNavigation.now')
                                 : entry.createdAtMs !== null
                                     ? formatTranscriptNavigationClockTime(entry.createdAtMs)

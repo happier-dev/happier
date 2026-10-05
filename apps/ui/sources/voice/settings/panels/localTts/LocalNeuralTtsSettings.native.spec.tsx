@@ -117,6 +117,9 @@ function requireAccessoryButton(node: unknown): React.ReactElement<AccessoryButt
   return node;
 }
 
+// Load the real settings owner during collection; a cold graph import is not playback behavior.
+const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
+
 describe('LocalNeuralTtsSettings (native)', () => {
   beforeEach(() => {
     modalAlertSpy.mockClear();
@@ -124,6 +127,21 @@ describe('LocalNeuralTtsSettings (native)', () => {
     cancelPrepareSpy.mockClear();
     localModelPackState.modelStatus = 'idle';
     modelPackStateParamsSpy.mockClear();
+  });
+
+  it('changes supported neural playback speed without replacing the selected pack or voice', async () => {
+    const cfgKokoro = { model: 'kokoro' as const, assetId: 'dummy', voiceId: 'af_heart', speed: 1, execution: 'device' as const };
+    const setKokoro = vi.fn();
+    const { tree } = await renderScreen(<LocalNeuralTtsSettings
+      cfgKokoro={cfgKokoro}
+      setKokoro={setKokoro}
+      networkTimeoutMs={1000}
+    />);
+    const speed = tree.root.findAll((node) => node.props.itemTrigger?.title === 'settingsVoice.local.kokoro.speed.title'
+      && typeof node.props.onSelect === 'function')[0];
+    expect(speed).toBeDefined();
+    await act(async () => { speed!.props.onSelect('1.2'); });
+    expect(setKokoro).toHaveBeenCalledWith({ ...cfgKokoro, speed: 1.2 });
   });
 
   it('blocks model download when runtime is unsupported and surfaces a clear error', async () => {

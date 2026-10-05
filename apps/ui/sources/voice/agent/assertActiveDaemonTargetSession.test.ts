@@ -126,24 +126,27 @@ function seedTargetSession(overrides: Readonly<Record<string, unknown>> = {}) {
     return session;
 }
 
+// Load the real graph once after boundary registration, outside case deadlines.
+const { assertActiveDaemonTargetSession, resolveVoiceAgentSessionFromState } = await import('./voiceAgentRunState');
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+
 async function assertTarget(target: unknown) {
-    const { assertActiveDaemonTargetSession } = await import('./voiceAgentRunState');
     return await assertActiveDaemonTargetSession(target as never);
 }
 
 async function resolveVoiceSession(target: unknown) {
-    const { resolveVoiceAgentSessionFromState } = await import('./voiceAgentRunState');
     return resolveVoiceAgentSessionFromState(target as never);
 }
 
 describe('assertActiveDaemonTargetSession', () => {
     beforeEach(() => {
-        vi.resetModules();
+        clearDaemonMergedProjectionCacheForTests();
         projectionRequests.length = 0;
         describeProjection.mockReset();
         describeProjection.mockResolvedValue({ supported: false, reason: 'not-supported' });
         state.sessions = {};
         state.machines = {};
+        state.machineListByServerId = {};
         state.sessionListRowsByServerId = {};
         state.ordinarySessionListMembershipByServerId = {};
         state.sessionListIndexByServerId = {};

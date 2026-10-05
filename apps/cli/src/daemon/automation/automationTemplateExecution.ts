@@ -5,6 +5,7 @@ import {
   openAutomationTemplateStoredV1,
   readAutomationTemplateStoredEnvelopeV1,
   type SessionAuthoringCheckoutCreationDraftV1,
+  type AutomationTemplateRetainedSessionV1,
 } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
@@ -67,7 +68,7 @@ export type AutomationTemplateExecutionParseResult =
   | Readonly<{ ok: true; value: ParsedAutomationExecution }>
   | Readonly<{
       ok: false;
-      code: 'invalid_template' | 'encryption_material_unavailable' | 'encryption_mode_mismatch';
+      code: 'invalid_template' | 'encryption_material_unavailable' | 'encryption_mode_mismatch' | 'session_key_required';
       error: string;
     }>;
 
@@ -81,6 +82,7 @@ export function parseAutomationTemplateExecution(
   payload: AutomationTemplateExecutionInput,
   encryption: AutomationTemplateEncryption | undefined,
   accountMode: 'plain' | 'e2ee',
+  retainedSession?: AutomationTemplateRetainedSessionV1,
 ): AutomationTemplateExecutionParseResult {
   if (payload.templateCiphertext.length > AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS) {
     return invalidAutomationTemplate('Invalid automation template: envelope too large');
@@ -91,6 +93,7 @@ export function parseAutomationTemplateExecution(
   const opened = openAutomationTemplateStoredV1({
     templateCiphertext: payload.templateCiphertext,
     accountMode,
+    ...(retainedSession && payload.targetType === 'existing_session' ? { retainedSession } : {}),
     ...(encryption ? { material: encryption } : {}),
   });
   if (!opened.ok) return { ok: false, code: opened.code, error: opened.code === 'encryption_material_unavailable'

@@ -1,8 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeVoiceSurfaceTranscriptEntries } from './mergeVoiceSurfaceTranscriptEntries';
+import { mergeVoiceSurfaceTranscriptEntries, resolveVoiceSurfaceLatestTranscriptText } from './mergeVoiceSurfaceTranscriptEntries';
 
 describe('mergeVoiceSurfaceTranscriptEntries', () => {
+  it('selects the compact line with the detail overlay and chronological ordering semantics', () => {
+    const canonical = {
+      epoch: 1, attemptIdentity: 'compact-attempt', itemId: 'older', role: 'assistant' as const,
+      text: 'Older correction', final: true, corrected: true, revision: 2,
+      firstSequence: 1, lastSequence: 3, provenance: 'live' as const, announce: 'polite' as const,
+    };
+    const persisted = [
+      { id: 'voice-realtime:compact-attempt:assistant:older', createdAt: 1, kind: 'assistant' as const, text: 'Older original' },
+      { id: 'latest', createdAt: 2, kind: 'user' as const, text: 'Newest persisted' },
+    ];
+    expect(resolveVoiceSurfaceLatestTranscriptText([], [])).toBeNull();
+    expect(resolveVoiceSurfaceLatestTranscriptText(persisted, [canonical])).toBe('Newest persisted');
+    const newer = { ...canonical, itemId: 'newer', firstSequence: 4, text: 'Newest partial', final: false, corrected: false };
+    expect(resolveVoiceSurfaceLatestTranscriptText(persisted, [canonical, newer])).toBe('Newest partial');
+    const tied = [...persisted, { id: 'z-last', createdAt: 2, kind: 'note' as const, text: 'Last by canonical id order' }];
+    expect(resolveVoiceSurfaceLatestTranscriptText(tied, [canonical])).toBe('Last by canonical id order');
+  });
+
   it('preserves interrupted generated text and surfaces the interrupted state', () => {
     const entries = mergeVoiceSurfaceTranscriptEntries([{
       id: 'assistant-interrupted',

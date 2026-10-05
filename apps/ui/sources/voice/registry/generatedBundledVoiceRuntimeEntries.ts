@@ -116,6 +116,11 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               }
             ]
           },
+          "structuredOutput": {
+            "formats": [
+              "json"
+            ]
+          },
           "surfaces": [
             "externalSessions"
           ],
@@ -679,7 +684,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "en",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (Experimental)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session."
           }
         },
@@ -687,7 +692,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "de",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimentell)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Sprich direkt mit der aktiven Codex-Agentensitzung."
           }
         },
@@ -695,7 +700,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "ru",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (экспериментально)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Говорите напрямую с активной сессией агента Codex."
           }
         },
@@ -703,7 +708,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "pl",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (eksperymentalne)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Rozmawiaj bezpośrednio z aktywną sesją agenta Codex."
           }
         },
@@ -711,7 +716,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "es",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimental)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Habla directamente con la sesión activa del agente Codex."
           }
         },
@@ -719,7 +724,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "fr",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (expérimental)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Parlez directement avec la session active de l’agent Codex."
           }
         },
@@ -727,7 +732,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "it",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (sperimentale)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Parla direttamente con la sessione attiva dell’agente Codex."
           }
         },
@@ -735,7 +740,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "pt",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimental)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Fale diretamente com a sessão ativa do agente Codex."
           }
         },
@@ -743,7 +748,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "ca",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimental)",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "Parla directament amb la sessió activa de l’agent Codex."
           }
         },
@@ -751,7 +756,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "zh-Hans",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex 实时模式（实验性）",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "直接与当前 Codex 智能体会话交谈。"
           }
         },
@@ -759,7 +764,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "zh-Hant",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex 即時模式（實驗性）",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "直接與目前的 Codex 代理程式工作階段交談。"
           }
         },
@@ -767,7 +772,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "locale": "ja",
           "messages": {
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Realtime（実験的）",
+            "settingsVoice.mode.codexRealtime": "Codex Live",
             "settingsVoice.mode.codexRealtimeSubtitle": "アクティブな Codex エージェントセッションと直接会話します。"
           }
         }
@@ -995,73 +1000,253 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         {
           "locale": "en",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "After changing the voice, update your agent so ElevenLabs uses it.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "Agent ID saved. Update after changing the voice.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Filled in when Happier creates your agent.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Create an agent, or enter its ID above.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier Voice agent",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Account",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversation",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Voice",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Manage API keys",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Which ElevenLabs voice model speaks. Default suits most voices.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Open your ElevenLabs account",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "How closely it matches the original voice.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "How quickly the voice speaks.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "How steady the voice sounds."
           }
         },
         {
           "locale": "ru",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Аудио и содержимое разговора отправляются с этого устройства в ElevenLabs через клиентское подключение ElevenLabs. В зависимости от выбранной настройки Happier также может отправлять в ElevenLabs ограниченные инструкции агента, определения и результаты клиентских инструментов, а также запросы аутентификации или подготовки, необходимые для функции. Сервер Happier может участвовать в размещённой аутентификации и учёте использования, но ни сервер Happier, ни ретранслятор не передают аудио живого разговора. ElevenLabs может обрабатывать и хранить полученные данные в соответствии с настройками вашей учётной записи ElevenLabs и его условиями. Элементы управления обменом голосовым контекстом отделены от обработки этим провайдером."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "После смены голоса обновите агента, чтобы ElevenLabs использовал его.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID агента сохранён. Обновите после смены голоса.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Заполняется, когда Happier создаёт вашего агента.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Создайте агента или введите его ID выше.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Голосовой агент Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Аккаунт",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Разговор",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Голос",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Управление API-ключами",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Какая голосовая модель ElevenLabs говорит. По умолчанию подходит большинству голосов.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Открыть ваш аккаунт ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Аудио и содержимое разговора отправляются с этого устройства в ElevenLabs через клиентское подключение ElevenLabs. В зависимости от выбранной настройки Happier также может отправлять в ElevenLabs ограниченные инструкции агента, определения и результаты клиентских инструментов, а также запросы аутентификации или подготовки, необходимые для функции. Сервер Happier может участвовать в размещённой аутентификации и учёте использования, но ни сервер Happier, ни ретранслятор не передают аудио живого разговора. ElevenLabs может обрабатывать и хранить полученные данные в соответствии с настройками вашей учётной записи ElevenLabs и его условиями. Элементы управления обменом голосовым контекстом отделены от обработки этим провайдером.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Насколько он похож на исходный голос.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Как быстро говорит голос.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Насколько ровно звучит голос."
           }
         },
         {
           "locale": "pl",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Dźwięk i treść rozmowy są wysyłane z tego urządzenia do ElevenLabs przez połączenie klienta ElevenLabs. W zależności od wybranej konfiguracji Happier może również wysyłać do ElevenLabs ograniczone instrukcje agenta, definicje i wyniki narzędzi klienckich oraz żądania uwierzytelniania lub provisioningu wymagane przez tę funkcję. Serwer Happier może uczestniczyć w hostowanym uwierzytelnianiu i rozliczaniu użycia, ale ani serwer Happier, ani przekaźnik nie przesyłają dźwięku rozmowy na żywo. ElevenLabs może przetwarzać i przechowywać otrzymane dane zgodnie z ustawieniami Twojego konta ElevenLabs i jego warunkami. Kontrolki udostępniania kontekstu głosowego są odrębne od przetwarzania przez tego dostawcę."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Po zmianie głosu zaktualizuj agenta, aby ElevenLabs go używał.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID agenta zapisane. Zaktualizuj po zmianie głosu.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Uzupełniane, gdy Happier tworzy Twojego agenta.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Utwórz agenta lub wpisz powyżej jego ID.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agent głosowy Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Konto",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Rozmowa",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Głos",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Zarządzaj kluczami API",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Który model głosu ElevenLabs mówi. Domyślny pasuje do większości głosów.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Otwórz swoje konto ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Dźwięk i treść rozmowy są wysyłane z tego urządzenia do ElevenLabs przez połączenie klienta ElevenLabs. W zależności od wybranej konfiguracji Happier może również wysyłać do ElevenLabs ograniczone instrukcje agenta, definicje i wyniki narzędzi klienckich oraz żądania uwierzytelniania lub provisioningu wymagane przez tę funkcję. Serwer Happier może uczestniczyć w hostowanym uwierzytelnianiu i rozliczaniu użycia, ale ani serwer Happier, ani przekaźnik nie przesyłają dźwięku rozmowy na żywo. ElevenLabs może przetwarzać i przechowywać otrzymane dane zgodnie z ustawieniami Twojego konta ElevenLabs i jego warunkami. Kontrolki udostępniania kontekstu głosowego są odrębne od przetwarzania przez tego dostawcę.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Jak bardzo przypomina oryginalny głos.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Jak szybko mówi głos.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Jak równo brzmi głos."
           }
         },
         {
           "locale": "es",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "El audio y el contenido de la conversación se envían desde este dispositivo a ElevenLabs mediante la conexión del cliente de ElevenLabs. Según la configuración seleccionada, Happier también puede enviar a ElevenLabs instrucciones acotadas del agente, definiciones y resultados de herramientas del cliente, y solicitudes de autenticación o aprovisionamiento necesarias para la función. El servidor de Happier puede participar en la autenticación alojada y la contabilidad de uso, pero ni el servidor de Happier ni el relé transportan el audio de la conversación en directo. ElevenLabs puede procesar y conservar los datos recibidos según la configuración y los términos de tu cuenta de ElevenLabs. Los controles para compartir el contexto de voz son independientes del procesamiento por este proveedor."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Después de cambiar la voz, actualiza tu agente para que ElevenLabs la use.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID del agente guardado. Actualiza tras cambiar la voz.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Se rellena cuando Happier crea tu agente.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Crea un agente o introduce su ID arriba.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agente de voz de Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Cuenta",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversación",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Voz",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Gestionar claves API",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Qué modelo de voz de ElevenLabs habla. El predeterminado sirve para la mayoría de las voces.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Abre tu cuenta de ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "El audio y el contenido de la conversación se envían desde este dispositivo a ElevenLabs mediante la conexión del cliente de ElevenLabs. Según la configuración seleccionada, Happier también puede enviar a ElevenLabs instrucciones acotadas del agente, definiciones y resultados de herramientas del cliente, y solicitudes de autenticación o aprovisionamiento necesarias para la función. El servidor de Happier puede participar en la autenticación alojada y la contabilidad de uso, pero ni el servidor de Happier ni el relé transportan el audio de la conversación en directo. ElevenLabs puede procesar y conservar los datos recibidos según la configuración y los términos de tu cuenta de ElevenLabs. Los controles para compartir el contexto de voz son independientes del procesamiento por este proveedor.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Cuánto se parece a la voz original.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "La rapidez con la que habla.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "La estabilidad del sonido de la voz."
           }
         },
         {
           "locale": "fr",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’audio et le contenu de la conversation sont envoyés depuis cet appareil à ElevenLabs via la connexion cliente d’ElevenLabs. Selon la configuration choisie, Happier peut également envoyer à ElevenLabs des instructions d’agent limitées, des définitions et résultats d’outils côté client, ainsi que les demandes d’authentification ou de provisionnement nécessaires à cette fonctionnalité. Le serveur Happier peut participer à l’authentification hébergée et à la comptabilisation de l’utilisation, mais ni le serveur Happier ni le relais ne transportent l’audio de la conversation en direct. ElevenLabs peut traiter et conserver les données reçues selon les paramètres et les conditions de votre compte ElevenLabs. Les contrôles de partage du contexte vocal sont distincts du traitement par ce fournisseur."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Après un changement de voix, mettez à jour votre agent pour qu’ElevenLabs l’utilise.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "Identifiant enregistré. Mettez à jour après un changement de voix.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Renseigné lorsque Happier crée votre agent.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Créez un agent ou saisissez son identifiant ci-dessus.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agent vocal Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Compte",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversation",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Voix",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Gérer les clés API",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Le modèle vocal ElevenLabs qui parle. Le modèle par défaut convient à la plupart des voix.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Ouvrir votre compte ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’audio et le contenu de la conversation sont envoyés depuis cet appareil à ElevenLabs via la connexion cliente d’ElevenLabs. Selon la configuration choisie, Happier peut également envoyer à ElevenLabs des instructions d’agent limitées, des définitions et résultats d’outils côté client, ainsi que les demandes d’authentification ou de provisionnement nécessaires à cette fonctionnalité. Le serveur Happier peut participer à l’authentification hébergée et à la comptabilisation de l’utilisation, mais ni le serveur Happier ni le relais ne transportent l’audio de la conversation en direct. ElevenLabs peut traiter et conserver les données reçues selon les paramètres et les conditions de votre compte ElevenLabs. Les contrôles de partage du contexte vocal sont distincts du traitement par ce fournisseur.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Sa ressemblance avec la voix d’origine.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "La vitesse à laquelle la voix parle.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "La régularité du son de la voix."
           }
         },
         {
           "locale": "it",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’audio e il contenuto della conversazione vengono inviati da questo dispositivo a ElevenLabs tramite la connessione client di ElevenLabs. A seconda della configurazione selezionata, Happier può anche inviare a ElevenLabs istruzioni limitate per l’agente, definizioni e risultati degli strumenti client e richieste di autenticazione o provisioning necessarie per la funzione. Il server di Happier può partecipare all’autenticazione ospitata e alla contabilizzazione dell’utilizzo, ma né il server di Happier né il relay trasportano l’audio della conversazione in diretta. ElevenLabs può elaborare e conservare i dati ricevuti secondo le impostazioni e i termini del tuo account ElevenLabs. I controlli di condivisione del contesto vocale sono separati dall’elaborazione di questo provider."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Dopo aver cambiato voce, aggiorna il tuo agente affinché ElevenLabs la usi.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID agente salvato. Aggiorna dopo aver cambiato voce.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Compilato quando Happier crea il tuo agente.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Crea un agente o inserisci il suo ID sopra.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agente vocale Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Account",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversazione",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Voce",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Gestisci chiavi API",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Quale modello vocale ElevenLabs parla. Quello predefinito va bene per la maggior parte delle voci.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Apri il tuo account ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’audio e il contenuto della conversazione vengono inviati da questo dispositivo a ElevenLabs tramite la connessione client di ElevenLabs. A seconda della configurazione selezionata, Happier può anche inviare a ElevenLabs istruzioni limitate per l’agente, definizioni e risultati degli strumenti client e richieste di autenticazione o provisioning necessarie per la funzione. Il server di Happier può partecipare all’autenticazione ospitata e alla contabilizzazione dell’utilizzo, ma né il server di Happier né il relay trasportano l’audio della conversazione in diretta. ElevenLabs può elaborare e conservare i dati ricevuti secondo le impostazioni e i termini del tuo account ElevenLabs. I controlli di condivisione del contesto vocale sono separati dall’elaborazione di questo provider.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Quanto somiglia alla voce originale.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Quanto velocemente parla la voce.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Quanto è costante il suono della voce."
           }
         },
         {
           "locale": "pt",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "O áudio e o conteúdo da conversa são enviados deste dispositivo para a ElevenLabs através da ligação do cliente ElevenLabs. Consoante a configuração selecionada, a Happier também pode enviar à ElevenLabs instruções limitadas do agente, definições e resultados de ferramentas do cliente e pedidos de autenticação ou aprovisionamento necessários para a funcionalidade. O servidor da Happier pode participar na autenticação alojada e na contabilização de utilização, mas nem o servidor da Happier nem o relay transportam o áudio da conversa em direto. A ElevenLabs pode processar e reter os dados recebidos de acordo com as definições e os termos da sua conta ElevenLabs. Os controlos de partilha de contexto de voz são separados do processamento por este fornecedor."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Depois de mudar a voz, atualize seu agente para que a ElevenLabs a use.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID do agente salvo. Atualize após mudar a voz.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Preenchido quando o Happier cria seu agente.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Crie um agente ou informe seu ID acima.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agente de voz do Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Conta",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversa",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Voz",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Gerenciar chaves de API",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Qual modelo de voz da ElevenLabs fala. O padrão atende à maioria das vozes.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Abrir sua conta ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "O áudio e o conteúdo da conversa são enviados deste dispositivo para a ElevenLabs através da ligação do cliente ElevenLabs. Consoante a configuração selecionada, a Happier também pode enviar à ElevenLabs instruções limitadas do agente, definições e resultados de ferramentas do cliente e pedidos de autenticação ou aprovisionamento necessários para a funcionalidade. O servidor da Happier pode participar na autenticação alojada e na contabilização de utilização, mas nem o servidor da Happier nem o relay transportam o áudio da conversa em direto. A ElevenLabs pode processar e reter os dados recebidos de acordo com as definições e os termos da sua conta ElevenLabs. Os controlos de partilha de contexto de voz são separados do processamento por este fornecedor.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "O quanto ela se parece com a voz original.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "A velocidade com que a voz fala.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "A estabilidade do som da voz."
           }
         },
         {
           "locale": "ca",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’àudio i el contingut de la conversa s’envien des d’aquest dispositiu a ElevenLabs mitjançant la connexió del client d’ElevenLabs. Segons la configuració seleccionada, Happier també pot enviar a ElevenLabs instruccions limitades de l’agent, definicions i resultats d’eines del client, i sol·licituds d’autenticació o aprovisionament necessàries per a la funció. El servidor de Happier pot participar en l’autenticació allotjada i la comptabilització d’ús, però ni el servidor de Happier ni el relé transporten l’àudio de la conversa en directe. ElevenLabs pot processar i conservar les dades rebudes segons la configuració i les condicions del vostre compte d’ElevenLabs. Els controls per compartir el context de veu són independents del processament per aquest proveïdor."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Després de canviar la veu, actualitza l’agent perquè ElevenLabs la faci servir.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "ID de l’agent desat. Actualitza’l després de canviar la veu.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "S’emplena quan Happier crea el teu agent.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Crea un agent o introdueix-ne l’ID a sobre.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Agent de veu de Happier",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Compte",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Conversa",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Veu",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "Gestiona les claus API",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Quin model de veu d’ElevenLabs parla. El predeterminat s’adiu amb la majoria de veus.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Obre el teu compte d’ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "L’àudio i el contingut de la conversa s’envien des d’aquest dispositiu a ElevenLabs mitjançant la connexió del client d’ElevenLabs. Segons la configuració seleccionada, Happier també pot enviar a ElevenLabs instruccions limitades de l’agent, definicions i resultats d’eines del client, i sol·licituds d’autenticació o aprovisionament necessàries per a la funció. El servidor de Happier pot participar en l’autenticació allotjada i la comptabilització d’ús, però ni el servidor de Happier ni el relé transporten l’àudio de la conversa en directe. ElevenLabs pot processar i conservar les dades rebudes segons la configuració i les condicions del vostre compte d’ElevenLabs. Els controls per compartir el context de veu són independents del processament per aquest proveïdor.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Com s’assembla a la veu original.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Com de ràpid parla la veu.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Com d’estable sona la veu."
           }
         },
         {
           "locale": "de",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Audio und Gesprächsinhalte werden von diesem Gerät über die ElevenLabs-Clientverbindung an ElevenLabs gesendet. Abhängig von der ausgewählten Einrichtung kann Happier außerdem begrenzte Agentenanweisungen, Client-Tool-Definitionen und -Ergebnisse sowie für die Funktion erforderliche Authentifizierungs- oder Bereitstellungsanfragen an ElevenLabs senden. Der Happier-Server kann an gehosteter Authentifizierung und Nutzungsabrechnung beteiligt sein, aber weder der Happier-Server noch das Relay übertragen Live-Gesprächsaudio. ElevenLabs kann empfangene Daten gemäß den Einstellungen und Bedingungen Ihres ElevenLabs-Kontos verarbeiten und speichern. Steuerelemente zur Freigabe des Sprachkontexts sind von der Verarbeitung durch diesen Anbieter getrennt."
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "Aktualisiere deinen Agenten nach einer Stimmänderung, damit ElevenLabs sie verwendet.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "Agenten-ID gespeichert. Nach einer Stimmänderung aktualisieren.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Wird ausgefüllt, wenn Happier deinen Agenten erstellt.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "Erstelle einen Agenten oder gib oben seine ID ein.",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier-Sprachagent",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "Konto",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "Gespräch",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "Stimme",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "API-Schlüssel verwalten",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "Welches ElevenLabs-Sprachmodell spricht. Standard passt für die meisten Stimmen.",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "Dein ElevenLabs-Konto öffnen",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "Audio und Gesprächsinhalte werden von diesem Gerät über die ElevenLabs-Clientverbindung an ElevenLabs gesendet. Abhängig von der ausgewählten Einrichtung kann Happier außerdem begrenzte Agentenanweisungen, Client-Tool-Definitionen und -Ergebnisse sowie für die Funktion erforderliche Authentifizierungs- oder Bereitstellungsanfragen an ElevenLabs senden. Der Happier-Server kann an gehosteter Authentifizierung und Nutzungsabrechnung beteiligt sein, aber weder der Happier-Server noch das Relay übertragen Live-Gesprächsaudio. ElevenLabs kann empfangene Daten gemäß den Einstellungen und Bedingungen Ihres ElevenLabs-Kontos verarbeiten und speichern. Steuerelemente zur Freigabe des Sprachkontexts sind von der Verarbeitung durch diesen Anbieter getrennt.",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "Wie nah sie der Originalstimme kommt.",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "Wie schnell die Stimme spricht.",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "Wie gleichmäßig die Stimme klingt."
           }
         },
         {
           "locale": "zh-Hans",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音频和对话内容会通过 ElevenLabs 客户端连接从此设备发送到 ElevenLabs。根据所选设置，Happier 还可能向 ElevenLabs 发送受限的代理指令、客户端工具定义和结果，以及此功能所需的身份验证或预配请求。Happier 服务器可能参与托管身份验证和使用情况核算，但 Happier 服务器和中继均不传输实时对话音频。ElevenLabs 可能会根据您的 ElevenLabs 帐户设置和其条款处理并保留收到的数据。语音上下文共享控件独立于此提供商的处理。"
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "更改声音后，更新代理，让 ElevenLabs 使用它。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "代理 ID 已保存。更改声音后请更新。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Happier 创建代理时会自动填写。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "创建代理，或在上方输入它的 ID。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier 语音代理",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "账户",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "对话",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "声音",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "管理 API 密钥",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "选择说话的 ElevenLabs 语音模型。默认模型适合大多数声音。",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "打开你的 ElevenLabs 账户",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音频和对话内容会通过 ElevenLabs 客户端连接从此设备发送到 ElevenLabs。根据所选设置，Happier 还可能向 ElevenLabs 发送受限的代理指令、客户端工具定义和结果，以及此功能所需的身份验证或预配请求。Happier 服务器可能参与托管身份验证和使用情况核算，但 Happier 服务器和中继均不传输实时对话音频。ElevenLabs 可能会根据您的 ElevenLabs 帐户设置和其条款处理并保留收到的数据。语音上下文共享控件独立于此提供商的处理。",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "与原始声音的相似程度。",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "声音的说话速度。",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "声音的稳定程度。"
           }
         },
         {
           "locale": "zh-Hant",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音訊和對話內容會透過 ElevenLabs 用戶端連線從此裝置傳送至 ElevenLabs。根據所選設定，Happier 也可能向 ElevenLabs 傳送受限的代理程式指示、用戶端工具定義和結果，以及此功能所需的驗證或佈建請求。Happier 伺服器可能參與代管驗證和使用量核算，但 Happier 伺服器和轉送均不傳輸即時對話音訊。ElevenLabs 可能會根據您的 ElevenLabs 帳戶設定和其條款處理並保留收到的資料。語音脈絡共用控制項獨立於此提供者的處理。"
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "變更聲音後，更新代理，讓 ElevenLabs 使用它。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "代理 ID 已儲存。變更聲音後請更新。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Happier 建立代理時會自動填入。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "建立代理，或在上方輸入它的 ID。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier 語音代理",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "帳戶",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "對話",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "聲音",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "管理 API 金鑰",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "選擇說話的 ElevenLabs 語音模型。預設模型適合大多數聲音。",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "開啟你的 ElevenLabs 帳戶",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音訊和對話內容會透過 ElevenLabs 用戶端連線從此裝置傳送至 ElevenLabs。根據所選設定，Happier 也可能向 ElevenLabs 傳送受限的代理程式指示、用戶端工具定義和結果，以及此功能所需的驗證或佈建請求。Happier 伺服器可能參與代管驗證和使用量核算，但 Happier 伺服器和轉送均不傳輸即時對話音訊。ElevenLabs 可能會根據您的 ElevenLabs 帳戶設定和其條款處理並保留收到的資料。語音脈絡共用控制項獨立於此提供者的處理。",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "與原始聲音的相似程度。",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "聲音的說話速度。",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "聲音的穩定程度。"
           }
         },
         {
           "locale": "ja",
           "messages": {
-            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音声と会話内容は、このデバイスから ElevenLabs クライアント接続を通じて ElevenLabs に送信されます。選択した設定に応じて、Happier は限定されたエージェント指示、クライアントツールの定義と結果、およびこの機能に必要な認証またはプロビジョニング要求も ElevenLabs に送信することがあります。Happier のサーバーはホスト型認証と使用量計測に関与する場合がありますが、Happier のサーバーもリレーもライブ会話音声を転送しません。ElevenLabs は、受信したデータをお客様の ElevenLabs アカウント設定およびその規約に従って処理・保持する場合があります。音声コンテキスト共有の制御は、このプロバイダーによる処理とは別です。"
+            "settingsVoice.realtimeProviders.elevenLabs.accountFooter": "声を変えたらエージェントを更新して、ElevenLabsに反映してください。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentConfigured": "エージェントIDを保存済み。声を変えたら更新してください。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription": "Happierがエージェントを作成すると入力されます。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentMissing": "エージェントを作成するか、上にIDを入力してください。",
+            "settingsVoice.realtimeProviders.elevenLabs.agentTitle": "Happier音声エージェント",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.account": "アカウント",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.conversation": "会話",
+            "settingsVoice.realtimeProviders.elevenLabs.groups.voice": "音声",
+            "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys": "APIキーを管理",
+            "settingsVoice.realtimeProviders.elevenLabs.modelDescription": "使用するElevenLabs音声モデル。既定のモデルはほとんどの声に適しています。",
+            "settingsVoice.realtimeProviders.elevenLabs.openAccount": "自分のElevenLabsアカウントを開く",
+            "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure": "音声と会話内容は、このデバイスから ElevenLabs クライアント接続を通じて ElevenLabs に送信されます。選択した設定に応じて、Happier は限定されたエージェント指示、クライアントツールの定義と結果、およびこの機能に必要な認証またはプロビジョニング要求も ElevenLabs に送信することがあります。Happier のサーバーはホスト型認証と使用量計測に関与する場合がありますが、Happier のサーバーもリレーもライブ会話音声を転送しません。ElevenLabs は、受信したデータをお客様の ElevenLabs アカウント設定およびその規約に従って処理・保持する場合があります。音声コンテキスト共有の制御は、このプロバイダーによる処理とは別です。",
+            "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle": "ElevenLabs",
+            "settingsVoice.realtimeProviders.elevenLabs.similarityDescription": "元の声にどれだけ似せるか。",
+            "settingsVoice.realtimeProviders.elevenLabs.speedDescription": "声の話す速さ。",
+            "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription": "声の安定性。"
           }
         }
       ],
@@ -2005,6 +2190,7 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             },
             "fields": [
               {
+                "immediateRequiresLiteral": true,
                 "kind": "welcome",
                 "path": "welcome",
                 "subtitleKey": "settingsVoice.byo.realtime.call.welcome.subtitle",
@@ -2013,9 +2199,9 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               {
                 "kind": "text",
                 "path": "agentId",
-                "promptBodyKey": "settingsVoice.byo.agentIdDescription",
+                "promptBodyKey": "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription",
                 "promptTitleKey": "settingsVoice.byo.agentIdTitle",
-                "subtitleKey": "settingsVoice.byo.agentIdDescription",
+                "subtitleKey": "settingsVoice.realtimeProviders.elevenLabs.agentIdDescription",
                 "titleKey": "settingsVoice.byo.agentIdTitle"
               },
               {
@@ -2056,44 +2242,120 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
                   }
                 ],
                 "path": "tts.modelId",
-                "promptBodyKey": "settingsVoice.byo.realtime.modelPicker.prompt.body",
+                "promptBodyKey": "settingsVoice.realtimeProviders.elevenLabs.modelDescription",
                 "promptTitleKey": "settingsVoice.byo.realtime.modelPicker.prompt.title",
-                "subtitleKey": "settingsVoice.byo.realtime.modelPicker.subtitle",
+                "subtitleKey": "settingsVoice.realtimeProviders.elevenLabs.modelDescription",
                 "titleKey": "settingsVoice.byo.realtime.modelPicker.title"
               },
               {
-                "kind": "number",
+                "defaultValue": 0.5,
+                "kind": "range",
                 "max": 1,
                 "min": 0,
+                "nullable": true,
                 "path": "tts.voiceSettings.stability",
                 "promptBodyKey": "settingsVoice.byo.realtime.voiceSettings.stability.promptBody",
                 "promptTitleKey": "settingsVoice.byo.realtime.voiceSettings.stability.promptTitle",
-                "subtitleKey": "settingsVoice.byo.realtime.voiceSettings.stability.subtitle",
+                "step": 0.01,
+                "subtitleKey": "settingsVoice.realtimeProviders.elevenLabs.stabilityDescription",
                 "titleKey": "settingsVoice.byo.realtime.voiceSettings.stability.title"
               },
               {
-                "kind": "number",
+                "defaultValue": 0.75,
+                "kind": "range",
                 "max": 1,
                 "min": 0,
+                "nullable": true,
                 "path": "tts.voiceSettings.similarityBoost",
                 "promptBodyKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptBody",
                 "promptTitleKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptTitle",
-                "subtitleKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.subtitle",
+                "step": 0.01,
+                "subtitleKey": "settingsVoice.realtimeProviders.elevenLabs.similarityDescription",
                 "titleKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.title"
               },
               {
-                "kind": "number",
+                "defaultValue": 1,
+                "fractionDigits": 1,
+                "kind": "range",
                 "max": 1.2,
                 "min": 0.7,
+                "nullable": true,
                 "path": "tts.voiceSettings.speed",
                 "promptBodyKey": "settingsVoice.byo.realtime.voiceSettings.speed.promptBody",
                 "promptTitleKey": "settingsVoice.byo.realtime.voiceSettings.speed.promptTitle",
-                "subtitleKey": "settingsVoice.byo.realtime.voiceSettings.speed.subtitle",
-                "titleKey": "settingsVoice.byo.realtime.voiceSettings.speed.title"
+                "step": 0.1,
+                "subtitleKey": "settingsVoice.realtimeProviders.elevenLabs.speedDescription",
+                "titleKey": "settingsVoice.byo.realtime.voiceSettings.speed.title",
+                "valueSuffix": "×"
               }
             ],
-            "footerKey": "settingsVoice.byo.provisioningGroupFooter",
+            "footerKey": "settingsVoice.realtimeProviders.elevenLabs.accountFooter",
+            "groups": [
+              {
+                "fieldPaths": [
+                  "agentId"
+                ],
+                "id": "account",
+                "includeCredentials": true,
+                "titleKey": "settingsVoice.realtimeProviders.elevenLabs.groups.account"
+              },
+              {
+                "fieldPaths": [
+                  "tts.voiceId",
+                  "tts.modelId",
+                  "tts.voiceSettings.stability",
+                  "tts.voiceSettings.similarityBoost",
+                  "tts.voiceSettings.speed"
+                ],
+                "id": "voice",
+                "titleKey": "settingsVoice.realtimeProviders.elevenLabs.groups.voice"
+              },
+              {
+                "fieldPaths": [
+                  "welcome"
+                ],
+                "id": "conversation",
+                "titleKey": "settingsVoice.realtimeProviders.elevenLabs.groups.conversation"
+              }
+            ],
             "kind": "voice.provider-settings.v1",
+            "language": {
+              "kind": "single_language",
+              "supportedLanguageCodes": [
+                "ar",
+                "bg",
+                "cs",
+                "da",
+                "de",
+                "el",
+                "en",
+                "es",
+                "fi",
+                "fr",
+                "hi",
+                "hr",
+                "hu",
+                "id",
+                "it",
+                "ja",
+                "ko",
+                "ms",
+                "nl",
+                "no",
+                "pl",
+                "pt",
+                "pt-br",
+                "ro",
+                "ru",
+                "sk",
+                "sv",
+                "ta",
+                "tr",
+                "uk",
+                "vi",
+                "zh"
+              ]
+            },
             "links": {
               "account": "https://elevenlabs.io",
               "apiKeys": "https://elevenlabs.io/app/settings/api-keys"
@@ -2233,7 +2495,8 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           },
           "turn": {
             "bargeIn": true,
-            "cancelResponse": true
+            "cancelResponse": true,
+            "clearInput": true
           }
         },
         "client": {
@@ -2526,6 +2789,98 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               "title": "Input transcription model"
             }
           ],
+          "presentation": {
+            "credential": {
+              "catalog": "voices",
+              "credentialPurpose": "voice.client-auth",
+              "kind": "api_key",
+              "promptBodyKey": "settingsVoice.realtimeProviders.credential.promptBody",
+              "promptTitleKey": "settingsVoice.realtimeProviders.credential.promptTitle",
+              "titleKey": "settingsVoice.realtimeProviders.credential.title"
+            },
+            "fields": [
+              {
+                "customIdAllowed": true,
+                "kind": "model",
+                "movingAliasRequiresOptIn": true,
+                "options": [
+                  {
+                    "id": "gpt-realtime-2.1",
+                    "kind": "pinned"
+                  },
+                  {
+                    "id": "gpt-realtime",
+                    "kind": "moving_alias"
+                  }
+                ],
+                "path": "model",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.model.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.model.title"
+              },
+              {
+                "customIdAllowed": true,
+                "kind": "voice_catalog",
+                "path": "voice",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.voice.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.voice.title",
+                "valueShape": "string"
+              },
+              {
+                "kind": "instructions",
+                "maxLength": 10000,
+                "path": "instructions",
+                "promptBodyKey": "settingsVoice.realtimeProviders.fields.instructions.promptBody",
+                "promptTitleKey": "settingsVoice.realtimeProviders.fields.instructions.promptTitle",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.instructions.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.instructions.title"
+              },
+              {
+                "kind": "select",
+                "options": [
+                  "server_vad",
+                  "semantic_vad",
+                  "manual"
+                ],
+                "path": "turnDetection",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.title"
+              },
+              {
+                "kind": "select",
+                "options": [
+                  {
+                    "id": "",
+                    "titleKey": "settingsVoice.realtimeProviders.options.automatic"
+                  },
+                  {
+                    "id": "gpt-4o-mini-transcribe",
+                    "title": "gpt-4o-mini-transcribe"
+                  },
+                  {
+                    "id": "custom",
+                    "titleKey": "settingsVoice.realtimeProviders.options.custom"
+                  }
+                ],
+                "path": "inputTranscriptionModel",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.transcriptionModel.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.transcriptionModel.title"
+              }
+            ],
+            "footerKey": "settingsVoice.realtimeProviders.authentication.footer",
+            "kind": "voice.provider-settings.v1",
+            "language": {
+              "kind": "automatic_recognition"
+            },
+            "links": {
+              "account": "https://platform.openai.com",
+              "apiKeys": "https://platform.openai.com/api-keys",
+              "privacy": "https://openai.com/policies/privacy-policy/"
+            },
+            "modes": [
+              "byo"
+            ],
+            "titleKey": "settingsVoice.realtimeProviders.setup.title"
+          },
           "privacyDisclosure": {
             "fallback": "Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.openai.privacyDisclosure"
@@ -3279,6 +3634,9 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             ],
             "footerKey": "settingsVoice.realtimeProviders.xai.setup.footer",
             "kind": "voice.provider-settings.v1",
+            "language": {
+              "kind": "independent_reply"
+            },
             "links": {
               "account": "https://console.x.ai",
               "apiKeys": "https://console.x.ai/team/default/api-keys",

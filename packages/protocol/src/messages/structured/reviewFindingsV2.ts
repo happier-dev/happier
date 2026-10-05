@@ -19,6 +19,10 @@ export type ReviewPublicationOverlay = z.infer<typeof ReviewPublicationOverlaySc
 
 export const ReviewFindingsV2Schema = z.object({
   runRef: ExecutionRunStructuredRunRefSchema,
+  comparisonId: z.string().min(1).optional(),
+  /** Number of files in the host's verified captured comparison inventory, when known. */
+  fileCount: z.number().int().nonnegative().optional(),
+  reviewOutcome: z.enum(['complete', 'partial', 'failed']).optional(),
   summary: z.string().min(1),
   overviewMarkdown: z.string().min(1),
   findings: z.array(ReviewFindingSchema),

@@ -64,10 +64,12 @@ describe('VirtualizedList backend selection', () => {
     it('renders the Legend backend for auto on native', async () => {
         platformState.os = 'ios';
         const nativeStyle = { height: 320 };
-        const screen = await renderList({ estimatedItemSize: 40, style: nativeStyle });
+        const nativeContentStyle = [{ paddingHorizontal: 12 }, { paddingLeft: 7 }];
+        const screen = await renderList({ estimatedItemSize: 40, style: nativeStyle, contentContainerStyle: nativeContentStyle });
         expect(screen.findAllByType('LegendList' as any)).toHaveLength(1);
         expect(mocks.legend?.state.props?.estimatedItemSize).toBe(40);
         expect(mocks.legend?.state.props?.style).toBe(nativeStyle);
+        expect(mocks.legend?.state.props?.contentContainerStyle).toBe(nativeContentStyle);
     });
 
     it('renders the Legend backend when explicitly preferred, on any platform', async () => {

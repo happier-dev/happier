@@ -2,6 +2,8 @@ import type * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
+import { widgetSetupNeedsStep, type WidgetSetup } from './widgetSetupModel';
+
 /**
  * The one Add popover's content model (lab `cwidgets` G1, round 2). Every placement — the Board, the
  * Companion — describes what can be added as sections of entries; the popover only draws them, in its
@@ -17,8 +19,21 @@ export type WidgetAddEntry = Readonly<{
     /** Where it comes from ("Channels", "Built in", "Note"). */
     subtitle?: string;
     icon: IconName;
-    /** Already on this surface: stays in place, marked Added, and cannot be picked again. */
+    /**
+     * Already on this surface and a second copy would be the same thing (a widget with no inputs):
+     * stays in place, marked Added, and cannot be picked again.
+     */
     added?: boolean;
+    /**
+     * A widget with inputs that is already here ("2 on Home"): picking it adds another copy, which
+     * its binding names (lab `dashboards` dbind G). Replaces Added for configurable widgets.
+     */
+    count?: string;
+    /**
+     * A configurable widget's Set up step, built when picked. The panel shows it only when an input
+     * is missing or ambiguous; a fully bound choice is submitted at once with scoped feedback.
+     */
+    setup?: () => WidgetSetup;
     /**
      * Gallery only: the real widget body at this placement's data. Mounted only while the gallery is
      * open; the List view never mounts it.
@@ -82,4 +97,23 @@ export function widgetAddViewFromSetting(value: 'grid' | 'list' | undefined | nu
 
 export function widgetAddViewToSetting(view: WidgetAddView): 'grid' | 'list' {
     return view === 'list' ? 'list' : 'grid';
+}
+
+/**
+ * What picking an entry does, decided once for the Gallery and for any list that offers widgets (a
+ * Board's Add to board): nothing for an Added widget; the Set up step only when an input is missing
+ * or ambiguous; a fully bound configurable widget submits its proposed inputs at once; anything else
+ * is the entry's own pick.
+ */
+export type WidgetAddPick =
+    | Readonly<{ kind: 'added' }>
+    | Readonly<{ kind: 'setup'; setup: WidgetSetup }>
+    | Readonly<{ kind: 'submit'; setup: WidgetSetup }>
+    | Readonly<{ kind: 'pick' }>;
+
+export function resolveWidgetAddPick(entry: WidgetAddEntry): WidgetAddPick {
+    if (entry.added) return { kind: 'added' };
+    if (!entry.setup) return { kind: 'pick' };
+    const setup = entry.setup();
+    return widgetSetupNeedsStep(setup.fields, setup.resolve(setup.initial)) ? { kind: 'setup', setup } : { kind: 'submit', setup };
 }

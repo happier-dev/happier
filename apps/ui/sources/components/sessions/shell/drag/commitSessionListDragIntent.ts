@@ -11,7 +11,7 @@
  * the user drags. This module takes that stable intent plus the latest live
  * state and:
  *
- * 1. rebuilds the latest tree metadata ONCE from the latest session-list index
+ * 1. uses current tree metadata or rebuilds ONCE from the latest session-list index
  *    (no measured geometry — only `rowMetadataById`/`containerMetadataById` are
  *    needed, and `buildSessionListTreeRows` yields those without bounds);
  * 2. resolves source/target/container by stable ids in the latest metadata;
@@ -63,7 +63,7 @@ import {
     type ApplySessionListTreeDropOperationContext,
     type SessionListTreeDropDestination,
 } from '../commit/applySessionListTreeDropOperation';
-import { buildSessionListGroupOrderAfterTreeDrop } from '../commit/applyGroupOrderUpdate';
+import { buildSessionListGroupOrderAfterTreeDrop, resolveSessionListGroupOrderChildKind } from '../commit/applyGroupOrderUpdate';
 import { buildSessionWorkspaceOrderAfterTreeDrop } from '../commit/applyWorkspaceOrderUpdate';
 import { buildSessionListDragSource } from '../drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
@@ -88,13 +88,19 @@ function isSessionListSessionIndexItem(item: SessionListIndexItem): item is Sess
 /**
  * Latest live state required to commit a drag intent.
  *
- * `latestItems` is the latest session-list index; the latest tree metadata is
- * rebuilt from it once. The folder/order maps are the latest live maps the
+ * `latestItems` is the latest session-list index; `latestTree` may supply its
+ * already-indexed projection. A stale projection is rebuilt once. The folder/order maps are the latest live maps the
  * minimal order update is built against.
  */
 export type CommitSessionListDragIntentContext = Readonly<{
+    scope?: SessionListDragIntent['scope'];
+    /** Current canonical relation verdict, preloaded by the relation read owner. */
+    resolvePutSessionUnder?: (input: Readonly<{ serverId: string; sessionId: string; leadSessionId: string }>) =>
+        Readonly<{ allowed: true; expectedLeadSessionId: string | null }> | Readonly<{ allowed: false; reason: string }>;
     /** Latest session-list index — the latest tree metadata is built from it. */
     latestItems: ReadonlyArray<SessionListIndexItem>;
+    /** Mounted list's existing indexed projection; reused only for the exact current item array. */
+    latestTree?: SessionListTreeModel;
     sessionFoldersV1: SessionFoldersV1;
     sessionListGroupOrderV1: SessionListGroupOrderV1;
     sessionWorkspaceOrderV1?: SessionWorkspaceOrderV1;
@@ -102,11 +108,11 @@ export type CommitSessionListDragIntentContext = Readonly<{
     sessionListOrderingModeV1?: SessionListOrderingModeV1;
     sessionListSectionModeV1?: SessionListOrderingSectionMode;
     manualSessionOrderingEnabled?: boolean;
-    isFolderOrganizationEnabled?: () => boolean;
+    isFolderOrganizationEnabled?: (serverId: string | null) => boolean;
     now: () => number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => void;
-    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void;
-    setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => void;
+    setSessionFoldersV1: (next: SessionFoldersV1) => Promise<void>;
+    setSessionListGroupOrderV1: (next: Record<string, string[]>) => Promise<void>;
+    setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => Promise<void>;
     setSessionFolderAssignment: (assignment: Readonly<{
         serverId: string;
         sessionId: string;
@@ -121,10 +127,10 @@ export type CommitSessionListDragIntentContext = Readonly<{
         serverId: string;
         sessionId: string;
         leadSessionId: string;
-    }>) => Promise<'applied' | 'not-eligible' | 'refused'>;
+    }>) => Promise<'applied' | 'not-eligible' | 'refused' | 'unknown'>;
 }>;
 
-function noOp(reason: SessionListDragCommitNoOpReason): SessionListDragCommitResult {
+function noOp(reason: SessionListDragCommitNoOpReason): Readonly<{ ok: false; reason: SessionListDragCommitNoOpReason }> {
     return { ok: false, reason };
 }
 
@@ -198,11 +204,11 @@ function resolveLatestResult(params: Readonly<{
     container: SessionListTreeContainerMetadata;
 }>): RebasedResult | SessionListDragCommitNoOpReason {
     const { intent, tree, container } = params;
-    const targetExists = intent.targetRowId != null
-        && tree.rowMetadataById.has(intent.targetRowId);
+    const target = intent.targetRowId ? tree.rowMetadataById.get(intent.targetRowId) : null;
+    const targetExists = target != null;
 
     if (intent.instructionKind === 'reorder-before' || intent.instructionKind === 'reorder-after') {
-        if (intent.targetRowId && targetExists) {
+        if (intent.targetRowId && target?.containerId === container.containerId) {
             const edge: 'top' | 'bottom' = intent.instructionKind === 'reorder-before' ? 'top' : 'bottom';
             const instruction: TreeInstruction = {
                 kind: intent.instructionKind,
@@ -231,13 +237,14 @@ function resolveLatestResult(params: Readonly<{
     }
 
     if (intent.instructionKind === 'nest-into') {
-        if (!intent.targetRowId || !targetExists || !intent.parentRowId) return 'target-missing';
+        // The child container belongs to the target; its parentRowId names the folder's own parent.
+        if (!intent.targetRowId || !targetExists || target?.childContainerId !== container.containerId) return 'target-missing';
         return {
             instruction: {
                 kind: 'nest-into',
                 targetId: intent.targetRowId,
                 containerId: container.containerId,
-                parentId: intent.parentRowId,
+                parentId: intent.targetRowId,
                 depth: container.depth,
             },
             visual: { kind: 'outline', targetId: intent.targetRowId },
@@ -294,7 +301,7 @@ function isNoChangeCommit(params: Readonly<{
         });
     }
 
-    const childKind = resolveGroupOrderChildKind(
+    const childKind = resolveSessionListGroupOrderChildKind(
         source.metadata.kind === 'folder' ? 'folder' : 'session',
         resolveEffectiveFolderSortModeForDragContext(context),
     );
@@ -311,19 +318,6 @@ function isNoChangeCommit(params: Readonly<{
         currentMap: context.sessionListGroupOrderV1,
         next,
     });
-}
-
-/**
- * Mirrors `applySessionListTreeDropOperation`'s `resolveGroupOrderChildKind`:
- * in `mixed` mode every kind shares the order scope; otherwise sessions and
- * folders occupy disjoint kind-filtered order scopes.
- */
-function resolveGroupOrderChildKind(
-    sourceKind: 'session' | 'folder',
-    folderSortMode: SessionListFolderSortModeV1 | undefined,
-): 'sessionsOnly' | 'foldersOnly' | 'mixed' {
-    if (folderSortMode === 'mixed') return 'mixed';
-    return sourceKind === 'session' ? 'sessionsOnly' : 'foldersOnly';
 }
 
 function resolveEffectiveFolderSortModeForDragContext(
@@ -373,31 +367,57 @@ function isSessionSiblingReorderBlockedByOrderingMode(params: Readonly<{
     }).canReorderSiblings;
 }
 
-export async function commitSessionListDragIntent(params: Readonly<{
+export type SessionListDragAdmission =
+    | Readonly<{ ok: false; reason: SessionListDragCommitNoOpReason; relationReason?: string }>
+    | Readonly<{ ok: true; effect: 'reports-to'; source: SessionListTreeRowMetadata; lead: SessionListTreeRowMetadata; expectedLeadSessionId: string | null }>
+    | Readonly<{ ok: true; effect: 'organization'; tree: SessionListTreeModel; source: SessionListTreeDragSource; result: SessionListTreeDropResult }>;
+
+/** Admission and semantic destination projection share the mounted list's current index. */
+export function resolveSessionListDragTree(context: Pick<CommitSessionListDragIntentContext, 'latestTree' | 'latestItems'>): SessionListTreeModel {
+    return context.latestTree?.items === context.latestItems
+        ? context.latestTree
+        : buildSessionListTreeRows({ items: context.latestItems });
+}
+
+/** The shared semantic admission owner. Geometry, menus and Actions submit the same stable intent. */
+export function resolveSessionListDragIntent(params: Readonly<{
     intent: SessionListDragIntent;
     context: CommitSessionListDragIntentContext;
-}>): Promise<SessionListDragCommitResult> {
+}>): SessionListDragAdmission {
     const { intent, context } = params;
+    if (intent.scope && (!context.scope || intent.scope.serverId !== context.scope.serverId
+        || intent.scope.accountId !== context.scope.accountId)) return noOp('scope-mismatch');
 
     // Blocked / idle intents never commit.
     if (intent.instructionKind === 'blocked' || intent.instructionKind === 'idle') {
         return noOp('blocked-intent');
     }
 
-    // Rebuild the latest tree metadata ONCE from the latest index — no measured
-    // geometry: only rowMetadataById/containerMetadataById are needed here.
-    const tree = buildSessionListTreeRows({ items: context.latestItems });
+    // Reuse the mounted list's current index for pointer admission. Release
+    // re-reads this context, and rejects a projection from an older item array.
+    const tree = resolveSessionListDragTree(context);
 
     // Resolve the source by stable id in the latest tree.
     const sourceMetadata = tree.rowMetadataById.get(intent.sourceRowId);
     if (!sourceMetadata || sourceMetadata.kind !== intentSourceKindToTreeKind(intent)) {
         return noOp('source-missing');
     }
+    if (intent.scope && sourceMetadata.serverId !== intent.scope.serverId) return noOp('scope-mismatch');
 
     // A drop on a Session row puts the source under that Session: a `reportsTo` change, not a
     // folder or order change, so none of the container rebase below applies.
     if (intent.instructionKind === 'nest-into' && intent.targetRowId && isSessionTreeRowId(intent.targetRowId)) {
-        return commitPutSessionUnder({ source: sourceMetadata, targetRowId: intent.targetRowId, tree, context });
+        const lead = tree.rowMetadataById.get(intent.targetRowId);
+        if (!lead || lead.kind !== 'session' || !lead.sessionId) return noOp('target-missing');
+        if (sourceMetadata.kind !== 'session' || !sourceMetadata.sessionId || !sourceMetadata.serverId) return noOp('blocked-intent');
+        if (lead.serverId !== sourceMetadata.serverId) return noOp('scope-mismatch');
+        if (!context.putSessionUnder) return noOp('blocked-intent');
+        const eligibility = context.resolvePutSessionUnder?.({ serverId: sourceMetadata.serverId,
+            sessionId: sourceMetadata.sessionId, leadSessionId: lead.sessionId });
+        if (!eligibility) return { ok: false, reason: 'blocked-intent', relationReason: 'unavailable' };
+        if (eligibility?.allowed === false) return { ok: false, reason: 'blocked-intent', relationReason: eligibility.reason };
+        return { ok: true, effect: 'reports-to', source: sourceMetadata, lead,
+            expectedLeadSessionId: eligibility.expectedLeadSessionId };
     }
 
     // Resolve the destination container by stable id in the latest tree.
@@ -413,7 +433,7 @@ export async function commitSessionListDragIntent(params: Readonly<{
     // Folder-move cycle guard against the LATEST descendant set.
     if (sourceMetadata.kind === 'folder') {
         const descendants = collectLatestDescendantRowIds(tree, sourceMetadata.rowId);
-        if (descendants.has(container.containerId) || (intent.parentRowId && descendants.has(intent.parentRowId))) {
+        if (descendants.has(container.containerId) || (container.parentRowId && descendants.has(container.parentRowId))) {
             return noOp('descendant-cycle');
         }
     }
@@ -437,6 +457,24 @@ export async function commitSessionListDragIntent(params: Readonly<{
     if (destination && isNoChangeCommit({ tree, source, context, destination })) {
         return noOp('no-change');
     }
+    if (context.isFolderOrganizationEnabled?.(source.metadata.serverId) === false && (source.metadata.kind === 'folder'
+        || (source.metadata.kind === 'session' && source.metadata.folderId !== destination?.container.folderId))) {
+        return noOp('feature-disabled');
+    }
+    return { ok: true, effect: 'organization', tree, source, result };
+}
+
+export async function commitSessionListDragIntent(params: Readonly<{
+    intent: SessionListDragIntent;
+    context: CommitSessionListDragIntentContext;
+}>): Promise<SessionListDragCommitResult> {
+    const { context } = params;
+    const admission = resolveSessionListDragIntent(params);
+    if (!admission.ok) return noOp(admission.reason);
+    if (admission.effect === 'reports-to') {
+        return commitPutSessionUnder({ source: admission.source, lead: admission.lead, context });
+    }
+    const { tree, source, result } = admission;
 
     const applyContext: ApplySessionListTreeDropOperationContext = {
         sessionFoldersV1: context.sessionFoldersV1,
@@ -463,17 +501,17 @@ export async function commitSessionListDragIntent(params: Readonly<{
 
     if (applied.ok) return { ok: true };
     if (applied.reason === 'date-ordering-mode') return noOp('date-ordering-mode');
+    if (applied.reason === 'feature-disabled') return noOp('feature-disabled');
     return noOp('no-change');
 }
 
 async function commitPutSessionUnder(params: Readonly<{
     source: SessionListTreeRowMetadata;
-    targetRowId: string;
-    tree: SessionListTreeModel;
+    lead: SessionListTreeRowMetadata;
     context: CommitSessionListDragIntentContext;
 }>): Promise<SessionListDragCommitResult> {
     const { source, context } = params;
-    const lead = params.tree.rowMetadataById.get(params.targetRowId);
+    const lead = params.lead;
     if (!lead || lead.kind !== 'session' || !lead.sessionId) return noOp('target-missing');
     if (source.kind !== 'session' || !source.sessionId || !source.serverId) return noOp('blocked-intent');
     if (lead.serverId !== source.serverId) return noOp('scope-mismatch');
@@ -484,6 +522,7 @@ async function commitPutSessionUnder(params: Readonly<{
         leadSessionId: lead.sessionId,
     });
     if (outcome === 'applied') return { ok: true };
+    if (outcome === 'unknown') return noOp('outcome-unknown');
     return noOp(outcome === 'refused' ? 'refused' : 'blocked-intent');
 }
 

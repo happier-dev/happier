@@ -86,7 +86,9 @@ export function usePaneAnimatedPresence(input: Readonly<{
 
     return {
         present,
-        node: present ? nodeRef.current : null,
+        // Open panes show their owner's current content immediately. The retained
+        // node is only for the exit animation, when the owner has removed it.
+        node: present ? (input.targetOpen ? input.node : nodeRef.current) : null,
         progress,
     };
 }

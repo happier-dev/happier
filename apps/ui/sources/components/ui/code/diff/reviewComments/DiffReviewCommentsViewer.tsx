@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Platform, useWindowDimensions, View } from 'react-native';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -13,6 +14,7 @@ import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLi
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 import { useSetting } from '@/sync/domains/state/storage';
+import type { DiffViewerBaseProps } from '../diffViewerTypes';
 
 const DISABLED_INTRA_LINE_WORD_DIFF = {
     enabled: false,
@@ -21,7 +23,7 @@ const DISABLED_INTRA_LINE_WORD_DIFF = {
     maxPairs: 0,
 } as const;
 
-export type DiffReviewCommentsViewerProps = Readonly<{
+export type DiffReviewCommentsViewerProps = Pick<DiffViewerBaseProps, 'findActive' | 'findRangesByLineId'> & Readonly<{
     filePath: string;
     unifiedDiff: string;
     scrollToLineId?: string;
@@ -36,6 +38,7 @@ export type DiffReviewCommentsViewerProps = Readonly<{
     wrapLines?: boolean;
     showLineNumbers?: boolean;
     showPrefix?: boolean;
+    renderAfterLine?: (line: CodeLine) => React.ReactNode;
 }>;
 
 function areDraftArraysEquivalent(
@@ -51,8 +54,12 @@ function areDiffReviewCommentsViewerPropsEqual(
     next: DiffReviewCommentsViewerProps,
 ): boolean {
     return previous.scrollToLineId === next.scrollToLineId
+        && previous.findActive === next.findActive
+        && previous.findRangesByLineId === next.findRangesByLineId
         && previous.highlightLineId === next.highlightLineId
         && previous.onScrollToLine === next.onScrollToLine
+        && previous.externalScrollView === next.externalScrollView
+        && previous.renderAfterLine === next.renderAfterLine
         && previous.filePath === next.filePath
         && previous.unifiedDiff === next.unifiedDiff
         && previous.reviewCommentsEnabled === next.reviewCommentsEnabled
@@ -118,10 +125,17 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         onError: props.onReviewCommentError,
     });
     const showInactiveCommentAffordance = Platform.OS === 'web';
+    const renderAfterLine = React.useCallback((line: CodeLine) => {
+        const notes = props.renderAfterLine?.(line);
+        const comments = controls?.renderAfterLine?.(line);
+        return notes || comments ? <>{notes}{comments}</> : null;
+    }, [controls?.renderAfterLine, props.renderAfterLine]);
 
     return (
         <View style={virtualized ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight)) : undefined}>
             <DiffViewer
+                findActive={props.findActive}
+                findRangesByLineId={props.findRangesByLineId}
                 scrollToLineId={props.scrollToLineId}
                 highlightLineId={props.highlightLineId}
                 onScrollToLine={props.onScrollToLine}
@@ -135,7 +149,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
                 pressLineWhenNotSelectable={Boolean(controls?.onPressAddComment)}
                 onPressAddComment={controls?.onPressAddComment}
                 isCommentActive={controls?.isCommentActive}
-                renderAfterLine={controls?.renderAfterLine}
+                renderAfterLine={props.renderAfterLine ? renderAfterLine : controls?.renderAfterLine}
                 showInactiveCommentAffordance={showInactiveCommentAffordance}
                 virtualized={virtualized}
                 wrapLines={effectiveWrapLines}

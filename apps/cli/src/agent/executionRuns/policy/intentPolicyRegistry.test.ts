@@ -12,6 +12,16 @@ import {
 } from './intentPolicyRegistry';
 
 describe('executionRun intent policy registry', () => {
+  it('admits a read-only retained review for findings-first narration', () => {
+    expect(validateExecutionRunStartIntentPolicy({ intent: 'review', permissionMode: 'read_only',
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' })).toEqual({ ok: true });
+  });
+  it('admits a read-only retained SCM generator through the existing session runtime', () => {
+    expect(validateExecutionRunStartIntentPolicy({
+      intent: 'scm_diff_summary', permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'long_lived', ioMode: 'streaming',
+    })).toEqual({ ok: true });
+  });
   it('keeps policy coverage aligned with the protocol intent surface and the bridge policy matrix', () => {
     for (const intent of ExecutionRunIntentSchema.options) {
       const policy = resolveExecutionRunIntentPolicy(intent);
@@ -74,7 +84,7 @@ describe('executionRun intent policy registry', () => {
     });
 
     expect(validateExecutionRunStartIntentPolicy({
-      intent: 'review',
+      intent: 'plan',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',

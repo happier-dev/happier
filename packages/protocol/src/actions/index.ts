@@ -1,18 +1,33 @@
 export * from './invocationAuthority.js';
+export * from './clientDispatchV1.js';
+export * from './anchoredListOrderV1.js';
+export { ComposerTransactionApplyInputV1Schema, ComposerAttachmentsPickInputV1Schema, ComposerAttachmentsPickResultV1Schema,
+  RepositoryUploadPickInputV1Schema, RepositoryUploadPickResultV1Schema,
+  type ComposerTransactionApplyInputV1, type ComposerAttachmentsPickInputV1,
+  type RepositoryUploadPickInputV1, type RepositoryUploadPickResultV1 } from './composerIngressAction.js';
+export { WorkflowConversationBindInputV1Schema, WorkflowConversationBindResultV1Schema,
+  type WorkflowConversationBindInputV1, type WorkflowConversationBindResultV1 } from './workflowAuthoringAction.js';
+export { SessionOrganizationMoveInputSchema, SessionOrganizationMoveOutputSchema,
+  type SessionOrganizationMoveInput, type SessionOrganizationMoveOutput } from './sessionOrganizationMoveAction.js';
+export { UiFindInputSchema } from './findActionSpecs.js';
 export { WORKSPACE_ACTION_IDS, WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, isWorkspaceActionId, type WorkspaceActionId, type WorkspaceTabsListOutput, type WorkspaceClosedTabsListOutput } from './workspaceActionFamily.js';
+export { SESSION_CANVAS_ACTION_IDS, SESSION_CANVAS_ACTION_INPUT_SCHEMAS, SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS, isSessionCanvasActionId, type SessionCanvasActionId, type SessionCanvasActionOutcome } from './sessionCanvasActionFamily.js';
 export * from './scopeActionFamily.js';
 export * from './specs/homeHub.js';
 export * from '../connect/configurationActionsV1.js';
 export * from '../connect/executeConfigurationActionV1.js';
 export * from './settingsDeclarationActionFamily.js';
+export * from './voiceConversationActionFamily.js';
 export * from './appShellActionFamily.js';
+export * from './notificationConfigurationActionFamily.js';
+export * from './appUpdateActionFamily.js';
 export * from './executor/artifactPublicLinkActions.js';
 export * from './decisionAuthority.js';
 export { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations, type WorkflowDefinitionArtifactHeaderRow } from './executor/workflowDefinitions.js';
 export {
   ActionCompletionContractV1Schema, ActionCompletionStateV1Schema,
   freezeActionCompletionContractV1, prepareActionCompletionV1, resumeActionCompletionV1,
-  readActionCompletionRunObservationV1,
+  readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1,
   type ActionCompletionDeclaration, type ActionCompletionContractV1, type ActionCompletionStateV1,
   type ActionCompletionRun, type ActionCompletionLaunchFailure, type ActionCompletionResult,
   type ExecutionRunTerminalObservation, type ReviewRunMaterialization,
@@ -569,3 +584,6 @@ export {
 export { ReviewStartTerminalValueV1Schema } from './specs/executionRunCompletion.js';
 export * from './specs/machineConnection.js';
 export * from './sessionTerminalActionFamily.js';
+export * from '../todos/todoSessionLinkV1.js';
+export { PendingReorderInputV1Schema, TodoReorderInputV1Schema, ListReorderOutputV1Schema,
+  type PendingReorderInputV1, type TodoReorderInputV1, type ListReorderOutputV1 } from './listReorderAction.js';

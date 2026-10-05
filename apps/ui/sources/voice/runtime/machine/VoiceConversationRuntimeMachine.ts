@@ -6,7 +6,7 @@ import {
     getVoiceConversationRuntimeSnapshot,
     setVoiceConversationRuntimeSnapshot,
 } from './voiceConversationRuntimeStore';
-import { createVoiceMachineError } from './voiceMachineError';
+import { classifyVoiceMachineError } from './voiceMachineError';
 import type {
     VoiceConversationRuntimeSnapshot,
     VoiceConversationRuntimeState,
@@ -142,13 +142,6 @@ function isTransitionAllowed(
     }
 
     return true;
-}
-
-function createProviderError(reason: string): VoiceMachineError {
-    return createVoiceMachineError({
-        kind: reason.includes('permission_denied') ? 'mic_permission_denied' : 'provider_error',
-        reason,
-    });
 }
 
 export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntimeMachine {
@@ -359,8 +352,9 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
         try {
             await startListening(abortController.signal);
         } catch (error) {
-            const reason = error instanceof Error ? error.message : 'listening_start_failed';
-            failRearmIfStillOwner(token, controlSessionId, createProviderError(reason));
+            failRearmIfStillOwner(token, controlSessionId, classifyVoiceMachineError(error, {
+                reason: 'listening_start_failed',
+            }));
             return;
         } finally {
             if (activeListeningAbortController === abortController) {

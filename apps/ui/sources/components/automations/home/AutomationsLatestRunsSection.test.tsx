@@ -157,6 +157,7 @@ function serveTwoAutomations() {
 
 afterEach(() => {
     standardCleanup();
+    vi.restoreAllMocks();
     act(() => {
         storage.getState().applyAutomations([], null);
     });
@@ -178,6 +179,14 @@ async function renderSection() {
 }
 
 describe('Automations · Latest runs on Home', () => {
+    it('keeps run times short and relative in the compact Home rows', async () => {
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        server.automations = [automation('triage', 'Morning triage', now - 12 * 60_000)];
+        server.runsByAutomationId = { triage: [run('recent', 'triage', now - 12 * 60_000, 'succeeded')] };
+        const screen = await renderSection();
+        expect(screen.getTextContent()).toContain('12m');
+    });
     it('shows the newest Runs across Automations, with when they were read and a way to Automations', async () => {
         serveTwoAutomations();
         const screen = await renderSection();

@@ -3,7 +3,7 @@ import type { PromptAssetReadRequest } from '@happier-dev/protocol';
 import { writePromptAssetTransferPayload } from '@/prompts/assets/shared/promptAssetTransferPayload';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 
-import type { DownloadTransferSource } from './downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 
 type PromptAssetDownloadSourceResult =
   | Readonly<{ success: true; source: DownloadTransferSource }>

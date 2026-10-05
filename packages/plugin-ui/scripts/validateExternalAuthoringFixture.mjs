@@ -704,7 +704,7 @@ async function assertPackedExternalAuthoringFixtureInstallation({ packedHostRoot
   return Object.freeze({ root: physicalFixtureRoot, version: manifest.version });
 }
 
-async function assertPublicPresentationContract(consumerRoot) {
+export async function assertPublicPresentationContract(consumerRoot) {
   const packageRoot = join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-ui');
   const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
   const presentationExport = packageJson.exports?.['./presentation'];
@@ -722,11 +722,18 @@ async function assertPublicPresentationContract(consumerRoot) {
   if (!pathIsInside(packageRoot, declarationFile)) {
     throw new Error('Packed plugin-ui presentation declaration escapes its package root');
   }
-  const declarations = await readFile(declarationFile, 'utf8');
-  if (/\bHappierImage\b/u.test(declarations)) {
+  // The public barrel may reexport another declaration. Ask the compiler's
+  // module-symbol owner rather than mistaking a barrel's text for its exports.
+  const ts = requireFromPluginUi('typescript');
+  const program = ts.createProgram([declarationFile], { noEmit: true, skipLibCheck: true, types: [] });
+  const source = program.getSourceFile(declarationFile);
+  const checker = program.getTypeChecker();
+  const module = source ? checker.getSymbolAtLocation(source) : undefined;
+  const exports = new Set(module ? checker.getExportsOfModule(module).map((symbol) => symbol.name) : []);
+  if (exports.has('HappierImage')) {
     throw new Error('Raw renderer export leaked through plugin-ui/presentation: HappierImage');
   }
-  if (!/\bHappierBrandMark\b/u.test(declarations)) {
+  if (!exports.has('HappierBrandMark')) {
     throw new Error('Semantic BrandMark renderer is missing from plugin-ui/presentation');
   }
 }

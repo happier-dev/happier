@@ -18,7 +18,7 @@ import {
   type PasswordWrappedRecoverySecretV1,
 } from '@happier-dev/protocol';
 
-import { openAes256GcmBytes, sealAes256GcmBytes } from '@/utils/crypto/aes256GcmBytes';
+import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 import { deriveKey } from '@/utils/deriveKey';
 
 type PasswordSodium = Readonly<{

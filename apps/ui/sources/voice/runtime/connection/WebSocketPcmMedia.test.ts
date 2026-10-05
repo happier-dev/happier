@@ -39,7 +39,7 @@ describe('WebSocketPcmMedia', () => {
       input: { sampleRate: 24_000, chunkMs: 100 },
       output: { sampleRate: 24_000, retainedOutputMaxMs: 1_500 },
       onInputChunk: vi.fn(),
-      createCapture: () => ({ start: async () => {}, stop: async () => {}, waitForDrain: async () => {}, isActive: () => true, level: () => 0 }),
+      createCapture: () => ({ start: async () => {}, finish: async () => {}, stop: async () => {}, waitForDrain: async () => {}, isActive: () => true, level: () => 0 }),
     });
     const enqueueSeconds = (seconds: number, marker: number) => media.enqueueOutput(
       encodePcm16LeBase64(new Int16Array(seconds * 24_000).fill(marker)),

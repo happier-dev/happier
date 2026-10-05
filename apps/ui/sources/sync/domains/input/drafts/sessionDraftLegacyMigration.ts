@@ -1,4 +1,9 @@
-import type { StrictJsonValue } from '@happier-dev/protocol';
+import { MENTION_KIND_V1, buildMentionRefForKindV1, pluginJsonValuesEqual, type MentionRefV1, type StrictJsonValue } from '@happier-dev/protocol';
+import {
+    composerReferencesFromStructuredMentions,
+    composerStructuredMentionsFromReferences,
+    placePositionlessComposerReferences,
+} from '@/components/sessions/composer/composerScopeAdapters';
 
 import { randomUUID } from '@/platform/randomUUID';
 import {
@@ -26,7 +31,10 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
     parseComposerStructuredInputMentionsForText,
+    ComposerStructuredInputMentionSchema,
     SESSION_DRAFT_VALUE_SCHEMAS,
+    type ComposerStructuredInputMention,
+    type ComposerStructuredInputMentionsForText,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
@@ -34,6 +42,48 @@ import { projectNewSessionDraftSyncedAuthoringFields } from './sessionAuthoringD
 
 function asStrictJsonValue(value: unknown): StrictJsonValue {
     return value as StrictJsonValue;
+}
+
+/** Only the predecessor storage seam places absent ranges. Live draft reads remain exact. */
+export function parseLegacySessionDraftMentions(value: unknown, text: string): ComposerStructuredInputMentionsForText {
+    if (!Array.isArray(value)) return { mentions: [], fullyDecoded: false };
+    const currentEntries: unknown[] = [];
+    const legacyMentionsByReference = new Map<string, ComposerStructuredInputMention[]>();
+    const legacyReferences: MentionRefV1[] = [];
+    const referenceKey = (reference: MentionRefV1) => JSON.stringify([reference.kind, reference.ref, reference.token]);
+    let fullyDecoded = true;
+    for (const entry of value) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { fullyDecoded = false; continue; }
+        const record: Record<string, unknown> = entry;
+        if ('start' in record || 'end' in record) { currentEntries.push(entry); continue; }
+        if (typeof record.tokenText !== 'string' || record.tokenText.length === 0) { fullyDecoded = false; continue; }
+        let candidate = record;
+        if (record.kind === 'session') {
+            if (typeof record.sessionId !== 'string' || record.sessionId.length === 0) { fullyDecoded = false; continue; }
+            candidate = { ...record, kind: MENTION_KIND_V1.session,
+                ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, record.sessionId) };
+        }
+        const parsed = ComposerStructuredInputMentionSchema.safeParse({ ...candidate, start: 0, end: record.tokenText.length });
+        if (!parsed.success) { fullyDecoded = false; continue; }
+        const reference = composerReferencesFromStructuredMentions({ text: parsed.data.tokenText, mentions: [parsed.data] })[0];
+        if (!reference) { fullyDecoded = false; continue; }
+        const key = referenceKey(reference);
+        const occurrences = legacyMentionsByReference.get(key) ?? [];
+        occurrences.push(parsed.data);
+        legacyMentionsByReference.set(key, occurrences);
+        legacyReferences.push(reference);
+    }
+    const current = parseComposerStructuredInputMentionsForText(currentEntries, text);
+    const placed = placePositionlessComposerReferences({ text, references: legacyReferences, occupied: current.mentions });
+    // Keep each saved leaf's richer catalog fields: the general document adapter
+    // groups by identity, but predecessor duplicate occurrences can have distinct context.
+    const migrated = placed.flatMap(reference => {
+        const existing = legacyMentionsByReference.get(referenceKey(reference))?.shift();
+        return existing ? composerStructuredMentionsFromReferences({ references: [reference], existing: [existing] }) : [];
+    });
+    const mentions = [...current.mentions, ...migrated]
+        .sort((left, right) => left.start - right.start || left.end - right.end);
+    return { mentions, fullyDecoded: fullyDecoded && current.fullyDecoded && migrated.length === legacyReferences.length };
 }
 
 function buildExistingPatch(
@@ -64,7 +114,7 @@ function buildExistingPatch(
                 fullyProjected = false;
                 continue;
             }
-            const mentions = parseComposerStructuredInputMentionsForText(envelope.value, text);
+            const mentions = parseLegacySessionDraftMentions(envelope.value, text);
             patch.mentions = mentions.mentions.map(asStrictJsonValue);
             if (!mentions.fullyDecoded) fullyProjected = false;
             continue;
@@ -114,7 +164,8 @@ export async function migrateLegacySessionDrafts(scope: ServerAccountScope): Pro
     const sessionIds = new Set([...Object.keys(legacyTexts), ...Object.keys(legacyValues)]);
     for (const sessionId of sessionIds) {
         const address = { kind: 'session', sessionId } as const;
-        const alreadyCaptured = getSessionDraftSnapshot(scope, address)?.localSupplement.legacyExistingSessionDraftV1 === true;
+        const captured = getSessionDraftSnapshot(scope, address);
+        const alreadyCaptured = captured?.localSupplement.legacyExistingSessionDraftV1 === true;
         const { patch, fullyProjected } = buildExistingPatch(legacyTexts[sessionId], legacyValues[sessionId]);
         if (!alreadyCaptured && Object.keys(patch).length > 0) {
             writeExistingSessionDraft({ scope, sessionId, patch, materializationIntent: 'seeded' });
@@ -123,7 +174,17 @@ export async function migrateLegacySessionDrafts(scope: ServerAccountScope): Pro
         const flushResult = await flushSessionDraft({ scope, address });
         const remotelyAcknowledged = isSessionDraftRemoteAcknowledged(scope, address)
             || (flushResult.status === 'clean' && getSessionDraftSnapshot(scope, address) === null);
-        if (fullyProjected && remotelyAcknowledged) {
+        // Older migration readers could mark a capture complete while dropping
+        // positionless references. Their acknowledged empty projection is not
+        // evidence those retained references reached canonical custody. Never
+        // overwrite a subsequently edited document to repair that old capture.
+        const capturedMentions = captured ? parseComposerStructuredInputMentionsForText(
+            captured.document.composer.mentions?.value ?? [], captured.document.composer.text.value,
+        ).mentions : [];
+        const referencesCaptured = !alreadyCaptured || (patch.mentions ?? []).every(mention => (
+            capturedMentions.some(current => pluginJsonValuesEqual(current, mention))
+        ));
+        if (fullyProjected && remotelyAcknowledged && referencesCaptured) {
             if (Object.prototype.hasOwnProperty.call(legacyTexts, sessionId)) {
                 delete legacyTexts[sessionId];
                 textsChanged = true;

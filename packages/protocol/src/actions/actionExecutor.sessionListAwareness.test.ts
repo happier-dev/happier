@@ -4,6 +4,9 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
 import type { SessionListQueryV1 } from '../sessions/listing/query.js';
 import { getActionSpec } from './actionSpecs.js';
+import type { SessionAwarenessProjectionV1 } from '../sessions/awareness/projectionV1.js';
+import { encodeV2SessionListCursorV1 } from '../sessions/listing/cursor.js';
+import { projectSessionAwarenessV1 } from '../sessions/awareness/projectV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -61,6 +64,124 @@ const agentContext = {
 } as const;
 
 describe('session.list execution', () => {
+  it('offers native widget Session options from the same awareness owner without requiring a plugin catalog', async () => {
+    const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [{
+      v: 1, sessionId: 'B', title: 'Bound B', lifecycle: 'active', runtime: 'idle', freshness: 'live',
+      operational: { primary: 'none', reasons: [] }, encryption: 'plain', availability: 'complete',
+    }], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
+    const executor = createExecutor({ sessionList, widgetAccountScope: () => ({ serverId: 'home-current', accountId: 'viewer' }) });
+    const result = await executor.execute('action.options.resolve', {
+      consumer: { kind: 'widget', surface: { serverId: 'home-current', accountId: 'viewer', owner: { kind: 'home' } },
+        definition: { kind: 'builtin', id: 'changes' } }, fieldPath: 'session',
+    }, { surface: 'ui', authority: 'present_user', serverId: 'home-current' });
+    expect(result).toEqual({ ok: true, result: expect.objectContaining({ options: [expect.objectContaining({ value: { serverId: 'home-current', sessionId: 'B' }, label: 'Bound B' })] }) });
+  });
+  it('does not let native descriptor discovery bypass the current Account scope or Session-list grant', async () => {
+    const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [], nextCursor: null, hasNext: false,
+      attentionNextCursor: null, attentionHasNext: false }));
+    const request = { consumer: { kind: 'widget', surface: { serverId: 'home-current', accountId: 'viewer', owner: { kind: 'home' } },
+      definition: { kind: 'builtin', id: 'changes' } }, fieldPath: 'session' };
+    for (const [scope, errorCode] of [[null, 'widget_scope_unavailable'], [{ serverId: 'home-current', accountId: 'other' }, 'account_target_mismatch']] as const) {
+      await expect(createExecutor({ sessionList, widgetAccountScope: () => scope }).execute('action.options.resolve', request,
+        { surface: 'ui', authority: 'present_user', serverId: 'home-current' })).resolves.toMatchObject({ ok: false, errorCode });
+    }
+    await expect(createExecutor({ sessionList, widgetAccountScope: () => ({ serverId: 'home-current', accountId: 'viewer' }) }).execute('action.options.resolve', request, {
+      surface: 'api', authority: 'account_automation', serverId: 'home-current',
+      externalActionCredential: { accountId: 'viewer', principalId: 'token', credentialId: 'token', grant: {
+        v: 1, actions: { families: [], ids: ['widgets.catalog.list'] }, targets: null, approve: false,
+        origins: [], models: null, permissionModes: null, create: null,
+      } },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(sessionList).not.toHaveBeenCalled();
+  });
+  it('discovers qualified Session options through the admitted awareness reader with complete paging and shared status order', async () => {
+    const awareness = (sessionId: string, runtime: SessionAwarenessProjectionV1['runtime'], primary: SessionAwarenessProjectionV1['operational']['primary']): SessionAwarenessProjectionV1 => ({
+      v: 1, sessionId, title: `Title ${sessionId}`, lifecycle: 'active', runtime, freshness: 'live',
+      operational: { primary, reasons: [] }, encryption: 'plain', availability: 'complete',
+    });
+    const requests: Parameters<ActionExecutorDeps['sessionList']>[0][] = [];
+    const cursor = encodeV2SessionListCursorV1('recent');
+    const executor = createExecutor({ machinesList: async () => { throw new Error('Session choices must not query machines'); },
+      sessionList: async (request) => {
+        requests.push(request);
+        return buildSessionAwarenessListResultV1({
+          sessions: request.query?.cursor
+            ? [awareness('working', 'working', 'working'), awareness('needs', 'offline', 'permission_required')]
+            : [awareness('recent', 'waiting', 'pending_input'), { ...awareness('locked', 'idle', 'none'), title: undefined, encryption: 'locked', availability: 'locked' }],
+          nextCursor: request.query?.cursor ? null : cursor,
+          hasNext: !request.query?.cursor, attentionNextCursor: null, attentionHasNext: false,
+        });
+      } });
+    await expect(executor.execute('action.options.resolve', { optionsSourceId: 'sessions', actionId: 'session.spawn_new',
+      draftInput: { executionTarget: { serverId: 'other-home' }, machineId: 'unrelated-machine' } }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home-current',
+    })).resolves.toMatchObject({ ok: true, result: { options: [
+      { value: { serverId: 'home-current', sessionId: 'needs' }, label: 'Title needs', description: 'Needs you' },
+      { value: { serverId: 'home-current', sessionId: 'working' }, label: 'Title working', description: 'Working' },
+      { value: { serverId: 'home-current', sessionId: 'recent' }, label: 'Title recent', description: 'Recent' },
+      { value: { serverId: 'home-current', sessionId: 'locked' }, label: 'locked', description: 'Recent', disabled: true },
+    ] } });
+    expect(requests).toHaveLength(2);
+    expect(requests.map(request => ({ serverId: request.serverId, view: request.view, query: request.query }))).toEqual([
+      { serverId: 'home-current', view: 'awareness', query: { ...canonicalQuery, includeInactive: true, includeAttention: false } },
+      { serverId: 'home-current', view: 'awareness', query: { ...canonicalQuery, includeInactive: true, includeAttention: false, cursor } },
+    ]);
+  });
+
+  it('does not return partial Session options when current read authority is refused on continuation', async () => {
+    const executor = createExecutor({ sessionList: async ({ query }) => query?.cursor
+      ? { ok: false, errorCode: 'permission_denied', error: 'permission_denied' }
+      : buildSessionAwarenessListResultV1({ sessions: [projectSessionAwarenessV1({
+          nowMs: 1, sessionId: 'first', title: 'First', lifecycle: {}, runtime: { presence: 'online', active: false },
+          pending: {}, content: { mode: 'plain' }, currentness: { lifecycle: 'observed', runtime: 'observed', pending: 'observed' },
+        })], nextCursor: encodeV2SessionListCursorV1('next'), hasNext: true,
+        attentionNextCursor: null, attentionHasNext: false }) });
+    await expect(executor.execute('action.options.resolve', { optionsSourceId: 'sessions' }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home-current',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'permission_denied' });
+  });
+
+  it('refuses Session discovery before reading when the autonomous caller has no admitted Session corpus', async () => {
+    const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [], nextCursor: null, hasNext: false }));
+    await expect(createExecutor({ sessionList }).execute('action.options.resolve', { optionsSourceId: 'sessions' }, {
+      surface: 'agent', authority: 'account_automation', serverId: 'home-current', sessionListAccess: 'unavailable',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(sessionList).not.toHaveBeenCalled();
+  });
+
+  it('requires the actual Session-list grant even when the consuming widget descriptor is granted', async () => {
+    const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [], nextCursor: null, hasNext: false }));
+    const surface = { serverId: 'home-current', accountId: 'viewer', owner: { kind: 'home' as const } };
+    const definition = { kind: 'builtin' as const, id: 'checks' };
+    let descriptorRead = false;
+    const executor = createExecutor({ sessionList,
+      widgetAccountScope: () => ({ serverId: 'home-current', accountId: 'viewer' }),
+      widgetCatalog: { list: async () => {
+        descriptorRead = true;
+        return [{ definition, title: 'Checks', availability: 'available', instanceCount: 0,
+          fields: [{ path: 'session', title: 'Session', widget: 'select', optionsSourceId: 'sessions' }] }];
+      } },
+    });
+    await expect(executor.execute('action.options.resolve', {
+      consumer: { kind: 'widget', surface, definition }, fieldPath: 'session',
+    }, {
+      surface: 'api', authority: 'account_automation', serverId: 'home-current',
+      externalActionCredential: { accountId: 'viewer', principalId: 'token', credentialId: 'token', grant: {
+        v: 1, actions: { families: [], ids: ['widgets.catalog.list'] }, targets: null,
+        approve: false, origins: [], models: null, permissionModes: null, create: null,
+      } },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(descriptorRead).toBe(true);
+    expect(sessionList).not.toHaveBeenCalled();
+  });
+
+  it('does not invent a Home identity for Session choices when the host has no selected Home', async () => {
+    const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [], nextCursor: null, hasNext: false }));
+    await expect(createExecutor({ sessionList }).execute('action.options.resolve', { optionsSourceId: 'sessions' }, {
+      surface: 'ui', authority: 'present_user',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'server_not_selected' });
+    expect(sessionList).not.toHaveBeenCalled();
+  });
   it('requires a marked server query for a subtree read instead of accepting an ignored selector', async () => {
     const executor = createExecutor({ sessionList: async () => ({ sessions: [], nextCursor: null, hasNext: false }) });
     await expect(executor.execute('session.list', { underSessionId: 'lead' }, agentContext))

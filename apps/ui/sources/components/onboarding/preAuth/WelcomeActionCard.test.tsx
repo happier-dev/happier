@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
+// Load the real UI owner graph before the interaction deadline begins.
+await import('./WelcomeActionCard');
+
 describe('WelcomeActionCard', () => {
     it('exposes its decision and description accessibly and invokes it once', async () => {
         const onPress = vi.fn();

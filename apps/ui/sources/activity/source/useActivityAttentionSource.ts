@@ -17,13 +17,14 @@ import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { createActivityAttentionStoreSourceSelector } from './createActivityAttentionStoreSourceSelector';
 import { useActivityPersonalSessionMembership } from './activityPersonalSessionMembership';
 
-export function useActivityAttentionSummarySource(): ActivityAttentionSource {
+function useActivityAttentionStoreSource(includeSessionMessages: boolean): ActivityAttentionSource {
     const personalMembership = useActivityPersonalSessionMembership();
     const storeSourceSelector = React.useMemo(
         () => createActivityAttentionStoreSourceSelector(
             personalMembership.membershipByServerId,
+            { includeSessionMessages },
         ),
-        [personalMembership.membershipByServerId],
+        [includeSessionMessages, personalMembership.membershipByServerId],
     );
     const activeServer = React.useSyncExternalStore(
         React.useCallback((listener) => {
@@ -47,8 +48,13 @@ export function useActivityAttentionSummarySource(): ActivityAttentionSource {
     }), [activeServer, personalMembership, storeSource]);
 }
 
+/** Summary surfaces never subscribe to or scan detailed transcript messages. */
+export function useActivityAttentionSummarySource(): ActivityAttentionSource {
+    return useActivityAttentionStoreSource(false);
+}
+
 export function useActivityAttentionSource(): ActivityAttentionSource {
-    const summarySource = useActivityAttentionSummarySource();
+    const summarySource = useActivityAttentionStoreSource(true);
     const serverProfilesGeneration = React.useSyncExternalStore(
         subscribeServerProfiles,
         getServerProfilesGeneration,

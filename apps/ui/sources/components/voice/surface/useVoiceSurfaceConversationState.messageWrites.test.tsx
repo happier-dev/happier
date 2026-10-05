@@ -2,6 +2,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -97,7 +98,6 @@ afterEach(() => {
  */
 describe('useVoiceSurfaceConversationState message-store subscription', () => {
     it('does not re-render on message writes to unrelated sessions', async () => {
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         let renders = 0;
 
         const hook = await renderHook(() => {
@@ -128,7 +128,6 @@ describe('useVoiceSurfaceConversationState message-store subscription', () => {
     });
 
     it('still observes writes to the bound conversation', async () => {
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
 
         const hook = await renderHook(() =>
             useVoiceSurfaceConversationState({

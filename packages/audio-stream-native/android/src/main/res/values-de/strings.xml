@@ -1,4 +1,4 @@
 <resources>
   <string name="happier_voice_foreground_notification_channel">Sprachunterhaltung</string>
-  <string name="happier_voice_foreground_notification_text">Die Sprachunterhaltung ist aktiv</string>
+  <string name="happier_voice_foreground_notification_text">Voice verwendet das Mikrofon. Tippen, um Happier zu öffnen.</string>
 </resources>

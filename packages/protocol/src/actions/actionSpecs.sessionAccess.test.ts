@@ -40,7 +40,8 @@ describe('Session access Action contracts', () => {
     const spec = getActionSpec(ActionIdSchema.parse('session.public_link.create'));
     const settings = { expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false };
     expect(spec.outputSchema?.safeParse(settings).success).toBe(false);
-    expect(spec.outputSchema?.safeParse({ ...settings, id: 'publication', updatedAt: 7 }).success).toBe(true);
+    expect(spec.outputSchema?.safeParse({ ...settings, id: 'publication', updatedAt: 7 }).success).toBe(false);
+    expect(spec.outputSchema?.safeParse({ ...settings, id: 'publication', updatedAt: 7, url: 'https://public.example/s/lookup#k=secret' }).success).toBe(true);
   });
   it('projects publication identity from the released owner response without its bearer', () => {
     const projected = projectSessionPublicLinkActionResultV1({

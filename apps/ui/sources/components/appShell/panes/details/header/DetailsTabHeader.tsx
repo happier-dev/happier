@@ -33,9 +33,13 @@ export type DetailsTabHeaderAction = Readonly<{
 export type DetailsTabHeaderProps = Readonly<{
     /** The thing this tab shows, in its own words: the file name, the commit subject, the stash as a place. */
     title: string;
+    leading?: React.ReactNode;
+    titleControl?: React.ReactNode;
+    titleTextStyle?: React.ComponentProps<typeof PaneHeader>['titleTextStyle'];
     meta?: readonly DetailsTabHeaderMetaFact[];
     /** A live status or presence leaf; its own subscription keeps ticking out of the header owner. */
     metaLeading?: React.ReactNode;
+    metaTrailing?: React.ReactNode;
     /** A short paragraph under the header (a commit body, what Restore will do). */
     body?: React.ReactNode;
     /** Quiet controls in the header band (icon toggles), before the buttons. */
@@ -121,6 +125,12 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
             <PaneHeader
                 testID={testID}
                 title={props.title}
+                leading={props.leading}
+                titleControl={props.titleControl}
+                titleTextStyle={props.titleTextStyle}
+                titleNumberOfLines={phone ? null : 1}
+                lineTrailing={!phone ? props.controls : undefined}
+                lineEnd={props.metaTrailing}
                 line={segments.length > 0 || props.metaLeading ? {
                     segments,
                     leading: props.metaLeading ? <View style={styles.liveFacts}>
@@ -131,9 +141,9 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
                 actions={bandActions}
                 size={phone ? 'large' : 'band'}
             />
-            {props.controls || props.body || phoneToolbar ? (
+            {props.body || phoneToolbar ? (
                 <View style={[styles.below, { paddingLeft: metrics.paddingStartPx, paddingRight: metrics.paddingEndPx }]}>
-                    {phoneToolbar ?? (props.controls ? <View style={styles.controls}>{props.controls}</View> : null)}
+                    {phoneToolbar}
                     {props.body ? (
                         typeof props.body === 'string'
                             ? <Text testID={`${testID}.body`} style={[styles.body, metrics.body]}>{props.body}</Text>

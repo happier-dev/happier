@@ -3,6 +3,17 @@ import { act } from 'react-test-renderer';
 import { Terminal } from '@xterm/xterm';
 
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+
+// Recipient-envelope HTTP is outside this controller journey and must remain unused.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Terminal controller unexpectedly reached the recipient-envelope API'); };
+    return {
+        createSessionDataKeyEnvelopeClient: unused,
+        readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused,
+        prepareSessionDataKeyEnvelopesDetached: unused,
+    };
+});
 import type { DaemonTerminalEnsureResponse } from '@happier-dev/protocol';
 import type {
     EmbeddedTerminalRendererHandle,
@@ -203,6 +214,7 @@ describe('useMachineTerminalSession', () => {
             () => useMachineTerminalSession({
                 machineId: 'machine-1',
                 serverId: 'home-a',
+                sessionId: 'session-1',
                 closeOnUnmount: true,
                 cwd: null,
                 launch,
@@ -242,7 +254,7 @@ describe('useMachineTerminalSession', () => {
         });
         await act(async () => hook.getCurrent().requestRestart());
         await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
-        expect(terminalOps.restart).toHaveBeenCalledWith('machine-1', expect.any(Object), { serverId: 'home-a' });
+        expect(terminalOps.restart).toHaveBeenCalledWith('machine-1', expect.objectContaining({ sessionId: 'session-1' }), { serverId: 'home-a' });
 
         await hook.unmount();
         expect(terminalOps.close).toHaveBeenCalledWith('machine-1', { terminalId: 'term-restarted' }, { serverId: 'home-a' });

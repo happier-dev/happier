@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 
 import { installWorkflowRendererCommonModuleMocks } from '@/components/tools/renderers/workflow/workflowRendererTestHelpers';
 
@@ -18,17 +19,13 @@ function collectText(value: unknown): string {
 
 async function render(text: string) {
     const { WorkflowAgentDetail } = await import('./WorkflowAgentDetail');
-    let tree: renderer.ReactTestRenderer | undefined;
-    act(() => {
-        tree = renderer.create(<WorkflowAgentDetail text={text} detailTestID="detail" />);
-    });
-    return tree as renderer.ReactTestRenderer;
+    return (await renderScreen(<WorkflowAgentDetail text={text} detailTestID="detail" />)).tree;
 }
 
 describe('WorkflowAgentDetail', () => {
     it('pretty-prints JSON payloads instead of dumping the raw source', async () => {
         const tree = await render('{"status":"done","count":2}');
-        const body = tree.root.findByProps({ testID: 'detail-body' });
+        const body = tree.findHostByTestId('detail-body')!;
         const rendered = collectText(body.props.children);
         expect(rendered).toContain('"status": "done"');
         expect(rendered).toContain('\n');
@@ -38,12 +35,12 @@ describe('WorkflowAgentDetail', () => {
     it('clamps long bodies to a line budget and offers a Show more toggle', async () => {
         const long = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n');
         const tree = await render(long);
-        const toggle = tree.root.findByProps({ testID: 'detail-show-more' });
+        const toggle = tree.findByTestId('detail-show-more')!;
         // Collapsed: only the first 6 lines are shown.
-        expect(collectText(tree.root.findByProps({ testID: 'detail-body' }).props.children).split('\n')).toHaveLength(6);
+        expect(collectText(tree.findHostByTestId('detail-body')!.props.children).split('\n')).toHaveLength(6);
         act(() => toggle.props.onPress());
         // Expanded: full body.
-        expect(collectText(tree.root.findByProps({ testID: 'detail-body' }).props.children).split('\n')).toHaveLength(20);
+        expect(collectText(tree.findHostByTestId('detail-body')!.props.children).split('\n')).toHaveLength(20);
         act(() => tree.unmount());
     });
 

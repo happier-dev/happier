@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -44,6 +44,43 @@ async function writePackagedRuntimeFixture(params: Readonly<{
 }
 
 describe('host plugin SDK resolution', () => {
+  it('resolves physical bundled packages through the runtime-owned shared support tree', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-host-sdk-shared-support-'));
+    const root = join(parent, 'code', 'payload');
+    const supportRoot = join(parent, 'support', 'payload');
+    try {
+      await writePackagedRuntimeFixture({ root, declareSdk: true });
+      await mkdir(supportRoot, { recursive: true });
+      await rename(join(root, 'node_modules'), join(supportRoot, 'node_modules'));
+      await symlink(join(supportRoot, 'node_modules'), join(root, 'node_modules'),
+        process.platform === 'win32' ? 'junction' : 'dir');
+      const runtimeModuleUrl = pathToFileURL(join(root, 'dist', 'plugins', 'entry.js')).href;
+
+      expect(resolveHostPluginSdkPackageRoot({ runtimeModuleUrl })).toBe(
+        await realpath(join(supportRoot, 'node_modules', '@happier-dev', 'plugin-sdk')),
+      );
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a package symlink escaping the runtime-owned dependency tree', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-host-sdk-package-escape-'));
+    const root = join(parent, 'runtime');
+    const outsideRoot = join(parent, 'outside');
+    try {
+      const sdkPackageRoot = await writePackagedRuntimeFixture({ root, declareSdk: true });
+      await rename(sdkPackageRoot, outsideRoot);
+      await symlink(outsideRoot, sdkPackageRoot, process.platform === 'win32' ? 'junction' : 'dir');
+      const runtimeModuleUrl = pathToFileURL(join(root, 'dist', 'plugins', 'entry.js')).href;
+
+      expect(() => resolveHostPluginSdkPackageRoot({ runtimeModuleUrl }))
+        .toThrow(/no physical bundled/);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
   it('resolves the packaged CLI SDK root and public specifier aliases through the canonical packaged resolver', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-host-sdk-packaged-'));
     // The author file lives outside the fixture runtime root so no local SDK

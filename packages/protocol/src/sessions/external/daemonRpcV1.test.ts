@@ -25,6 +25,22 @@ import { SessionIndexedIdentifierMaxLengthV1 } from '../idsV1';
 import { resolveExternalSessionsSourceKey } from './sourceCatalog';
 
 describe('ExternalSessionsAgentIdSchema', () => {
+  it('admits content searches and validates decoded source matches strictly while preserving metadata requests', () => {
+    const request = { machineId: 'machine', agentId: 'claude', source: { kind: 'claudeConfig' }, searchTerm: 'body phrase' };
+    expect(ExternalSessionsCandidatesListRequestSchema.parse(request)).toEqual(request);
+    const contentRequest = { ...request, searchTarget: 'content', searchTerm: '  literal body  ' };
+    expect(ExternalSessionsCandidatesListRequestSchema.parse(contentRequest)).toEqual(contentRequest);
+    const response = { ok: true, candidates: [{ remoteSessionId: 'remote', updatedAtMs: 1, match: { snippet: 'body phrase', sourceItemId: 'item', messageIndex: 0 } }], contentCoverage: 'partial' };
+    expect(ExternalSessionsCandidatesListResponseSchema.parse(response)).toMatchObject(response);
+    expect(ExternalSessionsCandidatesListResponseSchema.safeParse({ ...response, contentCoverage: 'loaded' }).success).toBe(false);
+    for (const match of [
+      { snippet: 'body phrase', sourceItemId: 'item', messageIndex: -1 },
+      { snippet: 'body phrase', sourceItemId: 'item', messageIndex: 0, seq: 1 },
+      { snippet: 'body phrase', sourceItemId: '', messageIndex: 0 },
+    ]) {
+      expect(ExternalSessionsCandidatesListResponseSchema.safeParse({ ...response, candidates: [{ ...response.candidates[0], match }] }).success).toBe(false);
+    }
+  });
   it('admits bounded manifest-projected Agent ids without adding them to a static protocol enum', () => {
     expect(AgentProviderIdV1Schema.parse('antigravity')).toBe('antigravity');
     expect(AgentProviderIdV1Schema.parse('pi')).toBe('pi');

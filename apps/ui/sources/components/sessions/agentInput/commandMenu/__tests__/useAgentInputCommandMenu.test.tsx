@@ -1,4 +1,5 @@
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
@@ -29,6 +30,34 @@ function buildDefaultArgs(overrides: Partial<HookArgs> = {}): HookArgs {
 }
 
 describe('useAgentInputCommandMenu', () => {
+    it('wraps through the picker in either direction without skipping the first command', async () => {
+        const hook = await renderHook(() => {
+            const [selected, setSelected] = React.useState(0);
+            return useAgentInputCommandMenu(buildDefaultArgs({ selected, onOpenPromptPicker: vi.fn(),
+                moveDown: () => setSelected((value) => (value + 1) % 2),
+                moveUp: () => setSelected((value) => (value + 1) % 2),
+            }));
+        });
+        await act(async () => hook.getCurrent().moveUp());
+        expect(hook.getCurrent().selectedIndex).toBe(2);
+        await act(async () => hook.getCurrent().moveDown());
+        expect(hook.getCurrent().selectedIndex).toBe(0);
+        await act(async () => hook.getCurrent().moveDown());
+        expect(hook.getCurrent().selectedIndex).toBe(1);
+        await act(async () => hook.getCurrent().moveDown());
+        expect(hook.getCurrent().selectedIndex).toBe(2);
+        await act(async () => hook.getCurrent().moveUp());
+        expect(hook.getCurrent().selectedIndex).toBe(1);
+    });
+    it('opens the picker from the last slash row and keyboard navigation can reach it', async () => {
+        const onOpenPromptPicker = vi.fn();
+        const hook = await renderHook(() => useAgentInputCommandMenu(buildDefaultArgs({ selected: 1, onOpenPromptPicker })));
+        expect(hook.getCurrent().items.at(-1)?.id).toBe('prompt-picker');
+        await act(async () => hook.getCurrent().moveDown());
+        expect(hook.getCurrent().selectedIndex).toBe(2);
+        await act(async () => hook.getCurrent().onSelectFromMenu());
+        expect(onOpenPromptPicker).toHaveBeenCalledOnce();
+    });
     it('opens only when suggestions and an active trigger are present', async () => {
         const { getCurrent, rerender } = await renderHook(
             (props: HookArgs) => useAgentInputCommandMenu(props),

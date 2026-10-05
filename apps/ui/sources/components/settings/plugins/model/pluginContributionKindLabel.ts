@@ -26,6 +26,7 @@ function labelFor(kind: PluginContributionKind): string | null {
         case 'voiceProviders':
         case 'voiceModelPacks': return t('settingsPlugins.surfaces.kinds.voice');
         case 'connectedAccounts': return t('settingsPlugins.surfaces.kinds.connectedAccounts');
+        case 'inputTypes': return t('settingsPlugins.surfaces.kinds.inputTypes');
         case 'mcp': return t('settingsPlugins.surfaces.kinds.mcp');
         case 'pluginUi': return t('settingsPlugins.surfaces.kinds.pluginUi');
         case 'pluginBrowser': return t('settingsPlugins.surfaces.kinds.pluginBrowser');
@@ -33,6 +34,10 @@ function labelFor(kind: PluginContributionKind): string | null {
         case 'composerControls':
         case 'composerRegions': return t('settingsPlugins.surfaces.kinds.composer');
         case 'managedDependencies':
-        case 'accountCollections': return null;
+        case 'accountCollections':
+        case 'dragSources':
+        case 'dropTargets': return null;
     }
+    kind satisfies never;
+    return null;
 }

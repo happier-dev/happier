@@ -41,6 +41,28 @@ function fixture(templateCiphertext: string, encryption = plain, targetType: Aut
 }
 
 describe('0.2 Automation Account trigger host', () => {
+  it('reads retained E2EE Session content on a plain Account with explicit historical custody', async () => {
+    const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
+    const host = createAccountWorkflowTriggerActions({ ...f.params,
+      resolveRetainedSession: async (sessionId) => ({ sessionId, encryptionMode: 'e2ee' as const,
+        material: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } }),
+    });
+    expect((await host.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ health: 'available', legacy: { editable: false },
+      target: { definition: { defaults: { conversation: { sessionId: 'session-old' } } } } });
+    expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
+    expect(f.writes()).toBe(0);
+  });
+  it.each([AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, AUTOMATION_TEMPLATE_V02_ENCRYPTED])('lists locked encrypted legacy rows and permits deletion without their keys', async (templateCiphertext) => {
+    const f = fixture(templateCiphertext, plain, templateCiphertext === AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED ? 'existingSession' : 'newSession');
+    const host = createAccountWorkflowTriggerActions(f.params);
+    const set = WorkflowTriggerListResultV1Schema.parse(await host.list({ scope: 'account_inline' })).sets[0];
+    expect(set).toMatchObject({ health: 'source_unavailable', legacy: { editable: false,
+      lockedReason: templateCiphertext === AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED ? 'session_key_required' : 'migration_required' } });
+    expect(set?.target).toBeUndefined();
+    await host.remove({ automationId: 'legacy-one', triggerId: AutomationTriggerIdSchema.parse('schedule-one') });
+    expect(f.row().triggers).toEqual([]);
+    expect(f.row().templateCiphertext).toBe(templateCiphertext);
+  });
   it('converts existing-Session predecessor bytes using its actual Agent and placement instead of stale template settings', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, plain, 'existingSession');
     const host = createAccountWorkflowTriggerActions({ ...f.params,
@@ -55,12 +77,14 @@ describe('0.2 Automation Account trigger host', () => {
     } } }, project: { machineId: 'machine-one', directory: '/actual-session-directory' } });
     expect(f.writes()).toBe(1);
   });
-  it('refuses existing-Session conversion if the Session Agent or assignment placement is unproven', async () => {
+  it.each(['missing Agent', 'mismatched Machine'])('refuses existing-Session conversion with %s', async (unproven) => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, plain, 'existingSession');
     const host = createAccountWorkflowTriggerActions({ ...f.params,
       observeLegacyChannelAssociation: async () => ({ kind: 'absent' as const }),
-      resolveSession: async () => ({ project: { machineId: 'another-machine', directory: '/repo' }, nativeGoalOwner: null,
-        executionSelection: { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } }),
+      resolveSession: async () => ({ project: { machineId: unproven === 'mismatched Machine' ? 'another-machine' : 'machine-one', directory: '/repo' }, nativeGoalOwner: null,
+        ...(unproven === 'missing Agent' ? {} : { executionSelection: {
+          agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        } }) }),
     });
     await expect(host.update({ automationId: 'legacy-one', expectedRevision: 3, patch: { enabled: false } }))
       .rejects.toMatchObject({ code: 'legacy_conversion_unsupported', details: { reason: 'conversation_unrepresentable' } });
@@ -182,11 +206,13 @@ describe('0.2 Automation Account trigger host', () => {
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_ENCRYPTED);
     expect(f.writes()).toBe(0);
   });
-  it.each([[AUTOMATION_TEMPLATE_V02_PLAIN, encrypted], [AUTOMATION_TEMPLATE_V02_ENCRYPTED, plain]] as const)
+  it.each([[AUTOMATION_TEMPLATE_V02_PLAIN, encrypted]] as const)
     ('fails mode mismatch closed before disclosure or mutation', async (bytes, encryption) => {
       const f = fixture(bytes, encryption);
-      await expect(createAccountWorkflowTriggerActions(f.params).list({ scope: 'account_inline' }))
-        .rejects.toMatchObject({ code: 'encryption_mode_mismatch' });
+      const { sets } = await createAccountWorkflowTriggerActions(f.params).list({ scope: 'account_inline' });
+      expect(sets[0]).toMatchObject({ health: 'source_unavailable', legacy: { lockedReason: 'migration_required' } });
+      expect(sets[0]?.target).toBeUndefined();
+      expect(sets[0]?.context).toBeUndefined();
       expect(f.writes()).toBe(0);
     });
 });

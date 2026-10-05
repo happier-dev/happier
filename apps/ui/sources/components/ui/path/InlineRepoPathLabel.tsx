@@ -6,6 +6,8 @@ import {
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
 } from '@/components/ui/text/webStartEllipsisTextStyles';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 
 const PATH_SEPARATOR = '/';
 
@@ -42,6 +44,10 @@ export type InlineRepoPathLabelProps = Readonly<{
     rootLabel?: string | null;
     /** Replaces the folder line (a rename's "was …"). Stacked only. */
     detail?: string | null;
+    /** UTF-16 offsets into the normalized inline path. */
+    findRanges?: readonly FindTextRange[];
+    /** Offsets into the independent rename/detail label, when displayed beside the full path for Find. */
+    detailFindRanges?: readonly FindTextRange[];
 }>;
 
 function splitDir(dir: string | null): string[] {
@@ -118,22 +124,25 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
     }, [effectiveNameMaxWidth, props.nameTextStyle]);
 
     if (props.layout === 'nameFirst') {
+        const finding = props.findRanges !== undefined;
+        const folderLine = finding ? dirLabel : (props.detail ?? dir);
         return (
             <View style={[{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 6 }, props.style]}>
-                <Text testID="repo-path-label-name" numberOfLines={1} ellipsizeMode="middle" style={[{ flexShrink: 0, maxWidth: '100%' }, props.nameTextStyle]}>
+                <Text testID="repo-path-label-name" numberOfLines={finding ? undefined : 1} ellipsizeMode="middle" style={[{ flexShrink: 0, maxWidth: '100%' }, props.nameTextStyle]}>
                     {disambiguation ? <Text style={props.pathTextStyle}>{`${disambiguation}${PATH_SEPARATOR}`}</Text> : null}
-                    {`${name}${props.nameSuffix ?? ''}`}
+                    {props.findRanges?.length ? <FindHighlightedText text={`${name}${props.nameSuffix ?? ''}`} ranges={sliceFindRanges(props.findRanges, dirLabel?.length ?? 0, name.length + (props.nameSuffix?.length ?? 0))} /> : `${name}${props.nameSuffix ?? ''}`}
                 </Text>
-                {(props.detail ?? dir) ? (
+                {folderLine ? (
                     <Text
                         testID="repo-path-label-folder"
-                        numberOfLines={1}
+                        numberOfLines={finding ? undefined : 1}
                         ellipsizeMode={isWeb ? undefined : 'head'}
                         style={[{ flex: 1, minWidth: 0 }, isWeb ? WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE : null, props.pathTextStyle]}
                     >
-                        {isWeb ? <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>{props.detail ?? dir}</Text> : (props.detail ?? dir)}
+                        {isWeb ? <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>{finding && props.findRanges?.length ? <FindHighlightedText text={folderLine} ranges={sliceFindRanges(props.findRanges, 0, folderLine.length)} /> : folderLine}</Text> : finding && props.findRanges?.length ? <FindHighlightedText text={folderLine} ranges={sliceFindRanges(props.findRanges, 0, folderLine.length)} /> : folderLine}
                     </Text>
                 ) : null}
+                {finding && props.detail ? <Text testID="repo-path-label-detail" style={props.pathTextStyle}>{props.detailFindRanges?.length ? <FindHighlightedText text={props.detail} ranges={props.detailFindRanges} /> : props.detail}</Text> : null}
             </View>
         );
     }
@@ -167,18 +176,18 @@ export const InlineRepoPathLabel = React.memo(function InlineRepoPathLabel(props
     return (
         <View style={containerStyle}>
             {dirLabel ? (
-                <Text numberOfLines={1} ellipsizeMode={isWeb ? undefined : 'head'} style={pathStyle}>
+                <Text numberOfLines={props.findRanges?.length ? undefined : 1} ellipsizeMode={isWeb ? undefined : 'head'} style={pathStyle}>
                     {isWeb ? (
                         <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>
-                            {dirLabel}
+                            {props.findRanges?.length ? <FindHighlightedText text={dirLabel} ranges={sliceFindRanges(props.findRanges, 0, dirLabel.length)} /> : dirLabel}
                         </Text>
-                    ) : dirLabel}
+                    ) : props.findRanges?.length ? <FindHighlightedText text={dirLabel} ranges={sliceFindRanges(props.findRanges, 0, dirLabel.length)} /> : dirLabel}
                 </Text>
             ) : props.alignForRootFiles === false ? null : (
                 <View style={{ flex: 1, minWidth: 0 }} />
             )}
-            <Text numberOfLines={1} ellipsizeMode="middle" style={nameStyle}>
-                {`${name}${props.nameSuffix ?? ''}`}
+            <Text numberOfLines={props.findRanges?.length ? undefined : 1} ellipsizeMode="middle" style={nameStyle}>
+                {props.findRanges?.length ? <FindHighlightedText text={`${name}${props.nameSuffix ?? ''}`} ranges={sliceFindRanges(props.findRanges, dirLabel?.length ?? 0, name.length + (props.nameSuffix?.length ?? 0))} /> : `${name}${props.nameSuffix ?? ''}`}
             </Text>
         </View>
     );

@@ -10,7 +10,6 @@ import { gitBranchCheckout } from './branchOperations.js';
 import { readGitBranchOperationState } from './branchOperationState.js';
 import { gitBranchOperationAbort, gitBranchOperationContinue } from './branchIntegrationOperations.js';
 import * as integrationOperations from './branchIntegrationOperations.js';
-import { gitCommitCreate } from './commitOperations.js';
 import { buildHappierBranchStashMarker, createGitStashPush, gitStashPop } from './stashOperations.js';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
@@ -78,19 +77,6 @@ describe('Git recoverable mutations', () => {
         } finally { repo.cleanup(); }
     });
 
-    it('reports a created commit as an applied effect when live-index reconciliation fails', async () => {
-        const repo = repository();
-        try {
-            writeFileSync(join(repo.cwd, 'file.txt'), 'committed\n');
-            const runtime = createRealGitScmBackendRuntimeServices();
-            const result = await runWithGitScmCommandRunner((input) => input.args[0] === 'reset' && input.args[1] === '--mixed'
-                ? Promise.resolve({ success: false, stdout: '', stderr: 'Injected index lock', exitCode: 128 })
-                : runtime.runCommand(input), () => gitCommitCreate({ context: repo.context, request: { message: 'commit', scope: { kind: 'all-pending' } } }));
-            const commitSha = git(repo.cwd, 'rev-parse', 'HEAD');
-            expect(git(repo.cwd, 'show', 'HEAD:file.txt')).toBe('committed');
-            expect(result).toMatchObject({ commitSha, outcome: { kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha }, nextActions: [{ kind: 'reconcile_index' }] } });
-        } finally { repo.cleanup(); }
-    });
 
     it('keeps stash-pop conflicts recoverable without claiming a sequencer or Continue', async () => {
         const repo = repository();

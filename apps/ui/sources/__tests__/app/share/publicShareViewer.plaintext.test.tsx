@@ -2,7 +2,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createDeferred, renderScreen } from '@/dev/testkit';
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installPublicShareViewerCommonModuleMocks } from './publicShareViewerTestHelpers';
 import { SessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import type { SessionTranscriptSource } from '@/components/sessions/transcript/source/types';
@@ -113,11 +113,27 @@ function createEmptyTurnDiffInput() {
 }
 
 describe('PublicShareViewerScreen (plaintext)', () => {
+    let PublicShareViewerScreen: typeof import('@/app/(app)/share/[token]').default;
+    beforeAll(async () => {
+        PublicShareViewerScreen = (await import('@/app/(app)/share/[token]')).default;
+    }, 180_000);
     beforeEach(() => {
         routeState.reset();
         serverFetchSpy.mockReset();
         decryptDataKeyFromPublicShareSpy.mockReset();
         transcriptListSpy.mockClear();
+    });
+
+    it('presents the owner-update state for a legacy link before attempting transcript or key reads', async () => {
+        serverFetchSpy.mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({
+            error: 'Session metadata privacy upgrade required', code: 'metadata_privacy_upgrade_required',
+        }) });
+        const screen = await renderScreen(React.createElement(PublicShareViewerScreen));
+        await flushHookEffects();
+        expect(screen.getTextContent()).toContain('shareSheet.publicLink.ownerUpdateRequired');
+        expect(transcriptListSpy).not.toHaveBeenCalled();
+        expect(decryptDataKeyFromPublicShareSpy).not.toHaveBeenCalled();
+        expect(serverFetchSpy).toHaveBeenCalledTimes(1);
     });
 
     it('resolves the concrete web path token when Expo exposes its static route placeholder', async () => {

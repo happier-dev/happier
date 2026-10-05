@@ -5,7 +5,9 @@ import {
     VOICE_SPEECH_OUTPUT_MAX_BYTES as canonicalVoiceSpeechOutputMaxBytes,
     VoiceCredentialSlotIdSchema as canonicalVoiceCredentialSlotIdSchema,
     VoiceProviderContributionSchema as canonicalVoiceProviderContributionSchema,
+    VoiceServiceMarkSchema as canonicalVoiceServiceMarkSchema,
     VoiceProviderSettingsPresentationSchema as canonicalVoiceProviderSettingsPresentationSchema,
+    resolveVoiceProviderLanguagePreference as canonicalResolveVoiceProviderLanguagePreference,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
     VoiceAvailabilityPlatform,
@@ -14,6 +16,7 @@ import type {
     VoiceCredentialOperationProjection,
     VoiceCredentialSlotId,
     VoiceProviderContribution,
+    VoiceServiceMark,
     VoiceProviderSettings,
     VoiceProviderSettingsPresentation,
     VoiceProviderSettingsPresentationField,
@@ -66,6 +69,9 @@ import type {
 import type { SpeechProviderRuntime } from './speech.js';
 
 export type { ConnectedAccountHttpHeadersRequest } from '../connectedAccounts.js';
+
+/** Service-declared presentation facts, validated by the canonical contribution schema. */
+export type VoicePrivacyFacts = NonNullable<VoiceProviderSettings['privacyFacts']>;
 
 export type VoiceSchema<TOutput> = Readonly<{
     parse(value: unknown): TOutput;
@@ -161,6 +167,7 @@ export type {
     VoiceCredentialOperationProjection,
     VoiceCredentialSlotId,
     VoiceProviderContribution,
+    VoiceServiceMark,
     VoiceProviderSettings,
     VoiceProviderSettingsPresentation,
     VoiceProviderSettingsPresentationField,
@@ -187,7 +194,12 @@ export const classifyVoiceProviderHttpFailure: (
 export const VOICE_SPEECH_OUTPUT_MAX_BYTES: number = canonicalVoiceSpeechOutputMaxBytes;
 export const VoiceCredentialSlotIdSchema: VoiceSchema<VoiceCredentialSlotId> = canonicalVoiceCredentialSlotIdSchema;
 export const VoiceProviderContributionSchema: VoiceSchema<VoiceProviderContribution> = canonicalVoiceProviderContributionSchema;
+export const VoiceServiceMarkSchema: VoiceSchema<VoiceServiceMark> = canonicalVoiceServiceMarkSchema;
 export const VoiceProviderSettingsPresentationSchema: VoiceSchema<VoiceProviderSettingsPresentation> = canonicalVoiceProviderSettingsPresentationSchema;
+export const resolveVoiceProviderLanguagePreference: (
+    preference: string | null,
+    supportedLanguageCodes: readonly string[],
+) => string | null = canonicalResolveVoiceProviderLanguagePreference;
 export const VoiceModelPackContributionV1Schema: VoiceSchema<VoiceModelPackContributionV1> = canonicalVoiceModelPackContributionV1Schema;
 export const VoiceModelPackDirectoryArtifactV1Schema: VoiceSchema<VoiceModelPackDirectoryArtifactV1> = canonicalVoiceModelPackDirectoryArtifactV1Schema;
 export const VoiceModelPackExecutionHostV1Schema: VoiceSchema<VoiceModelPackExecutionHostV1> = canonicalVoiceModelPackExecutionHostV1Schema;

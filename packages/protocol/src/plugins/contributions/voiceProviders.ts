@@ -20,6 +20,7 @@ import {
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
 } from '../actions/jsonSchemaValidation.js';
 import { ConnectedServiceIdSchema } from '../../connect/connectedServiceBindings.js';
+import { PluginUiIconTokenV1Schema } from './ui/tokens.js';
 import {
   PluginContributionReferenceV2Schema,
   PluginLocalizedStringV2Schema,
@@ -41,6 +42,14 @@ import {
 } from './clientExecution.js';
 
 const VoiceJsonScalarSchema = z.union([z.null(), z.boolean(), z.number().finite(), z.string()]);
+
+/** Decorative service identity; it grants no Agent, credential or Connected Account access. */
+export const VoiceServiceMarkSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('connected_service'), serviceId: ConnectedServiceIdSchema }).strict(),
+  z.object({ kind: z.literal('agent'), agentId: z.string().trim().min(1) }).strict(),
+  z.object({ kind: z.literal('icon'), name: PluginUiIconTokenV1Schema }).strict(),
+]);
+export type VoiceServiceMark = z.infer<typeof VoiceServiceMarkSchema>;
 const MAX_VOICE_JSON_SETTINGS_BYTES = 64 * 1024;
 
 export const VoiceCredentialSlotIdSchema = canonicalBoundedRecordKeySchema(128)
@@ -507,10 +516,19 @@ export const VoiceProviderSettingsPresentationFieldSchema = z.object({
   options: z.array(VoiceProviderSettingsPresentationOptionSchema).max(64).optional(),
   supportedModelIds: z.array(z.string().min(1).max(512)).max(64).optional(),
   catalog: z.literal('voices').optional(),
+  valueShape: z.enum(['string', 'selection']).optional(),
   customIdAllowed: z.boolean().optional(),
   movingAliasRequiresOptIn: z.boolean().optional(),
+  immediateRequiresLiteral: z.boolean().optional(),
   advanced: z.boolean().optional(),
   defaultValue: VoiceJsonScalarSchema.optional(),
+  /** Presentation only; stored and agent-edited numeric values remain unformatted. */
+  valueSuffix: z.string().optional(),
+  /** The shared numeric field control; its increment is declared, never guessed by the host. */
+  numericControl: z.literal('stepper').optional(),
+  unitKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  // Number.toFixed accepts precision from 0 through 100.
+  fractionDigits: z.number().int().min(0).max(100).optional(),
   forgetAction: z.literal('forget_provider_conversation').optional(),
   maxLength: z.number().int().positive().max(10_000).optional(),
   maxItems: z.number().int().positive().max(1_000).optional(),
@@ -523,6 +541,12 @@ export const VoiceProviderSettingsPresentationFieldSchema = z.object({
   requiresOptIn: z.boolean().optional(),
   subfields: z.array(VoiceProviderSettingsPresentationSubfieldSchema).min(1).max(16).optional(),
 }).strict().superRefine((field, context) => {
+  if (field.numericControl !== undefined && (field.kind !== 'number' || field.step === undefined)) {
+    context.addIssue({ code: 'custom', path: ['numericControl'], message: 'Voice steppers require a numeric field and an explicit positive step.' });
+  }
+  if (field.unitKey !== undefined && field.kind !== 'number') {
+    context.addIssue({ code: 'custom', path: ['unitKey'], message: 'Voice field units belong to numeric fields.' });
+  }
   if ((field.kind === 'number' || field.kind === 'range')
     && !VoiceProviderSettingsPresentationNumericSchema.safeParse({
       min: field.min,
@@ -546,11 +570,28 @@ export type VoiceProviderSettingsPresentationField = z.infer<
   typeof VoiceProviderSettingsPresentationFieldSchema
 >;
 
+/** Match a preference to the service's published native language vocabulary. */
+export function resolveVoiceProviderLanguagePreference(preference: string | null, supportedLanguageCodes: readonly string[]): string | null {
+  const normalized = typeof preference === 'string' ? preference.trim().toLowerCase() : '';
+  if (!normalized) return null;
+  if (supportedLanguageCodes.includes(normalized)) return normalized;
+  const base = normalized.split(/[-_]/u, 1)[0] ?? '';
+  return supportedLanguageCodes.includes(base) ? base : null;
+}
+
 export const VoiceProviderSettingsPresentationSchema = z.object({
   kind: z.literal('voice.provider-settings.v1'),
   modes: uniqueBoundedArray(z.enum(['byo', 'happier']), 1, 2, 'Voice settings presentation modes'),
   titleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
   footerKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  language: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('automatic_recognition') }).strict(),
+    z.object({ kind: z.literal('independent_reply') }).strict(),
+    z.object({
+      kind: z.literal('single_language'),
+      supportedLanguageCodes: uniqueBoundedArray(z.string().min(1).max(64), 1, 64, 'Voice service language codes'),
+    }).strict(),
+  ]).optional(),
   credential: z.object({
     kind: z.enum(['api_key', 'none']),
     credentialPurpose: ConnectedAccountPurposeIdSchema.optional(),
@@ -572,6 +613,13 @@ export const VoiceProviderSettingsPresentationSchema = z.object({
     });
   }),
   fields: z.array(VoiceProviderSettingsPresentationFieldSchema).max(64),
+  groups: z.array(z.object({
+    id: z.string().min(1).max(128),
+    titleKey: VoiceProviderSettingsPresentationTextSchema,
+    descriptionKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+    fieldPaths: z.array(VoiceProviderSettingsPresentationPathSchema).max(64),
+    includeCredentials: z.boolean().optional(),
+  }).strict()).min(1).max(64).optional(),
 }).strict().superRefine((presentation, context) => {
   if (presentation.credential.kind === 'none' && presentation.credential.catalog !== null) {
     context.addIssue({ code: 'custom', path: ['credential', 'catalog'], message: 'Voice settings without credentials cannot declare a credential catalog.' });
@@ -589,6 +637,22 @@ export const VoiceProviderSettingsPresentationSchema = z.object({
       paths.add(subfield.path);
     });
   });
+  if (presentation.groups) {
+    const ids = new Set<string>();
+    const groupedPaths = new Set<string>();
+    const fieldPaths = new Set(presentation.fields.map((field) => field.path));
+    let credentialGroups = 0;
+    presentation.groups.forEach((group, index) => {
+      if (ids.has(group.id)) context.addIssue({ code: 'custom', path: ['groups', index, 'id'], message: 'Voice settings group ids must be unique.' });
+      ids.add(group.id);
+      if (group.includeCredentials) credentialGroups += 1;
+      group.fieldPaths.forEach((path, pathIndex) => {
+        if (!fieldPaths.has(path) || groupedPaths.has(path)) context.addIssue({ code: 'custom', path: ['groups', index, 'fieldPaths', pathIndex], message: 'Voice settings groups must name each published field exactly once.' });
+        groupedPaths.add(path);
+      });
+    });
+    if (groupedPaths.size !== fieldPaths.size || credentialGroups > 1) context.addIssue({ code: 'custom', path: ['groups'], message: 'Voice settings groups must cover every field and have at most one credential group.' });
+  }
 });
 export type VoiceProviderSettingsPresentation = z.infer<
   typeof VoiceProviderSettingsPresentationSchema
@@ -598,6 +662,13 @@ export const VoiceProviderSettingsSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
   fields: z.array(VoiceProviderSettingFieldSchema).max(16),
   privacyDisclosure: PluginLocalizedStringV2Schema.optional(),
+  /** Compact service-declared processing facts; the full disclosure remains separate. */
+  privacyFacts: z.object({
+    audioDestination: PluginLocalizedStringV2Schema,
+    processor: PluginLocalizedStringV2Schema,
+    retention: PluginLocalizedStringV2Schema,
+    details: PluginLocalizedStringV2Schema.optional(),
+  }).strict().optional(),
   presentation: VoiceProviderSettingsPresentationSchema.optional(),
   connectedServicesBinding: z.object({
     id: PluginSettingFieldIdV2Schema,
@@ -623,6 +694,7 @@ export const VoiceProviderSettingsSchema = z.object({
     settings.fields.length === 0
     && !settings.connectedServicesBinding
     && !settings.privacyDisclosure
+    && !settings.privacyFacts
   ) {
     context.addIssue({
       code: 'custom',
@@ -762,6 +834,7 @@ const VoiceAgentRuntimeVersionSchema = z.string().min(1).max(64).refine(
 const VoiceConversationProviderContributionSchema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
+  mark: VoiceServiceMarkSchema.optional(),
   kind: z.literal('conversation'),
   roles: uniqueBoundedArray(
     VoiceConversationProviderRoleSchema,
@@ -791,6 +864,7 @@ const VoiceConversationProviderContributionSchema = z.object({
 const VoiceSpeechProviderContributionSchema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
+  mark: VoiceServiceMarkSchema.optional(),
   kind: z.literal('speech'),
   roles: uniqueBoundedArray(
     VoiceSpeechProviderRoleSchema,
@@ -1141,6 +1215,8 @@ function readVoiceSpeechOutputFormat(
 export function resolveVoiceSpeechSettingsCorrespondence(input: Readonly<{
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   settings: unknown;
+  /** Invocation-local recognition preference; null selects the declared default. */
+  recognitionLanguage?: string | null;
 }>): VoiceSpeechSettingsCorrespondence {
   const contribution = VoiceProviderContributionSchema.parse(input.contribution);
   if (contribution.kind !== 'speech'
@@ -1155,6 +1231,7 @@ export function resolveVoiceSpeechSettingsCorrespondence(input: Readonly<{
     throw new TypeError('voice_speech_settings_invalid');
   }
   const normalizedSettings: Record<string, unknown> = {};
+  const hasSttRole = contribution.roles.some((role) => role === 'dictation_stt' || role === 'conversation_stt');
   for (const field of contribution.settings.fields) {
     const value = Object.hasOwn(settingsRecord, field.id)
       ? settingsRecord[field.id]
@@ -1168,14 +1245,19 @@ export function resolveVoiceSpeechSettingsCorrespondence(input: Readonly<{
     if (!isValidPluginJsonSchemaValue(validate, value)) {
       throw new TypeError('voice_speech_settings_invalid');
     }
-    normalizedSettings[field.id] = value;
+    const invocationValue = hasSttRole && field.id === 'language' && input.recognitionLanguage !== undefined
+      ? input.recognitionLanguage ?? field.default
+      : value;
+    if (!isValidPluginJsonSchemaValue(validate, invocationValue)) {
+      throw new TypeError('voice_speech_settings_invalid');
+    }
+    normalizedSettings[field.id] = invocationValue;
   }
   const settings = cloneAndFreezeVoiceSpeechSettings(normalizedSettings);
   const modelsFieldId = contribution.catalogs?.find((catalog) => catalog.kind === 'models')?.settingFieldId
     ?? 'model';
   const voicesFieldId = contribution.catalogs?.find((catalog) => catalog.kind === 'voices')?.settingFieldId
     ?? 'voiceName';
-  const hasSttRole = contribution.roles.some((role) => role === 'dictation_stt' || role === 'conversation_stt');
   const hasTtsRole = contribution.roles.includes('conversation_tts');
   const model = readVoiceSpeechRequestString(settings, modelsFieldId);
   const voiceName = readVoiceSpeechRequestString(settings, voicesFieldId);

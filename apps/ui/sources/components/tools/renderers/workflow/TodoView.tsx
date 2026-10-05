@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 export interface Todo {
@@ -14,18 +16,35 @@ export interface Todo {
     id?: string;
 }
 
-export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+function readTodoList(value: unknown, key: string): Todo[] | null {
+    if (!value || typeof value !== 'object') return null;
+    const list = (value as Record<string, unknown>)[key];
+    if (!Array.isArray(list)) return null;
+    return list as Todo[];
+}
+
+function resolveTodos(tool: ToolViewProps['tool']): Todo[] {
+    return readTodoList(tool.result, 'todos') ?? readTodoList(tool.result, 'newTodos') ?? readTodoList(tool.input, 'todos') ?? [];
+}
+
+function formatTodo(todo: Todo): string {
+    const icon = todo.status === 'completed' ? '☑' : todo.status === 'cancelled' ? '☒' : '☐';
+    return `${icon} ${todo.content ?? ''}`;
+}
+
+export const projectTodoDisplayText: ToolDisplayTextProjector = (tool) => tool.state === 'completed'
+    ? resolveTodos(tool).flatMap((todo, index) => toolTextBlock(`tool-todo-${index}`, formatTodo(todo)))
+    : [];
+
+export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     if (tool.state !== 'completed') return null;
 
-    const listFromResult = Array.isArray((tool.result as any)?.todos) ? ((tool.result as any).todos as Todo[]) : null;
-    const listFromLegacyResult = Array.isArray((tool.result as any)?.newTodos) ? ((tool.result as any).newTodos as Todo[]) : null;
-    const listFromInput = Array.isArray((tool.input as any)?.todos) ? ((tool.input as any).todos as Todo[]) : null;
-
-    const todosList = listFromResult ?? listFromLegacyResult ?? listFromInput ?? [];
+    const todosList = resolveTodos(tool);
     if (todosList.length === 0) return null;
 
     const isFullView = detailLevel === 'full';
-    const shown = todosList.slice(0, isFullView ? 50 : 6);
+    const shown = find.active ? todosList : todosList.slice(0, isFullView ? 50 : 6);
     const more = todosList.length - shown.length;
 
     return (
@@ -37,27 +56,21 @@ export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                     const isPending = todo.status === 'pending';
                     const isCancelled = todo.status === 'cancelled';
 
-                    let textStyle: any = styles.todoText;
-                    let icon = '☐';
+                    let textStyle: StyleProp<TextStyle> = styles.todoText;
 
                     if (isCompleted) {
                         textStyle = [styles.todoText, styles.completedText];
-                        icon = '☑';
                     } else if (isCancelled) {
                         textStyle = [styles.todoText, styles.cancelledText];
-                        icon = '☒';
                     } else if (isInProgress) {
                         textStyle = [styles.todoText, styles.inProgressText];
-                        icon = '☐';
                     } else if (isPending) {
                         textStyle = [styles.todoText, styles.pendingText];
                     }
 
                     return (
                         <View key={todo.id || `todo-${index}`} style={styles.todoItem}>
-                            <Text style={textStyle} numberOfLines={isFullView ? 3 : 2}>
-                                {icon} {todo.content}
-                            </Text>
+                            <ToolFindText messageId={messageId} blockId={`tool-todo-${index}`} text={formatTodo(todo)} style={textStyle} numberOfLines={isFullView ? 3 : 2} />
                         </View>
                     );
                 })}

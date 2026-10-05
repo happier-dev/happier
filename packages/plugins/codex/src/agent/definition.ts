@@ -75,6 +75,7 @@ export const AGENT_DEFINITION = Object.freeze({
     },
     resume: { vendorResume: 'experimental' as const, vendorResumeIdField: 'codexSessionId' },
     sessionStorage: { direct: true, persisted: true },
+    structuredOutput: { formats: ['json'] },
     sessionCapabilities: {
       sessionListing: 'supported',
       sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },

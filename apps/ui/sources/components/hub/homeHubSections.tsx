@@ -11,7 +11,8 @@ import { HubComposerSection } from './composer/HubComposerSection';
 import { HubMachinesSection } from './HubMachinesSection';
 import { HubSetupSection } from './HubSetupSection';
 import { HubUsageSection } from './HubUsageSection';
-import type { HomeHubBuiltinDefinition, HomeHubSection } from './layout/homeHubLayout';
+import { HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubBuiltinDefinition, type HomeHubSection } from './layout/homeHubLayout';
+export { isHomeHubCardSection } from './layout/homeHubLayout';
 
 /**
  * The app home's built-in sections, in their default order: the one table the home, its section
@@ -24,15 +25,17 @@ export type HomeHubBuiltinSection = HomeHubBuiltinDefinition & Readonly<{
     /** Customize names each section with a glyph and where it comes from. */
     icon: IconName;
     description: () => string;
-    /** A card like a widget's: Home tiles consecutive cards two to a row. */
-    card?: boolean;
     render: (input: Readonly<{ menu: React.ReactNode; placeholder: string; frameStyle: WidgetFrameStyle }>) => React.ReactNode;
 }>;
 
+const builtin = (id: string): HomeHubBuiltinDefinition => {
+    const definition = HOME_HUB_BUILTIN_DEFINITIONS.find(section => section.id === id);
+    if (!definition) throw new Error(`Unknown Home builtin: ${id}`);
+    return definition;
+};
 export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Object.freeze([
     {
-        id: 'start',
-        hideable: false,
+        ...builtin('start'),
         icon: 'arrow-up',
         description: () => t('homeIndex.startDescription'),
         title: () => t('settingsOverview.homeStartSection'),
@@ -40,46 +43,36 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         render: () => <HubComposerSection />,
     },
     {
-        id: 'attention',
-        hideable: false,
+        ...builtin('attention'),
         icon: 'bell',
         description: () => t('homeIndex.attentionDescription'),
         title: () => t('settingsOverview.attentionTitle'),
         render: ({ menu }) => <HubAttentionSection menu={menu} />,
     },
     {
-        id: 'setup',
-        hideable: true,
+        ...builtin('setup'),
         icon: 'check-circle',
         description: () => t('homeIndex.builtIn'),
         title: () => t('settingsOverview.setupTitle'),
         render: ({ menu }) => <HubSetupSection menu={menu} />,
     },
     {
-        id: 'automations',
-        hideable: true,
-        afterWidgets: true,
-        card: true,
+        ...builtin('automations'),
         icon: 'timer',
         description: () => t('navigation.automations'),
         title: () => t('homeWidgets.latestRunsTitle'),
         render: ({ menu, frameStyle }) => <AutomationsLatestRunsSection menu={menu} frameStyle={frameStyle} />,
     },
     {
-        id: 'machines',
-        hideable: true,
-        afterWidgets: true,
+        ...builtin('machines'),
         icon: 'desktop',
         description: () => t('homeIndex.machinesDescription'),
         // Off until turned on in Customize; shown, it is a grid of the machines.
-        defaultHidden: true,
         title: () => t('settingsOverview.machinesTitle'),
         render: ({ menu }) => <HubMachinesSection menu={menu} />,
     },
     {
-        id: 'usage',
-        hideable: true,
-        afterWidgets: true,
+        ...builtin('usage'),
         icon: 'speedometer',
         description: () => t('homeIndex.builtIn'),
         title: () => t('settingsOverview.usageTitle'),
@@ -95,14 +88,9 @@ export function findHomeHubBuiltinSection(id: string): HomeHubBuiltinSection | n
     return BUILTIN_BY_ID.get(id) ?? null;
 }
 
-/** Widgets and card-like built-ins (Latest runs) share Home's two-column card rows. */
-export function isHomeHubCardSection(section: HomeHubSection<WidgetCandidate>): boolean {
-    return section.kind === 'widget' || findHomeHubBuiltinSection(section.id)?.card === true;
-}
-
 /** What a section is called in its menu and in Customize. */
 export function homeHubSectionTitle(section: HomeHubSection<WidgetCandidate>): string {
     return section.kind === 'widget'
-        ? section.widget.title
+        ? section.instance.displayName ?? section.widget?.title ?? section.instance.id
         : findHomeHubBuiltinSection(section.id)?.title() ?? section.id;
 }

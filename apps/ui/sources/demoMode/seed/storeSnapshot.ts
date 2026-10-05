@@ -112,9 +112,9 @@ function restoreSessionListIndexes(
     for (const [serverId, items] of Object.entries(current)) {
         if (!Array.isArray(items)) continue;
         const filtered = items.filter((item) => (
-            item.type !== 'session'
-                ? !ownedSessionIds.has(item.seedSessionId ?? '')
-                : !ownedSessionIds.has(item.sessionId)
+            item.type === 'session'
+                ? !ownedSessionIds.has(item.sessionId)
+                : !('seedSessionId' in item && ownedSessionIds.has(item.seedSessionId ?? ''))
         ));
         if (
             !(serverId in snapshot)

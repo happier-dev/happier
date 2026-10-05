@@ -81,6 +81,7 @@ import { PluginSurfaceInteractionBoundary } from '@/components/plugins/shared/Pl
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
 import { useUiSurfaceRendererMount } from '@/components/plugins/hostApi/useUiSurfaceRendererMount';
+import { measureWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
 
 type PluginHostedWebPanePlatform = 'web' | 'ios' | 'android' | 'desktop';
 const INLINE_DOCUMENT_SANDBOX: PluginHostedWebSandboxPolicy = Object.freeze({
@@ -960,6 +961,8 @@ export function PluginHostedWebPane(props: Readonly<{
     // re-rendered. What the transport must react to is whether a handler is
     // installed at all, which is a boolean and stays in the memo key.
     const handleRequestRef = React.useRef<PluginHostedWebHostApiRequestHandler | undefined>(undefined);
+    const hostedFrameBoundsRef = React.useRef<React.ElementRef<typeof View> | null>(null);
+    const getHostedFrameBounds = React.useCallback(() => measureWindowBounds(toTreeDropMeasurableRef(hostedFrameBoundsRef.current)), []);
     handleRequestRef.current = interactionEnabled ? props.hostApi?.handleRequest : undefined;
     const handleRequestInstalled = handleRequestRef.current !== undefined;
     const handleRequest = React.useCallback<PluginHostedWebHostApiRequestHandler>(
@@ -971,9 +974,11 @@ export function PluginHostedWebPane(props: Readonly<{
             // Forwarded verbatim, including the absence of cancellation: an
             // invented `undefined` second argument would change what the mount
             // observes about how it was called.
-            return options === undefined ? current(request) : current(request, options);
+            return request.method === 'updateEntityDragDrop'
+                ? current(request, { ...options, getHostedFrameBounds })
+                : options === undefined ? current(request) : current(request, options);
         },
-        [],
+        [getHostedFrameBounds],
     );
     const canonicalBindingKey = canonicalHostApi
         ? [
@@ -1366,6 +1371,7 @@ export function PluginHostedWebPane(props: Readonly<{
                 consume={requestNativeArtifactGoBack}
             />
             <View
+                ref={hostedFrameBoundsRef}
                 testID={nativeArtifactReadyDiagnosticTestID ?? undefined}
                 accessible={false}
                 collapsable={false}

@@ -14,6 +14,16 @@ export type MachineAgentSignInActionInputById = {
         agentId: string;
         machineId: string;
     };
+    readonly "machines.agents.signIn.cancel": {
+        agentId: string;
+        machineId: string;
+        terminalId: string;
+    };
+    readonly "machines.agents.signIn.restart": {
+        agentId: string;
+        machineId: string;
+        terminalId: string;
+    };
 };
 export type MachineAgentSignInActionResultById = {
     readonly "machines.agents.signIn.start": {
@@ -116,6 +126,7 @@ export type MachineAgentSignInActionResultById = {
         diagnostic?: unknown;
     } | {
         terminalKey: string;
+        terminalId: string;
     } | {
         ok: false;
         errorCode: string;
@@ -130,5 +141,124 @@ export type MachineAgentSignInActionResultById = {
             serviceId: string;
             title: string;
         }[];
+    };
+    readonly "machines.agents.signIn.cancel": {
+        [x: string]: unknown;
+        ok: true;
+    } | {
+        [x: string]: unknown;
+        ok: false;
+        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        error: string;
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
+    };
+    readonly "machines.agents.signIn.restart": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    } | {
+        terminalKey: string;
+        terminalId: string;
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
     };
 };

@@ -67,7 +67,7 @@ describe('registerSessionHandlers attachments uploads', () => {
         t: 'session_attachment_upload_v1', sessionId: 'session-b',
         messageLocalId: 'message-a', fileName: 'notes.txt', sizeBytes: 0,
       })).toMatchObject({ success: false });
-      const { createEncryptedTransferChunkEnvelope } = await import('@/machines/transfer/transferChunkEncryption');
+      const { createEncryptedTransferChunkEnvelope } = await import('@happier-dev/transfers/node');
       const chunk = createEncryptedTransferChunkEnvelope({
         transferId: init.uploadId, sequence: 0, payload: bytes, recipientPublicKeyBase64: init.recipientPublicKeyBase64,
       });
@@ -77,7 +77,7 @@ describe('registerSessionHandlers attachments uploads', () => {
       const destination = isAbsolute(finalized.path) ? finalized.path : join(workingDirectory, finalized.path);
       expect(destination.startsWith(join(workingDirectory, '.happier', 'attachments'))).toBe(true);
       expect(await readFile(destination)).toEqual(bytes);
-      const { createTransferRecipientKeyPair } = await import('@/machines/transfer/transferChunkEncryption');
+      const { createTransferRecipientKeyPair } = await import('@happier-dev/transfers/node');
       const recipient = createTransferRecipientKeyPair();
       expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, {
         t: 'session_file_download_v1', path: finalized.path, recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,

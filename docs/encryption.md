@@ -220,6 +220,45 @@ gates. Source evidence described here does not by itself activate the feature.
 | Device-local key | present per device | present per device | Local secret/cache/daemon restart persistence |
 | TLS/auth material | present | present | Transport and account authorization, never content-at-rest encryption |
 
+In current 0.3 development source, a plain Account may retain genuine predecessor
+credential material for retained encrypted history, including E2EE Sessions and
+their Automation templates. This is historical custody, not active Account E2EE
+material: persisted Account mode still controls every Account-scoped read and write.
+A retained template opens only after its explicit predecessor Session binding is
+resolved through that Session's authenticated envelope. Without the key it remains
+locked and deletable. Account transition completion and template recovery preserve
+historical credentials even when an inventory finds no encrypted dependencies:
+another key-holding client can create an E2EE Session after that read. Returned
+encrypted trigger definitions and opaque predecessor Run summaries retain their
+existing locked/plain-Account reader rules.
+
+On a plain Account holding historical credentials, **Forget the old encryption key**
+uses the client-placed `account.encryption.historicalKey.forget` Action. Settings,
+Agent/MCP requests and plugin SDK callers share its scoped credential owner.
+Agent/MCP requests cannot waive present-user approval; a headless executor without
+the invoking client's credential custodian returns typed unavailability rather than
+discarding a daemon's credentials. The device owner always requires destructive
+human confirmation and returns `forgotten`, `nothing_retained`, or `cancelled`.
+It lists known encrypted Sessions,
+templates/trigger sets and Run history before confirmation; incomplete inventory
+prevents discard. The warning covers encrypted Sessions created after the listing
+as well. It adopts token-only credentials through the existing scoped credential
+owner, with Account mode/currentness and expected-credential checks. Server content
+is not deleted, and automatic recovery never invokes this action.
+
+For predecessor templates with a plain target or no Session target, the existing
+Account transition converter performs explicit one-time recovery to canonical plain
+content using genuine historical material and the template-version CAS. Failed
+decryption leaves the row locked, and a conflict never overwrites the newer row.
+This recovery neither creates Account keys nor changes the retained Session's mode.
+The invoking client's `account.encryption.automationTemplates.recover` Action owns
+this operation, and the Account recovery control calls that same Action. It reports
+each template as `recovered`, `already_plain`, `retained_e2ee`, `locked`, or
+`conflict`. It requires present-user authority; Agent/MCP discovery does not waive
+the human-approval floor. A client without historical key custody returns typed
+unavailability. Recovery retains the historical credentials; only Forget discards
+them after human confirmation.
+
 ### Device-local secret sealing
 
 Device-local sealing is deliberately separate from account encryption:
@@ -769,6 +808,29 @@ opens only that caller's recipient envelope; the private binding retains the
 owner Account, Run, purpose and, for progress, exact invocation identity.
 Plain Runs need no client encryption material or recipient-key rows.
 
+The server-visible Workflow structure is the same in plain and E2EE mode:
+
+- Invocation lifecycle `waiting_for_review` discloses a human-held step. Parent
+  Run state `waiting_for_review` discloses that the Run is parked with only
+  human-held work remaining and no worker claim; it is distinct from manual
+  `pause_requested` / `paused`.
+- Public invocation `contentRevision` advances on row content or lifecycle
+  changes and is the row-scoped currentness token. It exposes that a row changed,
+  including draft publication while its lifecycle stays the same, not the new
+  value or an integrity guarantee for the public index. Parent revision still
+  governs Run state and control transitions.
+- Frozen nullable `sourceArtifactId` identifies the saved definition that
+  admitted the Run; it exposes source attribution, not definition content or an
+  access grant.
+- Frozen nullable `visibleTeamId` identifies the Team selected to see the Run.
+  Access still requires that Team's live source-Artifact grant and the caller's
+  effective membership; the id alone grants nothing.
+
+Provisional results, result-source metadata, review instructions, human
+authorship and decision values remain in the existing invocation content
+envelope. These structural disclosures do not introduce plaintext copies of
+that private content, a manual-intent column, or mutable-index tamper protection.
+
 Boundary Resume is a key-free control write. Its nullable
 `workflowResumeRequestedRevision` is server-readable control metadata in both
 plain and E2EE Accounts, written with the Run's state/revision CAS and consumed
@@ -1200,6 +1262,31 @@ resource admission path.
 - Stored as `Bytes` in the DB.
 - Emitted in `new-artifact` / `update-artifact` events as base64 strings.
 
+The 0.3 development Home layout is an Account-owned `home-hub-layout.v1`
+Artifact. Its body contains built-in order/visibility, setup dismissals and
+independently configured widget instances with width/frame overrides. The
+semantic owner is `packages/protocol/src/home/homeHubArtifactV1.ts`; UI and CLI
+use the existing Account-mode-aware Artifact transports. Rendering defaults
+does not create the record; the first real edit materializes them. After Account,
+mode and Artifact-kind admission, the shared reader normalizes missing layout
+arrays to empty arrays, drops unknown layout presentation fields, and uses
+unpersisted defaults for invalid layout content. Transport and ownership
+refusals remain errors. The retired
+0.3 `homeHubLayoutV1` Settings document has no reader, writer or migration.
+Qualified instance refs identify placements, not access grants. Session Board
+content remains Session-owned, while direct Companion instances and private
+viewer-selection metadata stay in existing device-local preferences.
+
+Reusable 0.3 development widget definitions are Account-owned
+`widget-definition.v1` Artifacts. Their declaration bodies use the same plain/E2EE
+Artifact codec; widget code does not derive mode from keys or introduce another
+envelope. Captured Account ownership and currentness are checked before opening
+or mutating a definition. Explicit publication copies the opened declaration
+into Session Board content before approval, without exposing the private
+Artifact reference or Connected Account selections. Frozen snapshots use the
+existing Session Board record encryption and upsert owner; their inert preview
+and as-of/provenance metadata are shared content, not credential material.
+
 The in-progress 0.3 binary extension keeps the opened body inside this same
 envelope: it is either text/null or a strict `{ blobId, mime, sizeBytes, sha256 }`
 reference. MIME and the plaintext integrity hash stay inside the document's
@@ -1210,10 +1297,40 @@ uses the public uploaded-file URL owner. Authenticated blob reads recheck the
 Artifact's current authority and Account mode, and key-holding clients check
 the opened bytes against the reference before preview or download.
 
-Binary revision, erase and Account-mode conversion validation is still in
-progress; these paragraphs do not certify a deployed binary-capable server or
-a completed conversion flow. Signed conversion must cover each distinct
-current/retained blob, not just change the reference envelope or discard bytes.
+Rejected private uploads retain their exact storage path in the existing
+Account-owned `UploadedFile` custody with the `artifact-blob-rejected-v1:`
+reuse-key namespace until private deletion succeeds. The next binary upload
+retries cleanup; Account erasure also treats those paths as private objects,
+including candidates whose Artifact was never created. The blob lifecycle
+owner classifies this custody; it adds no cleanup timer or public URL.
+
+Development writers validate candidate paths through the canonical private-key
+owner before recording custody, so unsupported legacy Artifact ids cannot leave
+undeletable cleanup records. Before a candidate's private write begins, they
+capture a pending write in the same Account-owned custody under the Account fence and current
+active-status admission. It stays pending until admission or terminal discard;
+conversion stages become ready only after their private write completes.
+Account erasure checks this custody under the same Account fence and refuses
+retirement or physical deletion while any candidate is pending. The Account
+stays active with its token epoch unchanged, so the writer can finish and the
+owner can retry erasure with the same credentials. Pending state
+is never cleared by an arbitrary expiry. Recovery after a process failure leaves
+a write's terminal outcome unknown and remains an unresolved development
+follow-up; this fail-closed phase does not claim complete crash recovery.
+
+Development Account-mode conversion stages each distinct current/retained blob
+privately before submitting the existing signed Account transition. A stage is
+Account-owned `UploadedFile` custody in the `artifact-blob-conversion-v1:`
+namespace, not a readable Artifact or a mode change. The signed directive binds
+the source bytes' SHA-256, target stage identity, target bytes' SHA-256 and target
+envelope kind; it carries no inline binary bytes and retains the owning signed
+request's 8 MiB budget. The Account transaction rechecks source custody and the
+complete retained set, then atomically replaces head/history, resource keys,
+recipient wraps and private blob locators. Displaced files become rejected
+cleanup custody in that transaction. Exact replay verifies target bytes as well
+as the committed document versions; cancellation cannot delete an activated
+stage. Account erasure treats both staged and rejected custody as private.
+These development contracts do not certify a deployed binary-capable server.
 
 Development ordinary Artifact body history uses `ArtifactRevision` rows keyed
 by Artifact id and body version. Successful updates retain the displaced stored
@@ -1235,10 +1352,29 @@ display-normalized header. Crypto conversion preserves arbitrary metadata;
 strictly admitted Workflow headers advance their embedded revision with the
 physical head versions. Display defaults are not persisted by this migration.
 
+The development Settings transition drains the Account-owned
+`GET /v1/account/encryption/artifacts` inventory, rather than treating an ordinary
+Artifact list page as the complete census. Its pages include raw head content and
+every retained body, including archives linked to inactive retained Plugin UI and
+Package Asset releases. Availability qualifies those rows against the exact
+immutable release link and archive descriptor; the keyholding client verifies
+opaque archive content after opening it. This transition-only reader does not
+make protected archives visible through ordinary Artifact APIs or reactivate
+hosting. The captured Home/Account producer rejects changed authority, mixed-mode
+content and non-advancing pages. Blob preparation and the final complete-set,
+version and source-byte checks remain with the existing signed Artifact migration
+owner; paging is not a new inventory ceiling or a second commit authority.
+
 Development document sharing uses `artifactAccessService.ts` as the common
 HTTP, socket, write and audience authority. Direct Account, Team and Group grants
 resolve against current membership; owners and admin grantees change grants,
 while only the owner may assign admin. Other grantees may inspect them.
+Grant mutations report the caller's resulting access. A committed self-revocation
+that removes all access succeeds with `access: null` and an empty `grants` roster;
+subsequent reads remain unauthorized. This mutation response is final; opening
+the document and preparing recipient keys require remaining access. Grant-list
+responses still require live access. This is an in-place development-only grant contract; the 0.2
+predecessor has no document grant endpoint.
 Shared documents retain the owner's Account encryption mode
 and plain at-rest storage path. Grantee changes use content-free AccountChange
 wakes and a fresh authorized read, not the owner's legacy Artifact payload event.
@@ -1823,9 +1959,9 @@ Public-link creation follows the same custody boundary without reusing the
 recipient-envelope format. The 0.3 development stored-content contract has one
 publication owner for Session and ordinary Artifact subjects. A trusted key-holding
 host generates two independent random values: an HTTP-visible lookup capability
-and a browser-only wrapping secret. The usable link is
+and a fragment-only wrapping secret. The usable link is
 `<isolated origin>/s/<lookupId>#k=<secret>`; the fragment secret never enters the
-publication request, Action result, access log, or content request. The server
+publication request, server response, access log, or content request. The server
 stores only the lookup hash and, for E2EE content, the opaque DEK envelope wrapped
 using the fragment secret. Plain Sessions and plaintext Accounts require no client
 encryption key and send no wrapped key. Artifact mode comes from persisted
@@ -1844,17 +1980,97 @@ fragment secret. This retains old link keys and routes without claiming their
 confidentiality has improved. Released 0.2 Sessions also use flat layout-0 metadata;
 the current recipient-privacy owner refuses that shape with
 `metadata_privacy_upgrade_required`. Retaining the token/envelope is therefore not
-proof that an unupgraded 0.2-created link can reopen. Its owner-upgrade journey
-remains an unresolved development compatibility requirement; public readers must
-not bypass the privacy projection to restore whole-metadata disclosure.
+proof that an unupgraded 0.2-created link can reopen. The owner's ordinary initial
+0.3 sync discovers pending shared layout-0 Sessions, including archived/offscreen
+Sessions, and delegates their exact-source upgrade to the existing metadata tuple
+writer. Until that succeeds, the viewer shows that the link is being updated by
+its owner. Public readers never bypass the privacy projection to restore
+whole-metadata disclosure. This upgrade path is development source, not a claim
+that a retained deployment or composed live journey has been validated.
 
-Public Actions describe only the subject and publication settings. Their results
-project safe publication ids, timestamps, expiry, use limits, use count, and
-consent—not a bearer or wrapped DEK. Only the generating device can assemble a
-usable new link. The isolated, unauthenticated viewer sends no Account credentials,
-opens E2EE bytes in the browser, and renders text rather than executable content;
-it has no authenticated-app or host-bridge authority. This development contract
+Public Actions describe only the subject and publication settings. After approval,
+the key-holding UI or CLI host returns the complete fragment URL in the create
+Action result, without requiring a mounted share sheet or publication callback.
+The existing E2EE Session transcript encrypts that result; diagnostic observations
+redact the capability URL. Get/list results retain only safe publication settings
+and cannot recover the wrapping secret. The server cannot assemble a usable new
+fragment link. The isolated, unauthenticated viewer sends no Account credentials,
+opens E2EE bytes in the browser, and renders ordinary text documents as text.
+Binary Artifact references use the same authorized response, Account-mode
+admission and browser decryption, then verify the opened size and SHA-256 before
+creating a local object URL. Inert raster images use a native image preview and
+PDFs use the browser's native PDF viewer with a download alternative. Other
+formats, including SVG and HTML without an admitted HTML Artifact header, are
+download-only with an octet-stream MIME type. Replacing the content or changing
+the link releases its object URL; no uploaded-file URL or authenticated request
+is introduced. HTML Artifacts use the isolated, opaque sandbox described below;
+neither view has authenticated-app or host-bridge authority. This development contract
 is not a claim of released availability or completed live validation.
+
+The existing owner-only publication access log is also exposed through
+`artifact.public_link.audit` in 0.3 development source. It remains a read Action
+with the catalog's egress approval floor: the keyholding host verifies the
+Artifact owner and the publication subject before requesting the existing audit
+endpoint. The sharing UI consumes that Action rather than bypassing it with a
+separate audit reader.
+
+Ordinary Artifact Actions keep creation acknowledgement separate from later
+reads: the keyholding UI returns the revision admitted by the existing create
+response, including an existing same-id document, without a follow-up GET. The
+Workflow id-returning adapter consumes that same creator. UI and CLI list Actions
+use the Protocol-owned decrypted header selector for private title search, kind
+filtering, ordering and logical cursors; omitted limits drain the existing
+structural pages. Workflow readers retain their structural page and body contract.
+
+The development UI file-publication and upload Action paths require an
+authenticated Session caller bound to the captured Home and Account. A Session
+selector alone supplies no authority. The existing Session control-target owner
+derives the machine and workspace root; the authenticated transfer producer
+enforces the existing realpath-based restricted-root policy, including symlink
+confinement. UI and CLI reuse one Protocol-owned file classification/provenance
+preparation before committing through their existing keyholding Artifact store.
+The UI refuses a retired scope or a changed source target rather than publishing
+under another Home. HTML preview preparation uses the acknowledged opened row;
+a preview-read failure returns a preview error without replaying the committed
+create or update.
+
+#### HTML Artifacts (0.3 development)
+
+An exact raw header `kind: 'html'` selects the HTML viewer. A document can carry
+HTML text or a phase-B private blob containing HTML or a strict
+`application/vnd.happier.html-bundle+json` bundle. A bundle has a version, a relative
+HTML entrypoint and a path-indexed set of MIME/base64 assets. Every asset lives in
+that one blob, so encryption, integrity, budgets and retained-version lifetime
+stay with the existing Artifact blob owner; there are no independent asset grants.
+UI and CLI writes use the same Protocol HTML-content parser before committing an
+HTML Artifact. Invalid bundles are refused without a document mutation; changing
+an existing binary Artifact to HTML also opens and validates its retained content
+through the canonical mode and integrity reader. A later preview failure remains
+distinct from this pre-write validation and does not replay a committed write.
+
+Private viewers open the current authorized content through the existing
+Account-mode and blob-integrity readers. The Home returns only a per-Artifact
+isolated shell URL. Opened bytes travel in its fragment, not an HTTP request,
+and previewing does not create a public share. An approved Artifact Action can
+return this preview URL; diagnostic observations redact its data fragment. A
+preview failure does not undo or replay an acknowledged create/update.
+
+Public viewers retain the stored-content publication authority, consent and
+fragment-key custody. They open the current document and optional blob in the
+browser before constructing the same sandbox. The shell never has Account
+credentials. Executable HTML lives only in a nested iframe with `allow-scripts`
+and no `allow-same-origin`, storage authority, bridge or message receiver.
+Inherited shell CSP blocks network-frame navigation; the guest CSP also denies
+network connections, forms, nested frames and workers. Asset references declared
+in HTML and CSS are rewritten locally; external assets are refused. Classic
+scripts and inline JavaScript are supported; module/import-map declarations and
+cyclic stylesheet imports fail visibly. Runtime-created relative URLs are not
+rewritten, so scripts must embed such data rather than fetch bundle files or load
+dynamic chunks. Grid previews are static and never execute the content.
+
+Like every disclosed document, an opened preview cannot be recalled from a
+recipient who already obtained its bytes. This is development-source behavior;
+loaded-stack and native-device validation remain separate evidence.
 
 Team credential resources and shared Saved Secrets in current 0.3 development source reuse these
 Account-mode boundaries; their product activation remains gated and unverified. Brokered Team
@@ -2003,12 +2219,22 @@ setup, or that owner-only reader; the server does not decide it.
 
 Implementation status. The per-Session collection, its persistence owner, and the
 invoking-client preparation passes exist in development source; the passes share one
-bounded page → seal → commit owner and differ only in worklist. The Team/Group
+host-neutral Protocol page → seal → commit owner and differ only in worklist. The Team/Group
 membership-history surface now has one server service mounted from the existing Team
 and Group membership routes plus one client preparation host. It pages only Sessions
 that both the caller and target may currently read and writes through the same
 `SessionDataKeyEnvelope` persistence owner; it does not create Team/Group keys or a
 second preparation store.
+
+Fresh Workflow Step Sessions (development) carry the Run's frozen view Team
+through the ordinary creation-time `initialAccess` writer. They omit
+`primaryTeamId` except for `team_required`, which selects the existing Team
+policy writer and its edit floor; the explicit grant never delegates permission
+approval. Both physical CLI creators prepare collective E2EE recipients through
+the shared pass and verified envelope helper before returning to runner startup.
+They open the returned Session's standalone key, including on rejoin, rather
+than sealing the proposed create key. Plain Sessions perform no key preparation;
+unready or unverified recipients stay truthfully pending at the canonical collection.
 
 Client surfaces (development). The mounted Collaboration/Access editor renders one
 Session-scoped `Encrypted access` aggregate from the Home's own summary — it never

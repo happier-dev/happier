@@ -2,14 +2,17 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 import { VoiceEnergyProvider } from '@/components/voice/light/useVoiceEnergy';
 import { VoiceComposerPlanetMount } from '@/components/voice/composer/VoiceComposerPlanetMount';
-import { VoiceOrbAppShellMount } from '@/components/voice/orb/VoiceOrbAppShellMount';
-import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
-import { VoiceHorizon } from '@/components/voice/surface/presentations/VoiceHorizon';
+import { VoiceTopBarPresence } from '@/components/voice/presence/VoiceTopBarPresence';
+import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL, type VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
+import { getStorage } from '@/sync/domains/state/storage';
+import { getVoiceSessionSnapshot, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
+import { VoiceSurfaceView } from '@/components/voice/surface/VoiceSurfaceView';
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import { tLoose } from '@/text';
 import {
@@ -23,60 +26,9 @@ import { VoiceAnnouncer, VOICE_ANNOUNCER_TEST_ID } from './VoiceAnnouncer';
  * §5.4a / §10.4a case 3 — **exactly one** Voice live region, app-wide.
  *
  * Two `aria-live` nodes are two queues and two Android views are two events; they
- * do not coalesce. M4 says at least two `VoiceSurface` instances are mounted at
- * once on desktop, and the orb and the composer planet are mounted on top of
- * that, so "every presentation owns its own region" announces each transition
- * three or four times with duplicated muted and recovery text.
+ * do not coalesce. The title presence, Companion section and composer coexist,
+ * so presentation-local regions would announce the same transition repeatedly.
  */
-
-const voiceSetting = vi.hoisted(() => ({
-    current: { ui: { activityFeedEnabled: false } } as Record<string, unknown>,
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-        useSetting: (key: string) => (
-            key === 'voice' ? voiceSetting.current : (actual.useSetting as (k: string) => unknown)(key)
-        ),
-    };
-});
-
-const attemptControl = vi.hoisted(() => ({
-    current: {
-        availability: 'ready' as 'ready' | 'recoverable' | 'unavailable',
-        live: true,
-        canStart: false,
-        canStop: true,
-        canMute: true,
-        muted: false,
-        capturing: true,
-        micStateLabel: 'Microphone active',
-        captionLabel: 'Microphone active',
-        primaryAction: 'end' as const,
-        primaryActionLabel: 'End Voice',
-        primaryActionHint: 'End Voice',
-        recoveryAvailable: false,
-        recoveryLabel: null,
-        surfaceState: 'listening' as const,
-        tone: 'active' as const,
-        stop: 'violet' as const,
-        sessionId: 'voice-session-1' as string | null,
-        onToggle: vi.fn(),
-        onToggleMute: vi.fn(),
-        onRecover: vi.fn(),
-        onPrimaryAction: vi.fn(),
-        openConversationSessionId: null as string | null,
-        onOpenConversation: vi.fn(),
-    } as VoiceAttemptControlProjection,
-}));
-
-vi.mock('@/components/voice/attempt/useVoiceAttemptControl', () => ({
-    useVoiceAttemptControl: () => attemptControl.current,
-    // The announcer and the orb both state their idle target explicitly (§2.5).
-    VOICE_ATTEMPT_IDLE_TARGET_GLOBAL: { kind: 'global' },
-}));
 
 vi.mock('@/components/pets/source/useSelectedPetPackage', () => ({
     useSelectedPetPackage: () => ({ enabled: false, source: null }),
@@ -84,9 +36,9 @@ vi.mock('@/components/pets/source/useSelectedPetPackage', () => ({
 
 function noop(): void {}
 
-function buildHorizonModel(): VoiceSurfaceViewModel {
+function buildSurfaceModel(control: VoiceAttemptControlProjection): VoiceSurfaceViewModel {
     return {
-        attemptControl: attemptControl.current,
+        attemptControl: control,
         activityFeedEnabled: true,
         canBargeIn: false,
         canCancelTurn: false,
@@ -104,6 +56,7 @@ function buildHorizonModel(): VoiceSurfaceViewModel {
         startStopLabel: 'End Voice',
         status: 'connected',
         subtitle: 'Target session: Dashboard auth',
+        targetLabel: 'Dashboard auth',
         toggleActivityLabel: 'Toggle voice activity',
         transcriptEntries: [],
         variant: 'sidebar',
@@ -116,24 +69,41 @@ function buildHorizonModel(): VoiceSurfaceViewModel {
     };
 }
 
+function MountedPresentations() {
+    const control = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
+    return <>
+        <VoiceSurfaceView model={buildSurfaceModel(control)} />
+        <VoiceTopBarPresence voice={control} />
+        <VoiceComposerPlanetMount target={{ kind: 'session', sessionAddress: { serverId: 'server-1', sessionId: 'composer-session-1' } }} />
+    </>;
+}
+
+const initialStorageState = getStorage().getState();
+beforeEach(() => {
+    getStorage().setState(initialStorageState, true);
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'voice-session-1', status: 'connected', mode: 'listening', canStop: true, micMuted: false });
+});
+afterEach(() => {
+    getStorage().setState(initialStorageState, true);
+    setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+});
+
 describe('one Voice announcer for the whole app shell', () => {
-    it('publishes exactly one live region with Horizon, the orb and the composer all mounted', async () => {
+    it('publishes exactly one live region with the Voice section, the top-bar presence and the composer all mounted', async () => {
         const screen = await renderScreen(
             <VoiceEnergyProvider
                 state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
                 previewTimeMs={1_100}
             >
                 <VoiceAnnouncer />
-                <VoiceHorizon model={buildHorizonModel()} />
-                <VoiceOrbAppShellMount />
-                <VoiceComposerPlanetMount target={{ kind: 'session', sessionAddress: { serverId: 'server-1', sessionId: 'composer-session-1' } }} />
+                <MountedPresentations />
             </VoiceEnergyProvider>,
         );
 
         // All three presentations really are on screen — otherwise "one region"
         // would be trivially true because nothing rendered.
-        expect(screen.findByTestId('voice-surface:sidebar')).toBeTruthy();
-        expect(screen.findByTestId('voice-orb-app-shell-root')).toBeTruthy();
+        expect(screen.findByTestId('voice-glance')).toBeTruthy();
+        expect(screen.findByTestId('voice-top-bar')).toBeTruthy();
         expect(screen.findByTestId('session-composer-voice')).toBeTruthy();
 
         const liveRegions = screen.tree.root.findAllByProps({ accessibilityLiveRegion: 'polite' });
@@ -183,9 +153,7 @@ describe('one Voice announcer for the whole app shell', () => {
                 previewTimeMs={1_100}
             >
                 <VoiceAnnouncer />
-                <VoiceHorizon model={buildHorizonModel()} />
-                <VoiceOrbAppShellMount />
-                <VoiceComposerPlanetMount target={{ kind: 'session', sessionAddress: { serverId: 'server-1', sessionId: 'composer-session-1' } }} />
+                <MountedPresentations />
             </VoiceEnergyProvider>,
         );
 
@@ -204,7 +172,6 @@ describe('one Voice announcer for the whole app shell', () => {
     });
 
     it('projects microphone, mute, and recovery facts into the one app announcer', async () => {
-        const original = attemptControl.current;
         const screen = await renderScreen(
             <VoiceEnergyProvider
                 state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
@@ -215,50 +182,15 @@ describe('one Voice announcer for the whole app shell', () => {
         );
 
         try {
-            attemptControl.current = {
-                ...attemptControl.current,
-                muted: true,
-                capturing: false,
-                micStateLabel: 'Microphone muted',
-            };
-            await screen.update(
-                <VoiceEnergyProvider
-                    state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
-                    previewTimeMs={1_100}
-                >
-                    <VoiceAnnouncer />
-                </VoiceEnergyProvider>,
-            );
+            await act(async () => { setVoiceSessionSnapshot({ ...getVoiceSessionSnapshot(), micMuted: true }); });
             expect(screen.findByTestId(VOICE_ANNOUNCER_TEST_ID)?.props.children?.props.children)
-                .toBe('Microphone muted');
+                .toBe(tLoose('voiceSurface.a11y.microphoneMuted'));
 
-            attemptControl.current = {
-                ...attemptControl.current,
-                availability: 'recoverable',
-                live: false,
-                canStop: false,
-                canMute: false,
-                primaryAction: 'recover',
-                primaryActionLabel: 'Retry',
-                primaryActionHint: 'Retry',
-                recoveryAvailable: true,
-                recoveryLabel: 'Retry',
-                surfaceState: 'error',
-                tone: 'error',
-            };
-            await screen.update(
-                <VoiceEnergyProvider
-                    state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
-                    previewTimeMs={1_100}
-                >
-                    <VoiceAnnouncer />
-                </VoiceEnergyProvider>,
-            );
+            await act(async () => { setVoiceSessionSnapshot({ ...getVoiceSessionSnapshot(), status: 'error', mode: 'idle', canStop: false, errorRecoveryAction: 'retry', errorPresentation: 'error' }); });
             expect(screen.findByTestId(VOICE_ANNOUNCER_TEST_ID)?.props.children?.props.children)
-                .toContain('Retry');
+                .toContain(tLoose('common.retry'));
             expect(screen.tree.root.findAllByProps({ accessibilityLiveRegion: 'polite' })).toHaveLength(1);
         } finally {
-            attemptControl.current = original;
             await screen.unmount();
         }
     });
@@ -293,8 +225,10 @@ describe('Voice announcer app mount', () => {
 
     it('leaves no second announcer inside a presentation', () => {
         for (const presentation of [
-            'components/voice/surface/presentations/VoiceHorizon.tsx',
-            'components/voice/orb/VoiceOrb.tsx',
+            'components/voice/presence/VoiceGlance.tsx',
+            'components/voice/presence/VoiceIsland.tsx',
+            'components/voice/presence/VoiceTopBarPresence.tsx',
+            'components/voice/presence/VoiceOrb.tsx',
             'components/voice/composer/VoiceComposerPlanet.tsx',
         ]) {
             expect(readSource(presentation)).not.toContain('accessibilityLiveRegion');

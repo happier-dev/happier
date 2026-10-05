@@ -25,7 +25,7 @@ export type TriageDetailTabFromV1 = 'entry' | 'fixPullRequest' | 'none';
 
 export type TriageDetailTabV1 =
   | Readonly<{ kind: 'shared'; id: TriageDetailSharedTabIdV1; from: TriageDetailTabFromV1 }>
-  | Readonly<{ kind: 'source'; id: string; title: string; from: 'entry' }>;
+  | Readonly<{ kind: 'source'; id: string; title: string; titleKey?: string; from: 'entry' }>;
 
 export type TriageDetailCompositionV1 =
   | Readonly<{ kind: 'whole' }>
@@ -76,7 +76,13 @@ export function planTriageDetailTabsV1(input: Readonly<{
   }
   for (const tab of input.entryTabs) {
     if (tab.kind === 'source') {
-      tabs.push(Object.freeze({ kind: 'source', id: tab.id, title: tab.title, from: 'entry' }));
+      tabs.push(Object.freeze({
+        kind: 'source',
+        id: tab.id,
+        title: tab.title,
+        ...(tab.titleKey ? { titleKey: tab.titleKey } : {}),
+        from: 'entry',
+      }));
     }
   }
   return Object.freeze({ kind: 'tabs', tabs: Object.freeze(tabs) });

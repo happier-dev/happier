@@ -9,7 +9,7 @@ import { machineScmRepositoryRemoveIndexLock } from '@/sync/ops/scm/machineScm';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
-type ScmMutationResponse = Readonly<{ success: boolean; error?: string; stderr?: string; errorCode?: ScmOperationErrorCode | string; outcome?: ScmOperationOutcome; commitSha?: string }>;
+export type ScmMutationResponse = Readonly<{ success: boolean; error?: string; stderr?: string; errorCode?: ScmOperationErrorCode | string; outcome?: ScmOperationOutcome; commitSha?: string }>;
 type ScmMutationFailureResponse = Readonly<{ success: false; error: string; errorCode: ScmOperationErrorCode; outcome: ScmOperationOutcome }>;
 
 type ScmMutationState = Parameters<typeof withSessionProjectScmOperationLock>[0]['state']
@@ -23,7 +23,8 @@ type ScmMutationInput<T extends ScmMutationResponse> = Readonly<{
     run: () => Promise<T | 'cancelled'>;
     fallbackError: string;
     successDetail?: (response: T) => string | undefined;
-    refreshAfterSuccess?: () => Promise<void>;
+    /** Reconcile changed or uncertain repository state without replaying the mutation. */
+    refreshAfterMutation?: () => Promise<void>;
     setScmOperationBusy?: (busy: boolean) => void;
     setScmOperationStatus?: (status: string | null) => void;
 }>;
@@ -91,7 +92,35 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
             };
         }
         const outcome = normalizeScmOperationOutcome({ ...response, errorCode: ScmOperationErrorCodeSchema.safeParse(response.errorCode).data });
+        response = { ...response, outcome };
         const errorCode = 'errorCode' in outcome ? outcome.errorCode : undefined;
+        const requiresReconciliation = outcome.kind === 'succeeded'
+            || outcome.kind === 'conflicted'
+            || outcome.kind === 'effect_applied_with_warning'
+            || outcome.kind === 'outcome_unknown'
+            || outcome.repositoryState !== undefined;
+        const refresh = requiresReconciliation ? input.refreshAfterMutation : undefined;
+        if (refresh) {
+            try {
+                await refresh();
+            } catch (error) {
+                // A failed read cannot erase a known conflict, warning, or indeterminate write.
+                // Its snapshot owner keeps the read error alongside the retained repository state.
+                if (outcome.kind === 'succeeded') {
+                    const refreshOutcome: ScmOperationOutcome = outcome.effect ? {
+                        v: 1, kind: 'effect_applied_with_warning', effect: outcome.effect,
+                        errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, nextActions: [{ kind: 'refresh' }],
+                    } : createScmOperationUnknownOutcome({ kind: 'repository_status', ...(input.cwd ? { cwd: input.cwd } : {}) });
+                    reportOperation({
+                        operation: input.operation, status: 'failed', outcome: refreshOutcome,
+                        errorCode: refreshOutcome.errorCode,
+                        detail: error instanceof Error ? error.message : String(error ?? ''),
+                        surface: 'update', tracking: null,
+                    });
+                    return response;
+                }
+            }
+        }
         if (outcome.kind !== 'succeeded') {
             reportOperation({
                 operation: input.operation,
@@ -104,23 +133,6 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
                 tracking: null,
             });
             return response;
-        }
-        if (input.refreshAfterSuccess) {
-            try {
-                await input.refreshAfterSuccess();
-            } catch (error) {
-                const refreshOutcome: ScmOperationOutcome = outcome.effect ? {
-                    v: 1, kind: 'effect_applied_with_warning', effect: outcome.effect,
-                    errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, nextActions: [{ kind: 'refresh' }],
-                } : createScmOperationUnknownOutcome({ kind: 'repository_status', ...(input.cwd ? { cwd: input.cwd } : {}) });
-                reportOperation({
-                    operation: input.operation, status: 'failed', outcome: refreshOutcome,
-                    errorCode: refreshOutcome.errorCode,
-                    detail: error instanceof Error ? error.message : String(error ?? ''),
-                    surface: 'update', tracking: null,
-                });
-                return response;
-            }
         }
         const detail = input.successDetail?.(response as T);
         reportOperation({

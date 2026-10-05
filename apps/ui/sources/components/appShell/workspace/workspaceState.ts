@@ -4,7 +4,7 @@ import { splitCanvasReduce } from '../splitCanvas/model/splitCanvasReducer';
 import { collectSplitCanvasLeaves } from '../splitCanvas/model/splitCanvasTree';
 import {
     activateGroupTab, closeGroupTab, insertGroupTab, moveGroupTab,
-    removeGroupPreviewTabs,
+    removeGroupPreviewTabs, reorderGroupTab,
 } from './tabGroups/tabGroupTransitions';
 
 export type WorkspaceTab = Readonly<{ id: string; target: DestinationRef; pinned: boolean; preview: boolean }>;
@@ -40,12 +40,17 @@ type MeasuredSplit = Readonly<{
 }>;
 
 export type WorkspaceAction =
-    | Readonly<{ type: 'openTab'; groupId: string; tab: WorkspaceTab; fallbackTitle?: string }>
+    | Readonly<{ type: 'openTab'; groupId: string; tab: WorkspaceTab; fallbackTitle?: string; beforeTabId?: string | null }>
+    | (MeasuredSplit & Readonly<{ type: 'openSplitTab'; groupId: string; tab: WorkspaceTab;
+        newGroupId: string; axis: SplitCanvasAxis; placement: SplitCanvasPlacement }>)
     | Readonly<{ type: 'activateTab'; groupId: string; tabId: string }>
     | Readonly<{ type: 'closeTab'; groupId: string; tabId: string; newTab: WorkspaceTab; remember?: boolean }>
     | Readonly<{ type: 'reopenTab'; tabId?: string; reuseTabId?: string }>
-    | Readonly<{ type: 'moveTab'; tabId: string; sourceGroupId: string; targetGroupId: string }>
-    | Readonly<{ type: 'reorderTab'; groupId: string; tabId: string; index: number }>
+    | Readonly<{ type: 'moveTab'; tabId: string; sourceGroupId: string; targetGroupId: string; beforeTabId?: string | null }>
+    | (Readonly<{ type: 'reorderTab'; groupId: string; tabId: string }> & (
+        | Readonly<{ index: number; beforeTabId?: never }>
+        | Readonly<{ beforeTabId: string | null; index?: never }>
+    ))
     | Readonly<{ type: 'focusGroup'; groupId: string }>
     | Readonly<{ type: 'toggleMaximize'; groupId: string }>
     | Readonly<{ type: 'restoreMaximize' }>
@@ -156,6 +161,14 @@ export function createWorkspaceState(tab: WorkspaceTab): WorkspaceState {
 
 export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
     switch (action.type) {
+        case 'openSplitTab': {
+            if (!state.groups[action.groupId] || state.tabs[action.tab.id]) return state;
+            const opened = reduceWorkspaceState(state, { type: 'openTab', groupId: action.groupId,
+                tab: { ...action.tab, preview: false } });
+            const split = reduceWorkspaceState(opened, { ...action, type: 'splitTab', tabId: action.tab.id,
+                sourceGroupId: action.groupId, targetGroupId: action.groupId });
+            return split.root === state.root ? state : split;
+        }
         case 'openTab': {
             const group = state.groups[action.groupId];
             if (!group) return state;
@@ -164,7 +177,7 @@ export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAct
             const preview = action.tab.preview
                 ? removeGroupPreviewTabs(group, state.tabs)
                 : { group, removedTabIds: [] };
-            const nextGroup = insertGroupTab(preview.group, action.tab.id);
+            const nextGroup = insertGroupTab(preview.group, action.tab.id, action.beforeTabId);
             const focused = splitCanvasReduce(canvasFor(state), { type: 'focusLeaf', leafId: group.id });
             return {
                 ...fromCanvas(state, focused),
@@ -232,34 +245,39 @@ export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAct
             const restoredPane = root !== state.root;
             const groupId = state.groups[entry.groupId] || restoredPane ? entry.groupId : state.focusedGroupId;
             const group = state.groups[groupId] ?? { id: groupId, tabIds: [], activeTabId: '', mru: [] };
-            const tabIds = [...group.tabIds];
-            tabIds.splice(Math.min(entry.index, tabIds.length), 0, entry.tab.id);
+            const restoredGroup = insertGroupTab(group, entry.tab.id, group.tabIds[entry.index] ?? null);
             const reopened = {
                 ...state, root, recentlyClosed, focusedGroupId: groupId, maximizedGroupId: null,
                 tabs: { ...state.tabs, [entry.tab.id]: { ...entry.tab, preview: false } },
-                groups: { ...state.groups, [groupId]: activateGroupTab({ ...group, tabIds }, entry.tab.id) as WorkspaceGroup },
+                groups: { ...state.groups, [groupId]: restoredGroup as WorkspaceGroup },
                 fallbackTitlesByTabId: { ...state.fallbackTitlesByTabId, ...(entry.fallbackTitle === undefined ? {} : { [entry.tab.id]: entry.fallbackTitle }) },
             };
             return restoredPane ? { ...reopened, tabPairs: projectWorkspaceSplitTabPairs(reopened) } : reopened;
         }
         case 'reorderTab': {
             const group = state.groups[action.groupId];
-            if (!group || !Number.isInteger(action.index) || action.index < 0 || action.index >= group.tabIds.length) return state;
-            const previousIndex = group.tabIds.indexOf(action.tabId);
-            if (previousIndex < 0 || previousIndex === action.index) return state;
-            const tabIds = group.tabIds.filter((id) => id !== action.tabId);
-            tabIds.splice(action.index, 0, action.tabId);
-            return { ...state, groups: { ...state.groups, [group.id]: { ...group, tabIds } } };
+            if (!group) return state;
+            let beforeTabId = action.beforeTabId;
+            if (action.index !== undefined) {
+                if (!Number.isInteger(action.index) || action.index < 0 || action.index >= group.tabIds.length) return state;
+                beforeTabId = group.tabIds.filter(id => id !== action.tabId)[action.index] ?? null;
+            }
+            const reordered = reorderGroupTab(group, action.tabId, beforeTabId ?? null);
+            return reordered === group ? state : { ...state, groups: { ...state.groups, [group.id]: reordered as WorkspaceGroup } };
         }
         case 'moveTab': {
-            if (action.sourceGroupId === action.targetGroupId) return reduceWorkspaceState(state, {
-                type: 'activateTab', groupId: action.targetGroupId, tabId: action.tabId,
-            });
             const source = state.groups[action.sourceGroupId];
             const target = state.groups[action.targetGroupId];
             const tab = state.tabs[action.tabId];
             if (!source || !target || !tab || !source.tabIds.includes(tab.id)) return state;
-            const moved = moveGroupTab(source, target, tab, state.tabs);
+            // Moving an existing view is an explicit keep intent. Its destination's
+            // current preview remains open rather than being replaced by the move.
+            const keptTab = source.id !== target.id && tab.preview ? { ...tab, preview: false } : tab;
+            const moved = moveGroupTab(source, target, keptTab, state.tabs, action.beforeTabId);
+            if (source.id === target.id) {
+                const activated = reduceWorkspaceState(state, { type: 'activateTab', groupId: target.id, tabId: tab.id });
+                return moved.target === target ? activated : { ...activated, groups: { ...activated.groups, [target.id]: moved.target as WorkspaceGroup } };
+            }
             const groups = { ...state.groups, [source.id]: moved.source as WorkspaceGroup, [target.id]: moved.target as WorkspaceGroup };
             let canvas = canvasFor(state);
             if (moved.source.tabIds.length === 0) {
@@ -269,8 +287,8 @@ export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAct
             canvas = splitCanvasReduce(canvas, { type: 'focusLeaf', leafId: target.id });
             return {
                 ...fromCanvas(state, canvas), groups,
-                tabs: withoutTabs(state.tabs, moved.replacedPreviewTabIds),
-                fallbackTitlesByTabId: withoutTabs(state.fallbackTitlesByTabId, moved.replacedPreviewTabIds),
+                tabs: keptTab === tab ? state.tabs : { ...state.tabs, [tab.id]: keptTab },
+                fallbackTitlesByTabId: state.fallbackTitlesByTabId,
                 tabPairs: projectWorkspaceSplitTabPairs({ root: canvas.root!, groups }),
             };
         }

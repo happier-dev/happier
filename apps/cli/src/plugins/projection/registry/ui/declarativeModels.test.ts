@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol';
+import { PluginSettingsContributionV2Schema, PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry, ResolvedSettingsContribution } from '../types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -82,6 +82,34 @@ function registry(): ResolvedContributionRegistry {
 type ActionRuntime = NonNullable<ResolvedExecutablePluginRuntimeRegistry['targetActionInvocations']>;
 
 describe('declarative projection models', () => {
+    it('uses only this renderer plugin declared drag families in its document inventory', () => {
+        const source = {
+            provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.forms', pluginRootPath: '/plugin', manifestPath: '/plugin/plugin.json',
+            identity: { pluginId: 'acme.forms', localId: 'card' },
+            definition: PluginDragSourceContributionV1Schema.parse({ id: 'card', title: 'Card', referenceSchema: { type: 'string' },
+                client: { artifactId: 'client', exportName: 'card' }, platforms: ['web'] }),
+        } satisfies NonNullable<ResolvedContributionRegistry['dragSources']>[number];
+        const target = {
+            ...source, identity: { pluginId: 'acme.forms', localId: 'tray' },
+            definition: PluginDropTargetContributionV1Schema.parse({ id: 'tray', title: 'Tray', acceptedKinds: ['plugin:acme.forms/card'],
+                actions: [{ kind: 'host', actionId: 'session.message.send' }],
+                client: { artifactId: 'client', exportName: 'tray' }, platforms: ['web'] }),
+        } satisfies NonNullable<ResolvedContributionRegistry['dropTargets']>[number];
+        const input = {
+            ...registry(), dragSources: [source, { ...source, pluginId: 'foreign.plugin', identity: { pluginId: 'foreign.plugin', localId: 'card' } }],
+            dropTargets: [target],
+            uiRenderersV2: registry().uiRenderersV2?.map((renderer) => ({ ...renderer, definition: {
+                id: 'preferences', kind: 'declarative', root: { kind: 'dropTarget', targetId: 'tray', children: [
+                    { kind: 'dragSource', sourceId: 'card', reference: '42', children: [{ kind: 'text', text: 'Card' }] },
+                ] },
+            } as const })),
+        } satisfies ResolvedContributionRegistry;
+        const models = resolveDeclarativeProjectionModels({ registry: input, readPluginOccurrenceId: () => '42' });
+        expect(models['acme.forms\0preferences']?.declarativeInventory).toMatchObject({
+            dragSources: [{ qualifiedId: 'acme.forms/card', occurrenceId: '42' }], dropTargets: [{ qualifiedId: 'acme.forms/tray' }],
+        });
+        expect(models['acme.forms\0preferences']?.declarativeInventory.dragSources).toHaveLength(1);
+    });
     it('binds fields and only enables current committed policy-visible actions', () => {
         const models = resolveDeclarativeProjectionModels({
             registry: registry(),

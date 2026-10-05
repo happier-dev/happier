@@ -8,6 +8,10 @@ const repoRoot = resolve(here, '..', '..');
 
 export const serverWorkspacePackageSourcesPlugin = createWorkspacePackageSourcesPlugin([
     {
+        packageName: '@happier-dev/transfers',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'transfers', 'src'),
+    },
+    {
         packageName: 'privacy-kit',
         packageSourceRoot: resolve(repoRoot, 'packages', 'privacy-kit', 'src'),
     },

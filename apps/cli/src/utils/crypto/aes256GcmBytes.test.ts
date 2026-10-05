@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { openAes256GcmBytes, sealAes256GcmBytes } from './aes256GcmBytes';
+import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 
 describe('Node AES-256-GCM byte adapter', () => {
   it('matches the peer-application cross-runtime golden vector and rejects modified ciphertext', async () => {

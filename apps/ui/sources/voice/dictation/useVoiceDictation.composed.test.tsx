@@ -22,6 +22,32 @@ import { useVoiceProviderLocalAvailability } from '@/voice/settings/voiceProvide
 import { resolveVoiceDictationReadiness } from './voiceDictationReadiness';
 
 const machineRpcWithServerScopeSpy = vi.hoisted(() => vi.fn());
+const stopRecording = vi.hoisted(() => vi.fn(async () => 'blob:dictation-composed-recording'));
+
+// Install the browser recorder boundary before transitive consumers construct
+// the singleton capture owner; its deterministic internal logic remains real.
+vi.mock('@/voice/runtime/input/LocalVoiceCaptureOwner', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/voice/runtime/input/LocalVoiceCaptureOwner')>();
+    return {
+        ...actual,
+        createLocalVoiceCaptureOwner: (
+            deps: Parameters<typeof actual.createLocalVoiceCaptureOwner>[0],
+        ) => actual.createLocalVoiceCaptureOwner(deps, {
+            createRecordingMicSession: () => {
+                let muted = false;
+                return {
+                    ensureActive: async () => {},
+                    setMuted: (nextMuted: boolean) => { muted = nextMuted; },
+                    isMuted: () => muted,
+                    teardown: async () => {},
+                    getStream: () => null,
+                    beginRecording: async () => {},
+                    stopRecording,
+                };
+            },
+        }),
+    };
+});
 
 function AuthenticatedHookBoundary({ children }: PropsWithChildren) {
     return (
@@ -55,7 +81,6 @@ describe('useVoiceDictation composed daemon readiness', () => {
         resetRuntimeFetch();
         resetServerFeaturesClientForTests();
         storage.setState(initialStorageState, true);
-        vi.doUnmock('@/voice/runtime/input/LocalVoiceCaptureOwner');
         vi.restoreAllMocks();
         machineRpcWithServerScopeSpy.mockReset();
     });
@@ -63,7 +88,7 @@ describe('useVoiceDictation composed daemon readiness', () => {
     it('does not report Ready when the real controller will fail the daemon feature gate before RPC', async () => {
         const executionMachineId = 'machine-ready-at-start';
         const recording = new Blob(['recorded-audio'], { type: 'audio/webm;codecs=opus' });
-        const stopRecording = vi.fn(async () => 'blob:dictation-composed-recording');
+        stopRecording.mockClear();
         setRuntimeFetch(async (input) => {
             if (String(input) !== 'blob:dictation-composed-recording') {
                 throw new Error(`unexpected fetch: ${String(input)}`);
@@ -142,31 +167,6 @@ describe('useVoiceDictation composed daemon readiness', () => {
             startMachineIds.push(resolved);
             return resolved;
         });
-        const captureOwnerModule = await import('@/voice/runtime/input/LocalVoiceCaptureOwner');
-        vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
-            ...captureOwnerModule,
-            createLocalVoiceCaptureOwner: (
-                deps: Parameters<typeof captureOwnerModule.createLocalVoiceCaptureOwner>[0],
-            ) => captureOwnerModule.createLocalVoiceCaptureOwner(deps, {
-                // The real capture owner remains active; only its browser
-                // recorder system boundary is injected for this composition.
-                createRecordingMicSession: () => {
-                    let muted = false;
-                    return {
-                        ensureActive: async () => {},
-                        setMuted: (nextMuted: boolean) => {
-                            muted = nextMuted;
-                        },
-                        isMuted: () => muted,
-                        teardown: async () => {},
-                        getStream: () => null,
-                        beginRecording: async () => {},
-                        stopRecording,
-                    };
-                },
-            }),
-        }));
-
         const availabilityHook = await renderHook(() => useVoiceProviderLocalAvailability({
             daemonModelState: 'ready',
             daemonRuntimeState: 'available',
@@ -188,9 +188,11 @@ describe('useVoiceDictation composed daemon readiness', () => {
             await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'started' });
         });
         await act(async () => {
-            await expect(hook.getCurrent().toggle()).rejects.toMatchObject({
-                code: 'feature_disabled',
-            });
+            await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'cancelled' });
+        });
+        expect(hook.getCurrent().failure).toMatchObject({
+            kind: 'provider_error',
+            reason: 'transcription_failed',
         });
 
         expect(readinessMachineId).toBe(executionMachineId);
@@ -244,5 +246,30 @@ describe('useVoiceDictation composed daemon readiness', () => {
             expect(stopRecording).toHaveBeenCalledTimes(2);
         });
         await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'cancelled' });
+
+        // A plugin-owned field consumes the same singleton capture admission and
+        // independent Dictation configuration, without inventing a Session id.
+        await act(async () => {
+            primeServerFeaturesSnapshot({
+                snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+                    features: { voice: { enabled: true, happierVoice: { enabled: false } } },
+                }) },
+            });
+        });
+        const { useTextInputDictation } = await import('./useTextInputDictation');
+        const delivered = vi.fn();
+        const field = await renderHook(({ presented }: { presented: boolean }) => useTextInputDictation({
+            controlId: 'plugin-owned-text-field', enabled: true, presented, editable: true,
+            transcriptionSessionId: null, onTranscription: delivered,
+        }), { initialProps: { presented: true }, wrapper: AuthenticatedHookBoundary });
+        await act(async () => { await field.getCurrent().onPress(); });
+        expect(field.getCurrent().status).toBe('listening');
+        await field.rerender({ presented: false });
+        await vi.waitFor(() => {
+            expect(field.getCurrent().status).toBe('idle');
+            expect(stopRecording).toHaveBeenCalledTimes(3);
+        });
+        expect(delivered).not.toHaveBeenCalled();
+        await field.unmount();
     });
 });

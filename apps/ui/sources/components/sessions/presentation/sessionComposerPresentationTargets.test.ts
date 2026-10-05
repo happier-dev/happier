@@ -4,6 +4,7 @@ import type {
     ComposerTransactionV1,
     ComposerTransactionResultV1,
 } from '@happier-dev/protocol';
+import { createActionExecutor, buildComposerReferenceMentionPayloadV1, readHappierStructuredInputV1FromMeta, type PluginProjectionV2, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -63,6 +64,9 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
 
 import {
     applyComposerPresentationTransaction,
+    applyMountedComposerPresentationTransaction,
+    readMountedComposerPresentationSnapshot,
+    requestRegisteredComposerAttachmentPicker,
     createComposerPresentationTransactionApplier,
     flushPendingRegisteredSessionComposerActionChip,
     notifyComposerPresentationTargetChanged,
@@ -74,11 +78,16 @@ import {
     registerComposerPresentationTarget,
     registerSessionComposerPresentationTarget,
     requestRegisteredSessionComposerFocus,
+    requestRegisteredComposerPromptPicker,
     subscribeComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
 } from './sessionComposerPresentationTargets';
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';
+import { executePromptPickerOpenAction } from '@/components/sessions/agentInput/commandMenu/promptPickerActionRuntime';
+import { executeComposerIngressAction } from '@/sync/ops/actions/composerIngressActionRuntime';
+import { resolveComposerEntityDrop, type ComposerEntityDropContext } from '@/components/sessions/composer/composerEntityDrop';
+import { buildComposerSnapshotStructuredInputMetaOverrides, placePositionlessComposerReferences } from '@/components/sessions/composer/composerScopeAdapters';
 
 function createAttachmentProjectionEntry(input: Readonly<{
     pluginId: string;
@@ -214,6 +223,284 @@ describe('composer presentation targets', () => {
         claimComposerContentSpy
             .mockReset()
             .mockImplementation(async () => ({ status: 'claimed', newlyAcquired: true } as const));
+    });
+
+    it('applies Actions only at the current presented mounted document and opens its incumbent attachment picker', async () => {
+        const scope = { serverId: 'home-actions', accountId: 'account-actions' };
+        activeScopeState.value = scope;
+        const document = createDocumentTarget(createSnapshot({ ref: { kind: 'newSession', instanceId: 'action-input' }, text: 'draft' }));
+        const ref = document.readCurrent().ref;
+        let presented = true;
+        let editable = true;
+        let pickerOpened = false;
+        const target: ComposerPresentationTarget = { ...document,
+            readScope: () => scope,
+            isPresented: () => presented,
+            readSnapshot: () => ({ ...document.readCurrent(), state: { ...document.readCurrent().state, editable } }),
+            openAttachmentPicker: () => { pickerOpened = true; return true; },
+        };
+        const request = { scope, ref, transaction: { expectedRevision: 1, operations: [{ kind: 'text.insert', position: { offset: 5 }, text: ' context' }] } };
+        expect(applyMountedComposerPresentationTransaction(request)).toEqual({ status: 'composerUnavailable' });
+        const release = registerComposerPresentationTarget(ref, target);
+        cleanups.push(release);
+        expect(applyMountedComposerPresentationTransaction({ ...request, scope: { ...scope, accountId: 'other' } })).toEqual({ status: 'composerUnavailable' });
+        presented = false;
+        expect(applyMountedComposerPresentationTransaction(request)).toEqual({ status: 'composerUnavailable' });
+        expect(requestRegisteredComposerAttachmentPicker({ scope, ref })).toEqual({ status: 'unavailable' });
+        presented = true;
+        editable = false;
+        expect(applyMountedComposerPresentationTransaction(request)).toEqual({ status: 'notEditable' });
+        expect(requestRegisteredComposerAttachmentPicker({ scope, ref })).toEqual({ status: 'notEditable' });
+        expect(pickerOpened).toBe(false);
+        editable = true;
+        expect(requestRegisteredComposerAttachmentPicker({ scope, ref })).toEqual({ status: 'opened' });
+        expect(pickerOpened).toBe(true);
+        expect(document.readCurrent().text).toBe('draft');
+        // The mounted UI is the host boundary; Protocol admission and the incumbent document executor remain real.
+        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction,
+            isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+        expect(await executor.execute('composer.transaction.apply', request, {
+            surface: 'agent', authority: 'account_automation', serverId: scope.serverId, runtimeAccountId: scope.accountId,
+        }))
+            .toEqual({ ok: true, result: { status: 'applied', revision: 2 } });
+        expect(document.readCurrent().text).toBe('draft context');
+        release();
+        expect(applyMountedComposerPresentationTransaction({ ...request, transaction: { ...request.transaction, expectedRevision: 2 } })).toEqual({ status: 'composerUnavailable' });
+    });
+
+    it('keeps same-id Session Action transactions on the exact Home mount', () => {
+        const scope = { serverId: 'action-home-a', accountId: 'account-a' };
+        activeScopeState.value = scope;
+        const ref = { kind: 'session', sessionId: 'action-same-id' } as const;
+        const first = createDocumentTarget(createSnapshot({ ref, text: 'Home A' }));
+        const second = createDocumentTarget(createSnapshot({ ref, text: 'Home B' }));
+        let presented = true;
+        cleanups.push(registerSessionComposerPresentationTarget({ serverId: scope.serverId, sessionId: ref.sessionId }, {
+            ...first, isPresented: () => presented,
+        }));
+        cleanups.push(registerSessionComposerPresentationTarget({ serverId: 'action-home-b', sessionId: ref.sessionId }, second));
+        expect(readMountedComposerPresentationSnapshot({ scope, ref })?.text).toBe('Home A');
+        presented = false;
+        expect(readMountedComposerPresentationSnapshot({ scope, ref })).toBeNull();
+        presented = true;
+        expect(applyMountedComposerPresentationTransaction({ scope, ref, transaction: {
+            expectedRevision: 1, operations: [{ kind: 'text.insert', position: { offset: 6 }, text: ' context' }],
+        } })).toEqual({ status: 'applied', revision: 2 });
+        expect(first.readCurrent().text).toBe('Home A context');
+        expect(second.readCurrent().text).toBe('Home B');
+    });
+
+    it('selects the exact pending editor Account scope and refuses undeclared Action placement', () => {
+        const scope = { serverId: 'pending-home-a', accountId: 'account-a' };
+        activeScopeState.value = scope;
+        const ref = { kind: 'pendingMessage', sessionId: 'same-session', localId: 'same-pending' } as const;
+        const first = createDocumentTarget(createSnapshot({ ref, text: 'Home A' }));
+        const foreign = createDocumentTarget(createSnapshot({ ref, text: 'Home B' }));
+        cleanups.push(registerComposerPresentationTarget(ref, { ...first, readScope: () => scope }));
+        cleanups.push(registerComposerPresentationTarget(ref, { ...foreign, readScope: () => ({ serverId: 'pending-home-b', accountId: 'account-b' }) }));
+        expect(readMountedComposerPresentationSnapshot({ scope, ref })?.text).toBe('Home A');
+        expect(applyMountedComposerPresentationTransaction({ scope, ref, transaction: {
+            expectedRevision: 1, operations: [{ kind: 'text.insert', position: { offset: 6 }, text: ' context' }],
+        } })).toEqual({ status: 'applied', revision: 2 });
+        expect(first.readCurrent().text).toBe('Home A context');
+        expect(foreign.readCurrent().text).toBe('Home B');
+        const undeclared = { kind: 'newSession', instanceId: 'scope-undeclared' } as const;
+        cleanups.push(registerComposerPresentationTarget(undeclared, createDocumentTarget(createSnapshot({ ref: undeclared }))));
+        expect(readMountedComposerPresentationSnapshot({ scope, ref: undeclared })).toBeNull();
+    });
+
+    it('adds qualified dropped context through one transaction without replacing the draft or selection', () => {
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const target = createDocumentTarget(createSnapshot({
+            text: 'Keep this draft @old', selection: { start: 2, end: 8 },
+            references: [{ kind: 'future.context', ref: 'future:old', token: '@old', start: 16, end: 20 }],
+        }));
+        cleanups.push(registerComposerPresentationTarget(target.readCurrent().ref, target));
+        const context: ComposerEntityDropContext = {
+            scope, ref: target.readCurrent().ref, snapshot: target.readCurrent(), workspace: null,
+            sessions: [{ id: 'dropped-session', title: 'Current title', serverId: scope.serverId,
+                workspaceLabel: null, agentLabel: null, agentId: null, machineId: 'machine-a', updatedAt: 0, active: true }],
+            preview: { verb: 'Add context', target: 'Composer' }, reason: code => code,
+        };
+        const item = { kind: 'session', scope, address: { serverId: scope.serverId, sessionId: 'dropped-session' } } as const;
+        const admission = resolveComposerEntityDrop(item, context);
+        expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') return;
+        expect(applyComposerPresentationTransaction(admission.effect.input as Parameters<typeof applyComposerPresentationTransaction>[0]))
+            .toEqual({ status: 'applied', revision: 2 });
+        const current = target.readCurrent();
+        expect(current.text).toMatch(/^Keep this draft @old /);
+        expect(current.selection).toEqual({ start: 2, end: 8 });
+        expect(current.references).toHaveLength(2);
+        expect(current.references[0]).toEqual(context.snapshot?.references[0]);
+        expect(current.references[1]).toMatchObject({ kind: 'happier.session', ref: 'session:dropped-session' });
+        expect(JSON.stringify(buildComposerSnapshotStructuredInputMetaOverrides(current))).toContain('session:dropped-session');
+        expect(current.text).not.toContain('"kind"');
+        expect(resolveComposerEntityDrop({ ...item, scope: { ...scope, accountId: 'other-account' } }, context).status).toBe('refused');
+        expect(resolveComposerEntityDrop(item, { ...context, sessions: [] }).status).toBe('refused');
+        expect(resolveComposerEntityDrop(item, { ...context, snapshot: { ...current, state: { ...current.state, editable: false } } }).status).toBe('refused');
+    });
+
+    it('admits repository references only on the exact current machine and workspace', () => {
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const snapshot = createSnapshot({ text: 'Draft', selection: { start: 5, end: 5 } });
+        const context: ComposerEntityDropContext = {
+            scope, ref: snapshot.ref, snapshot, sessions: [],
+            workspace: { serverId: scope.serverId, machineId: 'machine-a', rootPath: '/repo' },
+            preview: { verb: 'Add context', target: 'Composer' }, reason: code => code,
+        };
+        const item = { kind: 'repository-file', scope, machineId: 'machine-a', path: '/repo/src/file.ts' } as const;
+        const admission = resolveComposerEntityDrop(item, context);
+        expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') return;
+        expect(admission.effect.input).toMatchObject({ transaction: { expectedRevision: 1, operations: [
+            { kind: 'text.insert', text: ' @src/file.ts' },
+            { kind: 'reference.insert', reference: { kind: 'happier.file', ref: 'file:src/file.ts' } },
+        ] } });
+        expect(resolveComposerEntityDrop({ ...item, path: '/repo-other/file.ts' }, context).status).toBe('refused');
+        expect(resolveComposerEntityDrop({ ...item, machineId: 'other-machine' }, context).status).toBe('refused');
+        expect(resolveComposerEntityDrop({ ...item, path: '../escape.ts' }, context).status).toBe('refused');
+        const windowsContext = { ...context, workspace: { ...context.workspace!, rootPath: 'C:\\Users\\Alice\\repo\\' } };
+        expect(resolveComposerEntityDrop({ ...item, path: 'c:/users/ALICE/repo\\src/file.ts' }, windowsContext).status).toBe('allowed');
+        expect(resolveComposerEntityDrop({ ...item, path: 'C:\\Users\\Alice\\repo2\\src\\file.ts' }, windowsContext).status).toBe('refused');
+        expect(resolveComposerEntityDrop({ ...item, path: '/repo/src/../escape.ts' }, context).status).toBe('refused');
+    });
+
+    it('preserves predecessor Message identities and unknown references when adding new context', () => {
+        // Observed ../0.2 HEAD 2124e78e: structuredInputMentions.ts writes this
+        // positionless Message identity. This is not a reconstructed current draft.
+        const text = 'Continue @session:older @future';
+        const envelope = readHappierStructuredInputV1FromMeta({ happierStructuredInputV1: { v: 1, mentions: [
+            { kind: 'happier.session', ref: 'session:older', token: '@session:older', label: 'Older Session' },
+            { kind: 'future.context', ref: 'future:42', token: '@future' },
+        ] } });
+        expect(envelope?.mentions).toHaveLength(2);
+        const references = placePositionlessComposerReferences({ text, references: envelope!.mentions! });
+        const target = createDocumentTarget(createSnapshot({ text, references }));
+        cleanups.push(registerComposerPresentationTarget(target.readCurrent().ref, target));
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const admission = resolveComposerEntityDrop({ kind: 'repository-file', scope, machineId: 'm', path: '/repo/current.ts' }, {
+            scope, ref: target.readCurrent().ref, snapshot: target.readCurrent(), sessions: [],
+            workspace: { serverId: scope.serverId, machineId: 'm', rootPath: '/repo' },
+            preview: { verb: 'Add context', target: 'Composer' }, reason: code => code,
+        });
+        expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') return;
+        expect(applyComposerPresentationTransaction(admission.effect.input as Parameters<typeof applyComposerPresentationTransaction>[0]).status).toBe('applied');
+        expect(target.readCurrent().references.slice(0, 2)).toEqual(references);
+        expect(readHappierStructuredInputV1FromMeta(buildComposerSnapshotStructuredInputMetaOverrides(target.readCurrent()))?.mentions?.slice(0, 2))
+            .toEqual(envelope?.mentions);
+    });
+
+    it('admits only a live contributed reference and keeps malformed carried data inert', () => {
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const target = createDocumentTarget(createSnapshot({ text: 'Review', selection: { start: 1, end: 3 } }));
+        cleanups.push(registerComposerPresentationTarget(target.readCurrent().ref, target));
+        const projection: PluginProjectionV2 = { v: 2, generation: 1,
+            installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {},
+            resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+            contributionIntrospection: { version: 1, generation: 1, diagnostics: [], contributions: [{
+                version: 1, occurrenceId: 'live', contribution: { kind: 'localId', pluginId: 'acme.issues',
+                    localId: 'pull-requests', family: 'composerReferences', qualifiedId: 'acme.issues/pull-requests' },
+                progression: { declared: true, normalized: true, merged: true },
+                registration: { requirement: 'required', state: 'bound', occurrenceId: 'live' },
+                activation: { state: 'active', occurrenceId: 'live' }, projection: { state: 'projected' },
+                consumer: 'composer-reference-host', platforms: ['cli', 'web'], diagnostics: [],
+                presentation: { kind: 'composerReference', title: 'Pull requests', icon: 'search', triggers: ['@'] },
+            }] },
+        };
+        const context: ComposerEntityDropContext = { scope, ref: target.readCurrent().ref, snapshot: target.readCurrent(),
+            workspace: null, sessions: [], referenceHost: { projection, serverId: scope.serverId, machineId: 'm', isCurrent: () => true },
+            preview: { verb: 'Add context', target: 'Composer' }, reason: code => code };
+        const item = { kind: 'plugin', scope, contribution: { pluginId: 'acme.issues', localId: 'pr-drag' },
+            reference: buildComposerReferenceMentionPayloadV1({ reference: { pluginId: 'acme.issues', localId: 'pull-requests' },
+                candidate: { id: 'pr:42', label: 'PR 42' } }) } as const;
+        const admission = resolveComposerEntityDrop(item, context);
+        expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') return;
+        expect(applyComposerPresentationTransaction(admission.effect.input as Parameters<typeof applyComposerPresentationTransaction>[0]).status).toBe('applied');
+        expect(target.readCurrent()).toMatchObject({ selection: { start: 1, end: 3 }, references: [{
+            kind: 'happier.composerReference', ref: 'composerReference:pr:42', composerReference: { pluginId: 'acme.issues', localId: 'pull-requests' },
+        }] });
+        expect(target.readCurrent().text).not.toContain('composerReference');
+        expect(resolveComposerEntityDrop(item, { ...context, referenceHost: { ...context.referenceHost!, isCurrent: () => false } }).status).toBe('refused');
+        expect(resolveComposerEntityDrop(item, { ...context, referenceHost: { ...context.referenceHost!, projection: { ...projection, contributionIntrospection: undefined } } }).status).toBe('refused');
+        expect(resolveComposerEntityDrop({ ...item, reference: { actionId: 'session.send', input: { text: 'transport' } } }, context).status).toBe('refused');
+        expect(resolveComposerEntityDrop({ ...item, reference: { ...item.reference, label: 'x'.repeat(5000) } }, context).status).toBe('refused');
+    });
+
+    it('opens prompts through the exact Home target, rejecting hidden, retired and locked composers', () => {
+        const ref = { kind: 'session', sessionId: 'same-id' } as const;
+        const address = { serverId: 'https://home.example.test', sessionId: ref.sessionId };
+        let presented = true;
+        let current = true;
+        let editable = true;
+        const open = vi.fn(() => true);
+        const otherOpen = vi.fn(() => true);
+        const base = createSnapshot({ ref });
+        cleanups.push(registerSessionComposerPresentationTarget(address, {
+            ...createDocumentTarget(base),
+            isCurrent: () => current,
+            isPresented: () => presented,
+            readSnapshot: () => ({ ...base, state: { ...base.state, editable } }),
+            openPromptPicker: open,
+        }));
+        cleanups.push(registerSessionComposerPresentationTarget({ ...address, serverId: 'https://other.example.test' }, {
+            ...createDocumentTarget(base), openPromptPicker: otherOpen,
+        }));
+        expect(requestRegisteredComposerPromptPicker({ ref, serverId: address.serverId })).toEqual(ref);
+        expect(open).toHaveBeenCalledOnce();
+        expect(otherOpen).not.toHaveBeenCalled();
+        presented = false;
+        expect(requestRegisteredComposerPromptPicker({ ref, serverId: address.serverId })).toBeNull();
+        presented = true;
+        current = false;
+        expect(requestRegisteredComposerPromptPicker({ ref, serverId: address.serverId })).toBeNull();
+        current = true;
+        editable = false;
+        expect(requestRegisteredComposerPromptPicker({ ref, serverId: address.serverId })).toBeNull();
+        expect(open).toHaveBeenCalledOnce();
+    });
+
+    it('opens the focused New/Home composer and never falls back from an absent explicit address', () => {
+        const ref = { kind: 'newSession', instanceId: 'home-composer' } as const;
+        const base = createSnapshot({ ref });
+        let focused = true;
+        let ready = true;
+        const open = vi.fn(() => ready);
+        const unregister = registerComposerPresentationTarget(ref, {
+            ...createDocumentTarget(base),
+            readSnapshot: () => ({ ...base, state: { ...base.state, focused } }),
+            openPromptPicker: open,
+        });
+        cleanups.push(unregister);
+        expect(requestRegisteredComposerPromptPicker({})).toEqual(ref);
+        focused = false;
+        expect(requestRegisteredComposerPromptPicker({})).toBeNull();
+        expect(requestRegisteredComposerPromptPicker({ ref })).toEqual(ref);
+        expect(requestRegisteredComposerPromptPicker({ ref: { kind: 'newSession', instanceId: 'missing' } })).toBeNull();
+        ready = false;
+        expect(requestRegisteredComposerPromptPicker({ ref })).toBeNull();
+        unregister();
+        expect(requestRegisteredComposerPromptPicker({ ref })).toBeNull();
+    });
+
+    it('executes the client Action through the real addressed target and cancels before opening', async () => {
+        const ref = { kind: 'session', sessionId: 'action-session' } as const;
+        const base = createSnapshot({ ref, text: 'private draft' });
+        const open = vi.fn(() => true);
+        cleanups.push(registerSessionComposerPresentationTarget({ serverId: 'https://home.example.test', sessionId: ref.sessionId }, {
+            ...createDocumentTarget(base), openPromptPicker: open,
+        }));
+        const request = { actionId: 'ui.prompts.picker.open' as const, input: {},
+            context: { surface: 'agent' as const, defaultSessionId: ref.sessionId, serverId: 'https://home.example.test' } };
+        await expect(executePromptPickerOpenAction(request)).resolves.toEqual({ ok: true, result: { status: 'opened', composerRef: ref } });
+        await expect(executePromptPickerOpenAction({ ...request, context: { ...request.context, serverId: 'https://other.example.test' } }))
+            .resolves.toEqual({ ok: true, result: { status: 'noEligibleComposer' } });
+        const cancellation = new AbortController();
+        cancellation.abort();
+        await expect(executePromptPickerOpenAction({ ...request, context: { ...request.context, signal: cancellation.signal } })).rejects.toBeDefined();
+        expect(open).toHaveBeenCalledOnce();
     });
 
     it('delivers a pending focus intent once when the exact qualified Session composer registers', () => {

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS } from '@/components/ui/selectionList/_constants';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -10,6 +10,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { DocumentShareSheet } from './DocumentShareSheet';
+import { useDocumentShareController } from './useDocumentShareController';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -35,7 +36,9 @@ const host = vi.hoisted(() => ({
     serverId: '',
     /** Grant requests the Home received: `GET`, or the mutation with its body. */
     requests: [] as Array<Readonly<{ method: string; body?: Record<string, unknown> }>>,
-    access: 'owner' as string,
+    access: 'owner' as import('@happier-dev/protocol').ArtifactCallerAccessV1 | null,
+    ownerAccountId: 'owner',
+    revokeOnRemove: false,
     grants: [] as any[],
     grantStatus: 200,
     document: { header: {} as Record<string, unknown>, body: '' },
@@ -80,13 +83,15 @@ async function serveHome(): Promise<void> {
             if (!route) return undefined;
             const artifactId = decodeURIComponent(route[1]!);
             if (!route[2]) {
+                if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
                 return Response.json({ id: artifactId, header: encodePlainArtifactStoredContent(host.document.header),
                     body: encodePlainArtifactStoredContent({ body: host.document.body }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, ownerAccountId: 'owner', access: host.access, encryptionMode: 'plain' });
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, ownerAccountId: host.ownerAccountId, access: host.access, encryptionMode: 'plain' });
             }
             const input = request.body as any;
             host.requests.push({ method: request.method, ...(input ? { body: input } : {}) });
             if (host.grantStatus !== 200) return Response.json({ error: 'not_found' }, { status: host.grantStatus });
+            if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
             const same = (row: any) => JSON.stringify(row.principal) === JSON.stringify(input.principal);
             if (request.method === 'PUT') {
                 const display = host.grants.find(same)?.display ?? (input.principal.kind === 'team' ? { name: 'Payments squad' } : { name: 'Someone' });
@@ -94,7 +99,8 @@ async function serveHome(): Promise<void> {
                     { principal: input.principal, accessLevel: input.accessLevel, createdByAccountId: 'owner', createdAt: 1, display }];
             }
             if (request.method === 'DELETE') host.grants = host.grants.filter((row) => !same(row));
-            return Response.json({ artifactId, ownerAccountId: 'owner', access: host.access, grants: host.grants,
+            if (request.method === 'DELETE' && host.revokeOnRemove) host.access = null;
+            return Response.json({ artifactId, ownerAccountId: host.ownerAccountId, access: host.access, grants: host.access === null ? [] : host.grants,
                 ...(request.method === 'GET' ? {} : { changed: true }) });
         },
     });
@@ -141,6 +147,8 @@ describe('DocumentShareSheet', () => {
     beforeEach(async () => {
         host.requests = [];
         host.access = 'owner';
+        host.ownerAccountId = 'owner';
+        host.revokeOnRemove = false;
         host.grants = [ana, studio];
         host.grantStatus = 200;
         host.document = WORKFLOW_DOCUMENT;
@@ -203,6 +211,74 @@ describe('DocumentShareSheet', () => {
         expect(screen.findByTestId('document-share-grant-team:studio')).toBeNull();
     });
 
+    it('lets an administrator edit, add and remove grants without assigning admin', async () => {
+        host.access = 'admin';
+        host.ownerAccountId = 'document-owner';
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+
+        expect(screen.findByTestId('document-share-candidate-team:payments')).not.toBeNull();
+        expect(screen.findByTestId('document-share-public-link')).toBeNull();
+        expect(host.publicRequests).toEqual([]);
+        await screen.pressByTestIdAsync('document-share-level:account:ana');
+        expect(renderedTestIds(screen, 'document-share-level:account:ana:')).toEqual([
+            'document-share-level:account:ana:view', 'document-share-level:account:ana:edit',
+        ]);
+        await screen.pressByTestIdAsync('document-share-level:account:ana:view');
+        await settle();
+        expect(host.requests.at(-1)).toEqual({ method: 'PUT',
+            body: { artifactId: 'wf-1', principal: { kind: 'account', accountId: 'ana' }, accessLevel: 'view' } });
+
+        await screen.pressByTestIdAsync('document-share-candidate-team:payments');
+        await settle();
+        expect(screen.findByTestId('document-share-grant-team:payments')).not.toBeNull();
+        await screen.pressByTestIdAsync('document-share-grant-team:studio');
+        await screen.pressByTestIdAsync('document-share-remove:team:studio');
+        await screen.pressByTestIdAsync('document-share-remove-confirm:team:studio');
+        await settle();
+        expect(screen.findByTestId('document-share-grant-team:studio')).toBeNull();
+        expect(screen.findByTestId('document-share-grant-account:ana')).not.toBeNull();
+    });
+
+    it('clears the controller roster after acknowledged self-revocation', async () => {
+        host.access = 'admin';
+        host.ownerAccountId = 'document-owner';
+        host.revokeOnRemove = true;
+        const self = { kind: 'account' as const, accountId: 'owner' };
+        host.grants = [{ ...ana, principal: self, accessLevel: 'admin' }, studio];
+        const hook = await renderHook(() => useDocumentShareController({ artifactId: 'wf-1',
+            scope: { serverId: host.serverId, accountId: 'owner' } }));
+        await settle();
+        expect(hook.getCurrent().grants).toHaveLength(2);
+
+        hook.getCurrent().actions.confirmRemove(self);
+        await settle();
+        expect(host.access).toBeNull();
+        expect(hook.getCurrent().grants).toEqual([]);
+        expect(hook.getCurrent().model).toMatchObject({ editable: false, stale: false, owner: null, grants: [], directory: { sections: [] } });
+        expect(hook.getCurrent().issue).toMatchObject({ code: 'artifact_access_revoked', retryable: false });
+        expect(hook.getCurrent().loading).toBe(false);
+    });
+
+    it('replaces the sheet controls with an access-lost state after self-revocation', async () => {
+        host.access = 'admin';
+        host.ownerAccountId = 'document-owner';
+        host.revokeOnRemove = true;
+        host.grants = [{ ...ana, principal: { kind: 'account', accountId: 'owner' }, accessLevel: 'admin' }, studio];
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-grant-account:owner');
+        await screen.pressByTestIdAsync('document-share-remove:account:owner');
+        await screen.pressByTestIdAsync('document-share-remove-confirm:account:owner');
+        await settle();
+
+        expect(renderedTestIds(screen, 'document-share-grant-')).toEqual([]);
+        expect(renderedTestIds(screen, 'document-share-candidate-')).toEqual([]);
+        expect(screen.findByTestId('document-share-public-link')).toBeNull();
+        expect(screen.findByTestId('document-share-editor:list:document-share:option:issue')).not.toBeNull();
+        expect(screen.findByTestId('document-share-editor:list:document-share:option:read-only')).toBeNull();
+    });
+
     it('shows a recipient the roster without any way to change it', async () => {
         host.access = 'edit';
         const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
@@ -221,11 +297,21 @@ describe('DocumentShareSheet', () => {
         const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
         await settle();
 
-        expect(screen.findByTestId('document-share-public-link')).not.toBeNull();
-        expect(host.publicRequests).toEqual([]);
+        expect(screen.findByTestId('document-share-public-link')?.props.accessibilityLabel).toContain('Off');
+        expect(host.publicRequests).toEqual([{ method: 'GET' }]);
         await screen.pressByTestIdAsync('document-share-public-link');
         await settle();
         expect(screen.findByTestId('document-share-public-link-controls')).not.toBeNull();
+    });
+
+    it('shows an existing public link as on before the owner opens its controls', async () => {
+        host.publicShare = { id: 'existing-share', subject: { kind: 'artifact', id: 'wf-1' },
+            expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false,
+            createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        expect(screen.findByTestId('document-share-public-link')?.props.accessibilityLabel).toContain('On');
+        expect(screen.findByTestId('document-share-public-link-controls')).toBeNull();
     });
 
     it('creates a local fragment link, reads the owner audit and revokes through the canonical Actions', async () => {
@@ -257,6 +343,7 @@ describe('DocumentShareSheet', () => {
         await screen.pressByTestIdAsync('session-public-link-turn-off');
         await settle();
         expect(host.publicShare).toBeNull();
+        expect(screen.findByTestId('document-share-public-link')?.props.accessibilityLabel).toContain('Off');
         expect(screen.findByTestId('session-public-link-url')).toBeNull();
         expect(host.publicRequests.some(request => request.method === 'DELETE')).toBe(true);
     });

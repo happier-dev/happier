@@ -1,15 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
 
 import {
   getStorage,
+  installLocalVoiceActionHomeForTests,
   registerLocalVoiceEngineHarnessHooks,
-  submitMessage,
+  localVoicePendingEnqueue,
 } from './localVoiceEngine.testHarness';
 
+const actionHome = await installLocalVoiceActionHomeForTests();
+const currentToolSessionAddress = { serverId: actionHome.homes.voice!.id, sessionId: 's1' };
+// Load real owners after the transport fixtures, once per suite.
+await Promise.all([import('./runVoiceAgentTurnWithTools'), import('@/voice/agent/streamVoiceAgentTurn'), import('./localVoiceEngine')]);
+afterAll(() => actionHome.dispose());
+
 describe('runVoiceAgentTurnWithTools local effect custody', () => {
-  registerLocalVoiceEngineHarnessHooks();
+  registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
+  beforeEach(() => actionHome.restore());
+  afterEach(async () => {
+    const { clearRetainedLocalVoiceEffectOutcomes } = await import('@/voice/tools/localVoiceEffectOutcomeCustody');
+    clearRetainedLocalVoiceEffectOutcomes('sys_voice');
+  });
 
   async function prepareSession() {
     const storage = await getStorage();
@@ -19,6 +31,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
         ...storage.getState().sessions,
         s1: {
           id: 's1',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -27,7 +40,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
         },
       },
       concurrentSessionListCacheByServerId: {
-        'server-a': {
+        [currentToolSessionAddress.serverId]: {
           serverName: null,
           sessions: { s1: { id: 's1', presence: 'online', active: true } },
         },
@@ -136,7 +149,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       sessionId: 'sys_voice',
       userText: 'check sessions',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: sessions,
       onOutputEvent: async ({ event }) => {
         observedTurnIds.push(event.turnId);
@@ -149,7 +162,6 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
 
   it('rejects a non-streaming effect that has no stable call identity', async () => {
     await prepareSession();
-    submitMessage.mockResolvedValue(undefined);
     const sessions = createSessions([
       {
         assistantText: 'I will send it.',
@@ -163,11 +175,11 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       sessionId: 'sys_voice',
       userText: 'send it',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: sessions,
     });
 
-    expect(submitMessage).not.toHaveBeenCalled();
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({
       t: 'sendSessionMessage',
       result: { ok: false, errorCode: 'tool_call_identity_required' },
@@ -177,9 +189,9 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
   it('retains and reports a completed canonical effect when abort fires at the handler completion boundary', async () => {
     await prepareSession();
     const controller = new AbortController();
-    submitMessage.mockImplementation(async () => {
+    localVoicePendingEnqueue.mockImplementation(async ({ body }) => {
       controller.abort();
-      return undefined;
+      return Response.json({ requestedAction: body.requestedAction, pending: { localId: body.localId } });
     });
     const effectResponse = await streamResponse('effect-completed', 'Do it once');
     const sessions = createSessions([effectResponse]);
@@ -190,13 +202,13 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       sessionId: 'sys_voice',
       userText: 'do it',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: sessions,
       signal: controller.signal,
       onToolResults,
     });
 
-    expect(submitMessage).toHaveBeenCalledTimes(1);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
     expect(onToolResults).toHaveBeenCalledWith({
       turnIndex: 0,
       toolResults: [expect.objectContaining({
@@ -211,7 +223,6 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
 
   it('executes one action when a canonical stable effect is replayed in the same stream', async () => {
     await prepareSession();
-    submitMessage.mockResolvedValue(undefined);
     const replayedWithinStream = await streamResponse('effect-same-stream', 'Do it once', undefined, 2);
     const sessions = createSessions([replayedWithinStream, { assistantText: 'Done.', actions: [] }]);
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
@@ -220,24 +231,25 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       sessionId: 'sys_voice',
       userText: 'do it',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: sessions,
     });
 
     expect(replayedWithinStream.actions).toHaveLength(1);
-    expect(submitMessage).toHaveBeenCalledTimes(1);
-    expect(submitMessage).toHaveBeenCalledWith('s1', 'Do it once', undefined, undefined, {
-      callerSurface: 'voice_turn',
-      forceImmediate: true,
-      hostAdmissionOrigin: 'voice',
-    });
+    expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      body: expect.objectContaining({
+        content: expect.objectContaining({ t: 'plain', v: expect.objectContaining({ content: expect.objectContaining({ text: 'Do it once' }) }) }),
+        requestedAction: { v: 1, kind: 'steer_if_active' },
+      }),
+    }));
     expect(result.totalActions).toBe(1);
     expect(result.toolResultBatches).toHaveLength(1);
   });
 
   it('reuses a retained canonical effect outcome across replay without rerunning the handler', async () => {
     await prepareSession();
-    submitMessage.mockResolvedValue(undefined);
     const firstEffect = await streamResponse('effect-replay', 'Do it once');
     const replayedEffect = await streamResponse('effect-replay', 'Do it once');
     const firstSessions = createSessions([firstEffect, { assistantText: 'Done.', actions: [] }]);
@@ -245,19 +257,18 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     const first = await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'first', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: firstSessions,
+      sessionId: 'sys_voice', userText: 'first', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: firstSessions,
     });
     const replay = await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'replay', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: replaySessions,
+      sessionId: 'sys_voice', userText: 'replay', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: replaySessions,
     });
 
-    expect(submitMessage).toHaveBeenCalledTimes(1);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
     expect(replay.toolResultBatches[0]).toEqual(first.toolResultBatches[0]);
   });
 
   it('retains more than 8,192 sequential stable local effect outcomes for the active session', async () => {
     await prepareSession();
-    submitMessage.mockResolvedValue(undefined);
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
     const { getRetainedLocalVoiceEffectOutcomes } = await import('@/voice/tools/localVoiceEffectOutcomeCustody');
     const retainedOutcomes = getRetainedLocalVoiceEffectOutcomes('sys_voice');
@@ -287,7 +298,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       sessionId: 'sys_voice',
       userText: 'send all',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: sessions,
     });
 
@@ -295,13 +306,12 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       t: 'sendSessionMessage',
       result: { ok: true },
     });
-    expect(submitMessage).toHaveBeenCalledOnce();
+    expect(localVoicePendingEnqueue).toHaveBeenCalledOnce();
     expect(retainedOutcomes).toHaveLength(8_193);
   }, 180_000);
 
   it('releases retained effect outcomes when the owning local Voice session stops', async () => {
     await prepareSession();
-    submitMessage.mockResolvedValue(undefined);
     const firstEffect = await streamResponse('effect-after-stop', 'Do it once');
     const restartedEffect = await streamResponse('effect-after-stop', 'Do it once');
     const firstSessions = createSessions([firstEffect, { assistantText: 'Done.', actions: [] }]);
@@ -309,22 +319,21 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'first', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: firstSessions,
+      sessionId: 'sys_voice', userText: 'first', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: firstSessions,
     });
 
     const { stopLocalVoiceAgent } = await import('./localVoiceEngine');
     await stopLocalVoiceAgent('sys_voice');
 
     await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'after restart', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: restartedSessions,
+      sessionId: 'sys_voice', userText: 'after restart', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: restartedSessions,
     });
 
-    expect(submitMessage).toHaveBeenCalledTimes(2);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(2);
   });
 
   it('fails closed when one canonical effect identity is reused with different arguments', async () => {
     await prepareSession();
-    submitMessage.mockResolvedValue(undefined);
     const firstEffect = await streamResponse('effect-conflict', 'First mutation');
     const conflictingEffect = await streamResponse('effect-conflict', 'Different mutation');
     const sessions = createSessions([
@@ -336,34 +345,38 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'first', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: sessions,
+      sessionId: 'sys_voice', userText: 'first', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: sessions,
     });
     const replay = await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'conflict', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: sessions,
+      sessionId: 'sys_voice', userText: 'conflict', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: sessions,
     });
 
-    expect(submitMessage).toHaveBeenCalledTimes(1);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
     expect(replay.toolResultBatches[0]?.[0]).toMatchObject({
       t: 'sendSessionMessage',
       result: { ok: false, errorCode: 'tool_call_identity_conflict' },
     });
   });
 
-  it('reports outcome_unknown when an identified external effect handler cannot prove completion', async () => {
+  it.each([false, true])('reports pending admission as unknown when HTTP cannot prove completion (abort: %s)', async (abortAfterDispatch) => {
     await prepareSession();
-    submitMessage.mockRejectedValue(new Error('transport closed after dispatch'));
+    const controller = new AbortController();
+    localVoicePendingEnqueue.mockImplementation(async () => {
+      if (abortAfterDispatch) controller.abort();
+      throw new Error('transport closed after dispatch');
+    });
     const effectResponse = await streamResponse('effect-unknown', 'Maybe sent');
     const sessions = createSessions([effectResponse, { assistantText: 'I cannot confirm it.', actions: [] }]);
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     const result = await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'send it', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: sessions,
+      sessionId: 'sys_voice', userText: 'send it', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: sessions, signal: controller.signal,
     });
 
-    expect(submitMessage).toHaveBeenCalledTimes(1);
+    expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({
       t: 'sendSessionMessage',
-      result: { ok: false, errorCode: 'outcome_unknown' },
+      result: { ok: true, status: 'outcomeUnknown', code: 'session_input_pending', localId: expect.any(String) },
     });
   });
 
@@ -378,10 +391,10 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const { runVoiceAgentTurnWithTools } = await import('./runVoiceAgentTurnWithTools');
 
     const result = await runVoiceAgentTurnWithTools({
-      sessionId: 'sys_voice', userText: 'send it', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', voiceAgentSessions: sessions,
+      sessionId: 'sys_voice', userText: 'send it', durableLocalId: 'test-durable-local-id', currentToolSessionId: 's1', currentToolSessionAddress, voiceAgentSessions: sessions,
     });
 
-    expect(submitMessage).not.toHaveBeenCalled();
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({
       t: 'sendSessionMessage',
       result: { ok: false, errorCode: 'session_not_found' },

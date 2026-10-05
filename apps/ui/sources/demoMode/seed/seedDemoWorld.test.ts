@@ -60,10 +60,12 @@ describe('seedDemoWorld and clearDemoWorld', () => {
     });
 
     it('seeds canonical role documents in memory and restores only demo-owned Artifacts', async () => {
-        const durableRoles = structuredClone(loadSettings().settings.rolesV1);
-        const existing = { ...buildDemoWorld().artifacts[0], body: 'Retain the original document' };
+        const durableRoles = structuredClone(settingsParse(loadSettings().settings).rolesV1);
+        const roleArtifact = buildDemoWorld().artifacts[0];
+        if (!roleArtifact.isDecrypted) throw new Error('Demo role fixture must be readable');
+        const existing = { ...roleArtifact, body: 'Retain the original document' };
         storage.setState((current) => ({
-            settings: { ...current.settings, rolesV1: { overrides: { builder: { roleId: 'builder', workspaceWrites: 'deny' } } } },
+            settings: settingsParse({ ...current.settings, rolesV1: { overrides: { builder: { roleId: 'builder', workspaceWrites: 'deny' } } } }),
             artifacts: { ...current.artifacts, [existing.id]: existing },
         }));
         const originalRoles = structuredClone(storage.getState().settings.rolesV1);
@@ -76,7 +78,7 @@ describe('seedDemoWorld and clearDemoWorld', () => {
         }
         const foreign = { ...world.artifacts[0], id: 'foreign-role' };
         storage.getState().addArtifact(foreign);
-        expect(loadSettings().settings.rolesV1).toEqual(durableRoles);
+        expect(settingsParse(loadSettings().settings).rolesV1).toEqual(durableRoles);
         await clearDemoWorld();
         expect(storage.getState().settings.rolesV1).toEqual(originalRoles);
         expect(storage.getState().artifacts).toEqual({ ...originalArtifacts, [foreign.id]: foreign });

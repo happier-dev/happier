@@ -122,7 +122,7 @@ describe('buildSessionBoardItemActions', () => {
             canEdit: true,
             item: {
                 ...item,
-                source: { kind: 'installedSurface', surface: { pluginId: 'acme.widget', localId: 'status' } },
+                source: { kind: 'widget', instance: { v: 1, id: 'instance-1', definition: { kind: 'installed', surface: { pluginId: 'acme.widget', localId: 'status' } }, bindings: {} } },
             },
             onEdit,
         });

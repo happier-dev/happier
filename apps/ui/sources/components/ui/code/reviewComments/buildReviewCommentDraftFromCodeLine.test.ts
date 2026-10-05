@@ -46,10 +46,10 @@ describe('buildReviewCommentDraftFromCodeLine', () => {
                 side: 'after',
                 oldLine: null,
                 newLine: add.newLine,
-                lineHash: computeLineContentHash('+const a = 2;'),
+                lineHash: computeLineContentHash('const a = 2;'),
             },
         });
-        expect(draft.snapshot.selectedLines).toEqual(['+const a = 2;']);
+        expect(draft.snapshot.selectedLines).toEqual(['const a = 2;']);
     });
 
     it('builds a fileLine anchor and snapshot for file lines', () => {
@@ -135,10 +135,36 @@ describe('buildReviewCommentDraftFromCodeLine', () => {
             startLine: 1,
             endLine: 2,
             side: 'after',
-            startLineHash: computeLineContentHash('+const a = 2;'),
-            endLineHash: computeLineContentHash('+const b = 2;'),
+            startLineHash: computeLineContentHash('const a = 2;'),
+            endLineHash: computeLineContentHash('const b = 2;'),
+            selectedTextHash: computeLineContentHash('const a = 2;\nconst b = 2;'),
         });
-        expect(draft.snapshot.selectedLines).toEqual(['+const a = 2;', '+const b = 2;']);
+        expect(draft.snapshot.selectedLines).toEqual(['const a = 2;', 'const b = 2;']);
+    });
+
+    it('preserves trailing whitespace in file and diff identities', () => {
+        for (const source of ['file', 'diff'] as const) {
+            const lines = source === 'file'
+                ? buildCodeLinesFromFile({ text: 'same();  ' })
+                : buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1 +1 @@\n-same();\n+same();  ' });
+            const targetLine = lines.find((line) => line.kind === (source === 'file' ? 'file' : 'add'))!;
+            const draft = buildReviewCommentDraftFromCodeLine({ filePath: 'a.ts', source, lines, targetLine, body: 'Whitespace', contextRadius: 0, id: 'space', nowMs: 1 });
+            expect(draft.anchor).toMatchObject({ lineHash: computeLineContentHash('same();  ') });
+            expect(draft.snapshot.selectedLines).toEqual(['same();  ']);
+        }
+    });
+
+    it('rejects a range spanning both diff sides instead of inventing one file range', () => {
+        const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1 +1 @@\n-old();\n+new();' });
+        expect(() => buildReviewCommentDraftFromCodeLineRange({ filePath: 'a.ts', source: 'diff', lines, rangeLines: lines.filter((line) => !line.renderIsHeaderLine), body: 'Both sides', contextRadius: 0, id: 'mixed', nowMs: 1 })).toThrow('review_comment_range_requires_one_side');
+    });
+
+    it('captures a before range with context rows and excludes interleaved additions', () => {
+        const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1,3 +1,3 @@\n first();\n-old();\n+new();\n last();' });
+        const rangeLines = lines.filter((line) => !line.renderIsHeaderLine && line.kind !== 'add');
+        const draft = buildReviewCommentDraftFromCodeLineRange({ filePath: 'a.ts', source: 'diff', lines, rangeLines, body: 'Before', contextRadius: 0, id: 'before', nowMs: 1 });
+        expect(draft.anchor).toMatchObject({ kind: 'range', side: 'before', startLine: 1, endLine: 3, selectedTextHash: computeLineContentHash('first();\nold();\nlast();') });
+        expect(draft.snapshot.selectedLines).toEqual(['first();', 'old();', 'last();']);
     });
 
     it('builds a normalized range anchor and snapshot from markdown source ranges', () => {

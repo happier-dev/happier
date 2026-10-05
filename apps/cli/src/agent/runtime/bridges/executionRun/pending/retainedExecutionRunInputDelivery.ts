@@ -19,6 +19,7 @@ import {
 import { readAdmittedSessionMediaInputForDispatchV1 } from '@/session/services/admitSessionStructuredInputV1';
 import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { projectExecutionRunWorkflowInputAcceptance } from '../executionRunWorkflowObservation';
+import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
 
 import type {
     ExecutionRunPendingInputDelivery,
@@ -41,13 +42,19 @@ export type RetainedExecutionRunInputDeliveryOptions = Readonly<{
     runId: string;
     controller: ExecutionRunBackendController;
     onInputTurnUpdated?: () => void;
+    onTurnComplete?: (turn: Readonly<{ turnId: string; inputIds?: readonly string[]; rawText: string; finishedAtMs: number }>) => Promise<void>;
+    onTurnFailed?: (turn: Readonly<{ turnId: string; inputIds?: readonly string[]; rawText: string; finishedAtMs: number;
+        diagnostic: Readonly<{ code: string; message?: string }> }>) => Promise<void>;
     sessionRunContext?: SessionRunPromptContextV1;
+    readInitialProfileContext?: () => string;
     /**
      * The incumbent connected-service generation check. It runs immediately before
      * every provider effect; canonical Session admission does not authorize the
      * use of stale credentials.
      */
     authorizeProviderEffect: () => Promise<Readonly<{ ok: boolean; errorCode?: string; error?: string }>>;
+    /** Capture the profile's publication basis before this exact input can have a provider effect. */
+    beforeProviderInput?: (localId: string) => Promise<void>;
     structuredInputContext?: Omit<
         Parameters<typeof resolveStructuredInputProviderDispatchContext>[0],
         'structuredInput' | 'sessionMedia' | 'composerAttachments'
@@ -79,6 +86,9 @@ export function createRetainedExecutionRunInputDelivery(
         controller.turnEpoch += 1;
         controller.turnCount += 1;
         controller.turnInFlight = true;
+        controller.buffer = '';
+        controller.sidechainStreamBuffer = '';
+        controller.sidechainStreamKey = '';
     };
     const unsubscribeRuntimeEvents = controller.backend.subscribeRuntimeEvents?.((event) => {
         if (controller.cancelled) return;
@@ -99,6 +109,22 @@ export function createRetainedExecutionRunInputDelivery(
             beginTurn(event.turnId);
             options.onInputTurnUpdated?.();
         } else if (event.kind === 'turn-complete' || event.kind === 'turn-failed' || event.kind === 'turn-cancelled') {
+            // Earlier model deltas can still be queued behind input acceptance on this barrier.
+            if (event.kind === 'turn-complete' && activeTurnId === event.turnId && options.onTurnComplete) {
+                const completed = { turnId: event.turnId, finishedAtMs: event.emittedAtMs,
+                    inputIds: controller.currentInputTurn?.turnId === event.turnId ? controller.currentInputTurn.inputIds : undefined };
+                controller.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
+                    controller.pendingHostBarrier, () => options.onTurnComplete!({ ...completed, rawText: controller.buffer }),
+                );
+            }
+            if (event.kind === 'turn-failed' && activeTurnId === event.turnId && options.onTurnFailed) {
+                const failed = { turnId: event.turnId, finishedAtMs: event.emittedAtMs,
+                    inputIds: controller.currentInputTurn?.turnId === event.turnId ? controller.currentInputTurn.inputIds : undefined,
+                    diagnostic: event.diagnostic };
+                controller.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
+                    controller.pendingHostBarrier, () => options.onTurnFailed!({ ...failed, rawText: controller.buffer }),
+                );
+            }
             if (controller.currentInputTurn?.turnId === event.turnId) {
                 controller.lastInputTurn = {
                     ...controller.currentInputTurn,
@@ -122,6 +148,20 @@ export function createRetainedExecutionRunInputDelivery(
     // authorize replay, and a new occurrence gets a new delivery instance.
     let contextInitialized = false;
     let contextInputLocalId: string | null = null;
+
+    const readProviderEffectRefusal = async (): Promise<ExecutionRunRuntimeDeliveryOutcome | null> => {
+        const authorized = await options.authorizeProviderEffect();
+        return authorized.ok ? null : {
+            status: 'rejected_before_effect',
+            reason: 'provider_unavailable_before_acceptance',
+            diagnostic: {
+                code: authorized.errorCode ?? 'execution_run_provider_effect_unauthorized',
+                message: authorized.error ?? `Execution run '${runId}' may not produce a provider effect.`,
+                severity: 'error',
+            },
+            retryable: true,
+        };
+    };
 
     const deliver = async (
         input: ExecutionRunAdmittedPendingInputV1,
@@ -201,16 +241,31 @@ export function createRetainedExecutionRunInputDelivery(
                 retryable: true,
             };
         }
-        const authorized = await options.authorizeProviderEffect();
-        if (!authorized.ok) {
+        const refusalBeforePreparation = await readProviderEffectRefusal();
+        if (refusalBeforePreparation) return refusalBeforePreparation;
+
+        try {
+            if (options.beforeProviderInput) await options.beforeProviderInput(localId);
+        } catch {
             return {
                 status: 'rejected_before_effect',
                 reason: 'provider_unavailable_before_acceptance',
-                diagnostic: {
-                    code: authorized.errorCode ?? 'execution_run_provider_effect_unauthorized',
-                    message: authorized.error ?? `Execution run '${runId}' may not produce a provider effect.`,
-                    severity: 'error',
-                },
+                diagnostic: { code: 'execution_run_input_preparation_unavailable', severity: 'error' },
+                retryable: true,
+            };
+        }
+
+        // Preparation can await disk. Reuse the incumbent authority after that
+        // boundary and never send through a cancelled or replaced occurrence.
+        if (options.beforeProviderInput) {
+            const refusalAfterPreparation = await readProviderEffectRefusal();
+            if (refusalAfterPreparation) return refusalAfterPreparation;
+        }
+        if (controller.cancelled || controller.runtimeId !== runtimeId) {
+            return {
+                status: 'rejected_before_effect',
+                reason: 'provider_unavailable_before_acceptance',
+                diagnostic: { code: 'execution_run_not_provisioned', severity: 'error' },
                 retryable: true,
             };
         }
@@ -218,12 +273,13 @@ export function createRetainedExecutionRunInputDelivery(
         const causalPermissionAuthority = readSessionInputCausalPermissionAuthorityV1(input.meta);
         const provenance = resolveSessionInputPromptProvenanceV1(input.meta);
         const sessionRunContext = !contextInitialized ? options.sessionRunContext : undefined;
+        const profileContext = !contextInitialized ? options.readInitialProfileContext?.() : undefined;
         const runtimeInput = {
             text: renderSessionInputContextPromptV1({
                 provenanceBlock: renderSessionInputContextBlockV1({ provenance }),
                 ...resolved.promptContext,
                 ...(sessionRunContext ? { sessionRunContext } : {}),
-                transformedUserText: input.content.text,
+                transformedUserText: profileContext ? `${profileContext}\n\n${input.content.text}` : input.content.text,
             }),
             ...(resolved.structuredInput
                 ? { structuredInput: normalizeStrictJsonValue(resolved.structuredInput) }
@@ -234,7 +290,7 @@ export function createRetainedExecutionRunInputDelivery(
                 localId,
                 ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
             };
-            if (sessionRunContext) {
+            if (sessionRunContext || profileContext) {
                 contextInitialized = true;
                 contextInputLocalId = localId;
             }

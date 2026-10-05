@@ -16,6 +16,8 @@ import {
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import {
   listPluginProjectionFamilyIdsV2,
+  compilePluginJsonSchema,
+  isValidPluginJsonSchemaValue,
   PluginProjectionV2Schema,
 } from '@happier-dev/protocol';
 import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -50,6 +52,16 @@ function readGeneratedBundledPluginsSource(): string {
 }
 
 describe('resolveBuiltInContributions', () => {
+  it('publishes Channels association input and witness result for Agent and MCP callers', () => {
+    const locator = generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.pluginId === 'happier.channels');
+    const manifest = PluginManifestV2Schema.parse(locator?.manifest);
+    const action = manifest.contributes.actions?.find((entry) => entry.id === 'binding/read-v1');
+    expect(action).toBeDefined();
+    if (!action?.inputSchema || !action.resultSchema) throw new Error('Missing Channels binding read schemas');
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(action.inputSchema), { automationId: 'automation-one' })).toBe(true);
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(action.resultSchema), { kind: 'automationAssociation', automationId: 'automation-one', association: 'absent' })).toBe(true);
+    expect(action.surfaces).toEqual(['cli', 'ui', 'agent', 'mcp']);
+  });
   it('serializes every concrete bundled projection family through the strict current Protocol schema', () => {
     const pluginMetadata = generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_METADATA;
     const projection = buildPluginProjectionV2({

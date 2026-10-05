@@ -3,11 +3,15 @@ import React from 'react';
 import { t } from '@/text';
 import type { SubagentCommandV1 } from '@happier-dev/protocol';
 
-import { SubagentStructuredMessageCard } from './SubagentStructuredMessageCard';
+import { SubagentStructuredMessageCard, projectSubagentStructuredFindText } from './SubagentStructuredMessageCard';
 
 function describeCommandTitle(payload: SubagentCommandV1): string {
     if (payload.kind === 'agent_team_delete') return t('session.subagents.messages.command.deleteTeamTitle');
     return t('session.subagents.messages.command.deleteMemberTitle');
+}
+
+export function projectSubagentCommandFindText(payload: SubagentCommandV1, messageText: string) {
+    return projectSubagentStructuredFindText({ title: describeCommandTitle(payload), targetLabel: describeCommandTarget(payload), messageText });
 }
 
 function describeCommandTarget(payload: SubagentCommandV1): string {

@@ -3,11 +3,24 @@ import * as React from 'react';
 import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { matchWorkspaceDestinationRoute, workspaceRouteBodies } from './workspaceRouteBodies';
+import { loadWorkspaceRouteLayout, workspaceRouteBodies } from './workspaceRouteBodies';
+import { matchWorkspaceDestinationRoute, workspaceRouteFiles } from './workspaceRoutes';
+import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
+import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 
 const bodies = Object.fromEntries(Object.entries(workspaceRouteBodies).map(([routeKey, load]) => (
     [routeKey, React.lazy(load)]
 )));
+// Stable component identities keep common layouts/providers mounted when their selected leaf changes.
+const layouts = new Map<string, React.LazyExoticComponent<React.ComponentType>>();
+function hostedLayout(key: string) {
+    let Layout = layouts.get(key);
+    if (!Layout) {
+        Layout = React.lazy(() => loadWorkspaceRouteLayout(key));
+        layouts.set(key, Layout);
+    }
+    return Layout;
+}
 const PluginAppPageScreen = React.lazy(() => import('@/components/appShell/plugins/PluginAppPageScreen')
     .then((module) => ({ default: module.PluginAppPageScreen })));
 
@@ -29,7 +42,13 @@ export function WorkspaceDestinationBody(props: Readonly<{
         </React.Suspense>;
     }
     if (!Body) return <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
+    let content: React.ReactNode = <Body />;
+    const contextKey = match ? workspaceRouteFiles[match.routeKey] : undefined;
+    for (const key of [...(contextKey ? workspaceSettingsLayoutKeys(contextKey) : [])].reverse()) {
+        const Layout = hostedLayout(key);
+        content = <WorkspaceRouteOutlet.Provider key={key} value={content}><Layout /></WorkspaceRouteOutlet.Provider>;
+    }
     return <React.Suspense fallback={<SurfaceStateCard kind="loading" title={t('common.loading')} />}>
-        <Body />
+        {content}
     </React.Suspense>;
 }

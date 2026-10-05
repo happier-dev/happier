@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import {
   admitAgentStartV1,
   createAccountScopedCryptoMaterialSnapshotV1,
@@ -20,7 +21,10 @@ import {
   materializeWorkflowAcceptedSnapshotV1,
   parseWorkflowStoredContentEnvelopeV1,
   prepareWorkflowRunDataKeyV1,
+  resolveWorkflowRunDataKeyV1,
+  WorkflowRunRecipientCensusResponseV1Schema,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+  sealAccountScopedBlobCiphertext,
   serializeWorkflowStoredContentEnvelopeV1,
   type WorkflowDefinitionV1,
   type WorkflowRunDataKeyV1,
@@ -29,6 +33,8 @@ import {
 } from '@happier-dev/protocol';
 import type { SessionInputResultV1 } from '@/session/services/sendSessionMessage';
 import type { AvailableAutomationAccountEncryptionV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
+import type { StoredCredentials } from '@/persistence';
+import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -177,6 +183,7 @@ function workflowDaemonProcess(input: Readonly<{
   sessionInput: ReturnType<typeof sessionInputBoundary>;
   directory: string;
   encryption?: AvailableAutomationAccountEncryptionV1;
+  credentials?: StoredCredentials;
 }>) {
   const unusedRunActions = { execute: vi.fn(async () => ({ ok: false as const, errorCode: 'unused' })) };
   const actionContext = () => ({ surface: 'agent' as const, authority: 'account_automation' as const });
@@ -201,7 +208,7 @@ function workflowDaemonProcess(input: Readonly<{
         }),
     }),
     execution: {
-      credentials: { token: 'token', encryption: null } as never,
+      credentials: input.credentials ?? { token: 'token', encryption: null },
       serverId: 'server-1',
 
       machineAdmissionTransport: vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-1' })) as never,
@@ -217,6 +224,7 @@ function workflowDaemonProcess(input: Readonly<{
     }),
     workspaceScm: createGitWorkflowWorkspaceTestDependencies(),
     onCommittedTransition: vi.fn(),
+    onReviewEntered: vi.fn(),
     storage: input.storage as never,
   });
 }
@@ -342,13 +350,15 @@ describe('composed Workflow front door and claimed execution', () => {
     });
     const coordinate = workflowDaemonProcess({ storage: kit, sessionInput, directory });
 
-    await expect(coordinate({
+    const coordinated = await coordinate({
       runId,
       attempt: 0,
       expectedRevision: 0,
       accountCurrentness: currentness,
       acceptedEnvelope,
-    } as never)).resolves.toMatchObject({ state: expectedState });
+    } as never);
+    expect(coordinated, JSON.stringify({ observedInputs: sessionInput.observe.mock.calls.map(([request]) => request.localId) }))
+      .toMatchObject({ state: expectedState });
 
     if (expectedState === 'interrupted') {
       expect(openRowProgress(kit, rowFor(kit, 'first')!).reason).toEqual({
@@ -633,6 +643,104 @@ describe('composed Automation workflow claim and optional receipt', () => {
       state: 'succeeded',
       workflowCustodyState: 'settled',
     });
+  });
+
+  it.each([['plain', false], ['e2ee', false], ['plain', true], ['e2ee', true]] as const)(
+    'settles a scheduled fieldless Wait after Continue and a fresh daemon claim (%s; saved=%s)', async (mode, savedSource) => {
+    const runId = '98989898-9898-4989-8989-989898989898';
+    const directory = await projectDirectory();
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+      { kind: 'wait', id: 'approval', execution: {}, document: { text: 'Continue', references: [], attachments: [] } },
+    ] };
+    const scheduledFor = 1_714_000_000_000;
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId: 'trigger-1', triggerKind: 'schedule',
+      triggerRevision: 4, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1',
+        evidence: { v: 1, kind: 'schedule', scheduledFor } }), occurredAt: scheduledFor, evidence: { scheduledFor } });
+    const material = mode === 'e2ee' ? createAccountScopedCryptoMaterialSnapshotV1({
+      accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+    }) : undefined;
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: currentness }
+      : { kind: 'available', witness: { mode, version: 1,
+        contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material!.contentPublicKeyFingerprint) }, material: material! };
+    const credentials: StoredCredentials = { token: 'token', encryption: mode === 'plain' ? null
+      : { type: 'legacy', secret: new Uint8Array(32).fill(7) } };
+    const definitionId = '2e17b7b7-1977-4b5b-9957-781ec43c5b54';
+    let storedArtifact: Record<string, unknown> = {};
+    // Only opaque HTTP storage is faked: the real Artifact writer seals the
+    // header/body/key, and production's saved-source resolver opens them.
+    const post = savedSource ? vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      expect(url).toMatch(/\/v1\/artifacts$/);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('artifact_boundary_invalid_write');
+      storedArtifact = { ...body, id: definitionId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
+        headerVersion: 3, bodyVersion: 3, seq: 3, createdAt: 1, updatedAt: 3 };
+      return { status: 200, data: storedArtifact };
+    }) : undefined;
+    const get = savedSource ? vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (url.endsWith(`/v1/artifacts/${definitionId}/access/recipients`)) return { status: 200,
+        data: { artifactId: definitionId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
+          dataEncryptionKey: storedArtifact.dataEncryptionKey, callerDataEncryptionKey: storedArtifact.dataEncryptionKey,
+          recipients: [] } };
+      expect(url).toMatch(new RegExp(`/v1/artifacts/${definitionId}$`));
+      return { status: 200, data: storedArtifact };
+    }) : undefined;
+    try {
+      if (savedSource) await createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode }).create({
+        artifactId: definitionId, header: { kind: 'workflow-definition.v1', definitionId,
+          revision: { headerVersion: 3, bodyVersion: 3 }, metadata: { title: 'Saved scheduled Wait' },
+          savedBy: { kind: 'person', accountId } },
+        body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
+      });
+      const kit = createWorkflowRunStorageTestkit({ runId, machineId,
+        origin: { kind: 'automation', automationId: 'automation-1', cause }, state: 'claimed',
+        keyCensus: { runId, ownerAccountId: accountId, access: 'owner', visibleTeamId: null, encryptionMode: mode,
+          ownerAccountCurrentness: encryption.witness, dataEncryptionKey: null,
+          callerDataEncryptionKey: null, recipients: [] },
+      });
+      const sessionInput = sessionInputBoundary();
+      const payload = AutomationStoredWorkflowDefinitionV2Schema.parse({ ...(savedSource ? {} : { inlineDefinition: definition }),
+        workspace: { directory }, executionTarget: { kind: 'session' } });
+      const definitionEnvelope = JSON.stringify(material
+        ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
+          material: material.material, payload, randomBytes: (length: number) => new Uint8Array(length).fill(5) }) }
+        : { t: 'plain', v: payload });
+      const claim = () => ({ runId, attempt: 0, expectedRevision: kit.run().revision, accountCurrentness: encryption.witness,
+        automationId: 'automation-1', causeWorkDepth: 0, automationCause: cause, automationEvidenceEnvelope: null,
+        ...(savedSource ? { workflowDefinitionId: definitionId } : {}),
+        definitionEnvelope });
+      expect(await workflowDaemonProcess({ storage: kit, sessionInput, directory, encryption, credentials })(claim()))
+        .toMatchObject({ state: 'waiting_for_review' });
+      const resolved = resolveWorkflowRunDataKeyV1({ encryption, census: WorkflowRunRecipientCensusResponseV1Schema.parse(
+        await kit.execute({ operation: 'run-key.census', runId })) });
+      if (resolved.kind !== 'available') throw new Error(resolved.reason);
+      const runCrypto = resolved.encryption.runCrypto;
+      const held = rowFor(kit, 'approval', runCrypto)!;
+      const owner = createWorkflowRunActionOwner({ resolveAccountId: async () => accountId, storage: kit,
+        definitions: { get: vi.fn() }, resolveEncryption: async () => encryption });
+      await owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { runId,
+        invocation: { recordId: held.id }, expectedContentRevision: held.contentRevision, mode: 'use_result' },
+        context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'yolo' } });
+      expect(kit.run().state).toBe('queued');
+      expect(openRowProgress(kit, kit.rowById(held.id)!.index, runCrypto).result).toBeUndefined();
+      // The server's next machine claim changes only public parent state/cursor;
+      // the restarted daemon reconstructs the same accepted snapshot and rows.
+      await kit.execute({ operation: 'transition', runId, parentAttempt: 0, expectedRevision: kit.run().revision,
+        state: 'claimed', checkpointEnvelope: kit.checkpointEnvelope()! });
+      expect(await workflowDaemonProcess({ storage: kit, sessionInput, directory, encryption, credentials })(claim()))
+        .toMatchObject({ state: 'succeeded' });
+      expect(kit.run()).toMatchObject({ state: 'succeeded', workflowCustodyState: 'settled' });
+      expect(kit.rowById(held.id)?.index).toMatchObject({ lifecycle: 'completed', attempt: '0' });
+      expect(kit.rows()).toHaveLength(2);
+      expect(kit.resultEnvelope()).toBeNull();
+      expect(sessionInput.enqueue).not.toHaveBeenCalled();
+      if (savedSource) {
+        const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...runCrypto,
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+          envelope: parseWorkflowStoredContentEnvelopeV1(kit.acceptedEnvelope()) });
+        expect(accepted).toMatchObject({ kind: 'available', content: { source: { kind: 'automation', definitionId,
+          revision: { headerVersion: 3, bodyVersion: 3 }, savedBy: { kind: 'person', accountId } } } });
+      }
+    } finally { get?.mockRestore(); post?.mockRestore(); }
   });
 
   it('admits a scheduled zero-input one-prompt workflow through the canonical binder into its literal child input', async () => {

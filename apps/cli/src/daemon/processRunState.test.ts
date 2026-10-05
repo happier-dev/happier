@@ -44,6 +44,13 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform === 'win32')('readProcessRunState (posix)', () => {
+  it('refreshes liveness when the process exits during an async state probe', async () => {
+    let observations = 0;
+    await expect(readProcessRunState(2_147_483_647, {
+      isPidAlive: () => ++observations === 1,
+    })).resolves.toBe('dead');
+  });
+
   it('reports a running process as servable', async () => {
     const pid = spawnSleeper();
     await expect(readProcessRunState(pid)).resolves.toBe('servable');

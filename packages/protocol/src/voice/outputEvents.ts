@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { VoiceAssistantActionSchema, type VoiceAssistantAction } from './actions.js';
+import { speechTextEndAtOrBefore } from './speechText.js';
 
 const VoiceOutputIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const VoiceOutputTurnIdSchema = VoiceOutputIdSchema;
@@ -73,9 +74,52 @@ export type VoiceAgentOutputTurnV1 = Readonly<{
 
 const MAX_EVENTS_PER_TURN = 256;
 const MAX_PAYLOAD_BYTES_PER_TURN = 256 * 1024;
+export const VOICE_OUTPUT_INCOMPLETE_TEXT = '\n\n[Voice output incomplete: turn output budget reached.]';
 
 function payloadByteLength(event: VoiceAgentOutputEventV1): number {
   return new TextEncoder().encode(JSON.stringify(event)).byteLength;
+}
+
+function fitsVoiceOutputBudget(eventCount: number, payloadBytes: number): boolean {
+  return eventCount <= MAX_EVENTS_PER_TURN && payloadBytes <= MAX_PAYLOAD_BYTES_PER_TURN;
+}
+
+/** Producer admission uses the same serialized budget as the receiving ingestor. */
+export function canAppendVoiceAgentOutputEventsV1(
+  state: VoiceAgentOutputTurnV1,
+  events: readonly VoiceAgentOutputEventV1[],
+): boolean {
+  return events.every((event) => VoiceAgentOutputEventV1Schema.safeParse(event).success)
+    && fitsVoiceOutputBudget(
+      state.eventCount + events.length,
+      state.payloadBytes + events.reduce((bytes, event) => bytes + payloadByteLength(event), 0),
+    );
+}
+
+/** Reserve the repeated final while admitting speech; clip only at a Unicode boundary. */
+export function fitVoiceAgentOutputTextV1(
+  state: VoiceAgentOutputTurnV1,
+  event: Extract<VoiceAgentOutputEventV1, { kind: 'speech_segment' | 'turn_final' }>,
+  finalTextPrefix = '',
+  finalTextSuffix = event.kind === 'speech_segment' ? VOICE_OUTPUT_INCOMPLETE_TEXT : '',
+): string {
+  const fits = (text: string) => canAppendVoiceAgentOutputEventsV1(state, [
+    { ...event, text: event.kind === 'turn_final' ? `${text}${finalTextSuffix}` : text },
+    ...(event.kind === 'speech_segment' ? [{
+      v: 1 as const, kind: 'turn_final' as const, turnId: event.turnId, seq: event.seq + 1,
+      text: `${finalTextPrefix}${text}${finalTextSuffix}`,
+    }] : []),
+  ]);
+  if (fits(event.text)) return event.text;
+  let low = 0;
+  let high = event.text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const end = speechTextEndAtOrBefore(event.text, middle);
+    if (fits(event.text.slice(0, end))) low = middle;
+    else high = middle - 1;
+  }
+  return event.text.slice(0, speechTextEndAtOrBefore(event.text, low));
 }
 
 function eventStableId(event: VoiceAgentOutputEventV1): Readonly<{ kind: 'segment' | 'status' | 'effect'; id: string }> | null {
@@ -120,7 +164,7 @@ export function ingestVoiceAgentOutputEventV1(
 
   const nextEventCount = state.eventCount + 1;
   const nextPayloadBytes = state.payloadBytes + payloadByteLength(event);
-  if (nextEventCount > MAX_EVENTS_PER_TURN || nextPayloadBytes > MAX_PAYLOAD_BYTES_PER_TURN) {
+  if (!fitsVoiceOutputBudget(nextEventCount, nextPayloadBytes)) {
     throw new Error('voice_output_budget_exceeded');
   }
 

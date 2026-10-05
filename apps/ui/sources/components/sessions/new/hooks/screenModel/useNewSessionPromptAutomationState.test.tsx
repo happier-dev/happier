@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
+import { SessionInitialTriggerV1Schema } from '@happier-dev/protocol';
 
 // Live source-turn truth for the injected exact-turn reader.
 const liveCurrentTurn = vi.hoisted(() => ({ value: 'turn-7' }));
@@ -22,6 +23,27 @@ vi.mock('@/sync/domains/state/storage', () => ({
 }));
 
 describe('useNewSessionPromptAutomationState', () => {
+    it('keeps authored initial triggers over stale hydration and replaces them on draft reentry', async () => {
+        const { useNewSessionPromptAutomationState } = await import('./useNewSessionPromptAutomationState');
+        const original = SessionInitialTriggerV1Schema.array().parse([{
+            trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'everyMatch' } },
+            target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
+        }]);
+        let hydratedPersistedAuthoringDraft = { initialTriggers: original };
+        let initialTriggersDraftKey = 'account-a:draft-a';
+        const hook = await renderHook(() => useNewSessionPromptAutomationState({
+            prompt: undefined, dataId: undefined, automationParam: undefined, persistedDraftEntryIntent: 'session',
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft, initialTriggersDraftKey,
+        }));
+        expect(hook.getCurrent().initialTriggers).toEqual(original);
+        await act(async () => hook.getCurrent().setInitialTriggers([]));
+        hydratedPersistedAuthoringDraft = { initialTriggers: original.map((entry) => ({ ...entry })) };
+        await hook.rerender();
+        expect(hook.getCurrent().initialTriggers).toEqual([]);
+        initialTriggersDraftKey = 'account-b:draft-b';
+        await hook.rerender();
+        expect(hook.getCurrent().initialTriggers).toEqual(original);
+    });
     it('never manufactures a fresh Automation draft from the route flag alone', async () => {
         // Creating an Automation is the shared wrapper's journey. A URL that
         // switched New Session into an Automation entry point produced a second

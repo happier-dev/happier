@@ -90,6 +90,17 @@ describe('the V1 source descriptor', () => {
 });
 
 describe('per-kind detail tab declarations (r0.42)', () => {
+    it('admits source-declared tabs beyond eight without a synthetic count ceiling', () => {
+        const tabs = Array.from({ length: 9 }, (_, i) => ({ kind: 'source', id: `panel-${i}`, title: `Panel ${i}` }));
+        expect(admitTriageSourceDescriptorV1({ ...MINIMAL, kinds: [{ ...MINIMAL.kinds[0], detailTabs: tabs }] }).ok).toBe(true);
+    });
+
+    it('preserves a source-owned translation key on its tab', () => {
+        const tab = { kind: 'source', id: 'trace', title: 'Stack trace', titleKey: 'plugins.example.trace' };
+        const admitted = admitTriageSourceDescriptorV1({ ...MINIMAL, kinds: [{ ...MINIMAL.kinds[0], detailTabs: [tab] }] });
+        expect(admitted.ok).toBe(true);
+        expect(admitted.ok && admitted.descriptor.kinds[0]?.detailTabs).toEqual([tab]);
+    });
     const withTabs = (detailTabs: unknown) => ({
         ...MINIMAL,
         kinds: [{ ...MINIMAL.kinds[0], detailTabs }],

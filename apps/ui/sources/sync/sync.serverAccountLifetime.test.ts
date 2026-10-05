@@ -131,6 +131,7 @@ vi.mock('./engine/automations/syncAutomations', async (importOriginal) => ({
     fetchAndApplyAutomationRuns,
 }));
 
+import './syncEngine';
 import { sync } from './sync';
 import { storage } from './domains/state/storage';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';

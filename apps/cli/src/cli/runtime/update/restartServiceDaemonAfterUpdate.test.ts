@@ -59,10 +59,23 @@ async function loadWithSpawnRecorder(options: Readonly<{ onRestart?: (env: NodeJ
     import('@/daemon/service/cli'),
     import('@/daemon/ownership/evaluateCurrentDaemonOwner'),
   ]);
-  const serviceLabel = resolveDaemonServicePaths(resolveDaemonServiceCliRuntimeFromEnv({
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv({
     channel: 'stable',
     targetMode: 'default-following',
-  })).label;
+  });
+  const serviceLabel = resolveDaemonServicePaths(runtime).label;
+  const { planDaemonServiceInstall } = await import('@/daemon/service/plan');
+  // Owner metadata describes the prior process; only its installed same-home definition
+  // authorizes the update to restart that global service name.
+  const definition = planDaemonServiceInstall({
+    platform: runtime.platform, channel: runtime.channel, targetMode: runtime.targetMode,
+    instanceId: runtime.instanceId, activeServerId: runtime.activeServerId,
+    userHomeDir: runtime.userHomeDir, happierHomeDir: runtime.happierHomeDir,
+    serverUrl: runtime.serverUrl, webappUrl: runtime.webappUrl, publicServerUrl: runtime.publicServerUrl,
+    nodePath: process.execPath, entryPath: '/opt/happier/index.mjs', uid: runtime.uid ?? undefined,
+  }).files[0]!;
+  mkdirSync(dirname(definition.path), { recursive: true });
+  writeFileSync(definition.path, definition.content);
   // The update's two halves, as `self update` composes them: plan from the owner observed before
   // the update, then restart onto the installed CLI and prove the version.
   const restart = async (params: Readonly<{ channel: 'stable' | 'preview'; updatedToVersion: string; ownerBeforeUpdate?: DaemonOwnerEvaluation }>) => {

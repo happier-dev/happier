@@ -24,6 +24,8 @@ const styles = StyleSheet.create((theme) => ({
     secondary: { color: theme.colors.text.secondary },
     selected: { color: theme.colors.text.link },
     inline: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+    actionContent: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    trailingAction: { paddingRight: 0 },
 }));
 
 /** Levels in the one sheet order, whatever order the adapter's controller produced them in. */
@@ -34,11 +36,15 @@ export function orderShareAccessLevels(levels: readonly ShareAccessLevel[]): rea
 /** The sheet's one quiet text action (level choice, remove, retry, explain). */
 export function ShareRowAction(props: Readonly<{
     label: string; testID: string; onPress(): void; disabled?: boolean; selected?: boolean; accessibilityLabel?: string;
+    trailing?: React.ReactNode;
 }>): React.ReactElement {
     return <Pressable testID={props.testID} accessibilityRole="button" accessibilityLabel={props.accessibilityLabel ?? props.label}
         accessibilityState={{ disabled: props.disabled === true, ...(props.selected === undefined ? {} : { selected: props.selected }) }}
-        disabled={props.disabled} onPress={props.onPress} style={styles.action}>
-        <Text style={props.selected ? styles.selected : styles.text}>{props.label}</Text>
+        disabled={props.disabled} onPress={props.onPress} style={[styles.action, props.trailing ? styles.trailingAction : null]}>
+        <View style={styles.actionContent}>
+            <Text style={props.selected ? styles.selected : styles.text}>{props.label}</Text>
+            {props.trailing}
+        </View>
     </Pressable>;
 }
 
@@ -48,7 +54,7 @@ function isBusy(row: ShareGrantRowModel): boolean {
 
 /** The row's right-side level: its adapter label, a policy lock, and the way into its choices. */
 export function ShareLevelControl<TRow extends ShareGrantRowModel>(props: Readonly<{
-    row: TRow; adapter: ShareSheetAdapter<TRow>; actions: ShareSheetActions; onExpand(): void; testID: string;
+    row: TRow; adapter: ShareSheetAdapter<TRow>; actions: ShareSheetActions; onExpand(): void; testID: string; editable: boolean;
 }>): React.ReactElement {
     const { row, actions } = props;
     const { theme } = useUnistyles();
@@ -60,6 +66,8 @@ export function ShareLevelControl<TRow extends ShareGrantRowModel>(props: Readon
         <ShareRowAction label={label} testID={props.testID}
             accessibilityLabel={t('shareSheet.accessibleControl', { name: row.principal.accessibilityLabel, control: t('shareSheet.accessLevel'), value: label })}
             disabled={isBusy(row)}
+            trailing={props.editable && row.level.kind === 'editable'
+                ? <SafeIonicons name="chevron-down" size={glyphSize} color={theme.colors.text.secondary} /> : undefined}
             onPress={() => row.level.kind === 'locked' ? actions.explain(row.level.reason) : props.onExpand()} />
     </View>;
 }

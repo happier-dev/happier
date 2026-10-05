@@ -14,7 +14,8 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
   panes: Set<string>;
   tabs: Set<string>;
   requests: Array<{ method: string; params: Record<string, unknown> }>;
-  beforeResponse: Map<string, () => void>;
+  beforeResponse: Map<string, () => void | Promise<void>>;
+  responses: Map<string, () => Record<string, unknown>>;
   setEmpty(): void;
   setServerVersion(version: string): void;
   start(): Promise<void>;
@@ -29,7 +30,8 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
     const panes = new Set<string>();
     const tabs = new Set<string>();
     const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
-    const beforeResponse = new Map<string, () => void>();
+    const beforeResponse = new Map<string, () => void | Promise<void>>();
+    const responses = new Map<string, () => Record<string, unknown>>();
     const sockets = new Set<Socket>();
     let empty = false;
     let serverVersion = '0.9.2';
@@ -38,7 +40,7 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
       let buffer = '';
-      socket.on('data', (chunk: string) => {
+      socket.on('data', async (chunk: string) => {
         buffer += chunk;
         const newline = buffer.indexOf('\n');
         if (options.maxInitialRequestBytes !== undefined
@@ -51,7 +53,8 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
           id: string; method: string; params: Record<string, unknown>;
         };
         requests.push({ method: request.method, params: request.params });
-        beforeResponse.get(request.method)?.();
+        const beforeResponseHandler = beforeResponse.get(request.method);
+        if (beforeResponseHandler) await beforeResponseHandler();
         const fault = faults.get(request.method);
         let result: Record<string, unknown> = {};
         if (fault !== 'error') {
@@ -89,6 +92,7 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
               break;
           }
         }
+        if (fault !== 'error' && responses.has(request.method)) result = responses.get(request.method)!();
         if (fault === 'timeout') return;
         if (fault === 'disconnect') {
           socket.end();
@@ -109,7 +113,7 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
     };
     await start();
     try {
-      return await run({ socketPath, faults, panes, tabs, requests, beforeResponse, start, stop, setEmpty: () => { empty = true; }, setServerVersion: (version) => { serverVersion = version; } });
+      return await run({ socketPath, faults, panes, tabs, requests, beforeResponse, responses, start, stop, setEmpty: () => { empty = true; }, setServerVersion: (version) => { serverVersion = version; } });
     } finally {
       await stop();
     }

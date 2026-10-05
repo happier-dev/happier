@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createFileFindSeedHandoff } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 const activeServerSnapshot = vi.hoisted(() => ({
     serverId: 'srv_identity',
@@ -132,6 +133,24 @@ describe('getActiveServerAccountScope', () => {
         expect(accountB?.isCurrent()).toBe(true);
 
         retireActiveServerAccountScopeLifetime();
+    });
+
+    it('retires pending file Find seeds and rejects a different Home with the same Account id', async () => {
+        storageState.profileScope = { serverId: 'srv_identity', accountId: 'account-a' };
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await lifetimeApi();
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account lifetime.');
+        const handoff = createFileFindSeedHandoff();
+        const destination = { host: 'project' as const, id: 'project-a', accountId: 'account-a', path: 'src/a.ts',
+            scope: { serverId: 'srv_identity', machineId: 'machine-a', rootPath: '/repo' } };
+        const seed = { query: 'needle', options: { matchCase: false, regex: false }, target: { kind: 'file' as const, path: destination.path } };
+        const wrongHome = { ...destination, scope: { ...destination.scope, serverId: 'other-home' } };
+        handoff.stage(wrongHome, seed, lifetime);
+        expect(handoff.peek(wrongHome)).toBeNull();
+        handoff.stage(destination, seed, lifetime);
+        expect(handoff.peek(destination)).toEqual(seed);
+        retireActiveServerAccountScopeLifetime();
+        expect(handoff.peek(destination)).toBeNull();
     });
 
     it('keeps the applied lifetime through staging, then retires it when the singleton runtime resets', async () => {

@@ -238,18 +238,18 @@ function mergeOverflowMessageActions(params: Readonly<{
  * admission nor Action dispatch: both remain in the shared contributed-Action
  * controller and its dispatcher.
  */
-export function PluginMessageActions(props: Readonly<{
-    invertedActionsLayout: boolean;
+export function usePluginMessageActions(props: Readonly<{
+    enabled: boolean;
     messageActionReference?: MessageActionReferenceV1;
-}>): React.ReactElement | null {
+}>) {
     usePluginUiClientExecutableRegistrationRevision();
     const host = React.useContext(PluginMessageActionHostContext);
     const controller = React.useMemo(() => {
-        if (!host || !props.messageActionReference) return null;
+        if (!props.enabled || !host || !props.messageActionReference) return null;
         return createPluginContributedActionController({
             resolveCurrent: () => host.resolveCurrent(props.messageActionReference!),
         });
-    }, [host, props.messageActionReference]);
+    }, [props.enabled, host, props.messageActionReference]);
     const rowActions = orderMessageActions(
         controller?.list({ placement: 'rowAction', scope: 'message' }) ?? [],
     );
@@ -271,6 +271,24 @@ export function PluginMessageActions(props: Readonly<{
             ...(host?.signal ? { signal: host.signal } : {}),
         }), { tag: 'PluginMessageActions.openAction' });
     }, [controller, host?.signal]);
+
+    const menuActions = mergeOverflowMessageActions({ legacy: rowActions, semantic: mergedOverflowActions });
+    return { rowActions, mergedOverflowActions, menuActions, openAction };
+}
+
+export function PluginMessageActions(props: Readonly<{
+    invertedActionsLayout: boolean;
+    messageActionReference?: MessageActionReferenceV1;
+}>): React.ReactElement | null {
+    const actions = usePluginMessageActions({ enabled: true, messageActionReference: props.messageActionReference });
+    return <PluginMessageActionsView actions={actions} invertedActionsLayout={props.invertedActionsLayout} />;
+}
+
+export function PluginMessageActionsView(props: Readonly<{
+    invertedActionsLayout: boolean;
+    actions: ReturnType<typeof usePluginMessageActions>;
+}>): React.ReactElement | null {
+    const { rowActions, mergedOverflowActions, openAction } = props.actions;
 
     if (rowActions.length === 0 && mergedOverflowActions.length === 0) return null;
     return (

@@ -11,6 +11,7 @@ import { resolveGlassCapability } from '@/components/ui/glass/resolveGlassCapabi
 import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { useLiquidGlassAvailable } from '@/components/ui/glass/liquidGlass';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
+import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 
 import { scrimMaskBand, scrimRamp } from './progressiveScrimFalloff';
 
@@ -114,11 +115,8 @@ export type OverlayScrimProps = Readonly<{
 }>;
 
 /**
- * The ground runs from FULLY OPAQUE at the seated edge to clear at the top of the ramp.
- *
- * Opaque, not a translucent scrim: the strip around and below the composer is part of the modal,
- * and letting the session list show through it made the composer look like it was floating on
- * nothing. The dissolve above is where the list is meant to reappear.
+ * The ground starts at the floating group's requested opacity and clears toward
+ * the top. The ramp and bottom extension must not add an opaque legibility coat.
  *
  * `surface.base`, not `background.canvas`: canvas is the colour BETWEEN the list's rows, and the
  * rows themselves sit on `surface.base`. Against a stack of rows a flat canvas strip reads as a
@@ -127,7 +125,7 @@ export type OverlayScrimProps = Readonly<{
  */
 function useDimGradientColors(): string[] {
     const { theme } = useUnistyles();
-    const ground = theme.colors.surface.base;
+    const ground = useGlassSurfaceColor(theme.colors.surface.base, 'floating', false);
 
     return React.useMemo(() => {
         const ramp = scrimRamp();
@@ -137,7 +135,7 @@ function useDimGradientColors(): string[] {
         } catch {
             return [ground, 'transparent'];
         }
-        return ramp.alphas.map((strength) => base.alpha(strength).rgb().string());
+        return ramp.alphas.map((strength) => base.alpha(base.alpha() * strength).rgb().string());
     }, [ground]);
 }
 

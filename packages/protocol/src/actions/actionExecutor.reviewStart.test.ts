@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor';
 import type { AgentStartContextV1 } from '../account/settings/admitAgentStartV1';
+import { ActionIdSchema } from './actionIds';
 
 const workflowStartContext: AgentStartContextV1 = {
   caller: { kind: 'originless', runId: 'workflow-1', runDepth: 0 },
@@ -10,6 +11,120 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  const narrationInventory = { items: [
+    { value: 'codex', label: 'Codex', capabilities: { structuredNarration: true } },
+    { value: 'claude', label: 'Claude', capabilities: { structuredNarration: true } },
+    { value: 'coderabbit', label: 'CodeRabbit', capabilities: { structuredNarration: false } },
+  ] };
+  it('offers capable narrators without hiding findings-only reviewer choices', async () => {
+    const executor = createActionExecutor({ reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
+    const narrator = await executor.execute('action.options.resolve', {
+      actionId: 'review.start', fieldPath: 'narrator.engineId', sessionId: 's1',
+    }, { surface: 'ui' });
+    expect(narrator).toMatchObject({ ok: true, result: { options: [
+      { value: 'codex' }, { value: 'claude' },
+    ] } });
+    const reviewers = await executor.execute('action.options.resolve', {
+      actionId: 'review.start', fieldPath: 'engineIds', sessionId: 's1',
+    }, { surface: 'ui' });
+    expect(reviewers).toMatchObject({ ok: true, result: { options: [
+      { value: 'codex' }, { value: 'claude' }, { value: 'coderabbit' },
+    ] } });
+  });
+  it('retains one capable reviewer for its findings-first narration turn', async () => {
+    const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({ runId: 'review-1', callId: 'call-1', sidechainId: 'call-1' }));
+    const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({}));
+    const executor = createActionExecutor({ executionRunStart, executionRunAction,
+      reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+      outputs: ['walkthrough'], comparisonId: 'comparison-1' }, { surface: 'ui' })).toMatchObject({
+      ok: true, result: { narration: { runId: 'review-1', state: 'collecting' } },
+    });
+    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({ runClass: 'long_lived',
+      intentInput: { outputs: ['walkthrough'], comparisonId: 'comparison-1', narrator: { engineId: 'codex' } } });
+    expect(executionRunAction).not.toHaveBeenCalled();
+  });
+  it('fans out bounded reviews then admits one narrator from only confirmed runs and launch provenance', async () => {
+    const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async (_session, input) =>
+      input.backendTarget?.kind === 'builtInAgent' && input.backendTarget.agentId === 'claude'
+        ? { ok: false, errorCode: 'engine_failed', error: 'Engine failed' }
+        : { runId: 'review-1', callId: 'call-1', sidechainId: 'call-1' });
+    const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({ ok: true, data: { ok: true, result: {
+      runId: 'narrator-1', comparisonId: 'comparison-1', mode: 'seeded_narrator', state: 'collecting',
+    } } }));
+    const executor = createActionExecutor({ executionRunStart, executionRunAction,
+      reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
+    const result = await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
+      outputs: ['walkthrough'], comparisonId: 'comparison-1' }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true, result: { narration: { runId: 'narrator-1', state: 'collecting' } } });
+    expect(executionRunStart.mock.calls.every((call) => call[1].runClass === 'bounded')).toBe(true);
+    expect(executionRunStart.mock.calls.every((call) => call[1].intentInput?.outputs === undefined)).toBe(true);
+    expect(executionRunAction.mock.calls).toHaveLength(1);
+    expect(executionRunAction.mock.calls[0]?.slice(0, 2)).toEqual(['s1', { runId: 'review-1', actionId: 'review.walkthrough', input: {
+      reviewRunIds: ['review-1'], comparisonId: 'comparison-1', narrator: { engineId: 'codex' },
+      launchFailures: [{ engineId: 'claude', errorCode: 'engine_failed', error: 'Engine failed' }],
+    } }]);
+  });
+  it('preserves explicit narrator model selection without replacing the original reviewer model', async () => {
+    const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({ runId: 'review-1', callId: 'call-1', sidechainId: 'call-1' }));
+    const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({ ok: true, result: {
+      runId: 'narrator-1', comparisonId: 'comparison-1', mode: 'seeded_narrator', state: 'collecting',
+    } }));
+    const executor = createActionExecutor({ executionRunStart, executionRunAction,
+      reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+      modelId: 'review-model', outputs: ['walkthrough'], comparisonId: 'comparison-1',
+      narrator: { engineId: 'codex', modelId: 'narration-model' } }, { surface: 'ui' }))
+      .toMatchObject({ ok: true, result: { narration: { runId: 'narrator-1' } } });
+    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({ runClass: 'bounded', modelId: 'review-model' });
+    expect(executionRunAction.mock.calls[0]?.[1].input).toMatchObject({ narrator: { engineId: 'codex', modelId: 'narration-model' } });
+  });
+  it.each([
+    { engineIds: ['codex'] },
+    { engineIds: ['coderabbit'], comparisonId: 'comparison-1' },
+    { engineIds: ['codex'], comparisonId: 'comparison-1', narrator: { engineId: 'coderabbit' } },
+  ])('rejects invalid narration before any reviewer starts: %j', async (selection) => {
+    const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({}));
+    const executor = createActionExecutor({ executionRunStart, reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', instructions: 'Review.', outputs: ['walkthrough'],
+      ...selection }, { surface: 'ui' })).toMatchObject({ ok: false });
+    expect(executionRunStart).not.toHaveBeenCalled();
+  });
+  it('keeps failed reviewer launches truthful and does not create narration without a confirmed run', async () => {
+    const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({}));
+    const executor = createActionExecutor({ executionRunAction,
+      executionRunStart: async () => ({ ok: false, errorCode: 'engine_failed', error: 'Engine failed' }),
+      reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
+      outputs: ['walkthrough'], comparisonId: 'comparison-1' }, { surface: 'ui' })).toMatchObject({
+      ok: true, result: { results: [{ ok: false }, { ok: false }], narration: { state: 'failed' } },
+    });
+    expect(executionRunAction).not.toHaveBeenCalled();
+  });
+  it('routes finished-review narration and targeted explanation through the existing Run Action authority', async () => {
+    const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async (_sessionId, request) => request.actionId === 'review.explain_findings'
+      ? { ok: true, result: { refinement: { actionId: 'scm.diffSummary.refine', input: {
+        cwd: '/repo', resultId: 'result-1', expectedRevision: 2, output: 'walkthrough', stopIds: ['stop-1'], instructions: 'Explain selected finding.',
+      } } } } : { ok: true, runId: 'narrator-1' });
+    const executor = createActionExecutor({ executionRunAction,
+      scmActionExecute: async () => ({ success: false, errorCode: 'revision_conflict', error: 'Saved result changed', latestRevision: 3 }),
+    } as ActionExecutorDeps);
+    const walkthrough = await executor.execute(ActionIdSchema.parse('review.walkthrough'), {
+      sessionId: 's1', runId: 'review-1', comparisonId: 'comparison-1',
+    }, { surface: 'cli' });
+    expect(walkthrough).toMatchObject({ ok: true });
+    expect(executionRunAction.mock.calls[0]?.slice(0, 2)).toEqual(['s1', { runId: 'review-1', actionId: 'review.walkthrough',
+      input: { reviewRunIds: ['review-1'], comparisonId: 'comparison-1' } }]);
+    const explanation = await executor.execute(ActionIdSchema.parse('review.explain_findings'), {
+      runId: 'review-1', cwd: '/repo', resultId: 'result-1', expectedRevision: 2,
+      findingIds: [{ runId: 'review-1', findingId: 'finding-1' }],
+    }, { surface: 'mcp', defaultSessionId: 's1' });
+    expect(explanation).toMatchObject({ ok: true, result: { success: false, errorCode: 'revision_conflict', latestRevision: 3 } });
+    expect(executionRunAction.mock.calls[1]?.slice(0, 2)).toEqual(['s1', { runId: 'review-1', actionId: 'review.explain_findings', input: {
+      reviewRunIds: ['review-1'], cwd: '/repo', resultId: 'result-1', expectedRevision: 2,
+      findingIds: [{ runId: 'review-1', findingId: 'finding-1' }],
+    } }]);
+  });
   it('stamps one fresh group on every engine Run, including detached Workflow fanout', async () => {
     const starts: Array<Record<string, unknown>> = [];
     const executor = createActionExecutor({
@@ -480,6 +595,7 @@ describe('createActionExecutor (review.start)', () => {
             ok: false,
             errorCode: 'review_engine_unavailable',
             error: 'review_engine_unavailable',
+            details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
           },
         ],
       },

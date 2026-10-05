@@ -13,6 +13,7 @@ import {
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { SessionHeaderWorkStrip } from '@/components/sessions/work/SessionHeaderWorkStrip';
+import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
 import { EMPTY_WORK_SUMMARY, type WorkSummary } from '@/components/sessions/work/workProjection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -529,6 +530,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         agentId,
         rightElement: (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <PendingNavigationPill address={normalizeSessionAddress(session.serverId, input.sessionId)} presentation="header" />
                 <ActionOperationActivityButton
                     preferredSessionAddress={normalizeSessionAddress(session.serverId, input.sessionId)}
                     testID="session-header-action-operations"

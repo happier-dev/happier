@@ -1,7 +1,6 @@
 import type { PluginCancellationOptions, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
-    MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     type TriageEntryRefV1,
     type TriageLinkedSessionProjectionV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -9,15 +8,12 @@ import {
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
 import {
-    CORPUS_SESSION_LINKS_INDEX_ID,
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
-import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
-import { deriveSessionLinkEntryTag } from '../corpus/identity/tags.js';
+import { readTriageSessionLinksPageV1 } from '../sessions/readEntrySessionLinks.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { isTriageSelfCaller } from './callerSource.js';
+import { isTriageAccountCaller, isTriageHostActionCaller, resolveTriageCallerSource } from './callerSource.js';
 import type {
     TriageReadEntryDetailInputV1,
     TriageReadEntryDetailResultV1,
@@ -32,11 +28,11 @@ import type {
  * operation, and surface facts remain on the physical mount's exact targeted
  * snapshot. It writes nothing, reaches no provider, and needs no daemon.
  *
- * It is caller-bound to this target's own surfaces. The configured instance
+ * It is caller-bound to this target's own surfaces and authenticated host Actions. The configured instance
  * carries the owning source's account binding and its source-private
  * configuration token, and the aggregate list Action deliberately withholds both
- * from its summaries; letting any plugin caller ask for one exactly would be the
- * way around that decision.
+ * from its summaries; unrelated plugin callers remain refused. Host automated
+ * callers must resolve a currently admitted source and declared kind first.
  */
 
 const INVALID_CALLER: TriageReadEntryDetailResultV1 = Object.freeze({ kind: 'invalidCaller' });
@@ -79,18 +75,13 @@ async function readLinkedSessions(
     sessions: readonly TriageLinkedSessionProjectionV1[];
     nextCursor?: string;
 }>> {
-    const entryTag = await deriveSessionLinkEntryTag(deps.sessionLinks, entryRef, options);
-    const page = await deps.sessionLinks.query({
-        index: CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
-        prefix: [entryTag],
-        order: 'asc',
-        limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
+    const page = await readTriageSessionLinksPageV1(deps.sessionLinks, {
+        relation: { entryRef },
         ...(cursor === undefined ? {} : { cursor }),
     }, options);
 
     const projections: TriageLinkedSessionProjectionV1[] = [];
-    for (const stored of page.rows) {
-        const link = fromCorpusStoredRow<CorpusSessionLinkRowV1>(stored).value;
+    for (const link of page.links) {
         let summary: Awaited<ReturnType<TriageLinkedSessionSummaryReaderV1>> = null;
         try {
             summary = await deps.readSessionSummary(link.sessionId, options);
@@ -160,7 +151,14 @@ export function createTriageReadEntryDetailActionHandler(): ActionHandler<
     TriageReadEntryDetailResultV1
 > {
     return async (input, context: PluginInvocationContext) => {
-        if (!isTriageSelfCaller(context)) return INVALID_CALLER;
+        if (!isTriageAccountCaller(context)) return INVALID_CALLER;
+        if (isTriageHostActionCaller(context)) {
+            const resolution = await resolveTriageCallerSource(context, { signal: context.signal }, input.entryRef.source);
+            if (resolution.kind !== 'source'
+                || !resolution.caller.contribution.descriptor.kinds.some((kind) => kind.id === input.entryRef.kindId)) {
+                return UNAVAILABLE;
+            }
+        }
         const { sourceInstances, sessionLinks } = bindCorpusCollections(
             requireTriageAccountStorage(context),
         );

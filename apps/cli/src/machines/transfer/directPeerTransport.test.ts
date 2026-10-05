@@ -675,7 +675,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-from-timeout-override', 'utf8');
     const timeoutSignals: AbortSignal[] = [];
@@ -796,7 +796,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-from-good-candidate', 'utf8');
     let recipientPublicKeyBase64 = '';
@@ -1231,7 +1231,7 @@ describe('direct peer machine transfer', () => {
 
   it('does not accumulate streamed JSON chunks in memory when content-length is provided (preallocated read)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-prealloc-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -1332,7 +1332,7 @@ describe('direct peer machine transfer', () => {
 
   it('does not accumulate streamed JSON chunks in memory when a peer lies about content-length (bounded growing buffer)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-lie-len-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -1433,7 +1433,7 @@ describe('direct peer machine transfer', () => {
 
   it('does not accumulate streamed JSON chunks in memory when content-length is omitted (bounded growing buffer)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-grow-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -1775,7 +1775,7 @@ describe('direct peer machine transfer', () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const openBody = {
       payload: 'payload-from-bytes-open-body',
@@ -1970,7 +1970,7 @@ describe('direct peer machine transfer', () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-retry-503-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -2045,7 +2045,7 @@ describe('direct peer machine transfer', () => {
 
   it('does not use Buffer.concat while fetching a direct-peer payload (small-only API must stay bounded)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-without-buffer-concat', 'utf8');
     let recipientPublicKeyBase64 = '';
@@ -2127,7 +2127,7 @@ describe('direct peer machine transfer', () => {
 
   it('accepts direct-peer endpoint candidates with a path prefix (for example Tailscale Serve)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-from-prefixed-endpoint', 'utf8');
     let recipientPublicKeyBase64 = '';
@@ -2194,7 +2194,7 @@ describe('direct peer machine transfer', () => {
 
   it('does not call String.prototype.trim on large base64 chunk fields while fetching a direct-peer payload', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from(new Uint8Array(2048).fill(7));
     let recipientPublicKeyBase64 = '';
@@ -2269,7 +2269,7 @@ describe('direct peer machine transfer', () => {
 
   it('reuses the same recipient key pair across direct-peer candidate retries', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-for-candidate-retry-key-reuse', 'utf8');
     const recipientPublicKeyBase64ByAttempt: string[] = [];
@@ -2361,7 +2361,7 @@ describe('direct peer machine transfer', () => {
 
   it('retries a transiently unavailable direct-peer candidate before failing the transfer', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-for-transient-candidate-retry', 'utf8');
     let openAttempts = 0;
@@ -2428,7 +2428,7 @@ describe('direct peer machine transfer', () => {
 
   it('fails closed when the direct-peer /open response is 200 but not application/json', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const transferId = 'transfer_open_non_json_content_type';
     const payload = Buffer.from('payload-for-open-non-json-content-type', 'utf8');
@@ -2488,7 +2488,7 @@ describe('direct peer machine transfer', () => {
 
   it('fails closed when the direct-peer chunk response is 200 but not application/json', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const transferId = 'transfer_chunk_non_json_content_type';
     const payload = Buffer.from('payload-for-chunk-non-json-content-type', 'utf8');
@@ -2591,7 +2591,7 @@ describe('direct peer machine transfer', () => {
 
   it('streams large direct-peer open bodies instead of materializing them into one request buffer', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-for-streamed-open-body', 'utf8');
     const openBody = {
@@ -2682,7 +2682,7 @@ describe('direct peer machine transfer', () => {
 
   it('does not preallocate the entire chunk response body when content-length is large', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
 
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES = String(512 * 1024);
@@ -2814,7 +2814,7 @@ describe('direct peer machine transfer', () => {
       requestDirectPeerTransferToFile,
       startDirectPeerTransferServer,
     } = await import('./directPeerTransport');
-    const { createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-file-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -2859,7 +2859,7 @@ describe('direct peer machine transfer', () => {
 
   it('rejects a direct endpoint commitment that disagrees with the caller publication before requesting chunks', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-commitment-mismatch-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -2909,7 +2909,7 @@ describe('direct peer machine transfer', () => {
 
   it('rejects plaintext beyond the published expected size before writing or promoting it', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-size-commitment-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -2985,7 +2985,7 @@ describe('direct peer machine transfer', () => {
       requestDirectPeerTransferToFile,
       startDirectPeerTransferServer,
     } = await import('./directPeerTransport');
-    const { createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-tiny-chunks-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -3419,7 +3419,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     const payload = Buffer.from('payload-via-header', 'utf8');
     let recipientPublicKeyBase64 = '';
     const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
@@ -3487,7 +3487,7 @@ describe('direct peer machine transfer', () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-safe-candidate-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     const payload = Buffer.from('payload-via-https', 'utf8');
     let recipientPublicKeyBase64 = '';
     const fetchFn: typeof fetch = vi.fn(async (input, init) => {
@@ -3579,7 +3579,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-from-good-candidate', 'utf8');
     let recipientPublicKeyBase64 = '';
@@ -3659,7 +3659,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-via-oversized-auth-token-skip', 'utf8');
     let recipientPublicKeyBase64 = '';
@@ -3740,7 +3740,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     const payload = Buffer.from('payload-via-legacy-token', 'utf8');
     let recipientPublicKeyBase64 = '';
     const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
@@ -3806,7 +3806,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     const payload = Buffer.from('payload-via-expired-candidate', 'utf8');
     let recipientPublicKeyBase64 = '';
     const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

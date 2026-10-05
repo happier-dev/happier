@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -19,6 +20,15 @@ function hostTexts(screen: Screen): string[] {
 }
 
 describe('AttentionBanner', () => {
+    it('preserves a domain-owned status glyph with its recovery actions', async () => {
+        const retry = vi.fn();
+        const screen = await renderScreen(<AttentionBanner testID="offline" title="Machine offline"
+            tone="neutral" icon={<View testID="machine-offline-mark" />}
+            action={{ label: 'Retry', onPress: retry }} />);
+        expect(screen.findByTestId('machine-offline-mark')).toBeTruthy();
+        await screen.pressByTestIdAsync('offline.action');
+        expect(retry).toHaveBeenCalledOnce();
+    });
     it('keeps diagnostic details behind a disclosure and preserves dismiss and secondary actions', async () => {
         const dismiss = vi.fn();
         const secondary = vi.fn();

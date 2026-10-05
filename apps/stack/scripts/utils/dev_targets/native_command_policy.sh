@@ -123,11 +123,20 @@ native_command_policy_base() {
   fi
 }
 native_command_policy_finish() {
+  if { [ "$policy_entry" = 'remote_runtime_build.mjs' ]; }; then
+    policy_heavyClass='compilation'
+  fi
   if { [ "$policy_validation" = '1' ]; }; then
     policy_commandClass='targeted-validation'
   fi
   if { [ "$policy_validation" = '1' ]; } && { [ "$policy_component" = '.' ]; }; then
     policy_commandClass='full-validation'
+  fi
+  if { [ "$policy_family" = 'build' ]; }; then
+    policy_heavyClass='compilation'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; }; then
+    policy_heavyClass='compilation'
   fi
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/cli' ] || [ "$policy_component" = 'apps/ui' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_kind='source-test'

@@ -7,7 +7,7 @@ import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } fr
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { isTriageSelfCaller } from './callerSource.js';
+import { isTriageAccountCaller } from './callerSource.js';
 import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import type { TriageReobserveEntryActionInputV1 } from './reobserveEntryProtocol.js';
 
@@ -16,7 +16,7 @@ export function createTriageReadPullRequestStatusActionHandler(): ActionHandler<
     TriageReobserveEntryActionInputV1, TriagePullRequestStatusResultV1
 > {
     return async (input, context) => {
-        if (!isTriageSelfCaller(context)) return { kind: 'unavailable', failure: { class: 'permission', code: 'invalidCaller' } };
+        if (!isTriageAccountCaller(context)) return { kind: 'unavailable', failure: { class: 'permission', code: 'invalidCaller' } };
         throwIfAborted(context.signal);
         const options = context.signal === undefined ? {} : { signal: context.signal };
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));

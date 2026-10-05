@@ -1,6 +1,7 @@
 import { systemTasks } from '@happier-dev/cli-common';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind, InteractiveSystemTaskKindMap } from '@happier-dev/cli-common/systemTasks';
 import { createInterface } from 'node:readline';
+import { pathToFileURL } from 'node:url';
 import {
   SystemTaskEventSchema,
   SystemTaskResultSchema,
@@ -395,7 +396,9 @@ function createDefaultIo(): HsetupIo {
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Bun's compiled executable has an embedded module URL, not the executable's argv path.
+// Older Node source launches still identify the entrypoint by its normalized file URL.
+if (import.meta.main || (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)) {
   runHsetupCli(process.argv.slice(2)).then((exitCode) => {
     process.exitCode = exitCode;
   });

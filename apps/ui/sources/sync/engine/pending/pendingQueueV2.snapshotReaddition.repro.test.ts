@@ -219,7 +219,11 @@ describe('pending snapshot re-addition after a committed twin', () => {
         const gate = new Promise<void>((resolve) => { release = resolve; });
         // One server read, shared by both refreshes — the in-flight de-dupe, modelled.
         const sharedRead = (async () => { await gate; return queuedRowResponse(LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const dedupedRequest = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : Response.json({ pending: [] });
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
@@ -289,7 +293,11 @@ describe('pending snapshot re-addition after a committed twin', () => {
         // One server read, shared by both refreshes — the in-flight de-dupe, modelled. It was read
         // BEFORE the enqueue below was accepted, so it lists only the row that already existed.
         const sharedRead = (async () => { await gate; return queuedRowResponse(SEED_LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const dedupedRequest = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : queuedRowResponse(ACCEPTED_LOCAL_ID);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
@@ -352,7 +360,11 @@ describe('pending snapshot re-addition after a committed twin', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowResponse(SEED_LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const dedupedRequest = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : queuedRowResponse(ACCEPTED_LOCAL_ID);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
@@ -425,7 +437,11 @@ describe('pending snapshot re-addition after a committed twin', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowResponse(LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const dedupedRequest = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : Response.json({ pending: [] });
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
@@ -458,7 +474,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedPending()).toEqual([]);
     });
 
-    it('republishes a row when a second refresh inherits an in-flight mark and the twin is old news', async () => {
+    it('republishes a row when a second refresh starts after an in-flight read and the twin is old news', async () => {
         const scope = await armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
         let release!: () => void;

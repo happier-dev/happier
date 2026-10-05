@@ -29,6 +29,8 @@ export type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse } from './proj
 export type { ScmCommitBackoutResponse } from './projections.js';
 export type { ScmCommitCreateRequest } from './projections.js';
 export type { ScmCommitCreateResponse } from './projections.js';
+export type { ScmCommitResolveOutcomeRequest, ScmCommitResolveOutcomeResponse } from './projections.js';
+export type { ScmCommitPublication, ScmCommitHookContentChanges } from './projections.js';
 export type { ScmConflictAcceptSideRequest } from './projections.js';
 export type { ScmConflictAcceptSideResponse } from './projections.js';
 export type { ScmConflictEntry } from './projections.js';
@@ -166,3 +168,5 @@ export { sameScmHostingRepositoryIdentity } from './projections.js';
 export { parseScmRemoteUrl } from './projections.js';
 export { resolveScmScopedChangedPaths } from './projections.js';
 export { stripTrailingSlash } from './projections.js';
+export { ScmComparisonSourceSchema, ScmComparisonSourceProtocolSchema, ScmComparisonSchema } from './projections.js';
+export type { ScmComparisonSource, ScmComparison } from './projections.js';

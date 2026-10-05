@@ -73,6 +73,7 @@ export type UniversalSearchNativeHostProps = Readonly<{
     listAccessibilityLabel?: string;
     /** The controller's scope filters (the Home chip), shown the same way as on the web palette. */
     filters?: ReadonlyArray<SelectionListFilter>;
+    inputSuffix?: React.ReactNode;
     testID?: string;
     dynamicSectionCache: SelectionListDynamicSectionCache;
 }>;
@@ -219,7 +220,7 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
                         onRequestClose={requestClose}
                         dynamicSectionCache={props.dynamicSectionCache}
                         filters={props.filters}
-                        inputSuffix={props.query.length > 0 ? (
+                        inputSuffix={<View style={{ flexDirection: 'row' }}>{props.inputSuffix}{props.query.length > 0 ? (
                             <IconButton
                                 testID={`${testID}:clear`}
                                 accessibilityRole="button"
@@ -229,7 +230,7 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
                                 minimumInteractiveTargetSize={minimumInteractiveTargetSize}
                                 onPress={() => props.onChangeQuery('')}
                             />
-                        ) : null}
+                        ) : null}</View>}
                         selectedOptionId={props.selectedOptionId ?? null}
                         {...(props.listAccessibilityLabel === undefined
                             ? {}

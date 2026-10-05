@@ -61,11 +61,14 @@ export const UI_FEATURE_REGISTRY = {
     'encryption.accountOptOut': {
         settingsToggle: undefined,
     },
+    // Promoted (Voice Experience r1): Voice is a product surface, not an experiment; the switch in
+    // Settings → Features stays the person's own way to turn it off. Its agent/daemon inference
+    // sub-features remain experimental.
     voice: {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.voice',
             subtitleKey: 'settingsFeatures.voiceSubtitle',
         },

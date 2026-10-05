@@ -6,5 +6,6 @@ export {
   buildLocalVoiceAgentSystemPrompt,
   buildVoiceAgentBasePrompt,
   buildVoiceClientToolAgentPrompt,
+  buildVoiceRealtimeAttemptPolicy,
   type VoicePromptVerbosity,
 } from './voiceAgentPrompt.js';

@@ -4,8 +4,24 @@ import { getActionSpec } from './actionSpecs.js';
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputOptionSchema } from './actionInputHints.js';
 import { normalizeActionInputByFieldHints, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
+import { InputHintsSchema, normalizeInputByFieldHints, resolveEffectiveInputFields } from '../inputs/index.js';
 
 describe('resolveEffectiveActionInputFields', () => {
+  it('uses the neutral field owner for structured selections and conditional fields', () => {
+    const a = { service: { pluginId: 'com.acme.accounts', localId: 'service' }, accountId: 'a' };
+    const b = { ...a, accountId: 'b' };
+    const spec = { inputHints: InputHintsSchema.parse({ fields: [
+      { path: 'accounts', title: 'Accounts', widget: 'multiselect', maxSelections: 1,
+        options: [{ value: a, label: 'A' }, { value: b, label: 'B' }] },
+      { path: 'note', title: 'Note', widget: 'text', visibleWhen: { op: 'truthy', path: 'show' } },
+    ] }) };
+    const input = { accounts: [a, b], show: false, note: 'Retained' };
+    expect(normalizeActionInputByFieldHints(spec, input)).toEqual(normalizeInputByFieldHints(spec, input));
+    expect(normalizeInputByFieldHints(spec, input)).toEqual({ ...input, accounts: [b] });
+    expect(resolveEffectiveActionInputFields(spec, input)).toEqual(resolveEffectiveInputFields(spec, input));
+    expect(resolveEffectiveInputFields(spec, input).map((field) => field.path)).toEqual(['accounts']);
+    expect(input.accounts).toEqual([a, b]);
+  });
   it('offers the required scalar value editor and optional page filter for declared settings Actions', () => {
     const setFields = resolveEffectiveActionInputFields(getActionSpec('settings.set'), { anchor: 'appearance.density' });
     expect(setFields.find((field) => field.path === 'value')).toMatchObject({ widget: 'json', required: true, visible: true });

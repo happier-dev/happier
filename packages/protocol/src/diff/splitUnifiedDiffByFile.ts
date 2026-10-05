@@ -40,19 +40,20 @@ function collectBoundaryOffsets(normalized: string): number[] {
   return boundaries;
 }
 
-export function splitUnifiedDiffByFile(unifiedDiff: string): string[] {
-  const normalized = normalizeNewlines(unifiedDiff);
+export function splitUnifiedDiffByFile(unifiedDiff: string, options?: Readonly<{ preserveText?: boolean }>): string[] {
+  const normalized = options?.preserveText ? unifiedDiff : normalizeNewlines(unifiedDiff);
   if (!normalized.trim()) return [];
 
   const boundaries = collectBoundaryOffsets(normalized);
 
-  if (boundaries.length === 0) return [normalized.trimEnd()];
+  if (boundaries.length === 0) return [options?.preserveText ? normalized : normalized.trimEnd()];
 
   const blocks: string[] = [];
   for (let i = 0; i < boundaries.length; i += 1) {
     const start = boundaries[i] ?? 0;
     const end = boundaries[i + 1] ?? normalized.length;
-    const slice = normalized.slice(start, end).trimEnd();
+    const content = normalized.slice(start, end);
+    const slice = options?.preserveText ? content : content.trimEnd();
     if (slice) blocks.push(slice);
   }
 

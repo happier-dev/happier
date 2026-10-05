@@ -1,8 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionFileDeepLink, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
+import { buildSessionFileDeepLink, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
 
 describe('sessionFileDeepLink', () => {
+    it('accepts predecessor line URLs whose position is encoded as line rather than startLine', () => {
+        expect(parseSessionFileDeepLinkAnchor({ path: 'src/a.ts', source: 'diff', anchor: 'line', line: '12', side: 'before' }))
+            .toEqual({ source: 'diff', anchor: { kind: 'line', filePath: 'src/a.ts', line: 12, side: 'before' } });
+    });
+    it('preserves the predecessor selected-text hash in range URLs', () => {
+        const anchor = { kind: 'range' as const, filePath: 'src/a.ts', startLine: 12, endLine: 14, selectedTextHash: 'lh1:1234567890abcdef' as const };
+        const url = buildSessionFileDeepLink({ sessionId: 's1', filePath: 'src/a.ts', source: 'file', anchor });
+        expect(parseSessionFileDeepLinkAnchor(Object.fromEntries(new URL(url, 'https://happier.test').searchParams))).toEqual({ source: 'file', anchor });
+        const diffUrl = buildSessionFileDeepLink({ sessionId: 's1', filePath: 'src/a.ts', source: 'diff', anchor });
+        expect(parseSearchFileTarget(diffUrl)).toMatchObject({ anchorSource: 'diff', anchor });
+    });
+    it('parses terminal line and column suffixes without splitting drives or literal filename colons', () => {
+        expect(parseSearchFileTarget('C:\\x\\a.ts:12:4')).toEqual({ path: 'C:\\x\\a.ts', anchor: { kind: 'fileLine', startLine: 12 }, column: 4 });
+        expect(parseSearchFileTarget('C:\\x\\a.ts:12')).toEqual({ path: 'C:\\x\\a.ts', anchor: { kind: 'fileLine', startLine: 12 } });
+        expect(parseSearchFileTarget('a:b.ts')).toBeNull();
+        expect(parseSearchFileTarget('a:b.ts:12')).toEqual({ path: 'a:b.ts', anchor: { kind: 'fileLine', startLine: 12 } });
+        expect(parseSearchFileTarget('a.ts:0')).toBeNull();
+        expect(parseSearchFileTarget('a.ts:12junk')).toBeNull();
+    });
+
+    it('parses a pasted deep link through the same anchor owner', () => {
+        const url = buildSessionFileDeepLink({ sessionId: 's1', serverId: 'home-a', filePath: 'src/a:b.ts', source: 'file',
+            anchor: { kind: 'range', filePath: 'src/a:b.ts', startLine: 12, endLine: 14 } });
+        expect(parseSearchFileTarget(`https://happier.test${url}`)).toEqual({ path: 'src/a:b.ts', sessionId: 's1', serverId: 'home-a',
+            anchor: { kind: 'range', filePath: 'src/a:b.ts', startLine: 12, endLine: 14 } });
+        expect(parseSessionFileDeepLinkAnchor({ source: 'file', anchor: 'fileLine', startLine: '12junk' })).toBeNull();
+    });
     it('builds a stable fileLine anchor URL and parses it back', () => {
         const url = buildSessionFileDeepLink({
             sessionId: 's1',

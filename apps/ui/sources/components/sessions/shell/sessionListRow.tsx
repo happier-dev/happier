@@ -11,6 +11,10 @@ import {
     type UseSessionInlineDragResolvedDrop,
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
+import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { isSecondaryEntityRowControl } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
+import { useSessionListStagedMoveKeyHandler } from './keyboardMove/SessionListStagedMoveDock';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import type {
     RegisterSessionListTreeRowBounds,
@@ -23,6 +27,7 @@ export type SessionListRowProps = Readonly<
         treeRowId: string;
         groupKey: string;
         reorderEnabled: boolean;
+        organizeMode: boolean;
         onDragStart: (sessionKey: string) => void;
         resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
         onDropResult: (event: UseSessionInlineDragDropResultEvent) => void | Promise<void>;
@@ -51,6 +56,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         treeRowId,
         groupKey,
         reorderEnabled,
+        organizeMode,
         onDragStart,
         onDropResult,
         onDragUpdate,
@@ -112,13 +118,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         void onDropResult(event);
     }, [getCellWrapper, onDropResult]);
 
-    const isWeb = Platform.OS === 'web';
-    const isIos = Platform.OS === 'ios';
-    const inlineDragEnabled = reorderEnabled && (isWeb || isIos);
-    const handleInlineLongPressActivated = React.useCallback(() => {
-        if (isWeb || isDragActive) return;
-        handleNativeContextMenuOpenChange(true);
-    }, [handleNativeContextMenuOpenChange, isDragActive, isWeb]);
+    // E1/K1: the whole desktop row is the one source; a phone row lifts only through its Organize grip.
+    const touchPrimary = isTouchPrimaryPointer();
+    const inlineDragEnabled = reorderEnabled && (!touchPrimary || organizeMode);
 
     const { gesture, animatedStyle } = useSessionInlineDrag({
         enabled: inlineDragEnabled,
@@ -129,10 +131,8 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         onDragUpdate,
         onDragCancel,
         resolveDropResult,
-        onLongPressActivated: isIos ? handleInlineLongPressActivated : undefined,
         dataIndex,
         overlayShared,
-        activateAfterLongPressMs: isWeb ? undefined : 350,
     });
 
     React.useEffect(() => {
@@ -147,6 +147,25 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             cellWrapper.style.overflow = '';
         }
     }, [getCellWrapper, isBeingDragged]);
+
+    // KS: on the web a focused row owns its staged keyboard move. Capture runs before the row's own
+    // press handling, so Space/Enter pick up instead of opening while a move is possible.
+    const stagedMoveKeyHandler = useSessionListStagedMoveKeyHandler();
+    const itemSessionRef = React.useRef(itemProps.session);
+    itemSessionRef.current = itemProps.session;
+    const itemServerId = itemProps.serverId ?? null;
+    const handleStagedMoveKeyDownCapture = React.useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+        if (!stagedMoveKeyHandler || !sessionKey || !reorderEnabled || !event.key) return;
+        if (event.defaultPrevented || isSecondaryEntityRowControl(event.nativeEvent, event.currentTarget)) return;
+        if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
+        const label = getSessionName(itemSessionRef.current, itemServerId);
+        if (!stagedMoveKeyHandler({ sessionKey, label, key: event.key, repeat: event.repeat })) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+    }, [itemServerId, reorderEnabled, sessionKey, stagedMoveKeyHandler]);
+    const webKeyProps = Platform.OS === 'web' && stagedMoveKeyHandler && reorderEnabled
+        ? ({ onKeyDownCapture: handleStagedMoveKeyDownCapture } as Record<string, unknown>)
+        : null;
 
     const rowPointerEvents = Platform.OS === 'web' && isDragActive && !isBeingDragged
         ? 'none' as const
@@ -166,7 +185,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             onTogglePinned={onTogglePinnedSessionKey ? handleTogglePinned : null}
             onSetTags={onSetTagsSessionKey && sessionKey ? handleSetTags : null}
             onNativeContextMenuOpenChange={onNativeContextMenuOpenChangeSessionKey && sessionKey ? handleNativeContextMenuOpenChange : undefined}
-            reorderHandleGesture={isWeb ? reorderGesture : undefined}
+            dragGripGesture={touchPrimary ? reorderGesture : undefined}
+            dragEnabled={reorderEnabled}
+            organizeMode={organizeMode}
             isBeingDragged={isBeingDragged}
         />
     );
@@ -193,6 +214,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             style={[animatedStyle, measurementTarget?.style]}
             pointerEvents={rowPointerEvents}
             onLayout={handleRowLayout}
+            {...webKeyProps}
         >
             {sessionItem}
         </Animated.View>
@@ -203,12 +225,13 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             style={measurementTarget?.style}
             pointerEvents={rowPointerEvents}
             onLayout={handleRowLayout}
+            {...webKeyProps}
         >
             {sessionItem}
         </View>
     );
 
-    if (isIos && reorderGesture) {
+    if (!touchPrimary && reorderGesture) {
         return (
             <GestureDetector gesture={reorderGesture}>
                 {rowNode}

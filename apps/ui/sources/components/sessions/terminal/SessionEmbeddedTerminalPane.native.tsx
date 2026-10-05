@@ -23,6 +23,8 @@ const SessionEmbeddedTerminalPaneContent = React.memo(function SessionEmbeddedTe
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             <EmbeddedTerminalPane
                 title={model.title}
+                focused={props.focused}
+                findSurfaceId={model.findSurfaceId}
                 chrome={props.chrome}
                 machineName={props.machineName}
                 controller={model.controller}

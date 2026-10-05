@@ -11,6 +11,11 @@
  *   adapters     → presentation + plugin-sdk/ui
  */
 export type { HappierLayoutChangeEvent, HappierTextSelection } from './portableTypes.js';
+export { HappierSetupSteps, type HappierSetupStep, type HappierSetupStepsProps } from './content/SetupSteps.js';
+export { HappierFieldStepper } from './form/FieldStepper.js';
+export type { HappierFieldStepperBounds } from './form/fieldValueDraft.js';
+export { happierMaterialBackgroundColor, type HappierMaterialRole } from './layout/material.js';
+export { matchFindText, type FindTextMatchRange, type FindTextMatchResult } from './find/matchFindText.js';
 export { HappierStoredImage, type HappierStoredImageProps, type HappierStoredImageHost } from './content/StoredImage.js';
 export { resolveHappierStoredImageDimensions, resolveHappierStoredImageLayout, type HappierStoredImageDimensions } from './content/storedImageLayout.js';
 export { HappierLiveStreamInputLayer } from './media/LiveStreamInputLayer.js';
@@ -52,6 +57,7 @@ export {
   type HappierCollectionDraftInput,
   type HappierCollectionModel,
   type HappierCollectionModelInput,
+  type HappierCollectionViewport,
 } from './collection/useCollection.js';
 export {
   HAPPIER_COLLECTION_LIST_METRICS,
@@ -250,6 +256,21 @@ export {
   HappierStatus,
   type HappierStatusProps,
 } from './status/Status.js';
+export {
+  describeHappierDataChart,
+  formatHappierDataShare,
+  formatHappierDataValue,
+  resolveHappierDataShares,
+  resolveHappierDataTableColumns,
+  type HappierDataColumn,
+  type HappierDataColumnPriority,
+  type HappierDataPoint,
+  type HappierDataValue,
+} from './data/dataModel.js';
+export { HAPPIER_DATA_METRICS } from './data/dataText.js';
+export { HappierDataMetric, type HappierDataMetricComparison, type HappierDataMetricProps } from './data/Metric.js';
+export { HappierDataRows, HappierDataTable, type HappierDataRowsProps } from './data/DataRows.js';
+export { HappierDataChart, type HappierDataChartProps } from './data/Chart.js';
 export type {
   HappierCapsuleButtonEmphasis,
   HappierCapsuleColors,
@@ -297,6 +318,52 @@ export {
   type HappierSelectionActionBarOverflowItem,
   type HappierSelectionActionBarProps,
 } from './interaction/SelectionActionBar.js';
+export {
+  HAPPIER_RELEASE_PREVIEW_METRICS,
+  HappierReleaseOutcomePill,
+  HappierReleaseOutcomeStrip,
+  HappierReleasePreviewCard,
+  HappierStagedMoveDock,
+  type HappierReleaseGlyph,
+  type HappierReleaseOutcome,
+  type HappierReleasePreviewColors,
+  type HappierReleasePreviewDensity,
+  type HappierReleasePreviewHost,
+  type HappierReleasePreviewIdentity,
+  type HappierStagedMoveHint,
+} from './interaction/ReleasePreview.js';
+export {
+  HAPPIER_DRAG_GRIP_METRICS,
+  HappierDragGrip,
+  type HappierDragGripDensity,
+  type HappierDragGripProps,
+} from './interaction/DragGrip.js';
+export {
+  HAPPIER_CARRIED_PREVIEW_OFFSET,
+  HAPPIER_CARRIED_SOURCE_OPACITY,
+  resolveHappierCarriedPreviewPlacement,
+  resolveHappierDropChooserSections,
+  resolveHappierStagedMoveKey,
+  type HappierCarriedPreviewPlacement,
+  type HappierDropChooserOption,
+  type HappierDropChooserOptionInput,
+  type HappierDropChooserSection,
+  type HappierStagedMoveKeyIntent,
+} from './interaction/dragDrop.js';
+export {
+  HAPPIER_FIND_BAR_METRICS,
+  HappierFindBar,
+  resolveHappierFindBarCount,
+  type HappierFindBarColors,
+  type HappierFindBarGlyph,
+  type HappierFindBarHost,
+  type HappierFindBarInputProps,
+  type HappierFindBarKeyEvent,
+  type HappierFindBarLabels,
+  type HappierFindBarNote,
+  type HappierFindBarProps,
+} from './find/FindBar.js';
+export type { FindCapabilities, FindController, FindCoverage, FindOptions, FindStatus, FindTextRange } from './find/findTypes.js';
 export {
   HappierPressable,
   type HappierPressableProps,
@@ -497,6 +564,26 @@ export {
   writeHappierActionInputPath,
   type HappierActionFieldPresentation,
 } from './form/actionInputFields.js';
+// One typed field for Actions, Workflows, widget setup and the public Form, with the host's
+// custom-picker port beneath it.
+export {
+  HappierInputField,
+  type HappierInputFieldDescriptor,
+  type HappierInputFieldProps,
+} from './form/InputField.js';
+export {
+  HappierInputPickerButton,
+  HappierInputPickerProvider,
+  useHappierInputPicker,
+  useHappierInputPickerPort,
+  type HappierInputPickerAffordance,
+  type HappierInputPickerField,
+  type HappierInputPickerOption,
+  type HappierInputPickerPort,
+  type HappierInputPickerRequest,
+  type HappierInputPickerResult,
+  type HappierInputPickerState,
+} from './form/inputPicker.js';
 export {
   HAPPIER_SELECTION_TILE_TEXT,
   HappierSelectionTiles,
@@ -571,6 +658,7 @@ export {
 export {
   HAPPIER_WORK_STATUS_BUCKETS,
   HAPPIER_WORK_STATUS_BUCKET_LABEL_KEYS,
+  HAPPIER_WORK_STATUS_SEMANTIC_TONE,
   resolveHappierWorkStatusBucketLabel,
   resolveHappierWorkStatusGlyphColor,
   resolveHappierWorkStatusSurfaceStyle,

@@ -1287,6 +1287,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
             };
             const kvScopeIdentity = Object.freeze({});
+            // Declarations are readonly author data. Keep their admitted schema
+            // and validator with this occurrence rather than rebuilding them on
+            // every polling wake. The handle still rechecks live authority and
+            // Account state on every operation; no row or credential is cached.
+            const boundCollections = new WeakMap<PluginAccountCollectionDefinition,
+                PluginAccountCollectionForDefinition<PluginAccountCollectionDefinition>>();
             const latestQueryCursorByCollectionKey = new Map<string, Readonly<{
                 accountScopeKey: string;
                 changeCursor: number;
@@ -1637,6 +1643,8 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             const bindDeclaredCollection = <TDefinition extends PluginAccountCollectionDefinition>(
                 definition: TDefinition,
             ): PluginAccountCollectionForDefinition<TDefinition> => {
+                const existing = boundCollections.get(definition);
+                if (existing) return existing as PluginAccountCollectionForDefinition<TDefinition>;
                 let requested: NormalizedPluginAccountCollectionContractV1 | null = null;
                 try {
                     const parsed = PluginAccountCollectionContributionV1Schema.safeParse(
@@ -2162,6 +2170,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         return Object.freeze({ dispose });
                     },
                 });
+                boundCollections.set(definition, bound);
                 return bound;
             };
 

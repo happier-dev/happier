@@ -11,7 +11,6 @@ import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTes
 
 const clearCacheSpy = vi.fn();
 const clearRepositoryDirectoryCacheSpy = vi.fn();
-const clearWorkspaceFileSearchCacheSpy = vi.fn();
 const clearWorkspaceRepositoryDirectoryCacheSpy = vi.fn();
 let latestTransferOptions: any = null;
 
@@ -122,11 +121,6 @@ vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
     clearCachedRepositoryDirectoryEntries: (input: { sessionId: string }) => clearRepositoryDirectoryCacheSpy(input),
 }));
 
-vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
-    workspaceFileSearchCache: { clearCache: (scope: unknown) => clearWorkspaceFileSearchCacheSpy(scope) },
-    searchWorkspaceFiles: vi.fn(async () => []),
-}));
-
 vi.mock('@/sync/domains/workspaces/files/workspaceRepositoryDirectory', () => ({
     clearCachedWorkspaceRepositoryDirectoryEntries: (input: { workspaceCacheKey: string }) => clearWorkspaceRepositoryDirectoryCacheSpy(input),
 }));
@@ -212,7 +206,6 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
 
     it('shows clear button when search is non-empty and refresh clears search cache + reloads tree', async () => {
         clearCacheSpy.mockClear();
-        clearWorkspaceFileSearchCacheSpy.mockClear();
         clearWorkspaceRepositoryDirectoryCacheSpy.mockClear();
         mountCount.current = 0;
         reloadCount.current = 0;
@@ -241,13 +234,6 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             screen.findByTestId('repository-tree-view-menu')?.props.onSelect('repository-tree-refresh');
         });
 
-        // Cleared BY SCOPE: the search cache derives its own key, so the refresh cannot name a
-        // different workspace than the one the tree is reading.
-        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith({
-            serverId: 'server',
-            machineId: 'm1',
-            rootPath: '/repo',
-        });
         expect(clearWorkspaceRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
         // Tree list remounts when switching between search-results and tree view.
         expect(mountCount.current).toBe(2);
@@ -257,7 +243,6 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
     it('refreshes the repository tree when uploads succeed', async () => {
         clearCacheSpy.mockClear();
         clearRepositoryDirectoryCacheSpy.mockClear();
-        clearWorkspaceFileSearchCacheSpy.mockClear();
         clearWorkspaceRepositoryDirectoryCacheSpy.mockClear();
         latestTransferOptions = null;
         reloadCount.current = 0;
@@ -271,13 +256,6 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             latestTransferOptions.onAfterUploadSuccess();
         });
 
-        // Cleared BY SCOPE: the search cache derives its own key, so the refresh cannot name a
-        // different workspace than the one the tree is reading.
-        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith({
-            serverId: 'server',
-            machineId: 'm1',
-            rootPath: '/repo',
-        });
         expect(clearWorkspaceRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
         expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
         expect(reloadCount.current).toBe(2);

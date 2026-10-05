@@ -7,7 +7,7 @@ import {
 import { inferProjectTitleFromPath } from '@/utils/path/browseSegments';
 
 /**
- * What Home's composer suggests, derived only from data the app already holds. Each suggestion
+ * What Home's composer suggests, using starter prompts and data the app already holds. Each suggestion
  * names its source; pressing one fills the composer (text and, when known, where to start) and
  * never sends.
  *
@@ -15,9 +15,9 @@ import { inferProjectTitleFromPath } from '@/utils/path/browseSegments';
  * - `sessionHistory`: the project with the most sessions this week → "Summarize what changed in
  *   <project> since <day>", started in that project's folder on its machine.
  *
- * Not offered, because no host-readable source exists yet: Automations (the definitions list
- * carries no run outcome; run windows load per Automation) and PR/issue review requests (plugin
- * data, owned by the plugin's own widget).
+ * Starter prompts name tasks without claiming any activity. Automation authoring is offered only
+ * when the Home supports Automations (the workflow definition and trigger Actions own creation).
+ * No Automation outcome or PR/issue request is invented; those remain in their source widgets.
  */
 export type HomeComposerSuggestionSession = Readonly<Pick<Session, 'id' | 'serverId' | 'createdAt'> & {
     metadata: Readonly<{ path?: unknown; machineId?: unknown; homeDir?: unknown; host?: unknown }> | null;
@@ -41,7 +41,20 @@ export type HomeComposerSuggestion = Readonly<{
     sessionCount: number;
     since: HomeComposerSuggestionSince;
     fill: Readonly<{ placement: HomeComposerSuggestionPlacement }>;
+}> | Readonly<{
+    id: string;
+    source: 'starter';
+    intent: 'explain' | 'fixTest' | 'automation';
+    fill: Readonly<{ placement: null }>;
 }>;
+
+const STARTER_SUGGESTIONS: readonly HomeComposerSuggestion[] = Object.freeze([
+    { id: 'starter:explain', source: 'starter', intent: 'explain', fill: { placement: null } },
+    { id: 'starter:fixTest', source: 'starter', intent: 'fixTest', fill: { placement: null } },
+]);
+const AUTOMATION_STARTER: HomeComposerSuggestion = {
+    id: 'starter:automation', source: 'starter', intent: 'automation', fill: { placement: null },
+};
 
 /** "This week": today and the six days before it, whole days, so a weekday name is unambiguous. */
 const WINDOW_DAYS = 7;
@@ -78,6 +91,7 @@ type ProjectGroup = {
 export function deriveHomeComposerSuggestions(input: Readonly<{
     sessions: Iterable<HomeComposerSuggestionSession>;
     nowMs: number;
+    automationsEnabled?: boolean;
 }>): readonly HomeComposerSuggestion[] {
     const windowStart = daysBefore(startOfLocalDay(input.nowMs), WINDOW_DAYS - 1);
     const groups = new Map<string, ProjectGroup>();
@@ -111,9 +125,10 @@ export function deriveHomeComposerSuggestions(input: Readonly<{
             busiest = group;
         }
     }
-    if (!busiest) return [];
+    const starters = input.automationsEnabled ? [...STARTER_SUGGESTIONS, AUTOMATION_STARTER] : STARTER_SUGGESTIONS;
+    if (!busiest) return starters;
     const project = inferProjectTitleFromPath(busiest.pathKey);
-    if (!project) return [];
+    if (!project) return starters;
 
     return [{
         id: `sessionHistory:${busiest.key}`,
@@ -124,5 +139,5 @@ export function deriveHomeComposerSuggestions(input: Readonly<{
         fill: {
             placement: { serverId: busiest.serverId, machineId: busiest.machineId, directory: busiest.pathKey },
         },
-    }];
+    }, ...STARTER_SUGGESTIONS];
 }

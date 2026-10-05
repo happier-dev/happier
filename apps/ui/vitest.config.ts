@@ -3,6 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers'
 import {
     createWorkspacePackageSourcesPlugin,
     readBundledPluginWorkspacePackageSpecs,
@@ -13,11 +14,6 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 // Vitest's --root does not change process.cwd(); aliases and setup belong to this package.
 const resolve = (...paths: string[]) => resolvePath(packageRoot, ...paths);
-const MAX_VITEST_FORKS = 6;
-const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
-const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0
-    ? Math.min(maxForksEnv, MAX_VITEST_FORKS)
-    : MAX_VITEST_FORKS;
 
 function resolveExpoNodeModuleStub(id: string, importer?: string): string | null {
     if (
@@ -151,12 +147,7 @@ export default defineConfig({
         // Work around intermittent Node 25 + worker-thread resolution failures seen in large suites.
         // Forks are slower but much more stable for our UI runner locally.
         pool: 'forks',
-        // Cap fork parallelism to reduce CPU contention (many tests are time-sensitive under load).
-        poolOptions: {
-            forks: {
-                maxForks,
-            },
-        },
+        ...resolveVitestWorkers({ legacyUiOverride: true }),
         // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
         // Increase the default timeout so unrelated load doesn't cause spurious failures.
         testTimeout: 60_000,
@@ -186,6 +177,7 @@ export default defineConfig({
         env: {
             HAPPIER_FEATURE_POLICY_ENV: '',
             NODE_ENV: 'test',
+            VITEST_UI_SOURCES_DIR: resolve('./sources'),
         },
         setupFiles: [resolve('./sources/dev/vitestSetup.ts')],
         include: [

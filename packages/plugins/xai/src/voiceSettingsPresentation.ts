@@ -15,6 +15,7 @@ const vadField = (suffix: string, bounds: Readonly<{ min: number; max: number; i
 export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
   kind: 'voice.provider-settings.v1' as const,
   modes: Object.freeze(['byo'] as const),
+  language: Object.freeze({ kind: 'independent_reply' as const }),
   titleKey: 'settingsVoice.realtimeProviders.setup.title',
   footerKey: 'settingsVoice.realtimeProviders.xai.setup.footer',
   credential: Object.freeze({

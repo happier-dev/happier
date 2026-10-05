@@ -1,3 +1,5 @@
+import { configureDevTargetPower } from './utils/dev_targets/worker_power.mjs';
+import { provisionManagedWslDevTarget } from './utils/dev_targets/managed_wsl.mjs';
 import './utils/env/env.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -31,6 +33,14 @@ import {
   waitForDevTargetSyncMonitor,
 } from './utils/dev_targets/sync_service.mjs';
 import { writeNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
+
+async function configureWorkerPower(target) {
+  const results = await configureDevTargetPower({ target });
+  for (const result of results) {
+    if (!result.ok) process.stderr.write(`[dev-targets] ${target.name} ${result.role}: sleep configuration failed: ${result.detail}\n`);
+  }
+  return { name: target.name, results };
+}
 
 function splitCommandArguments(argv) {
   const separator = argv.indexOf('--');
@@ -161,8 +171,8 @@ function setPlacement(config, surface, destination, options = {}) {
   const upgraded = upgradePlacementConfig(config);
   const normalizedSurface = String(surface ?? '').trim().toLowerCase();
   const normalizedDestination = String(destination ?? '').trim().toLowerCase();
-  if (!['server', 'expo', 'daemon', 'commands'].includes(normalizedSurface)) {
-    throw new Error('[dev-targets] placement surface must be server, expo, daemon, or commands');
+  if (!['server', 'expo', 'daemon', 'build', 'commands'].includes(normalizedSurface)) {
+    throw new Error('[dev-targets] placement surface must be server, expo, daemon, build, or commands');
   }
   if (!normalizedDestination) {
     throw new Error('[dev-targets] placement destination must be local or a configured target name');
@@ -231,7 +241,7 @@ function requireCapacityInteger(raw, option) {
 function setTargetCapacity(config, targetName, mode, kv) {
   const target = requireTarget(config.targets, targetName, 'capacity set');
   if (!target.managedRuntime) {
-    throw new Error(`[dev-targets] target ${target.name} has no managed Lima runtime`);
+    throw new Error(`[dev-targets] target ${target.name} has no managed runtime`);
   }
   const normalizedMode = String(mode ?? '').trim().toLowerCase();
   if (normalizedMode !== 'shared' && normalizedMode !== 'dedicated') {
@@ -319,14 +329,17 @@ async function main() {
         '  hstack dev-targets sync-service stop [--stack=NAME]',
         '  hstack dev-targets exec NAME|auto [--cwd=PATH] [--env=KEY=VALUE]... [--flush] [--tty] [--stack=NAME] -- COMMAND [ARG...]',
         '  hstack dev-targets placement show [--stack=NAME]',
-        '  hstack dev-targets placement set server|expo local|TARGET [--stack=NAME]',
+        '  hstack dev-targets placement set server|expo|build local|TARGET [--stack=NAME]',
         '  hstack dev-targets placement set daemon local|TARGET|local-and-targets [--targets=NAME,...] [--stack=NAME]',
         '  hstack dev-targets placement set commands local|TARGET|auto [--targets=NAME,...] [--include-local] [--fallback=local|error] [--load-probe-ttl-ms=MS] [--unavailable-probe-ttl-ms=MS] [--stack=NAME]',
         '  hstack dev-targets placement clear --downgrade-v1 [--stack=NAME]',
         '  hstack dev-targets add NAME --host=HOST --user=USER [--managed-lima] [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
         '  hstack dev-targets add NAME --managed-lima --outer-target=NAME [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
         '  hstack dev-targets add NAME --platform=posix|windows --ssh=ALIAS --repo-dir=PATH --cli-home-dir=PATH [--ssh-config-file=PATH] [--lima-instance=NAME --lima-home=PATH --lima-profile=worker-balanced] [--remote-server-port=PORT] [--stack=NAME]',
+        '  hstack dev-targets add NAME --managed-wsl --outer-ssh=ALIAS --outer-ssh-config-file=PATH --dedicated-cpus=N --dedicated-memory-gib=N [--wsl-instance=NAME] [--wsl-user=happier] [--shared-cpus=N --shared-memory-gib=N] [--stack=NAME]',
         '  hstack dev-targets remove NAME [--stack=NAME]',
+        '',
+        '  hstack dev-targets power no-sleep NAME|auto [--stack=NAME]',
         '',
         'Mutagen is intentionally user-installed and remains available as the normal `mutagen` CLI.',
       ].join('\n'),
@@ -365,7 +378,7 @@ async function main() {
         ...(target.sshConfigFile ? [`ssh config\t${target.sshConfigFile}`] : []),
         ...(target.limaInstance ? [`Lima\t${target.limaHome}:${target.limaInstance}`] : []),
         ...(target.managedRuntime
-          ? [`managed Lima\t${target.managedRuntime.host.kind}:${target.managedRuntime.limaHome}:${target.managedRuntime.instance} (${target.managedRuntime.profile})`]
+          ? [`managed ${target.managedRuntime.kind}\t${target.managedRuntime.host.kind}:${target.managedRuntime.instance}`]
           : []),
         `repo\t${target.repoDir}`,
         `CLI home\t${target.cliHomeDir}`,
@@ -424,7 +437,7 @@ async function main() {
       text: [
         formatSyncStatus(target, status),
         ...(managedRuntime
-          ? [`[dev-targets] ${target.name} managed Lima\t${managedRuntime.status}\t${managedRuntime.ok ? 'ok' : 'failed'}`]
+          ? [`[dev-targets] ${target.name} managed ${target.managedRuntime.kind}\t${managedRuntime.status}\t${managedRuntime.ok ? 'ok' : 'failed'}`]
           : []),
       ].join('\n'),
     });
@@ -436,7 +449,7 @@ async function main() {
     if (action === 'show') {
       const target = requireTarget(loaded.config.targets, positionals[2], 'capacity show');
       if (!target.managedRuntime) {
-        throw new Error(`[dev-targets] target ${target.name} has no managed Lima runtime`);
+        throw new Error(`[dev-targets] target ${target.name} has no managed runtime`);
       }
       printResult({
         json,
@@ -473,8 +486,8 @@ async function main() {
         text: [
           `[dev-targets] ${desired.target.name} capacity mode: ${desired.target.managedRuntime.capacity.mode}`,
           applied.changed
-            ? '[dev-targets] managed Lima VM reconciled and capacity applied'
-            : '[dev-targets] managed Lima VM already matched the selected capacity',
+            ? '[dev-targets] managed worker reconciled and capacity applied'
+            : '[dev-targets] managed worker already matched the selected capacity',
         ].join('\n'),
       });
       return;
@@ -544,19 +557,16 @@ async function main() {
         data: { path, stackName, ...result },
         text: [
           `[dev-targets] independent synchronization\t${result.independent ? 'active' : 'inactive'}`,
-          `[dev-targets] synchronization readiness\t${result.preparation?.state ?? 'unknown'}`,
+          `[dev-targets] synchronization readiness\t${result.state}`,
+          `[dev-targets] startup preparation history\t${result.preparation?.state ?? 'unknown'}`,
           ...Object.entries(result.preparation?.targets ?? {}).map(([target, preparation]) => (
-            `[dev-targets] ${target} synchronization\t${preparation.state}`
+            `[dev-targets] ${target} startup preparation history\t${preparation.state}`
               + (preparation.error ? `\t${preparation.error}` : '')
           )),
           ...result.statuses.map(({ target, status }) => `[dev-targets] ${target}\t${status.state}`),
         ].join('\n'),
       });
-      if (
-        !result.independent
-        || result.preparation?.state !== 'ready'
-        || result.statuses.some(({ status }) => !['ready', 'synchronizing'].includes(status.state))
-      ) {
+      if (result.state !== 'ready') {
         process.exitCode = 1;
       }
       return;
@@ -634,6 +644,17 @@ async function main() {
     process.exitCode = exitCodeForCommandResult(result);
     return;
   }
+  if (command === 'power') {
+    if (positionals[1] !== 'no-sleep') throw new Error('[dev-targets] power requires no-sleep NAME|auto');
+    const requested = positionals[2];
+    const targets = requested === 'auto'
+      ? (loaded.config.commandExecution?.targets ?? []).map((name) => requireTarget(loaded.config.targets, name, 'power'))
+      : [requireTarget(loaded.config.targets, requested, 'power')];
+    const results = await Promise.all(targets.map(configureWorkerPower));
+    printResult({ json, data: { results }, text: results.map((entry) => `[dev-targets] ${entry.name} sleep: ${entry.results.every((result) => result.ok) ? 'disabled' : 'incomplete'}`).join('\n') });
+    if (results.some((entry) => entry.results.some((result) => !result.ok))) process.exitCode = 1;
+    return;
+  }
   if (command === 'placement') {
     const action = String(positionals[1] ?? 'show').trim().toLowerCase();
     if (action === 'show') {
@@ -652,6 +673,9 @@ async function main() {
         loadProbeTtlMs: kv.get('--load-probe-ttl-ms'),
         unavailableProbeTtlMs: kv.get('--unavailable-probe-ttl-ms'),
       });
+      if (positionals[2] === 'commands' && config.commandExecution?.mode === 'auto') {
+        await Promise.all(config.commandExecution.targets.map((name) => configureWorkerPower(requireTarget(config.targets, name, 'placement'))));
+      }
       await writeConfig(path, config);
       printResult({
         json,
@@ -681,7 +705,34 @@ async function main() {
     const host = kv.get('--host');
     const outerTargetName = String(kv.get('--outer-target') ?? '').trim().toLowerCase();
     let candidate;
-    if (host || outerTargetName) {
+    if (flags.has('--managed-wsl')) {
+      if (host || flags.has('--managed-lima') || kv.get('--ssh') || kv.get('--ssh-config-file')) {
+        throw new Error('[dev-targets] managed WSL requires outer Windows SSH configuration without other provisioning modes');
+      }
+      if (outerTargetName && (kv.get('--outer-ssh') || kv.get('--outer-ssh-config-file'))) {
+        throw new Error('[dev-targets] use either --outer-target or direct outer SSH configuration');
+      }
+      const outerTarget = outerTargetName
+        ? loaded.config.targets.find((entry) => entry.name === outerTargetName)
+        : { platform: 'windows', ssh: kv.get('--outer-ssh'), sshConfigFile: kv.get('--outer-ssh-config-file') };
+      const cpus = requireCapacityInteger(kv.get('--dedicated-cpus'), '--dedicated-cpus');
+      const memoryGiB = requireCapacityInteger(kv.get('--dedicated-memory-gib'), '--dedicated-memory-gib');
+      candidate = await provisionManagedWslDevTarget({
+        name: name.toLowerCase(), outerTarget, stackBaseDir: dirname(path),
+        instance: kv.get('--wsl-instance') ?? `HappierWorker-${name.toLowerCase()}`,
+        user: kv.get('--wsl-user') ?? 'happier',
+        capacity: {
+          mode: 'dedicated',
+          shared: {
+            cpus: requireCapacityInteger(kv.get('--shared-cpus') ?? cpus, '--shared-cpus'),
+            memoryGiB: requireCapacityInteger(kv.get('--shared-memory-gib') ?? memoryGiB, '--shared-memory-gib'),
+          },
+          dedicated: { cpus, memoryGiB },
+        },
+        repoDir: kv.get('--repo-dir') ?? null, cliHomeDir: kv.get('--cli-home-dir') ?? null,
+        env: process.env,
+      });
+    } else if (host || outerTargetName) {
       if (host && outerTargetName) {
         throw new Error('[dev-targets] --host and --outer-target are mutually exclusive');
       }
@@ -777,6 +828,7 @@ async function main() {
     const config = withTargets(loaded.config, [...remaining, candidate]);
     await writeConfig(path, config);
     const target = config.targets.find((entry) => entry.name === name.toLowerCase());
+    if (target.managedRuntime || host) await configureWorkerPower(target);
     printResult({
       json,
       data: { path, stackName, target },

@@ -40,4 +40,8 @@ describe('SCM RPC failure normalization', () => {
         }
         expect(assertScmResponse({ success: true })).toEqual({ success: true });
     });
+    it('rejects malformed commit publication before granting effect or retry authority', () => {
+        expect(() => assertScmResponse({ success: false, publication: { state: 'not_published', candidateOid: 'unknown' } })).toThrow();
+        expect(() => assertScmResponse({ success: true, publication: { state: 'published', expectedHeadOid: null, expectedRef: null, candidateOid: 'a'.repeat(40), indexReconciliation: 'reconciled', hiddenAuthority: true } })).toThrow();
+    });
 });

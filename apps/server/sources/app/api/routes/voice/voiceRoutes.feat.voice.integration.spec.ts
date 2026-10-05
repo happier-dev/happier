@@ -721,7 +721,7 @@ describe("voiceRoutes (integration, sqlite)", () => {
     it("accepts exactly one concurrent owner and leaves the losing lease unpoisoned", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-voice-concurrent-completion" }, select: { id: true } });
         const providerConversationId = "conv_concurrent_completion";
-        const completionNonces: string[] = [];
+        let ownerBindingNonce = "";
 
         harness.resetEnv({ VOICE_MAX_CONCURRENT_SESSIONS: "2", HAPPIER_VOICE_TOKEN_RATE_LIMIT_MAX: "100" });
         vi.stubGlobal("fetch", vi.fn(async (url: any) => {
@@ -730,11 +730,9 @@ describe("voiceRoutes (integration, sqlite)", () => {
                 return new Response(JSON.stringify({ token: "conv_token_concurrent_completion" }), { status: 200 });
             }
             if (u.includes(`/v1/convai/conversations/${providerConversationId}`)) {
-                const bindingNonce = completionNonces.shift();
-                if (!bindingNonce) throw new Error("missing completion nonce");
                 return new Response(JSON.stringify(providerConversationDetails({
                     conversationId: providerConversationId,
-                    bindingNonce,
+                    bindingNonce: ownerBindingNonce,
                     durationSeconds: 3,
                 })), { status: 200 });
             }
@@ -747,7 +745,8 @@ describe("voiceRoutes (integration, sqlite)", () => {
 
         const first = await mintVoiceLeaseWithBindingNonce(app, user.id, "s-concurrent-completion-1");
         const second = await mintVoiceLeaseWithBindingNonce(app, user.id, "s-concurrent-completion-2");
-        completionNonces.push(first.bindingNonce, second.bindingNonce);
+        // A real conversation has one stable nonce, regardless of request arrival order.
+        ownerBindingNonce = first.bindingNonce;
 
         const attempts = await Promise.all([
             completeVoiceSession(app, user.id, first.leaseId, providerConversationId),
@@ -1173,6 +1172,7 @@ describe("voiceRoutes (integration, sqlite)", () => {
                 return new Response(
                     JSON.stringify({
                         conversation_id: providerConversationId,
+                        status: "done",
                         agent_id: "agent_other",
                         metadata: { call_duration_secs: 4, start_time_unix_secs: Math.floor(Date.now() / 1000) },
                         conversation_initiation_client_data: {

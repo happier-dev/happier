@@ -4,6 +4,8 @@
  * the strings live here, one block per locale, spread into each locale root.
  */
 import type { ActionIdFamilyV1 } from '@happier-dev/protocol';
+import { fileContentSearchTranslations } from './fileContentSearchTranslations';
+import { promptPickerTranslations } from './promptPickerTranslations';
 
 // Newly projected surface families follow the existing Workspace English-fallback convention.
 const surfaceFamilyLabels = {
@@ -11,6 +13,7 @@ const surfaceFamilyLabels = {
     capture_viewing: 'Captures',
     session_terminals: 'Session terminals',
     workspace_layout: 'Workspace layout',
+    workspace_file_search: fileContentSearchTranslations.en.textInFiles,
     scope: 'Scope',
     connected_services_configuration: 'Connected accounts',
     boards: 'Boards',
@@ -19,7 +22,17 @@ const surfaceFamilyLabels = {
     home_hub_layout: 'Home layout',
     machine_connection: 'Machine connections',
     session_organization_resources: 'Projects and tags',
+    session_organization_move: 'Session organization',
+    composer_ingress: 'Composer and uploads',
+    list_reorder: 'Pending input and todos',
+    todo_session_link: 'Todo sessions',
+    widgets: 'Widgets',
+    workflow_authoring: 'Workflow authoring',
     command_palette: 'Search',
+    find: 'Find',
+    prompt_picker: promptPickerTranslations.en.open,
+    app_updates: 'App updates',
+    notification_configuration: 'Notification settings',
 };
 
 const english = {
@@ -106,6 +119,8 @@ export const actionFamilyTranslations = {
     ca: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.ca.textInFiles,
+            find: 'Cerca',
             app_shell: 'Workspace',
             roles: 'Rols',
             launch_profiles: 'Perfils d’inici',
@@ -180,6 +195,8 @@ export const actionFamilyTranslations = {
     de: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.de.textInFiles,
+            find: 'Suche',
             app_shell: 'Workspace',
             roles: 'Rollen',
             launch_profiles: 'Startprofile',
@@ -254,6 +271,8 @@ export const actionFamilyTranslations = {
     es: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.es.textInFiles,
+            find: 'Buscar',
             app_shell: 'Workspace',
             roles: 'Roles de agente',
             launch_profiles: 'Perfiles de inicio',
@@ -328,6 +347,8 @@ export const actionFamilyTranslations = {
     fr: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.fr.textInFiles,
+            find: 'Rechercher',
             app_shell: 'Workspace',
             roles: 'Rôles',
             launch_profiles: 'Profils de lancement',
@@ -402,6 +423,8 @@ export const actionFamilyTranslations = {
     it: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.it.textInFiles,
+            find: 'Trova',
             app_shell: 'Workspace',
             roles: 'Ruoli',
             launch_profiles: 'Profili di avvio',
@@ -476,6 +499,8 @@ export const actionFamilyTranslations = {
     ja: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.ja.textInFiles,
+            find: '検索',
             app_shell: 'Workspace',
             roles: 'ロール',
             launch_profiles: '起動プロファイル',
@@ -550,6 +575,8 @@ export const actionFamilyTranslations = {
     pl: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.pl.textInFiles,
+            find: 'Znajdź',
             app_shell: 'Workspace',
             roles: 'Role',
             launch_profiles: 'Profile uruchamiania',
@@ -624,6 +651,8 @@ export const actionFamilyTranslations = {
     pt: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.pt.textInFiles,
+            find: 'Localizar',
             app_shell: 'Workspace',
             roles: 'Funções',
             launch_profiles: 'Perfis de inicialização',
@@ -698,6 +727,8 @@ export const actionFamilyTranslations = {
     ru: translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations.ru.textInFiles,
+            find: 'Поиск',
             app_shell: 'Workspace',
             roles: 'Роли',
             launch_profiles: 'Профили запуска',
@@ -772,6 +803,8 @@ export const actionFamilyTranslations = {
     'zh-Hans': translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations['zh-Hans'].textInFiles,
+            find: '查找',
             app_shell: 'Workspace',
             roles: '角色',
             launch_profiles: '启动配置',
@@ -846,6 +879,8 @@ export const actionFamilyTranslations = {
     'zh-Hant': translated({
         actionFamilies: {
             ...surfaceFamilyLabels,
+            workspace_file_search: fileContentSearchTranslations['zh-Hant'].textInFiles,
+            find: '尋找',
             app_shell: 'Workspace',
             roles: '角色',
             launch_profiles: '啟動設定檔',

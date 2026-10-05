@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol';
 
 import { composeCurrentUiContextSnapshot } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import { storage } from '@/sync/domains/state/storage';
@@ -413,6 +414,41 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     // The same session still produces the stored-session prompt for a
     // direct-media provider, so the empty result above is real scoping.
     expect(voiceHooks.onVoiceStarted('s1', 'session_context')).not.toBe('');
+  });
+
+  it('does not mark activity-only sessions as shown, so later Account Follow consent can emit full context', () => {
+    // s1 is neither the attempt target nor included in Account Voice.
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
+    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
+
+    voiceHooks.onReady({ serverId: 'server-a', sessionId: 's1' });
+    // activity-only sessions should not emit a full session context block.
+    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+      'session_context',
+    );
+
+    // Synchronized Include in Voice consent admits its full context.
+    storage.setState((state) => ({ sessions: {
+      ...state.sessions,
+      s1: {
+        ...state.sessions.s1,
+        viewer: SessionViewerProjectionV1Schema.parse({
+          readState: { state: 'not_started' },
+          relevance: { relevant: true, reasons: ['followed_by_me'] },
+          attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+          follow: { follows: true, notificationLevel: 'important', includeInVoice: true },
+          notification: { level: 'important', source: 'preference' },
+        }),
+      },
+    } }));
+    voiceHooks.onReady({ serverId: 'server-a', sessionId: 's1' });
+    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+      'session_context',
+    );
   });
 
   it('does not mark activity-only sessions as shown, so later target selection can emit full context', () => {

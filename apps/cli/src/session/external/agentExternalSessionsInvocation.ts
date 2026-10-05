@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import {
     AgentExternalSessionTranscriptRawRecordSchema,
     ExternalSessionCandidateThreadV1Schema,
+    ExternalSessionCandidateMatchV1Schema,
+    ExternalSessionsContentCoverageSchema,
     ExternalSessionTranscriptItemIdV1Schema,
     ExternalSessionTerminalSourceObservationV1Schema,
     ExternalSessionTranscriptSourceTimestampV1Schema,
@@ -27,6 +29,7 @@ import type {
     AgentExternalSessionsManagedEndpointRead,
     AgentExternalSessionsReadAfterDiagnostic,
     AgentExternalSessionsResult,
+    AgentExternalSessionsRipgrep,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { isAgentExternalSessionsFailureCode } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
@@ -42,6 +45,7 @@ import type {
 
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { run as runPackagedRipgrep } from '@/integrations/ripgrep';
 
 import {
     serializeManagedServiceEndpointReadRequestHeaders,
@@ -191,7 +195,7 @@ function boundManagedEndpointResponseBody(
 }
 
 type WithoutHostStampedInvocationServices<T> = T extends unknown
-    ? Omit<T, 'managedEndpointRead' | 'exec'>
+    ? Omit<T, 'managedEndpointRead' | 'exec' | 'ripgrep'>
     : never;
 
 /**
@@ -433,7 +437,7 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
     const record = readStrictRecord(
         value,
         ['remoteSessionId', 'updatedAtMs'],
-        ['title', 'createdAtMs', 'archived', 'thread', 'linkData', 'candidateIndexState'],
+        ['title', 'createdAtMs', 'archived', 'thread', 'linkData', 'candidateIndexState', 'match'],
     );
     if (!record) return null;
     const remoteSessionId = parseBoundedString(record.remoteSessionId, MAX_ID_CODE_UNITS);
@@ -451,6 +455,8 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
     const candidateIndexState = record.candidateIndexState === undefined
         ? undefined
         : parseLinkData(record.candidateIndexState);
+    const parsedMatch = record.match === undefined ? undefined : ExternalSessionCandidateMatchV1Schema.safeParse(record.match);
+    const match = parsedMatch === undefined ? undefined : parsedMatch.success ? parsedMatch.data : null;
     if (
         remoteSessionId === null
         || updatedAtMs === null
@@ -461,6 +467,7 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
         || thread === null
         || linkData === null
         || candidateIndexState === null
+        || match === null
     ) {
         return null;
     }
@@ -473,6 +480,7 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
         ...(thread === undefined ? {} : { thread }),
         ...(linkData === undefined ? {} : { linkData }),
         ...(candidateIndexState === undefined ? {} : { candidateIndexState }),
+        ...(match === undefined ? {} : { match }),
     });
 }
 
@@ -663,7 +671,7 @@ function parseListCandidatesValue(
     identity: ContributionIdentity,
     scope: CursorScope,
 ): AgentExternalSessionsListCandidatesResult | null {
-    const record = readStrictRecord(value, ['candidates', 'nextCursor'], ['searchIncomplete', 'preparation']);
+    const record = readStrictRecord(value, ['candidates', 'nextCursor'], ['searchIncomplete', 'preparation', 'contentCoverage']);
     if (!record || !Array.isArray(record.candidates) || record.candidates.length > maxItems) return null;
     const candidates = record.candidates.map(parseCandidate);
     if (candidates.some((candidate) => candidate === null)) return null;
@@ -674,16 +682,20 @@ function parseListCandidatesValue(
             : null;
     const searchIncomplete = parseOptionalBoolean(record.searchIncomplete);
     const preparation = parseCandidatePreparation(record.preparation);
+    const parsedCoverage = record.contentCoverage === undefined ? undefined : ExternalSessionsContentCoverageSchema.safeParse(record.contentCoverage);
+    const contentCoverage = parsedCoverage === undefined ? undefined : parsedCoverage.success ? parsedCoverage.data : null;
     if (
         (record.nextCursor !== null && nextCursor === null)
         || searchIncomplete === null
         || preparation === null
+        || contentCoverage === null
     ) return null;
     return Object.freeze({
         candidates: Object.freeze(candidates as AgentExternalSessionCandidate[]),
         nextCursor,
         ...(searchIncomplete === undefined ? {} : { searchIncomplete }),
         ...(preparation === undefined ? {} : { preparation }),
+        ...(contentCoverage === undefined ? {} : { contentCoverage }),
     });
 }
 
@@ -1060,12 +1072,31 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
     const bindInvocationContext = async (
         source: AgentExternalSessionSource,
         signal: AbortSignal,
+        maxSerializedBytes: number,
     ) => {
         const managedEndpointRead = await bindManagedEndpointRead(source, signal);
         assertOperationAdmissible(signal);
         const exec = await params.createInvocationExec(signal);
         assertOperationAdmissible(signal);
-        return Object.freeze({ managedEndpointRead, exec });
+        const ripgrep: AgentExternalSessionsRipgrep = Object.freeze({
+            async run(request) {
+                const operationSignal = request.signal
+                    ? AbortSignal.any([signal, request.signal])
+                    : signal;
+                assertOperationAdmissible(operationSignal);
+                // An empty source file set must not turn into a cwd-wide scan.
+                if (request.paths.length === 0) return { exitCode: 1, stdout: '', stderr: '' };
+                const result = await runPackagedRipgrep([...request.args, ...request.paths], {
+                    signal: operationSignal,
+                    maxStdoutBytes: maxSerializedBytes,
+                    maxStderrBytes: maxSerializedBytes,
+                    terminateOnStdoutLimit: true,
+                });
+                assertOperationAdmissible(operationSignal);
+                return Object.freeze(result);
+            },
+        });
+        return Object.freeze({ managedEndpointRead, exec, ripgrep });
     };
     const wrap = Object.freeze({
         async resolveSource(request) {
@@ -1086,6 +1117,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
+                        maxSerializedBytes,
                     );
                     return await params.contribution.resolveSource({
                         source: parsedSource,
@@ -1122,6 +1154,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                 || maxSerializedBytes === null
                 || searchTerm === null
                 || (request.searchMode !== undefined && request.searchMode !== 'fast' && request.searchMode !== 'full')
+                || (request.searchTarget !== undefined && request.searchTarget !== 'metadata' && request.searchTarget !== 'content')
                 || (request.includeThreads !== undefined && typeof request.includeThreads !== 'boolean')
                 || (request.cursor !== undefined && cursor === null)
                 || !scope
@@ -1137,6 +1170,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
+                        maxSerializedBytes,
                     );
                     return await params.contribution.listCandidates({
                         source: parsedSource,
@@ -1148,6 +1182,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                         ...(typeof cursor === 'string' ? { cursor } : {}),
                         ...(searchTerm === undefined ? {} : { searchTerm }),
                         ...(request.searchMode === undefined ? {} : { searchMode: request.searchMode }),
+                        ...(request.searchTarget === undefined ? {} : { searchTarget: request.searchTarget }),
                         ...(request.includeThreads === undefined ? {} : { includeThreads: request.includeThreads }),
                         ...(request.readCandidateIndexState === undefined
                             ? {}
@@ -1190,6 +1225,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
+                        maxSerializedBytes,
                     );
                     return await params.contribution.resolveLinkIdentity({
                         source: parsedSource,
@@ -1224,6 +1260,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
+                        maxSerializedBytes,
                     );
                     return await params.contribution.resolveLinkedIdentity({
                         source: parsedSource,
@@ -1276,6 +1313,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
+                        maxSerializedBytes,
                     );
                     return await params.contribution.pageTranscript({
                         ...(request.projection ? { projection: request.projection } : {}),
@@ -1324,6 +1362,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     const invocation = await bindInvocationContext(
                         parsedSource,
                         signal,
+                        maxSerializedBytes,
                     );
                     return await params.contribution.readAfterTranscript({
                         ...(request.projection ? { projection: request.projection } : {}),

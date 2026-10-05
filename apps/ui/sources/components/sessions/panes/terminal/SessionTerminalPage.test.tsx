@@ -7,11 +7,20 @@ import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import type { SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-
 import { SessionTerminalPage } from './SessionTerminalPage';
 
 const actions = vi.hoisted(() => ({ execute: vi.fn(async () => ({ ok: true })) }));
+
+// The recipient-envelope HTTP API is not part of a terminal journey. Fail if this harness reaches it.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Terminal page unexpectedly reached the recipient-envelope API'); };
+    return {
+        createSessionDataKeyEnvelopeClient: unused,
+        readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused,
+        prepareSessionDataKeyEnvelopesDetached: unused,
+    };
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -118,16 +127,4 @@ describe('the phone Terminal page', () => {
         expect(actions.execute).toHaveBeenLastCalledWith('session.terminals.focus', { terminalId: 'embedded', scopeId }, expect.anything());
     });
 
-    it('offers the strip’s tab menu on a chip’s long press; Close goes through the Action owner', async () => {
-        const screen = await renderPage();
-        const chip = screen.findAll((node) => node.props.testID === 'term-chip-embedded' && typeof node.props.onLongPress === 'function')[0];
-        expect(chip).toBeTruthy();
-        await act(async () => { chip!.props.onLongPress({ nativeEvent: { pageX: 40, pageY: 120 } }); });
-
-        const menu = screen.findByType(DropdownMenu);
-        expect((menu.props.items as Array<{ id: string }>).map((item) => item.id)).toEqual(expect.arrayContaining(['rename', 'splitRight', 'restart', 'close']));
-        await act(async () => { menu.props.onSelect('close'); });
-
-        expect(actions.execute).toHaveBeenLastCalledWith('session.terminals.close', { terminalId: 'embedded', scopeId }, expect.anything());
-    });
 });

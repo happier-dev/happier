@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionInputOptionValue, ActionInputPredicate } from './pluginActionDtoSupport.generated.js';
+import type { InputPredicate } from './pluginActionDtoSupport.generated.js';
 
 export type DiscoveryActionInputById = {
     readonly "action.spec.search": {
@@ -18,17 +18,137 @@ export type DiscoveryActionInputById = {
         [x: string]: unknown;
         actionId?: string | undefined;
         fieldPath?: string | undefined;
+        consumer?: {
+            kind: 'workflow';
+            workflow: string;
+        } | {
+            kind: 'widget';
+            surface: {
+                serverId: string;
+                accountId: string;
+                owner: {
+                    kind: 'home';
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'companion';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
+                } | {
+                    kind: 'project';
+                    projectId: string;
+                } | {
+                    kind: 'pluginArea';
+                    pluginId: string;
+                    pageId: string;
+                    area: string;
+                };
+            };
+            definition: {
+                kind: 'installed';
+                surface: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'builtin';
+                id: string;
+            } | {
+                kind: 'artifact';
+                artifactId: string;
+            } | {
+                kind: 'inline';
+                definition: {
+                    provenance: {
+                        source: {
+                            kind: 'authored';
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                            itemId: string;
+                        };
+                        authorAccountId?: string | undefined;
+                    };
+                    name: string;
+                    body: {
+                        kind: 'declarative';
+                        document: unknown;
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    inputs: {
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        submitLabel?: string | undefined;
+                        fields?: readonly {
+                            path: string;
+                            widget: 'number' | 'boolean' | 'text' | 'url' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                            title: string;
+                            inputType?: {
+                                pluginId: string;
+                                localId: string;
+                            } | undefined;
+                            required?: boolean | undefined;
+                            requireExplicitSelection?: boolean | undefined;
+                            listSeparator?: 'comma' | 'newline' | undefined;
+                            maxSelections?: number | undefined;
+                            visibleWhen?: unknown;
+                            requiredWhen?: unknown;
+                            disabledWhen?: unknown;
+                            optionsSourceId?: string | undefined;
+                            connectedAccountOptions?: true | undefined;
+                            resolvedEmptyConnectedAccountOptions?: true | undefined;
+                            description?: string | undefined;
+                            placeholder?: string | undefined;
+                            options?: readonly {
+                                value: unknown;
+                                label: string;
+                                description?: string | undefined;
+                                disabled?: boolean | undefined;
+                            }[] | undefined;
+                        }[] | undefined;
+                    };
+                    inputSchema: unknown;
+                    v: 1;
+                    id: string;
+                    description?: string | undefined;
+                    sessionInputPath?: string | undefined;
+                    connectedAccountPurposeBindings?: {
+                        path: string;
+                        purpose: string;
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    }[] | undefined;
+                };
+            };
+            selectedSession?: {
+                serverId: string;
+                sessionId: string;
+            } | undefined;
+        } | undefined;
         optionsSourceId?: string | undefined;
         sessionId?: string | undefined;
         limit?: number | undefined;
         query?: string | undefined;
         draftInput?: Record<string, unknown> | undefined;
     };
-    readonly "action.invoke": {
+    readonly "action.invoke": Omit<{
         action: {
             pluginId: string;
             localId: string;
         };
+        input?: JsonValue;
+    }, 'input'> & {
         input?: unknown;
     };
 };
@@ -55,20 +175,24 @@ export type DiscoveryActionResultById = {
                     path: string;
                     widget: 'number' | 'boolean' | 'text' | 'url' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
                     title: string;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
                     listSeparator?: 'comma' | 'newline' | undefined;
                     maxSelections?: number | undefined;
-                    visibleWhen?: ActionInputPredicate | undefined;
-                    requiredWhen?: ActionInputPredicate | undefined;
-                    disabledWhen?: ActionInputPredicate | undefined;
+                    visibleWhen?: InputPredicate | undefined;
+                    requiredWhen?: InputPredicate | undefined;
+                    disabledWhen?: InputPredicate | undefined;
                     optionsSourceId?: string | undefined;
                     connectedAccountOptions?: true | undefined;
                     resolvedEmptyConnectedAccountOptions?: true | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
                     options?: readonly {
-                        value: ActionInputOptionValue;
+                        value: JsonValue;
                         label: string;
                         description?: string | undefined;
                         disabled?: boolean | undefined;
@@ -104,7 +228,7 @@ export type DiscoveryActionResultById = {
                 flow?: 'blocking' | 'deferred' | undefined;
             } | undefined;
             requiredAuthority?: 'account_automation' | 'present_user' | undefined;
-            executionPlacement?: 'account' | 'machine' | 'session' | 'client' | undefined;
+            executionPlacement?: 'session' | 'account' | 'machine' | 'client' | undefined;
             toolExposure?: {
                 agent?: 'direct' | 'discoverable_only' | undefined;
                 mcp?: 'direct' | 'discoverable_only' | undefined;
@@ -115,7 +239,7 @@ export type DiscoveryActionResultById = {
                 machineId?: 'current_session_machine' | undefined;
             } | undefined;
             outputSchema?: Record<string, unknown> | undefined;
-            sideEffectClass?: 'danger' | 'none' | 'external' | 'read' | 'write' | undefined;
+            sideEffectClass?: 'external' | 'danger' | 'none' | 'read' | 'write' | undefined;
             operation?: {
                 version: 1;
                 visibility: 'activity';
@@ -159,20 +283,24 @@ export type DiscoveryActionResultById = {
                     path: string;
                     widget: 'number' | 'boolean' | 'text' | 'url' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
                     title: string;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
                     listSeparator?: 'comma' | 'newline' | undefined;
                     maxSelections?: number | undefined;
-                    visibleWhen?: ActionInputPredicate | undefined;
-                    requiredWhen?: ActionInputPredicate | undefined;
-                    disabledWhen?: ActionInputPredicate | undefined;
+                    visibleWhen?: InputPredicate | undefined;
+                    requiredWhen?: InputPredicate | undefined;
+                    disabledWhen?: InputPredicate | undefined;
                     optionsSourceId?: string | undefined;
                     connectedAccountOptions?: true | undefined;
                     resolvedEmptyConnectedAccountOptions?: true | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
                     options?: readonly {
-                        value: ActionInputOptionValue;
+                        value: JsonValue;
                         label: string;
                         description?: string | undefined;
                         disabled?: boolean | undefined;
@@ -210,7 +338,7 @@ export type DiscoveryActionResultById = {
                 flow?: 'blocking' | 'deferred' | undefined;
             } | undefined;
             requiredAuthority?: 'account_automation' | 'present_user' | undefined;
-            executionPlacement?: 'account' | 'machine' | 'session' | 'client' | undefined;
+            executionPlacement?: 'session' | 'account' | 'machine' | 'client' | undefined;
             toolExposure?: {
                 agent?: 'direct' | 'discoverable_only' | undefined;
                 mcp?: 'direct' | 'discoverable_only' | undefined;
@@ -221,7 +349,7 @@ export type DiscoveryActionResultById = {
                 machineId?: 'current_session_machine' | undefined;
             } | undefined;
             outputSchema?: Record<string, unknown> | undefined;
-            sideEffectClass?: 'danger' | 'none' | 'external' | 'read' | 'write' | undefined;
+            sideEffectClass?: 'external' | 'danger' | 'none' | 'read' | 'write' | undefined;
             operation?: {
                 version: 1;
                 visibility: 'activity';
@@ -249,7 +377,7 @@ export type DiscoveryActionResultById = {
         fieldPath: string | null;
         optionsSourceId: string | null;
         options: readonly {
-            value: ActionInputOptionValue;
+            value: JsonValue;
             label: string;
             description?: string | undefined;
             disabled?: boolean | undefined;
@@ -325,6 +453,7 @@ export type DiscoveryActionResultById = {
                             capabilities?: {
                                 toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
                                 reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                                structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
                             } | undefined;
                         };
                         sources: {
@@ -412,6 +541,7 @@ export type DiscoveryActionResultById = {
                                 capabilities?: {
                                     toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
                                     reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                                    structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
                                 } | undefined;
                             };
                             application: {

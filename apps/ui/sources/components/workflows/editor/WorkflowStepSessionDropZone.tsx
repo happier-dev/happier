@@ -1,99 +1,66 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
+import { useEntityDragDropRuntime, useEntityDropTarget, useEntityDropTargetState,
+    measureWindowBounds, readWindowBounds, TreeDropOutline, useEntityDropDomBinding,
+    type WindowBounds } from '@/components/ui/treeDragDrop';
+import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 
-import { decodeSessionSplitCanvasDragData } from '@/components/sessions/canvas/sessionSplitCanvasDragData';
-import { useSessionSplitCanvasDraggedSessionId } from '@/components/sessions/canvas/useSessionSplitCanvasDragState';
-import { Text } from '@/components/ui/text/Text';
-import type { WorkflowExistingSessionOption } from '@/sync/domains/workflows/workflowAuthoring';
-import { t } from '@/text';
+export type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 
-import { workflowEditorStyles } from './workflowEditorStyles';
-
-/**
- * What dropping a Session onto an Agent step would do (07 J19, 04 §5.2 E17):
- * continue it in this step, or refuse because it lives on another machine
- * than the workflow's Where. A Session the host's candidacy owner does not
- * offer at all is not a drop target.
- */
-export type WorkflowSessionDropVerdict =
-    | Readonly<{ accepted: true; option: WorkflowExistingSessionOption; line: string }>
-    | Readonly<{ accepted: false; line: string }>;
-
-export function resolveWorkflowSessionDrop(params: Readonly<{
-    sessionId: string;
-    /** Every Session the host's candidacy owner can continue, on any machine. */
-    candidates: readonly WorkflowExistingSessionOption[];
-    /** The workflow's Where machine; `null` while none is chosen. */
-    whereMachineId: string | null;
-    whereMachineName: string | null;
-    machineName: (machineId: string) => string;
-}>): WorkflowSessionDropVerdict | null {
-    const option = params.candidates.find((candidate) => candidate.sessionId === params.sessionId);
-    if (option === undefined) return null;
-    if (params.whereMachineId !== null && option.machineId !== params.whereMachineId) {
-        return {
-            accepted: false,
-            line: t('workflows.page.inspector.dropRefused', {
-                session: option.label,
-                machine: params.machineName(option.machineId),
-                where: params.whereMachineName ?? params.machineName(params.whereMachineId),
-            }),
-        };
-    }
-    return { accepted: true, option, line: t('workflows.page.inspector.dropContinue', { session: option.label }) };
+/** This leaf alone subscribes to admission; pointer frames never rerender the prompt. */
+function WorkflowStepSessionTarget(props: Readonly<{
+    sessionDrop: WorkflowSessionDrop;
+    targetId: string;
+    stepId: string;
+    label: string;
+    bounds: () => WindowBounds | null;
+    measure: () => Promise<void>;
+}>): React.ReactElement | null {
+    const runtime = useEntityDragDropRuntime();
+    useEntityDropTarget(runtime, {
+        id: props.targetId, scope: props.sessionDrop.scope, acceptedKinds: ['session'], captureKinds: ['session'], getBounds: props.bounds,
+        measureBounds: props.measure,
+        resolve: ({ item }) => props.sessionDrop.resolve(props.stepId, item),
+        execute: props.sessionDrop.execute,
+        listDestinations: () => [{ destination: null, label: props.label }],
+    });
+    const snapshot = useEntityDropTargetState(runtime, props.targetId);
+    // Outcome/reason copy is the realm's E1 preview, never a second wrapper-local hint.
+    return snapshot?.admission?.status === 'allowed' && snapshot.phase === 'carrying'
+        ? <TreeDropOutline visual={{ kind: 'outline', targetId: props.targetId }}
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, pointerEvents: 'none' }} /> : null;
 }
 
-export type WorkflowSessionDrop = Readonly<{
-    resolve: (sessionId: string) => WorkflowSessionDropVerdict | null;
-    /** Binds the step's conversation to the Session, as one draft change. */
-    bind: (stepId: string, option: WorkflowExistingSessionOption) => void;
-}>;
-
-/**
- * The web drop target around an Agent step's composer for the existing
- * Session drag payload (`SessionSplitCanvasDragHandle`). The payload travels
- * as `text/plain`, so this handles the drop before the composer's text field
- * can insert it as text; a refused Session states why and writes nothing.
- * Native platforms have no drag source; the Conversation row is their path.
- */
+/** Qualified Session binding owns the app drop; child Files remain with the composer. */
 export function WorkflowStepSessionDropZone(props: Readonly<{
     stepId: string;
-    /** Absent (read-only, native host, no candidacy), the zone is inert. */
+    label: string;
     sessionDrop?: WorkflowSessionDrop;
     testID: string;
     children: React.ReactNode;
 }>): React.ReactElement {
-    const draggedSessionId = useSessionSplitCanvasDraggedSessionId();
-    const { sessionDrop, stepId } = props;
-    const verdict = draggedSessionId === null || sessionDrop === undefined ? null : sessionDrop.resolve(draggedSessionId);
-
-    const dropHandlers = React.useMemo(() => (Platform.OS !== 'web' || sessionDrop === undefined ? {} : {
-        onDragOver: (event: { preventDefault?: () => void }) => {
-            // Accepting the drag is what lets the drop reach this target.
-            if (verdict?.accepted === true) event.preventDefault?.();
-        },
-        onDrop: (event: { preventDefault?: () => void; stopPropagation?: () => void; dataTransfer?: { getData?: (type: string) => string } }) => {
-            const decoded = decodeSessionSplitCanvasDragData(event.dataTransfer?.getData?.('text/plain') ?? '');
-            if (decoded === null) return;
-            // A Session payload is never text for the composer, accepted or not.
-            event.preventDefault?.();
-            event.stopPropagation?.();
-            const dropped = sessionDrop.resolve(decoded.sessionId);
-            if (dropped?.accepted === true) sessionDrop.bind(stepId, dropped.option);
-        },
-    }), [sessionDrop, stepId, verdict?.accepted]);
-
-    return (
-        <View testID={props.testID} {...dropHandlers}>
-            {props.children}
-            {verdict === null ? null : (
-                <Text
-                    testID={`${props.testID}-hint`}
-                    style={verdict.accepted ? workflowEditorStyles.metaAction : workflowEditorStyles.issueText}
-                >
-                    {verdict.line}
-                </Text>
-            )}
-        </View>
-    );
+    const runtime = useEntityDragDropRuntime();
+    const targetId = React.useId();
+    const host = React.useRef<View | null>(null);
+    const nativeBounds = React.useRef<WindowBounds | null>(null);
+    const dropRef = useEntityDropDomBinding(runtime, props.sessionDrop
+        ? { captureKinds: ['session'] } : undefined);
+    const attach = React.useCallback((node: View | null) => {
+        host.current = node;
+        dropRef(node);
+    }, [dropRef]);
+    const bounds = React.useCallback(() => readWindowBounds(host.current) ?? nativeBounds.current, []);
+    const measure = React.useCallback(async () => {
+        const node = host.current;
+        const next = await measureWindowBounds(node);
+        if (host.current === node) nativeBounds.current = next;
+    }, []);
+    const onLayout = React.useCallback(() => {
+        void measure().then(() => runtime.refresh());
+    }, [measure, runtime]);
+    return <View ref={attach} collapsable={false} testID={props.testID} onLayout={onLayout}>
+        {props.children}
+        {props.sessionDrop === undefined ? null : <WorkflowStepSessionTarget
+            sessionDrop={props.sessionDrop} targetId={targetId} stepId={props.stepId} label={props.label} bounds={bounds} measure={measure} />}
+    </View>;
 }

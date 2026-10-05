@@ -9,7 +9,6 @@ import {
   VoiceProviderContributionSchema,
   withVoiceSchemaField,
 } from '@happier-dev/plugin-sdk/voice';
-import { VoiceRealtimeJsonValueSchema } from '@happier-dev/plugin-sdk/voice/client';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 export const ELEVENLABS_VOICE_CREDENTIAL_KIND = 'api_key' as const;
@@ -54,8 +53,9 @@ export const ElevenLabsModelIdSchema = z.string().trim().min(1).max(256);
 
 const ElevenLabsUnitIntervalSchema = z.number().min(0).max(1);
 const ElevenLabsTtsSpeedSchema = z.number().min(0.7).max(1.2);
+// Tool parameters describe JSON Schema metadata, not a live tool argument value.
 const ElevenLabsProvisionToolParametersSchema = createVoiceRecordSchema(
-  VoiceRealtimeJsonValueSchema,
+  z.json(),
 );
 
 export const ElevenLabsVoiceProviderSettingsLegacySchema = z.object({

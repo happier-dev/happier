@@ -1,6 +1,8 @@
 import * as React from 'react';
 import {
   Button,
+  DragSource,
+  DropTarget,
   Icon,
   Row,
   Stack,
@@ -25,6 +27,7 @@ import {
   type TriageEntryDisplayTextV1,
 } from '../window/entryDisplay.js';
 import type { TriageListItemV1 } from './sections.js';
+import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1 } from './entryDragDrop.js';
 
 /**
  * One PRs & Issues row.
@@ -405,13 +408,48 @@ const SIGNAL_TONES: Readonly<Record<NonNullable<TriageListItemV1['signal']>['ton
  * row's accessible NAME and only the entry; everything else a sighted reader takes from the row's surroundings is
  * its description, composed by the one announcement owner (`triageListRowItemProps`).
  */
-export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean }>): CollectionAnatomy<TriageListItemV1> {
+export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; organizing?: boolean }>): CollectionAnatomy<TriageListItemV1> {
   const text = usePluginTranslation();
   const surfaceContext = useSurfaceContext();
-  const { withSignal } = input;
+  const { withSignal, organizing = false } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
     const descriptorOf = (item: TriageListItemV1) => readTriageSourceDescriptorV1(surfaceContext, item.row.entryRef.source);
     return {
+      wrapItem: (item, children) => {
+        const { row, locator } = item;
+        if (!row.materialized || row.sourceInstanceId === null || locator == null) return children;
+        const context = readTriageEntryRowContextV1(row, descriptorOf(item), row.entryRef.source);
+        return (
+          <DragSource
+            sourceId={TRIAGE_ENTRY_DRAG_SOURCE_ID_V1}
+            organizing={organizing}
+            reference={{
+              entryRef: row.entryRef,
+              sourceInstance: { source: row.entryRef.source, sourceInstanceId: row.sourceInstanceId },
+              lastKnownLocator: locator,
+              title: row.title,
+              subtitle: context.label,
+            }}
+            testID={`triage-entry-drag:${encodeURIComponent(row.key)}`}
+          >
+            <DropTarget
+              targetId={TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1}
+              input={{
+                entryRef: row.entryRef,
+                display: { locator, scopeLabel: row.scopeLabel },
+                preview: {
+                  verb: text('plugins.triage.surface.drop.linkSession', 'Link Session'),
+                  target: row.title,
+                  consequence: text('plugins.triage.sessionLinks.linkReassurance', 'Linking doesn’t change anything at the source.'),
+                },
+              }}
+              testID={`triage-entry-session-drop:${encodeURIComponent(row.key)}`}
+            >
+              {children}
+            </DropTarget>
+          </DragSource>
+        );
+      },
       glyph: (item) => {
         const descriptor = descriptorOf(item);
         const mark = readTriageRowMarkV1(
@@ -456,5 +494,5 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean }>)
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };
-  }, [surfaceContext, text, withSignal]);
+  }, [organizing, surfaceContext, text, withSignal]);
 }

@@ -32,6 +32,8 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
   title: string;
   subtitle?: string;
   icon?: I;
+  /** Bare identity art in the icon slot; no synthetic glyph vocabulary. */
+  mark?: ReactNode;
   disabled?: boolean;
   badge?: string;
   /**
@@ -39,7 +41,7 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
    * static props — not a drawn replica — so the preview cannot drift from the product.
    */
   preview?: ReactNode;
-  /** Overrides the `testIdPrefix:id` test id of an action tile. */
+  /** Overrides the `testIdPrefix:id` test id of this tile. */
   testID?: string;
 }>;
 
@@ -146,6 +148,18 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
   testIdPrefix?: string;
   density?: 'regular' | 'compact';
   minimumColumns?: number;
+  maximumColumns?: number;
+  /**
+   * Card variant: the narrowest a tile may be before the grid drops a column (a choice inside a
+   * narrow panel reads as one per line rather than squeezed pairs). Absent, the width breakpoints
+   * alone decide.
+   */
+  minimumTileWidth?: number;
+  /**
+   * Card variant: how many lines a description may take before it ellipsizes (default 4). The tile
+   * is always announced with its whole description.
+   */
+  subtitleLines?: number;
   renderOptionFooter?: HappierSelectionTileFooterRenderer<T, I>;
 }>;
 
@@ -291,6 +305,12 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
   const tileKeyboardProps = useChoiceTilesKeyboard(props);
   const selectionAccessibilityRole = props.selectionMode === 'multiple' ? 'checkbox' : 'radio';
   const fill = props.tileSizing === 'fill';
+  const columns = Math.min(props.options.length, Math.max(1, props.maximumColumns ?? props.options.length));
+  // A row cannot fit columns + 1 percentage bases plus the positive shared gap. Flex growth then
+  // distributes the remaining row width equally, keeping the same grid on web and native.
+  const columnBasis: ViewStyle | undefined = fill && columns < props.options.length
+    ? { flexBasis: `${100 / (columns + 1)}%`, flexShrink: 0 }
+    : undefined;
   return (
     <View style={styles.visualGrid} {...choiceGroupSemantics(props)}>
       {props.options.map((option, index) => {
@@ -300,12 +320,12 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
           <Pressable
             key={option.id}
             {...tileKeyboardProps(index)}
-            testID={props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined}
+            testID={option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined)}
             accessibilityRole={selectionAccessibilityRole}
             accessibilityLabel={option.title}
             accessibilityState={props.selectionMode === 'multiple'
               ? { checked: selected, disabled }
-              : { selected, disabled }}
+              : { checked: selected, selected, disabled }}
             // React Native Web drops `accessibilityState`; the ARIA alias carries the
             // radio/checkbox state to the browser.
             aria-checked={selected}
@@ -317,6 +337,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
             style={({ pressed }) => [
               styles.visualTile,
               fill ? styles.visualTileFill : null,
+              columnBasis,
               { opacity: pressOpacity(disabled, pressed) },
             ]}
           >
@@ -375,9 +396,9 @@ function ActionSelectionTiles<T extends string, I extends string>(props: Happier
               { opacity: pressOpacity(disabled, pressed) },
             ]}
           >
-            {option.icon
+            {option.mark ?? (option.icon
               ? props.renderGlyph({ glyph: { kind: 'icon', name: option.icon }, size: 20, color: props.colors.glyph })
-              : null}
+              : null)}
             <View style={styles.actionText}>
               {props.renderText({ role: 'actionTitle', text: option.title, selected: false, compact: false, numberOfLines: 2 })}
               {option.subtitle
@@ -459,17 +480,24 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
     return ensureMinimumColumns(1, width);
   }, [compact, fallbackViewportWidth, gap, minimumColumns, props.options.length, width]);
 
+  const minimumTileWidth = props.minimumTileWidth;
+  const fittedColumns = useMemo(() => {
+    let next = Math.min(columns, Math.max(1, props.maximumColumns ?? columns));
+    if (!minimumTileWidth || width <= 0) return next;
+    while (next > 1 && (width - gap * (next - 1)) / next < minimumTileWidth) next -= 1;
+    return next;
+  }, [columns, gap, minimumTileWidth, props.maximumColumns, width]);
   const tileWidth = useMemo(() => {
     if (width <= 0) return undefined;
-    const totalGap = gap * (columns - 1);
-    return Math.floor((width - totalGap) / columns);
-  }, [columns, gap, width]);
+    const totalGap = gap * (fittedColumns - 1);
+    return Math.floor((width - totalGap) / fittedColumns);
+  }, [fittedColumns, gap, width]);
   const fallbackTileWidthStyle = useMemo((): ViewStyle | null => {
     if (width > 0) return null;
-    if (columns <= 1) return { width: '100%' };
-    if (columns === 2) return { width: '48%', maxWidth: '48%', flexGrow: 0, flexShrink: 0 };
+    if (fittedColumns <= 1) return { width: '100%' };
+    if (fittedColumns === 2) return { width: '48%', maxWidth: '48%', flexGrow: 0, flexShrink: 0 };
     return { width: '31%', maxWidth: '31%', flexGrow: 0, flexShrink: 0 };
-  }, [columns, width]);
+  }, [fittedColumns, width]);
 
   return (
     <View
@@ -485,9 +513,9 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         const disabled = option.disabled === true;
         const glyph: HappierSelectionTileGlyph<I> | null = option.icon
           ? { kind: 'icon', name: option.icon }
-          : (selected ? { kind: 'check' } : null);
+          : null;
         const borderColor = selected ? props.colors.selection : props.colors.tileBorder;
-        const glyphColor = selected ? props.colors.selection : props.colors.glyph;
+        const glyphColor = props.colors.glyph;
         const glyphSize = compact ? 16 : 29;
         const hasSubtitle = typeof option.subtitle === 'string' && option.subtitle.trim().length > 0;
         const footer = props.renderOptionFooter?.({ option, selected, disabled });
@@ -504,11 +532,12 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
           >
             <Pressable
               {...tileKeyboardProps(index)}
-              testID={props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined}
+              testID={option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined)}
               accessibilityRole={selectionAccessibilityRole}
+              accessibilityLabel={hasSubtitle ? `${option.title}, ${option.subtitle}` : option.title}
               accessibilityState={props.selectionMode === 'multiple'
                 ? { checked: selected, disabled }
-                : { selected, disabled }}
+                : { checked: selected, selected, disabled }}
               aria-checked={selected}
               disabled={disabled}
               onPress={() => {
@@ -527,23 +556,26 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
             >
               <View style={[styles.headerRow, compact && !hasSubtitle ? styles.headerRowCentered : null]}>
                 <View style={[styles.titleRow, compact && !hasSubtitle ? styles.titleRowCentered : null]}>
-                  <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
-                    {glyph
-                      ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor })
-                      : <SelectionRing size={glyphSize} color={glyphColor} />}
-                  </View>
+                  {option.mark || glyph ? <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
+                    {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
+                  </View> : null}
                   <View style={[styles.textContainer, compact && !hasSubtitle ? styles.textContainerCentered : null]}>
                     {props.renderText({ role: 'cardTitle', text: option.title, selected, compact, numberOfLines: 2 })}
                     {option.subtitle
-                      ? props.renderText({ role: 'cardSubtitle', text: option.subtitle, selected, compact, numberOfLines: 4 })
+                      ? props.renderText({ role: 'cardSubtitle', text: option.subtitle, selected, compact, numberOfLines: props.subtitleLines ?? 4 })
                       : null}
+                    {option.badge ? (
+                      <View style={styles.badge}>
+                        {props.renderText({ role: 'badge', text: option.badge, selected, compact, numberOfLines: 1 })}
+                      </View>
+                    ) : null}
                   </View>
                 </View>
-                {option.badge ? (
-                  <View style={styles.badge}>
-                    {props.renderText({ role: 'badge', text: option.badge, selected, compact, numberOfLines: 1 })}
-                  </View>
-                ) : null}
+                <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
+                  {selected
+                    ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection })
+                    : <SelectionRing size={16} color={props.colors.glyph} />}
+                </View>
               </View>
             </Pressable>
             {footer != null && footer !== false ? (
@@ -652,7 +684,7 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     tile: {
       backgroundColor: colors.tileBackground,
       borderRadius: 12,
-      borderWidth: 2,
+      borderWidth: 1,
       overflow: 'hidden',
     },
     // Compact cards share the field box's shape (radius, one-pixel outline), so a dense grid reads
@@ -685,15 +717,28 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       justifyContent: 'space-between',
       gap: 12,
     },
+    selectionAccessory: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
     headerRowCentered: {
       alignItems: 'center',
     },
+    // The footer continues the tile's text column (inside its padding, under the title), never
+    // flush against the outline.
     footer: {
-      marginTop: 10,
+      marginTop: -4,
+      paddingLeft: 12 + CARD_ICON_BOX_PX.comfortable + 10,
+      paddingRight: 12,
+      paddingBottom: 14,
       gap: 8,
     },
     footerCompact: {
-      marginTop: 8,
+      marginTop: -2,
+      paddingLeft: 10 + CARD_ICON_BOX_PX.compact + 10,
+      paddingRight: 10,
+      paddingBottom: 8,
       gap: 6,
     },
     titleRow: {
@@ -725,6 +770,7 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       justifyContent: 'center',
     },
     badge: {
+      alignSelf: 'flex-start',
       borderRadius: 999,
       borderWidth: 1,
       borderColor: colors.tileBorder,

@@ -2,11 +2,14 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const state = vi.hoisted(() => ({
     stashList: vi.fn(),
     stashPop: vi.fn(),
+    statusSnapshot: vi.fn(),
     operationLog: [] as Array<{ operation: string; status: string }>,
 }));
 
@@ -39,7 +42,16 @@ vi.mock('@/sync/ops', async (importOriginal) => {
         sessionScmRepositoryRemoveIndexLock: vi.fn(),
     } });
 });
-vi.mock('@/scm/scmStatusSync', () => ({ scmStatusSync: { invalidateFromMutationAndAwait: vi.fn(async () => {}) } }));
+vi.mock('@/sync/ops/sessionScm', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({ importOriginal, overrides: { sessionScmStatusSnapshot: state.statusSnapshot } });
+});
+// Unrelated key-envelope HTTP requests must not occur in a repository recovery test.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unexpected = () => { throw new Error('Unexpected session key-envelope HTTP request in Git'); };
+    return { createSessionDataKeyEnvelopeClient: unexpected, readSessionDataKeyEnvelopeCollectionPage: unexpected,
+        prepareSessionDataKeyEnvelopesForScope: unexpected, prepareSessionDataKeyEnvelopesDetached: unexpected };
+});
 
 const { storage } = await import('@/sync/domains/state/storage');
 const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
@@ -47,22 +59,41 @@ const { projectManager } = await import('@/sync/runtime/orchestration/projectMan
 const SNAPSHOT = {
     repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
     branch: { head: 'v0.3', upstream: 'origin/v0.3', ahead: 0, behind: 0, detached: false },
-    capabilities: { readStash: true, writeStash: true },
+    capabilities: { ...EMPTY_SCM_CAPABILITIES, readStash: true, writeStash: true },
     totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
     fetchedAt: 1,
     projectKey: 'p1',
     hasConflicts: false,
     entries: [],
     stashCount: 2,
-} as any;
+} satisfies ScmWorkingSnapshot;
 
 describe('GitKeptAsideNotice (Git lab SZ)', () => {
     beforeEach(() => {
         state.stashList.mockReset();
         state.stashPop.mockReset();
+        state.statusSnapshot.mockReset().mockResolvedValue({ success: true, snapshot: SNAPSHOT });
         storage.setState(storage.getInitialState(), true);
         projectManager.clear();
         storage.getState().applySessions([createSessionFixture({ id: 's1', active: true, metadata: { path: '/repo', host: 'localhost', machineId: 'm1' } })]);
+    });
+
+    it('reconciles a conflicted restore without replaying it or erasing its outcome', async () => {
+        storage.getState().updateSessionProjectScmSnapshot('s1', SNAPSHOT);
+        state.stashList.mockResolvedValue({ success: true,
+            stashes: [{ stashRef: 'stash@{0}', stashOid: 'a'.repeat(40), kind: 'branch', branch: 'v0.3' }] });
+        state.stashPop.mockImplementationOnce(async () => {
+            state.statusSnapshot.mockResolvedValue({ success: true, snapshot: { ...SNAPSHOT, hasConflicts: true } });
+            return { success: false, outcome: { v: 1, kind: 'conflicted', errorCode: 'CONFLICTING_WORKTREE',
+                repositoryState: { hasConflicts: true, operation: null }, nextActions: [{ kind: 'resolve_conflicts' }] } };
+        });
+        const { GitKeptAsideNotice } = await import('./GitKeptAsideNotice');
+        const screen = await renderScreen(<GitKeptAsideNotice sessionId="s1" snapshot={SNAPSHOT} />);
+        await screen.pressByTestIdAsync('git-kept-aside-notice.action');
+        await flushHookEffects({ cycles: 3 });
+        expect(storage.getState().getSessionProjectScmSnapshot('s1')?.hasConflicts).toBe(true);
+        expect(storage.getState().getSessionProjectScmOperationLog('s1')[0]?.outcome?.kind).toBe('conflicted');
+        expect(state.stashPop).toHaveBeenCalledOnce();
     });
 
     it('offers the changes kept aside for this branch and restores them through the operation owner', async () => {

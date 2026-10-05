@@ -1,4 +1,5 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2, PluginJsonSchemaV2, PluginContributionIdentityV1, PluginProjectedResourceV2 } from '@happier-dev/protocol';
+import type { InputHints } from '@happier-dev/protocol/inputs';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -20,14 +21,18 @@ export type WidgetFixtureEntry = Readonly<{
     title?: string;
     target?: WidgetTargetKind;
     homeDefault?: WidgetHomeDefault;
-    placements?: readonly ('board' | 'companion' | 'home')[];
+    inputs?: InputHints;
+    inputSchema?: PluginJsonSchemaV2;
+    sessionInputPath?: string;
     role?: typeof WIDGET_ROLE | 'sessionSubagentDetails';
     entryId?: string;
     availability?: 'available' | 'unavailable';
     featureGate?: string;
     requiredPermissionIds?: readonly string[];
+    capabilityIds?: readonly string[];
     platforms?: readonly ('web' | 'desktop' | 'ios' | 'android')[];
     occurrenceId?: string;
+    resources?: readonly PluginContributionIdentityV1[];
 }>;
 
 function entryId(input: WidgetFixtureEntry): string {
@@ -35,6 +40,11 @@ function entryId(input: WidgetFixtureEntry): string {
 }
 
 export function widgetProjectionEntry(input: WidgetFixtureEntry) {
+    const sessionWidget = (input.target ?? 'session') === 'session' && (input.role ?? WIDGET_ROLE) === WIDGET_ROLE;
+    const inputs = input.inputs ?? (sessionWidget ? { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true }] } : undefined);
+    const inputSchema = input.inputSchema ?? (sessionWidget ? {
+        type: 'object', properties: { session: { type: 'object', properties: { serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 } }, required: ['serverId', 'sessionId'], additionalProperties: false } }, required: ['session'], additionalProperties: false,
+    } : undefined);
     const binding = normalizePluginUiInlineSurfaceBindingV1({
         pluginId: input.pluginId,
         surfaceId: input.localId,
@@ -56,16 +66,19 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry) {
         renderer: { kind: 'declarative', contributionId: 'widget-native' },
         display: { title: input.title ?? input.localId },
         ...(input.homeDefault ? { home: { default: input.homeDefault } } : {}),
-        ...(input.placements ? { placements: input.placements } : {}),
-        ...(input.featureGate ? { featureGate: input.featureGate } : {}),
-        ...(input.requiredPermissionIds
-            ? { policy: { requiredPermissionIds: input.requiredPermissionIds } }
-            : {}),
-        ...(input.platforms ? { compatibility: { platforms: input.platforms } } : {}),
+        ...(inputs ? { inputs } : {}),
+        ...(inputSchema ? { inputSchema } : {}),
+        ...(input.resources ? { resources: input.resources } : {}),
+        ...((input.sessionInputPath ?? (sessionWidget ? 'session' : undefined)) ? { sessionInputPath: input.sessionInputPath ?? 'session' } : {}),
         availability: {
             state: input.availability === 'unavailable' ? 'disabled' : 'available',
             reason: input.availability === 'unavailable' ? 'plugin_disabled' : 'available',
             diagnostics: [],
+            ...(input.featureGate || input.platforms || input.capabilityIds ? { when: { all: [
+                ...(input.featureGate ? [{ fact: 'host.feature', operator: 'enabled', value: input.featureGate }] : []),
+                ...(input.platforms ? [{ any: input.platforms.map(platform => ({ fact: 'host.platform', operator: 'equals', value: platform })) }] : []),
+                ...(input.capabilityIds?.map(value => ({ fact: 'session.capability', operator: 'contains', value })) ?? []),
+            ] } } : {}),
         },
     };
 }
@@ -78,6 +91,7 @@ export function widgetInstalledPackage(id: string, displayName: string) {
 export function widgetProjectionOf(
     entries: readonly WidgetFixtureEntry[],
     installedPackagesById: Readonly<Record<string, unknown>> = {},
+    resourcesById: Readonly<Record<string, PluginProjectedResourceV2>> = {},
 ): PluginUiProjectionModel {
     const raw = entries.map(widgetProjectionEntry);
     return normalizePluginUiProjection({
@@ -85,6 +99,7 @@ export function widgetProjectionOf(
         generation: 1,
         installedPackagesById,
         actionsById: {},
+        resourcesById,
         familiesById: {
             pluginUi: { entriesById: Object.fromEntries(raw.map((entry) => [entry.id, entry])) },
         },

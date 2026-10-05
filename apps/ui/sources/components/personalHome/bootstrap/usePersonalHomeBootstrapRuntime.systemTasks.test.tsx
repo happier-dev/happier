@@ -22,13 +22,13 @@ import { usePersonalHomeBootstrapRuntime } from './usePersonalHomeBootstrapRunti
  *   `runPersonalHomeBootstrap` from `@happier-dev/cli-common/firstPartyRuntime`;
  * - the REAL `serverProfiles`/`adoptHomeProfile` owner (arranged through
  *   `upsertServerProfile`/`setActiveServerId`; internal profile logic is not a boundary).
+ * - the REAL `useLocalDaemonControl` and `readLocalDaemonStatusData`, including setup adoption.
  *
  * Mocked boundaries (genuine system boundaries only):
  * - the system-task bridge (process/native boundary behind `createSystemTaskBridge`) — the only
  *   mocked process boundary;
  * - endpoint/network probes and the endpoint auth request;
- * - Home-scoped secure token storage;
- * - the daemon service boundary.
+ * - Home-scoped secure token storage.
  */
 const harness = vi.hoisted(() => {
     const SYSTEM_TASK_PROTOCOL_VERSION = 1;
@@ -93,8 +93,6 @@ const harness = vi.hoisted(() => {
     /** When set, status reads FAIL with this task error (e.g. the CLI cannot tell which profile is this Home). */
     let daemonStatusFailure: Readonly<{ code: string; message: string }> | null = null;
     let setupFailureAfterApproval: Readonly<{ code: string; message: string }> | null = null;
-    /** Render-time projection of the daemon-control hook; only readStatus() updates it (real-hook semantics). */
-    const daemonControl: { status: Record<string, unknown> | null } = { status: null };
 
     const recordedSpecs: Array<RecordedTaskSpec> = [];
     const recordedResults: Array<RecordedResult> = [];
@@ -363,34 +361,33 @@ const harness = vi.hoisted(() => {
                 }
                 case 'daemon.service.status.v1': {
                     events.push('daemon:status:read');
-                    if (daemonStatusFailure) {
-                        recordedResults.push({ taskId, kind: spec.kind, data: {}, error: daemonStatusFailure });
+                    // Like relay status, deliver after the real runner subscribes to this task.
+                    const statusTimer = setTimeout(() => {
+                        pendingTimers.delete(statusTimer);
+                        if (daemonStatusFailure) {
+                            recordedResults.push({ taskId, kind: spec.kind, data: {}, error: daemonStatusFailure });
+                            listeners.get(taskId)?.onResult({
+                                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                                taskId,
+                                ok: false,
+                                error: daemonStatusFailure,
+                            });
+                            return;
+                        }
+                        const data = daemonStatusData();
+                        recordedResults.push({ taskId, kind: spec.kind, data: JSON.parse(JSON.stringify(data)) as Record<string, unknown> });
                         listeners.get(taskId)?.onResult({
                             protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
                             taskId,
-                            ok: false,
-                            error: daemonStatusFailure,
+                            ok: true,
+                            data,
                         });
-                        break;
-                    }
-                    const data = daemonStatusData();
-                    recordedResults.push({ taskId, kind: spec.kind, data: JSON.parse(JSON.stringify(data)) as Record<string, unknown> });
-                    const listener = listeners.get(taskId);
-                    listener?.onResult({
-                        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-                        taskId,
-                        ok: true,
-                        data,
-                    });
+                    }, 8);
+                    pendingTimers.add(statusTimer);
                     break;
                 }
                 default:
-                    listeners.get(taskId)?.onResult({
-                        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-                        taskId,
-                        ok: false,
-                        error: { code: 'bridge_unexpected_task_kind', message: spec.kind },
-                    });
+                    throw new Error(`manual bridge: unexpected task kind ${spec.kind}`);
             }
             return taskId;
         },
@@ -417,20 +414,6 @@ const harness = vi.hoisted(() => {
             }
         },
     });
-
-    async function readDaemonStatusThroughBridge(
-        scope: Readonly<{ relayUrl?: string | null }> = {},
-    ): Promise<Record<string, unknown> | null> {
-        const bridge = makeManualBridge();
-        const taskId = await bridge.start({
-            kind: 'daemon.service.status.v1',
-            params: scope.relayUrl ? { relayUrl: scope.relayUrl } : {},
-        });
-        const recorded = recordedResults.find((entry) => entry.taskId === taskId);
-        // Mirrors the real hook: a FAILED status task rejects with its coded error.
-        if (recorded?.error) throw Object.assign(new Error(recorded.error.message), { code: recorded.error.code });
-        return recorded?.data ?? null;
-    }
 
     const authGetTokenAtEndpoint = vi.fn(async (params: {
         endpointUrl: string;
@@ -510,8 +493,6 @@ const harness = vi.hoisted(() => {
             daemonStatusClearsOnApproval = true;
         },
         daemonFacts: () => ({ ...daemonRuntime }),
-        daemonControl,
-        readDaemonStatusThroughBridge,
         reset() {
             runtime.installed = false;
             runtime.healthy = false;
@@ -532,7 +513,6 @@ const harness = vi.hoisted(() => {
             daemonStatusClearsOnApproval = false;
             daemonStatusFailure = null;
             setupFailureAfterApproval = null;
-            daemonControl.status = null;
             recordedSpecs.length = 0;
             recordedResults.length = 0;
             recordedPromptAnswers.length = 0;
@@ -663,34 +643,6 @@ vi.mock('@/modal', async () => {
 // live above this mock; the bridge only records actual specs and moves the managed runtime state.
 vi.mock('@/components/systemTasks/createSystemTaskBridge', () => ({
     createSystemTaskBridge: () => harness.makeManualBridge(),
-}));
-
-// Daemon service boundary (separate native process/service manager). The Personal Home
-// bootstrap must never drive the focused-Home repair/start actions. `status` mirrors the real
-// hook: a render-time projection updated only by the awaited readStatus(), which runs the
-// canonical daemon.service.status.v1 task through the bridge.
-vi.mock('@/components/settings/machines/localControl/useLocalDaemonControl', () => ({
-    useLocalDaemonControl: () => ({
-        activeTaskSnapshot: null,
-        canInstall: false,
-        canStart: false,
-        status: harness.daemonControl.status,
-        refreshStatus: async () => null,
-        readStatus: async (scope?: Readonly<{ relayUrl?: string | null }>) => {
-            const next = await harness.readDaemonStatusThroughBridge(scope);
-            harness.daemonControl.status = next;
-            return next;
-        },
-        installBackgroundService: async () => {
-            throw new Error('focused daemon repair must not be used by Personal Home bootstrap');
-        },
-        repairBackgroundService: async () => {
-            throw new Error('focused daemon repair must not be used by Personal Home bootstrap');
-        },
-        startDaemonService: async () => {
-            throw new Error('focused daemon start must not be used by Personal Home bootstrap');
-        },
-    }),
 }));
 
 // Explicit-endpoint HTTP transport boundary. The focused-Home fetch must never be entered.
@@ -843,10 +795,12 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
             const persisted = [...storage.store.entries()].find(([key]) => key.includes('server-state-v1'))!;
             // Seed the genuine persistence boundary: live adoption correctly refuses conflicting identities.
             const state = JSON.parse(persisted[1]) as { servers: Record<string, ServerProfile> };
+            state.servers[profile.id] = { ...profile, canonicalServerUrl: harness.CANONICAL_SERVER_URL };
             state.servers['same-url-other-home'] = {
                 ...profile, id: 'same-url-other-home', serverIdentityId: 'srv_other_home',
+                canonicalServerUrl: harness.CANONICAL_SERVER_URL,
                 ...(matching === 'canonical-alias' ? {
-                    serverUrl: 'https://other-home.example.test', canonicalServerUrl: harness.CANONICAL_SERVER_URL,
+                    serverUrl: 'https://other-home.example.test',
                 } : {}),
             };
             storage.store.set(persisted[0], JSON.stringify(state));
@@ -916,10 +870,10 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
         const { usePersonalHomeBootstrapRuntime } = await import('./usePersonalHomeBootstrapRuntime');
         const hook = await renderHook(() => usePersonalHomeBootstrapRuntime());
 
-        // The real useLocalRelayRuntimeControl performs exactly one mount auto-refresh status
-        // read before the bootstrap operation starts; it is distinguished explicitly here.
+        // Both real runtime-control hooks refresh at mount before bootstrap starts.
         expect(harness.recordedSpecs().map((spec) => [spec.phase, spec.kind])).toEqual([
             ['auto-refresh', 'relay.runtime.status.v1'],
+            ['auto-refresh', 'daemon.service.status.v1'],
         ]);
 
         harness.markBootstrapStarted();

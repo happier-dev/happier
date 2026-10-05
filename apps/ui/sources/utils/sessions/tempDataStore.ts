@@ -13,6 +13,7 @@ import type {
     TemporaryComputerActivationRefV1,
     SessionOrganizationPlacementV1,
     SessionInitialAccessDraftV1,
+    SessionInitialTriggerV1,
 } from '@happier-dev/protocol';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
@@ -39,6 +40,7 @@ export interface NewSessionData {
     temporaryComputerActivationRef?: TemporaryComputerActivationRefV1 | null;
     organizationPlacement?: SessionOrganizationPlacementV1;
     access?: SessionInitialAccessDraftV1 | null;
+    initialTriggers?: SessionInitialTriggerV1[];
     primaryTeamId?: string | null;
     replacePersistedDraftSelections?: boolean;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;

@@ -9,7 +9,6 @@ import {
     verifyAccountContentKeyBindingV1,
     withArtifactExcerptV1,
     openPublicShareDataKeyV1,
-    type ArtifactPublicLinkIssuedV1,
     type ArtifactAccessGrantRowV1,
     type ArtifactRecipientKeyEnvelopeCommitInputV1,
 } from '@happier-dev/protocol';
@@ -57,7 +56,6 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
     const revisions: { bodyVersion: number; body: string; createdAt: number; sizeBytes: number }[] = [];
     let grants: ArtifactAccessGrantRowV1[] = [];
     const requests: string[] = [];
-    const issued: ArtifactPublicLinkIssuedV1[] = [];
     let publicLinkBody: Record<string, unknown> | undefined;
     const publicShare = { id: 'share-1', subject: { kind: 'artifact', id: 'document' }, expiresAt: null, maxUses: null,
         useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
@@ -160,8 +158,8 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
     else await account.workflowArtifacts.create({ artifactId: 'document', header, body });
     const context = { serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    return { account, context, executor: createDefaultActionExecutor({ onPublicLinkIssued: link => { issued.push(link); } }), requests, envelopes, recipientSecret, fingerprint,
-        issued, publicLinkBody: () => publicLinkBody,
+    return { account, context, executor: createDefaultActionExecutor(), requests, envelopes, recipientSecret, fingerprint,
+        publicLinkBody: () => publicLinkBody,
         stored: () => stored!, setAccess: (value: typeof access) => { access = value; },
         setGrantStatus: (value: number) => { grantStatus = value; }, setCensusCallerEnvelope: (value: string) => { censusCallerEnvelope = value; },
         setRestoreQuota: () => { restoreQuota = { error: 'quota_exceeded', budget: 'document', limitBytes: 10, usedBytes: 20 }; },
@@ -169,16 +167,19 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
 }
 
 describe('UI Artifact sharing Action front door', () => {
-    it.each(['plain', 'e2ee'] as const)('creates, lists and revokes %s public links on the captured Home without secret egress', async mode => {
+    it.each(['plain', 'e2ee'] as const)('returns, lists and revokes %s public links without sending secrets to the captured Home', async mode => {
         const f = await fixture(mode, { header: { title: 'Public note' }, body: 'note' });
         try {
             const created = await f.executor.execute('artifact.public_link.create', { artifactId: 'document' }, {
                 ...f.context, presentUserConfirmation: { actionId: 'artifact.public_link.create' },
             });
             expect(created).toMatchObject({ ok: true, result: { publicShare: { id: 'share-1' } } });
-            const local = f.issued[0]!;
+            const url = (created as { result: { url: string } }).result.url;
+            const parsed = new URL(url);
+            const local = { url, lookupId: parsed.pathname.split('/').at(-1)!, secret: new URLSearchParams(parsed.hash.slice(1)).get('k')! };
             expect(local.url).toBe(`https://public.example.test/s/${local.lookupId}#k=${local.secret}`);
-            expect(JSON.stringify({ created, body: f.publicLinkBody() })).not.toContain(local.secret);
+            expect(local.secret).toBeTruthy();
+            expect(JSON.stringify(f.publicLinkBody())).not.toContain(local.secret);
             if (mode === 'e2ee') expect(openPublicShareDataKeyV1({ encryptedDataKey: String(f.publicLinkBody()!.encryptedDataKey), secret: local.secret })).toHaveLength(32);
             else expect(f.publicLinkBody()).not.toHaveProperty('encryptedDataKey');
             expect(await f.executor.execute('artifact.public_link.list', { artifactId: 'document' }, {

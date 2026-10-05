@@ -234,10 +234,19 @@ node ./apps/stack/scripts/repo_local.mjs stack env <qa-stack> unset HAPPIER_STAC
 node ./apps/stack/scripts/repo_local.mjs tui stack start <qa-stack> --runtime
 ```
 
+## Remote placement boundary (0.3 development)
+
+The current `stack start --runtime` owner loads the consumer's snapshot locally; it does not consume `dev-targets` service placement. The remote supervisor currently runs `stack dev --watch`. Do not substitute that source lifecycle for a controlled snapshot or interpret a placement config write as a service or data move.
+
+Before a controlled stack can move, its canonical placement/runtime owners must transfer and validate the selected snapshot's complete component/support closure, preserve the retained server-light directory (database, signing secret, public and private files), isolate the target CLI state per stack, and provide a writable session workspace outside the one-way source replica. Preserve the consumer's canonical server origin and browser state through the existing forwards. Observe selected == loaded for the actual remote server and daemon before claiming the pin is running there.
+
+Managed snapshots are target-specific: compare the manifest's platform/architecture with the target's observed host identity. WSL is a Linux target, but its architecture must still match. An ARM64 snapshot cannot be used on an x64 worker by copying files or changing its manifest. If the requested worker cannot load the producer's pin, report the target choice or producer-publication decision instead of starting a consumer publisher. A placement change must use the canonical retained-data handoff; never copy a live SQLite file manually or initialize a replacement database to make remote startup pass.
+
 ## Preserve ownership and evidence
 
 - Stop only the remembered consumer with `node ./apps/stack/scripts/repo_local.mjs stack stop <qa-stack>`; this must not stop borrowed Expo.
 - Keep the stack for reuse throughout the session. Do not delete/recreate it between scenarios to obtain fresh state unless the human explicitly requests that reset or a separate stack.
+- Stop it when idle. When a QA session or round ends and no further QA on this stack is imminent, stop the remembered consumer with the `stack stop` command above. Each idle stack holds a server and a daemon (several GB of memory), and the shared machine runs many programs' stacks at once. The next round re-selects the snapshot and starts it again through "Select and start"; the stack name, database and auth are retained, so stopping loses nothing. Never stop another session's or program's stack.
 - Never delete, replace, or share its database without the normal authorization required for that exact data owner.
 - Do not treat selecting a snapshot, a still-running process, or wiring registration as proof that new bytes loaded.
 - Report the stack name, loaded snapshot id, UI mode, terminal QA result, skipped checks, and residual risk in the handoff.

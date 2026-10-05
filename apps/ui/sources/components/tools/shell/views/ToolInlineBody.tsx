@@ -11,6 +11,7 @@ import {
 } from '@/components/tools/renderers/core/_registry';
 import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
 import { knownTools } from '@/components/tools/catalog';
+import type { KnownToolDefinition } from '@/components/tools/catalog/_types';
 import { ToolHeaderActionsContext } from '@/components/tools/shell/presentation/ToolHeaderActionsContext';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import {
@@ -20,18 +21,19 @@ import {
 import { CodeView } from '@/components/ui/media/CodeView';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useSetting } from '@/sync/domains/state/storage';
-import { maybeParseJson } from '@happier-dev/protocol';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import {
     getAgentCore,
     } from '@/agents/catalog/catalog';
 import { t } from '@/text';
-import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
+import { isSubAgentRunErrorResult, resolveToolInlineErrorDisplay } from '@/components/tools/shell/presentation/resolveToolInlineErrorDisplay';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import type { ExecutionRunPromptResponseTarget } from '@/components/tools/shell/permissions/executionRunPromptResponseTarget';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
+import { useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 
 type ToolInlineBodyMode = 'card' | 'timeline';
 type DisplayCode = Readonly<{
@@ -52,13 +54,24 @@ function clampToolDisplayCode(value: unknown, maxChars: number): DisplayCode {
     };
 }
 
-function ToolCodeViewWithClamp(props: Readonly<{
+export function ToolCodeViewWithClamp(props: Readonly<{
     value: unknown;
     maxChars: number;
     sourceId: string;
+    messageId?: string;
+    blockId?: string;
 }>) {
     const [expanded, setExpanded] = React.useState(false);
+    const find = useTranscriptFindRow(props.messageId);
+    const ranges = find?.blocks.find((block) => block.id === props.blockId)?.sourceRanges;
+    const reveal = find?.reveal;
+    const revealId = reveal && reveal.blockId === props.blockId ? reveal.requestId : undefined;
     const rowLayoutMutation = useTranscriptRowLayoutMutation();
+    React.useEffect(() => {
+        if (revealId === undefined) return;
+        rowLayoutMutation({ reason: 'expand', sourceId: props.sourceId });
+        setExpanded(true);
+    }, [props.sourceId, revealId, rowLayoutMutation]);
     const display = React.useMemo(
         () => clampToolDisplayCode(props.value, props.maxChars),
         [props.maxChars, props.value],
@@ -67,9 +80,10 @@ function ToolCodeViewWithClamp(props: Readonly<{
     const code = expanded ? fullCode : display.code;
     return (
         <>
-            <CodeView code={code} />
+            <CodeView code={code} findRanges={sliceFindRanges(ranges, 0, expanded || !display.truncated ? fullCode.length : props.maxChars)} />
             {display.truncated ? (
                 <Pressable
+                    testID={`tool-code-clamp:${props.sourceId}`}
                     accessibilityRole="button"
                     onPress={() => {
                         rowLayoutMutation({
@@ -101,6 +115,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         canApprovePermissions: boolean;
         permissionDisabledReason?: TranscriptPermissionDisabledReason;
     };
+    findBodyBlockId?: string;
     detailLevel: 'summary' | 'full';
     executionRun?: ExecutionRunPromptResponseTarget;
     sectionSpacing?: 'default' | 'compact';
@@ -120,20 +135,9 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         [props.setHeaderActions],
     );
 
-    const isSubAgentRunLikeErrorResult = React.useMemo(() => {
-        const parsed = maybeParseJson(tool.result);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-        const record = parsed as Record<string, unknown>;
-        const hasRunId = typeof record.runId === 'string' && record.runId.trim().length > 0;
-        const hasCallRef =
-            (typeof record.callId === 'string' && record.callId.trim().length > 0) ||
-            (typeof record.sidechainId === 'string' && record.sidechainId.trim().length > 0);
-        const status = typeof record.status === 'string' ? record.status : null;
-        const hasError = Boolean(record.error);
-        return hasRunId && hasCallRef && (hasError || status === 'timeout' || status === 'failed');
-    }, [tool.result]);
+    const isSubAgentRunLikeErrorResult = React.useMemo(() => isSubAgentRunErrorResult(tool.result), [tool.result]);
 
-    const knownTool = knownTools[normalizedToolName as keyof typeof knownTools] as any;
+    const knownTool: KnownToolDefinition | undefined = knownTools[normalizedToolName as keyof typeof knownTools];
     const isSubAgentRunTool = normalizedToolName === 'SubAgentRun' || tool.name === 'SubAgentRun';
     const shouldUseSubAgentRunErrorFallback = isSubAgentRunTool || isSubAgentRunLikeErrorResult;
 
@@ -143,14 +147,6 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         parseToolUseError(tool.result).isToolUseError;
 
     let minimal = false;
-    let hideDefaultError = false;
-
-    if (knownTool && typeof knownTool.hideDefaultError === 'boolean') {
-        hideDefaultError = knownTool.hideDefaultError;
-    }
-    if (shouldUseSubAgentRunErrorFallback) {
-        hideDefaultError = true;
-    }
 
     const agentId = historicalAgentId ?? resolveAgentIdFromSessionMetadata(props.metadata);
     const hideUnknownToolsByDefault = getAgentCore(agentId ?? '')?.toolRendering.hideUnknownToolsByDefault === true;
@@ -167,22 +163,22 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     }
 
     if (isToolUseError) {
-        hideDefaultError = true;
         minimal = true;
     }
 
-    const permissionTerminalErrorMessage = resolveToolPermissionTerminalErrorMessage({
+    const errorDisplay = resolveToolInlineErrorDisplay({
         tool,
+        normalizedToolName,
         metadata: props.metadata ?? null,
         permissionDisabledReason: props.interaction?.permissionDisabledReason,
         historicalAgentId,
     });
-    if (permissionTerminalErrorMessage) {
+    if (errorDisplay.override) {
         // When a permission is denied/canceled, the tool body often has no result payload.
         // Render an explicit status so the user understands why the tool did not run.
         return (
             <TextSelectabilityScope selectable>
-                <ToolError message={permissionTerminalErrorMessage} />
+                <ToolError message={errorDisplay.override} messageId={props.messageId} blockId="tool-error-override" />
             </TextSelectabilityScope>
         );
     }
@@ -202,18 +198,17 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                             serverId={props.serverId}
                             session={props.session}
                             messageId={props.messageId}
+                            findBodyBlockId={props.findBodyBlockId}
                             detailLevel={props.detailLevel}
                             interaction={props.interaction}
                             executionRun={props.executionRun}
                         />
                     </ToolHeaderActionsContext.Provider>
-                    {tool.state === 'error' && tool.result && !hideDefaultError && (
+                    {errorDisplay.append && (
                         <ToolError
-                            message={
-                                typeof tool.result === 'string'
-                                    ? tool.result
-                                    : JSON.stringify(tool.result, null, 2)
-                            }
+                            message={errorDisplay.append}
+                            messageId={props.messageId}
+                            blockId="tool-error-append"
                         />
                     )}
                 </ToolSectionSpacingProvider>
@@ -263,6 +258,8 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                                 ? tool.result
                                 : JSON.stringify(tool.result, null, 2)
                         }
+                        messageId={props.messageId}
+                        blockId="tool-error-append"
                     />
                 </ToolSectionSpacingProvider>
             </TextSelectabilityScope>
@@ -280,6 +277,8 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                                 value={tool.input}
                                 maxChars={displayMaxChars}
                                 sourceId={`tool-code:${props.messageId ?? tool.id}:input`}
+                                messageId={props.messageId}
+                                blockId="tool-input"
                             />
                         </ToolSectionView>
                     </ToolSectionSpacingProvider>
@@ -298,6 +297,8 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                             value={tool.input}
                             maxChars={displayMaxChars}
                             sourceId={`tool-code:${props.messageId ?? tool.id}:input`}
+                            messageId={props.messageId}
+                            blockId="tool-input"
                         />
                     </ToolSectionView>
                 ) : null}
@@ -317,6 +318,8 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                             value={tool.result}
                             maxChars={displayMaxChars}
                             sourceId={`tool-code:${props.messageId ?? tool.id}:output`}
+                            messageId={props.messageId}
+                            blockId="tool-output"
                         />
                     </ToolSectionView>
                 ) : null}

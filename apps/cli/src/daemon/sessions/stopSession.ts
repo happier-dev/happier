@@ -32,6 +32,7 @@ import {
   type StopSessionResult,
 } from './stopSessionContract';
 import type { ExactTerminalControlServiceabilityRetirement } from './retireTerminalControlServiceability';
+import { resolveTrackedSessionTerminalPresentation } from './resolveTrackedSessionTerminalPresentation';
 
 function mapDispositionFailureReason(
   reason: 'legacy_attachment' | 'attachment_mismatch' | 'missing_topology_proof' | 'disposition_in_progress' | 'destroy_failed' | 'retirement_failed' | 'descriptor_retirement_failed',
@@ -358,8 +359,30 @@ export function createStopSession(params: Readonly<{
         && !predecessorAttachmentHandle
         && !hasExactPredecessorWindowsRunner
       ) {
-        logWarning(`[DAEMON RUN] Refusing to destroy terminal host without committed attachment identity for session ${normalizedSessionId}`);
-        return incompleteStopSession('missing_attachment_identity');
+        for (const [index, mode] of terminalModes.entries()) {
+          if (mode !== 'tmux' && mode !== 'zellij' && mode !== 'herdr'
+            && mode !== 'windows_terminal' && mode !== 'windows_console') continue;
+          const pid = pidsToStop[index]!;
+          const expected = expectedTrackedSessionsByPid.get(pid);
+          const ownsCurrentRunner = expected?.startedBy === 'daemon'
+            && pidToTrackedSession.get(pid) === expected
+            && isExactTrackedRunner(pid, expected, options?.expectedTrackedRunner)
+            && await isPidSafeHappySessionProcess({
+              pid,
+              expectedProcessCommandHash: expected.processCommandHash,
+              expectedProcessStartTimeMs: expected.processStartTimeMs,
+            });
+          // Only a proven daemon-owned headless runner can outlive its optional client.
+          const presentation = ownsCurrentRunner && expected
+            ? await resolveTrackedSessionTerminalPresentation(expected,
+                mode === 'windows_terminal' ? 'windows_console' : mode)
+            : null;
+          if (ownsCurrentRunner && expected && pidToTrackedSession.get(pid) === expected
+            && isExactTrackedRunner(pid, expected, options?.expectedTrackedRunner)
+            && presentation?.kind === 'provider_attach') continue;
+          logWarning(`[DAEMON RUN] Refusing to destroy terminal host without committed attachment identity for session ${normalizedSessionId}`);
+          return incompleteStopSession('missing_attachment_identity');
+        }
       }
       if (attachmentInfo?.version === 2 && attachmentInfo.handle.kind === 'windows_console' && !retiredTerminalMode) {
         logWarning(`[DAEMON RUN] Refusing to retire Windows terminal topology without a unique actual-mode proof for session ${normalizedSessionId}`);
@@ -740,6 +763,10 @@ export function createStopSession(params: Readonly<{
           sessionId: normalizedSessionId,
           trackedPids: pidsToStop,
         });
+      } else if (params.areTrackedRunnersExited) {
+        // Identity inspection may await OS discovery while the runner exits.
+        // Refusing to signal is not liveness evidence; retain the canonical positive-death proof.
+        runnersExited = await haveTrackedRunnersExited(pidsToStop);
       }
       if (!runnersExited) {
         logWarning(

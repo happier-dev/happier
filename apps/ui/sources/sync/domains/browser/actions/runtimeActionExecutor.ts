@@ -135,6 +135,8 @@ function mapControlRejectedReason(
     switch (reasonCode) {
         case 'adapter_unavailable':
             return 'browser_adapter_unavailable';
+        case 'automation_busy':
+            return 'browser_control_unavailable';
         case 'view_not_found':
             return 'browser_view_unavailable';
     }
@@ -154,12 +156,6 @@ function readBrowserViewInput(input: unknown): RuntimeBrowserViewInput | null {
     return browserSessionId && viewId ? { browserSessionId, viewId } : null;
 }
 
-function readRecord(value: unknown): Readonly<Record<string, unknown>> {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Readonly<Record<string, unknown>>
-        : {};
-}
-
 function serializeAutomationTimelineEntry(
     entry: BrowserAutomationTimelineEntry,
 ): Readonly<Record<string, unknown>> {
@@ -172,34 +168,11 @@ function serializeAutomationTimelineEntry(
 function serializeAutomationActionResult(
     request: BrowserAutomationActionRequestV1,
     result: BrowserAutomationResult,
-    controlService: BrowserAutomationControlService,
 ): unknown {
     if (result.status === 'interrupted' && result.completion === 'unknown') {
         return { v: 1, automationRequestId: request.automationRequestId, status: 'interrupted', completion: 'unknown' };
     }
-    const entry = [...controlService.getActionTimeline({
-        browserSessionId: request.browserSessionId,
-        viewId: request.viewId,
-    })].reverse().find((candidate) => candidate.automationRequestId === request.automationRequestId);
-    if (!entry) {
-        return browserRuntimeActionDisabledResult('browser_automation_unavailable');
-    }
-    return {
-        v: 1,
-        automationRequestId: result.automationRequestId ?? request.automationRequestId,
-        status: result.status,
-        durationMs: result.durationMs ?? entry.durationMs ?? 0,
-        adapterKind: entry.adapterKind,
-        fidelity: entry.fidelity,
-        trustedInput: entry.trustedInput,
-        navigationGenerationBefore: entry.navigationGenerationBefore,
-        navigationGenerationAfter: entry.navigationGenerationAfter,
-        controlEpochBefore: entry.controlEpochBefore,
-        controlEpochAfter: entry.controlEpochAfter,
-        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
-        diagnostics: {},
-        resultSummary: readRecord(entry.resultSummary),
-    };
+    return result.actionResult ?? browserRuntimeActionDisabledResult('browser_automation_unavailable');
 }
 
 function serializeBrowserControlActionResult(
@@ -223,7 +196,7 @@ function serializeBrowserControlActionResult(
 
 async function executeBrowserControlAction(
     args: RuntimeActionExecuteArgs,
-    input: Pick<CreateBrowserRuntimeActionExecutorInput, 'control' | 'resolveControl'>,
+    input: Pick<CreateBrowserRuntimeActionExecutorInput, 'control' | 'resolveControl' | 'automation' | 'resolveAutomation'>,
 ): Promise<unknown> {
     const parsed = parseRuntimeActionInput(args);
     if (!parsed.ok) return parsed.result;
@@ -244,12 +217,17 @@ async function executeBrowserControlAction(
     }
 
     const result = dispatchBrowserControlCommand(state, command.data, {
+        clientControlService: (input.automation ?? input.resolveAutomation?.(command.data))?.controlService ?? undefined,
         ...(control.sendDaemonCommand ? { sendDaemonCommand: control.sendDaemonCommand } : {}),
     });
     const rejected = result.effects.find((effect): effect is Extract<BrowserControlCommandEffect, { kind: 'commandRejected' }> => (
         effect.kind === 'commandRejected'
     ));
     if (rejected) {
+        if (rejected.reasonCode === 'automation_busy') {
+            return BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: command.data.commandId,
+                status: 'failed', error: { code: 'permission_denied', message: 'Browser input is still settling', retryable: true } });
+        }
         return browserRuntimeActionDisabledResult(mapControlRejectedReason(rejected.reasonCode));
     }
     if (result.effects.some((effect) => effect.kind === 'daemonCommand') && !control.sendDaemonCommand) {
@@ -317,7 +295,7 @@ async function executeBrowserAutomationAction(
     if (!requestedBy) return invalidParametersResult;
     const admitted = { ...request.data, requestedBy };
     const result = await controlService.executeAction(admitted, { signal: args.context?.signal });
-    return serializeAutomationActionResult(admitted, result, controlService);
+    return serializeAutomationActionResult(admitted, result);
 }
 
 export function createBrowserRuntimeActionExecutor(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { VOICE_SPEECH_OUTPUT_MAX_BYTES } from '../plugins/contributions/voiceProviders.js';
+import { VOICE_SPEECH_OUTPUT_MAX_BYTES, VoiceProviderContributionSchema, resolveVoiceSpeechSettingsCorrespondence } from '../plugins/contributions/voiceProviders.js';
 
 import {
   DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES,
@@ -17,6 +17,40 @@ import {
 } from './voiceSpeech.js';
 
 describe('daemon provider-neutral Voice speech RPC contract', () => {
+  it('admits Dictation purpose without accepting caller-selected language or provider configuration', () => {
+    const request = { target: { pluginId: 'acme.speech', localId: 'stt' }, requestId: 'dictation-1', mimeType: 'audio/wav', uploadId: 'upload-1', capturePurpose: 'dictation' };
+    expect(DaemonVoiceSpeechTranscribeRequestSchema.parse(request)).toMatchObject({ capturePurpose: 'dictation' });
+    expect(DaemonVoiceSpeechTranscribeRequestSchema.safeParse({ ...request, language: 'de' }).success).toBe(false);
+    expect(DaemonVoiceSpeechTranscribeRequestSchema.safeParse({ ...request, settings: { language: 'de' } }).success).toBe(false);
+  });
+
+  it('validates invocation-local recognition against the declared field and preserves stored configuration', () => {
+    const contribution = VoiceProviderContributionSchema.parse({ id: 'stt', title: 'STT', kind: 'speech', roles: ['conversation_stt', 'dictation_stt'], platforms: ['web'], settings: { schemaVersion: 1, fields: [
+      { id: 'model', title: 'Model', schema: { type: 'string', minLength: 1, maxLength: 256 }, default: 'stt-model', presentation: { control: 'text' } },
+      { id: 'language', title: 'Language', schema: { type: 'string', minLength: 1, maxLength: 64, enum: ['en', 'fr', 'de'] }, default: 'en', presentation: { control: 'select', options: [{ value: 'en', title: 'English' }, { value: 'fr', title: 'French' }, { value: 'de', title: 'German' }] } },
+    ] } });
+    if (contribution.kind !== 'speech') throw new Error('expected speech declaration');
+    const settings = Object.freeze({ model: 'stt-model', language: 'fr' });
+    expect(resolveVoiceSpeechSettingsCorrespondence({ contribution, settings }).transcribe?.language).toBe('fr');
+    expect(resolveVoiceSpeechSettingsCorrespondence({ contribution, settings, recognitionLanguage: 'de' }).transcribe?.language).toBe('de');
+    expect(resolveVoiceSpeechSettingsCorrespondence({ contribution, settings, recognitionLanguage: null }).transcribe?.language).toBe('en');
+    expect(settings.language).toBe('fr');
+    expect(() => resolveVoiceSpeechSettingsCorrespondence({ contribution, settings, recognitionLanguage: 'es' })).toThrow();
+    expect(() => resolveVoiceSpeechSettingsCorrespondence({ contribution, settings: { ...settings, language: 1 }, recognitionLanguage: 'de' })).toThrow();
+    const withoutLanguage = { ...contribution, settings: { ...contribution.settings, fields: contribution.settings.fields.filter((field) => field.id !== 'language') } };
+    const unsupported = resolveVoiceSpeechSettingsCorrespondence({ contribution: withoutLanguage, settings: { model: 'stt-model' }, recognitionLanguage: 'de' });
+    expect(unsupported.transcribe?.language).toBeNull();
+    expect(unsupported.settings).not.toHaveProperty('language');
+    const ttsOnly = VoiceProviderContributionSchema.parse({ ...contribution, roles: ['conversation_tts'], settings: { ...contribution.settings, fields: [
+      ...contribution.settings.fields,
+      { id: 'voiceName', title: 'Voice', schema: { type: 'string', minLength: 1, maxLength: 256 }, default: 'voice', presentation: { control: 'text' } },
+      { id: 'format', title: 'Format', schema: { type: 'string', enum: ['mp3', 'wav'] }, default: 'mp3', presentation: { control: 'select', options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }] } },
+    ] } });
+    if (ttsOnly.kind !== 'speech') throw new Error('expected speech declaration');
+    const synthesis = resolveVoiceSpeechSettingsCorrespondence({ contribution: ttsOnly, settings: { ...settings, voiceName: 'voice', format: 'mp3' }, recognitionLanguage: 'de' });
+    expect(synthesis.transcribe).toBeNull();
+    expect(synthesis.settings.language).toBe('fr');
+  });
   it('uses one canonical 16 MiB speech output ceiling at the provider and wire boundary', () => {
     expect(VOICE_SPEECH_OUTPUT_MAX_BYTES).toBe(16 * 1024 * 1024);
     expect(DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES).toBe(VOICE_SPEECH_OUTPUT_MAX_BYTES);

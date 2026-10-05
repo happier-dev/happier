@@ -15,13 +15,18 @@ function githubSvg(theme: Theme): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="${theme.colors.text.primary}">${body}</svg>`;
 }
 
+/** Anthropic's service identity (lab kit's A\\ mark), distinct from Claude's Agent starburst. */
+function anthropicSvg(theme: Theme): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${theme.colors.text.primary}"><path d="M13.8 5h3.1L22 19h-3.1L13.8 5ZM7.1 5h3.2L15.4 19h-3.2l-1-2.9H5.9L4.9 19H1.8L7.1 5Zm3.2 8.5-1.8-5-1.8 5h3.6Z"/></svg>`;
+}
+
 /**
  * Resolves the themed, monochrome brand-mark SVG XML for a connected service.
  *
  * Reuses the canonical registry plumbing: a service id maps to an `AgentId` via
  * `resolveAgentIdFromConnectedServiceId`, and the mark comes from the shared
- * `AGENT_LOGO_SVG_XML` registry. `github` has no `AgentId`, so it is
- * special-cased onto the dedicated `githubSvg` mark. Returns `null` when no mark
+ * `AGENT_LOGO_SVG_XML` registry. Services with their own identity (`github`,
+ * `anthropic`) use their dedicated mark here. Returns `null` when no mark
  * exists (the caller falls back to a generic `key-outline` glyph).
  *
  * LOCKED: marks render in the registry's monochrome/themed treatment
@@ -35,6 +40,7 @@ export function resolveConnectedServiceBrandIconXml(
     if (!normalized) return null;
 
     if (normalized === 'github') return githubSvg(theme);
+    if (normalized === 'anthropic') return anthropicSvg(theme);
 
     const agentId = resolveAgentIdFromConnectedServiceId(normalized);
     if (!agentId) return null;

@@ -288,7 +288,7 @@ describe('plugin registration scope targets', () => {
         expect(() => wrongRealm.commit()).toThrow(/Voice.*realm/i);
     });
 
-    it('captures the exact conversation topology and retains the root method receiver', () => {
+    it('captures the exact conversation topology and retains root and protocol method receivers', () => {
         const scope = createPluginRegistrationScope({
             pluginId: 'acme.voice',
             target: clientTarget,
@@ -305,6 +305,10 @@ describe('plugin registration scope targets', () => {
                 async prepare() { return { kind: 'unavailable' as const, reason: 'test' }; },
                 decodeControl() { return []; },
                 encodeTurnControl() { return null; },
+                continuation: { type: 'response.create' },
+                encodePostInputCommitControls(this: Readonly<{ continuation: Readonly<{ type: string }> }>) {
+                    return [this.continuation];
+                },
             },
             async createConnection() { return {} as never; },
             encodeToolResults() { return []; },
@@ -326,6 +330,13 @@ describe('plugin registration scope targets', () => {
         expect(registration.value.encodeTextTurn('captured'))
             .toEqual([{ kind: 'conversation', text: 'captured' }]);
         expect(registration.value.microphoneMode).toBe('host_pcm');
+        expect(registration.value.protocol.encodePostInputCommitControls?.())
+            .toEqual([{ type: 'response.create' }]);
+        if (runtime.kind === 'conversation') {
+            Reflect.set(runtime.protocol, 'encodePostInputCommitControls', () => [{ type: 'replacement' }]);
+        }
+        expect(registration.value.protocol.encodePostInputCommitControls?.())
+            .toEqual([{ type: 'response.create' }]);
     });
 
     it('rejects a provider-managed conversation runtime without an input mute setter before publication', () => {

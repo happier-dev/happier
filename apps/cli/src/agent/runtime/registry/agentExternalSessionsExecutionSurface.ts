@@ -183,6 +183,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
                 ...(request.searchTerm === undefined ? {} : { searchTerm: request.searchTerm }),
                 ...(request.searchMode === undefined ? {} : { searchMode: request.searchMode }),
+                ...(request.searchTarget === undefined ? {} : { searchTarget: request.searchTarget }),
                 ...(request.includeThreads === undefined ? {} : { includeThreads: request.includeThreads }),
                 ...(request.readCandidateIndexState === undefined
                     ? {}
@@ -194,6 +195,7 @@ export function createAgentExternalSessionsExecutionSurface(
                 ...(result.searchIncomplete === undefined
                     ? {}
                     : { searchIncomplete: result.searchIncomplete }),
+                ...(result.contentCoverage === undefined ? {} : { contentCoverage: result.contentCoverage }),
                 ...(result.preparation === undefined
                     ? {}
                     : { preparation: result.preparation }),

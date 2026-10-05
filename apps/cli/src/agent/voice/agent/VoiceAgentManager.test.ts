@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2, createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs, VoiceAgentTurnStreamEvent } from './voiceAgentTypes';
@@ -2462,6 +2462,92 @@ describe('VoiceAgentManager', () => {
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_NOT_FOUND' });
   });
 
+  it('uses the admitted speech latency target before provider completion', async () => {
+    let releaseProvider: (() => void) | undefined;
+    const providerDone = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      runtimeId: 'latency-runtime',
+      onProvisionRuntime() { runtime.emitMessage({ type: 'status', status: 'running' }); },
+      async onSendPrompt() {
+        runtime.emitMessage({ type: 'model-output', textDelta: `Sure. ${'word '.repeat(30)}` });
+        await providerDone;
+        runtime.emitMessage({ type: 'status', status: 'idle' });
+      },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+    const started = await manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model',
+      permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: 'CTX',
+    });
+    try {
+      const stream = await manager.startTurnStream({
+        voiceAgentId: started.voiceAgentId, userText: 'hello', speechSegmentTargetChars: 120,
+      });
+      await vi.waitFor(async () => {
+        const read = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0 });
+        expect(read.done).toBe(false);
+        const speech = read.events.flatMap((event) => event.t === 'voice_output' && event.output.kind === 'speech_segment'
+          ? [event.output.text.trim()] : []);
+        expect(speech).toEqual(['Sure.', 'word '.repeat(30).trim()]);
+      });
+    } finally {
+      releaseProvider?.();
+      await manager.stop({ voiceAgentId: started.voiceAgentId });
+    }
+  });
+
+  it.each([
+    { label: 'multilingual bytes', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true },
+    { label: 'multilingual text with normalized action preamble', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true, sendMessage: true },
+    { label: 'serialized JSON escaping', text: '\u0001'.repeat(60_000), actionCount: 1, incomplete: true },
+    { label: 'action event overhead', text: 'word '.repeat(9_000), actionCount: 230, incomplete: true },
+    { label: 'valid near-boundary ASCII', text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
+  ])('keeps $label inside the Protocol budget including actions and the repeated terminal final', async ({ text, actionCount, incomplete, sendMessage }) => {
+    const action = sendMessage
+      ? { t: 'sendSessionMessage', args: { message: 'Do X.' } }
+      : { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } };
+    const block = `<voice_actions>${JSON.stringify({ actions: Array.from({ length: actionCount }, () => action) })}</voice_actions>`;
+    const chatBackend = createMultiDeltaBackend('budget', [text, block]);
+    const manager = new VoiceAgentManager({ createBackend: () => chatBackend });
+    const started = await manager.start({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    });
+    let persistedText = '';
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello', onTurnFinal: (value) => { persistedText = value; } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const firstPage = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId, cursor: 0, maxEvents: 1 });
+    expect(firstPage.done).toBe(false);
+    expect(firstPage.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: persistedText } });
+    const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId, maxEvents: 256 });
+    let state = createVoiceAgentOutputTurnV1(stream.streamId);
+    let spokenText = '';
+    let finalText: string | undefined;
+    for (const event of events) {
+      if (event.t !== 'voice_output') continue;
+      const result = ingestVoiceAgentOutputEventV1(state, event.output);
+      state = result.state;
+      if (event.output.kind === 'speech_segment') spokenText += event.output.text;
+      if (event.output.kind === 'turn_final') finalText = event.output.text;
+    }
+    expect(state.terminal).toBe('final');
+    expect(finalText).toBe(persistedText);
+    expect(finalText?.startsWith(spokenText.trimEnd())).toBe(true);
+    expect(spokenText.length).toBeGreaterThan(text.length / 4);
+    expect(text.startsWith(spokenText)).toBe(true);
+    expect(spokenText).not.toMatch(/[\uD800-\uDBFF]$/u);
+    expect(finalText?.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(incomplete);
+    expect(events.some((event) => event.t === 'error')).toBe(false);
+    if (!incomplete) {
+      expect(spokenText).toBe(text);
+      expect(finalText).toBe(text.trimEnd());
+      expect(events.filter((event) => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(actionCount);
+    }
+  });
+
   it('rejects a cursor beyond produced events without evicting the stream or skipping its final event', async () => {
     const chatBackend = createDeltaOnlyBackend('cursor-ahead');
     const manager = new VoiceAgentManager({ createBackend: () => chatBackend });
@@ -2622,6 +2708,36 @@ describe('VoiceAgentManager', () => {
       }
     }
     expect(done).toBe(true);
+  });
+
+  it.each([
+    { enabled: false, mode: 'immediate' as const },
+    { enabled: true, mode: 'immediate' as const },
+    { enabled: true, mode: 'on_first_turn' as const },
+  ])('delivers admitted reply and greeting policy to the model on seeded and READY paths: %j', async (welcome) => {
+    for (const bootstrapMode of ['none', 'ready_handshake'] as const) {
+      const backend = createPromptCaptureBackend([
+        ...(bootstrapMode === 'ready_handshake' ? [{ responseText: 'READY' }] : []),
+        { responseText: 'Bonjour.' },
+      ]);
+      const manager = new VoiceAgentManager({ createBackend: () => backend });
+      try {
+        const start = {
+          backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' },
+          chatModelId: 'chat-model', commitModelId: 'commit-model',
+          permissionIntent: 'read-only' as const, idleTtlSeconds: 60,
+          initialContext: 'CTX', bootstrapMode,
+          voicePolicy: { assistantLanguage: 'fr-FR', welcome },
+        };
+        const started = await manager.start(start);
+        await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'What should we do?' });
+        const prompt = backend.prompts[0];
+        expect(prompt).toContain('Reply in fr-FR.');
+        if (!welcome.enabled) expect(prompt).toContain('Do not add greeting filler');
+        else if (welcome.mode === 'on_first_turn') expect(prompt).toContain('first reply to the user');
+        else expect(prompt).toContain('Do not repeat this startup greeting');
+      } finally { await manager.dispose(); }
+    }
   });
 
   it('bootstraps new sessions with a READY handshake when bootstrapMode is enabled', async () => {

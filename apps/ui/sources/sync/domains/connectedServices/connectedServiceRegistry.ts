@@ -36,6 +36,28 @@ type ConnectedServiceTokenKind =
   | 'personal-access-token'
   | 'api-token';
 
+// Built-in presentation follows the same exact qualified identity as the released compatibility
+// owner. A third-party contribution with a matching local id never borrows these instructions.
+const BUILT_IN_SETUP_PRESENTATION = {
+  'claude-subscription': { order: 0, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogClaude', manualMethodTitleKey: 'connectedServicesSettings.methodToken' },
+  'openai-codex': { order: 1, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogChatGpt' },
+  gemini: { order: 2, firstRun: true, connectPrimary: true, catalogDescriptionKey: 'connectedServicesSettings.catalogGemini' },
+  anthropic: {
+    order: 3, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogAnthropic',
+    manual: { consoleUrl: 'https://console.anthropic.com/settings/keys',
+      createKeyTitleKey: 'connectedServicesSettings.keyCreateAnthropic',
+      billingNoteKey: 'connectedServicesSettings.keyBillingAnthropic',
+      shapePattern: '^sk-ant-', shapeHintKey: 'connectedServicesSettings.keyShapeAnthropic' },
+  },
+  openai: { order: 4, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogOpenAi' },
+} as const;
+
+export function getConnectedServiceSetupPresentation(service: PluginContributionIdentityV1) {
+  const legacyServiceId = resolveLegacyServiceId(service);
+  if (!legacyServiceId || !(legacyServiceId in BUILT_IN_SETUP_PRESENTATION)) return null;
+  return BUILT_IN_SETUP_PRESENTATION[legacyServiceId as keyof typeof BUILT_IN_SETUP_PRESENTATION];
+}
+
 export type ConnectedServiceRegistryEntry = Readonly<{
   serviceId: ConnectedAccountUiProjectionEntryV1['serviceId'];
   /**

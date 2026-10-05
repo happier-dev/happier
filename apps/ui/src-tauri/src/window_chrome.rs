@@ -1,5 +1,8 @@
 #[cfg(desktop)]
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[cfg(desktop)]
+use std::sync::Mutex;
 
 #[cfg(desktop)]
 use tauri::{App, Emitter, Manager, Runtime, TitleBarStyle, WebviewWindow, Window, WindowEvent};
@@ -9,6 +12,440 @@ pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 
 #[cfg(desktop)]
 const DESKTOP_WINDOW_STATE_EVENT: &str = "desktopWindow://state";
+
+#[cfg(desktop)]
+const DESKTOP_GLASS_STATE_EVENT: &str = "desktopGlass://state";
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DesktopGlassBlur {
+    Off,
+    Light,
+    Regular,
+    Strong,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DesktopGlassMaterialRequest {
+    enabled: bool,
+    blur: DesktopGlassBlur,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopGlassStatePayload {
+    pub supported: bool,
+    /// Native transparent backing is live, including enabled material with blur Off.
+    pub material_live: bool,
+    pub reduce_transparency: bool,
+    pub high_contrast: bool,
+    pub window_active: bool,
+}
+
+#[cfg(desktop)]
+struct DesktopGlassRuntime(Mutex<DesktopGlassRuntimeInner>);
+
+#[cfg(desktop)]
+struct DesktopGlassRuntimeInner {
+    request: DesktopGlassMaterialRequest,
+    applied_blur: Option<DesktopGlassBlur>,
+    payload: DesktopGlassStatePayload,
+}
+
+#[cfg(desktop)]
+fn desktop_glass_material_requested(
+    request: DesktopGlassMaterialRequest,
+    supported: bool,
+    reduce_transparency: bool,
+    window_active: bool,
+) -> bool {
+    request.enabled && supported && !reduce_transparency && window_active
+}
+
+#[cfg(target_os = "macos")]
+fn read_glass_accessibility() -> Result<(bool, bool), String> {
+    // Invoked on the native main thread with all material application.
+    let workspace = unsafe { objc2_app_kit::NSWorkspace::sharedWorkspace() };
+    Ok(unsafe {
+        (
+            workspace.accessibilityDisplayShouldReduceTransparency(),
+            workspace.accessibilityDisplayShouldIncreaseContrast(),
+        )
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn read_glass_accessibility() -> Result<(bool, bool), String> {
+    use windows::UI::ViewManagement::{AccessibilitySettings, UISettings};
+    let effects = UISettings::new()
+        .and_then(|settings| settings.AdvancedEffectsEnabled())
+        .map_err(|error| error.to_string())?;
+    let contrast = AccessibilitySettings::new()
+        .and_then(|settings| settings.HighContrast())
+        .map_err(|error| error.to_string())?;
+    Ok((!effects, contrast))
+}
+
+#[cfg(all(desktop, not(any(target_os = "macos", target_os = "windows"))))]
+fn read_glass_accessibility() -> Result<(bool, bool), String> {
+    Ok((false, false))
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_backdrop(window: &WebviewWindow) -> Result<i32, String> {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE};
+    let mut backdrop = 0_i32;
+    unsafe {
+        DwmGetWindowAttribute(
+            window.hwnd().map_err(|error| error.to_string())?,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            (&mut backdrop as *mut i32).cast(),
+            std::mem::size_of::<i32>() as u32,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    Ok(backdrop)
+}
+
+#[cfg(desktop)]
+fn glass_platform_supported(window: &WebviewWindow) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        true
+    }
+    #[cfg(target_os = "windows")]
+    {
+        read_windows_backdrop(window).is_ok()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = window;
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_native_glass(
+    window: &WebviewWindow,
+    blur: Option<DesktopGlassBlur>,
+) -> Result<(), String> {
+    use window_vibrancy::{NSVisualEffectMaterial as Material, NSVisualEffectState};
+    let material = match blur {
+        None | Some(DesktopGlassBlur::Off) => {
+            return window_vibrancy::clear_vibrancy(window)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+        }
+        Some(DesktopGlassBlur::Light) => Material::UnderWindowBackground,
+        Some(DesktopGlassBlur::Regular) => Material::Sidebar,
+        Some(DesktopGlassBlur::Strong) => Material::HudWindow,
+    };
+    // Tauri's public effect path uses this same crate but drops its Result.
+    // Replacing a step removes the old native view instead of stacking blur planes.
+    window_vibrancy::clear_vibrancy(window).map_err(|error| error.to_string())?;
+    window_vibrancy::apply_vibrancy(
+        window,
+        material,
+        Some(NSVisualEffectState::FollowsWindowActiveState),
+        None,
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn apply_native_glass(
+    window: &WebviewWindow,
+    blur: Option<DesktopGlassBlur>,
+) -> Result<(), String> {
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
+    };
+    // Public Desktop Acrylic (Windows 11 build 22621+), with result and readback.
+    // Chrome drives this single window material. Windows maps each non-Off
+    // chrome step to Acrylic; each group's renderer blur/tint remains independent.
+    let backdrop = match blur {
+        None | Some(DesktopGlassBlur::Off) => DWMSBT_NONE.0,
+        Some(_) => DWMSBT_TRANSIENTWINDOW.0,
+    };
+    unsafe {
+        DwmSetWindowAttribute(
+            window.hwnd().map_err(|error| error.to_string())?,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            (&backdrop as *const i32).cast(),
+            std::mem::size_of::<i32>() as u32,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    if read_windows_backdrop(window)? != backdrop {
+        return Err("DWM did not retain the requested window material".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(desktop, not(any(target_os = "macos", target_os = "windows"))))]
+fn apply_native_glass(
+    _window: &WebviewWindow,
+    _blur: Option<DesktopGlassBlur>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn refresh_desktop_glass(window: &WebviewWindow) -> Result<DesktopGlassStatePayload, String> {
+    let state = window.app_handle().state::<DesktopGlassRuntime>();
+    let mut inner = state.0.lock().map_err(|error| error.to_string())?;
+    let previous = inner.payload;
+    let accessibility = read_glass_accessibility();
+    let supported = accessibility.is_ok() && glass_platform_supported(window);
+    let (reduce_transparency, high_contrast) = accessibility.unwrap_or_else(|error| {
+        log::warn!("failed to read desktop glass accessibility: {error}");
+        (previous.reduce_transparency, previous.high_contrast)
+    });
+    let window_active = window.is_focused().unwrap_or(false);
+    let wants_material = desktop_glass_material_requested(
+        inner.request,
+        supported,
+        reduce_transparency,
+        window_active,
+    );
+    let desired = if wants_material {
+        Some(inner.request.blur)
+    } else {
+        None
+    };
+    let mut material_live = inner.applied_blur.is_some();
+    if desired != inner.applied_blur {
+        let result = if desired.is_some() {
+            window
+                .set_background_color(Some(tauri::window::Color(0, 0, 0, 0)))
+                .map_err(|error| error.to_string())
+                .and_then(|_| apply_native_glass(window, desired))
+        } else {
+            apply_native_glass(window, None).and_then(|_| {
+                window
+                    .set_background_color(None)
+                    .map_err(|error| error.to_string())
+            })
+        };
+        match result {
+            Ok(()) => {
+                inner.applied_blur = desired;
+                material_live = desired.is_some();
+            }
+            Err(error) => {
+                log::warn!("failed to apply desktop glass material: {error}");
+                let _ = apply_native_glass(window, None);
+                let _ = window.set_background_color(None);
+                inner.applied_blur = None;
+                material_live = false;
+            }
+        }
+    }
+    let payload = DesktopGlassStatePayload {
+        supported,
+        material_live: material_live && wants_material,
+        reduce_transparency,
+        high_contrast,
+        window_active,
+    };
+    inner.payload = payload;
+    drop(inner);
+    if payload != previous {
+        let _ = window.emit(DESKTOP_GLASS_STATE_EVENT, payload);
+    }
+    Ok(payload)
+}
+
+#[cfg(desktop)]
+fn request_refresh_desktop_glass(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window(MAIN_WINDOW_LABEL) {
+            if let Err(error) = refresh_desktop_glass(&window) {
+                log::warn!("failed to refresh desktop glass: {error}");
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn register_glass_accessibility(app: &mut App) {
+    use objc2::{rc::Retained, runtime::ProtocolObject};
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification};
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol};
+    use std::{cell::RefCell, ptr::NonNull};
+
+    struct Observer {
+        center: Retained<NSNotificationCenter>,
+        token: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+    }
+    impl Drop for Observer {
+        fn drop(&mut self) {
+            let token: &ProtocolObject<dyn NSObjectProtocol> = self.token.as_ref();
+            unsafe { self.center.removeObserver(token.as_ref()) };
+        }
+    }
+    thread_local! { static OBSERVER: RefCell<Option<Observer>> = const { RefCell::new(None) }; }
+    let handle = app.handle().clone();
+    let block = block2::RcBlock::new(move |_notification: NonNull<NSNotification>| {
+        request_refresh_desktop_glass(&handle)
+    });
+    let center = unsafe { NSWorkspace::sharedWorkspace().notificationCenter() };
+    let token = unsafe {
+        center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification),
+            None,
+            None,
+            &block,
+        )
+    };
+    OBSERVER.with(|observer| *observer.borrow_mut() = Some(Observer { center, token }));
+}
+
+#[cfg(target_os = "windows")]
+fn register_glass_accessibility(app: &mut App) {
+    use windows::{
+        core::IInspectable,
+        Foundation::TypedEventHandler,
+        UI::ViewManagement::{AccessibilitySettings, UISettings},
+    };
+
+    struct Subscriptions {
+        ui: UISettings,
+        effects_token: i64,
+        accessibility: AccessibilitySettings,
+        contrast_token: i64,
+    }
+    impl Drop for Subscriptions {
+        fn drop(&mut self) {
+            let _ = self
+                .ui
+                .RemoveAdvancedEffectsEnabledChanged(self.effects_token);
+            let _ = self
+                .accessibility
+                .RemoveHighContrastChanged(self.contrast_token);
+        }
+    }
+    let result = (|| -> windows::core::Result<Subscriptions> {
+        let ui = UISettings::new()?;
+        let accessibility = AccessibilitySettings::new()?;
+        let handle = app.handle().clone();
+        let effects_token = ui.AdvancedEffectsEnabledChanged(&TypedEventHandler::<
+            UISettings,
+            IInspectable,
+        >::new(move |_, _| {
+            request_refresh_desktop_glass(&handle);
+            Ok(())
+        }))?;
+        let handle = app.handle().clone();
+        let contrast_token =
+            match accessibility.HighContrastChanged(&TypedEventHandler::<
+                AccessibilitySettings,
+                IInspectable,
+            >::new(move |_, _| {
+                request_refresh_desktop_glass(&handle);
+                Ok(())
+            })) {
+                Ok(token) => token,
+                Err(error) => {
+                    let _ = ui.RemoveAdvancedEffectsEnabledChanged(effects_token);
+                    return Err(error);
+                }
+            };
+        Ok(Subscriptions {
+            ui,
+            effects_token,
+            accessibility,
+            contrast_token,
+        })
+    })();
+    match result {
+        Ok(subscriptions) => {
+            app.manage(subscriptions);
+        }
+        Err(error) => log::warn!("failed to subscribe to desktop glass accessibility: {error}"),
+    }
+}
+
+#[cfg(all(desktop, not(any(target_os = "macos", target_os = "windows"))))]
+fn register_glass_accessibility(_app: &mut App) {}
+
+#[cfg(desktop)]
+async fn update_desktop_glass(
+    window: WebviewWindow,
+    request: Option<DesktopGlassMaterialRequest>,
+) -> Result<DesktopGlassStatePayload, String> {
+    if window.label() != MAIN_WINDOW_LABEL {
+        return Err("window material belongs to the main window".into());
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let result = (|| {
+                if let Some(request) = request {
+                    handle
+                        .app_handle()
+                        .state::<DesktopGlassRuntime>()
+                        .0
+                        .lock()
+                        .map_err(|error| error.to_string())?
+                        .request = request;
+                }
+                refresh_desktop_glass(&handle)
+            })();
+            let _ = sender.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    receiver.await.map_err(|error| error.to_string())?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn desktop_get_glass_state(
+    window: WebviewWindow,
+) -> Result<DesktopGlassStatePayload, String> {
+    update_desktop_glass(window, None).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn desktop_apply_glass_material(
+    window: WebviewWindow,
+    enabled: bool,
+    blur: DesktopGlassBlur,
+) -> Result<DesktopGlassStatePayload, String> {
+    update_desktop_glass(window, Some(DesktopGlassMaterialRequest { enabled, blur })).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn desktop_open_reduce_transparency_settings(
+    window: WebviewWindow,
+) -> Result<bool, String> {
+    use tauri_plugin_opener::OpenerExt;
+    if window.label() != MAIN_WINDOW_LABEL {
+        return Ok(false);
+    }
+    let url = match resolve_current_desktop_window_platform() {
+        DesktopWindowPlatform::MacOs => {
+            "x-apple.systempreferences:com.apple.preference.universalaccess?Seeing_Display"
+        }
+        DesktopWindowPlatform::Windows => "ms-settings:easeofaccess-display",
+        DesktopWindowPlatform::Linux | DesktopWindowPlatform::Unknown => return Ok(false),
+    };
+    // A fixed OS destination avoids extending the renderer's generic URL/scheme permission.
+    window
+        .app_handle()
+        .opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
 
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -321,7 +758,7 @@ pub(crate) fn present_main_window_for_lifecycle_event(
 /// here, so a login start in menu-bar mode never loads a web UI).
 #[cfg(desktop)]
 pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<WebviewWindow> {
-    let config = app
+    let mut config = app
         .config()
         .app
         .windows
@@ -329,6 +766,8 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
         .find(|window| window.label == MAIN_WINDOW_LABEL)
         .cloned()
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
+    // The renderer starts solid and clears selected paint roles only after native success.
+    config.transparent = cfg!(any(target_os = "macos", target_os = "windows"));
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
     configure_main_window(app, &window);
     crate::window_sizing::configure_main_window(app, &window)?;
@@ -452,6 +891,21 @@ pub async fn desktop_start_window_dragging(window: Window) -> Result<bool, Strin
 /// which has no window until the tray's Open asks for one.
 #[cfg(desktop)]
 pub fn register(app: &mut App) -> tauri::Result<()> {
+    app.manage(DesktopGlassRuntime(Mutex::new(DesktopGlassRuntimeInner {
+        request: DesktopGlassMaterialRequest {
+            enabled: false,
+            blur: DesktopGlassBlur::Off,
+        },
+        applied_blur: None,
+        payload: DesktopGlassStatePayload {
+            supported: false,
+            material_live: false,
+            reduce_transparency: false,
+            high_contrast: false,
+            window_active: false,
+        },
+    })));
+    register_glass_accessibility(app);
     if crate::menu_bar::launched_in_menu_bar_mode(app.handle()) {
         return Ok(());
     }
@@ -461,6 +915,21 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
 
 #[cfg(desktop)]
 fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
+    // New native windows have no effect yet; retain the last request across recreation.
+    if let Ok(mut inner) = app.state::<DesktopGlassRuntime>().0.lock() {
+        inner.applied_blur = None;
+        inner.payload.material_live = false;
+    }
+    request_refresh_desktop_glass(app);
+    let glass_handle = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(
+            event,
+            WindowEvent::Focused(_) | WindowEvent::ThemeChanged(_)
+        ) {
+            request_refresh_desktop_glass(&glass_handle);
+        }
+    });
     let policy = resolve_desktop_window_chrome_runtime_policy(
         window.label(),
         resolve_current_desktop_window_platform(),
@@ -506,6 +975,59 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glass_requires_supported_live_material_and_respects_reduce_transparency_and_focus() {
+        let request = DesktopGlassMaterialRequest {
+            enabled: true,
+            blur: DesktopGlassBlur::Strong,
+        };
+        assert!(desktop_glass_material_requested(request, true, false, true));
+        assert!(!desktop_glass_material_requested(
+            request, false, false, true
+        ));
+        assert!(!desktop_glass_material_requested(request, true, true, true));
+        assert!(!desktop_glass_material_requested(
+            request, true, false, false
+        ));
+        assert!(!desktop_glass_material_requested(
+            DesktopGlassMaterialRequest {
+                enabled: false,
+                ..request
+            },
+            true,
+            false,
+            true
+        ));
+        // Off removes blur, not the transparent window backing requested by Custom.
+        assert!(desktop_glass_material_requested(
+            DesktopGlassMaterialRequest {
+                blur: DesktopGlassBlur::Off,
+                ..request
+            },
+            true,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn glass_state_serializes_native_outcome_and_diagnostic_flags() {
+        let payload = DesktopGlassStatePayload {
+            supported: true,
+            material_live: false,
+            reduce_transparency: false,
+            high_contrast: true,
+            window_active: true,
+        };
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            serde_json::json!({
+                "supported": true, "materialLive": false, "reduceTransparency": false,
+                "highContrast": true, "windowActive": true
+            })
+        );
+    }
 
     #[test]
     fn main_window_prefers_native_traffic_lights_on_macos() {

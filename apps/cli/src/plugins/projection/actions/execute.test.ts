@@ -1,10 +1,11 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, formatQualifiedPluginActionId, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
 import type {
   ResolvedActionContribution,
   ResolvedActionDefinition,
@@ -28,6 +29,8 @@ import {
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
+import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
+import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
 
 type SafeResolvedActionContribution = Omit<ResolvedActionContribution, 'definition'> & Readonly<{
   definition: Extract<ResolvedActionDefinition, Readonly<{ dangerLevel: 'safe' }>>;
@@ -285,6 +288,7 @@ function createExecutableRegistry(params: Readonly<{
       ? { resolveCurrentPluginExecutionOrigin: params.resolveCurrentPluginExecutionOrigin }
       : {}),
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => [],
     retireConsumers: () => {},
     dispose: async () => {},
@@ -683,6 +687,89 @@ describe('executeContributedAction', () => {
     });
 
     expect(daemonHandler).not.toHaveBeenCalled();
+  });
+
+  it.each(['agent', 'mcp', 'cli'] as const)('executes a client-target Action on the answering UI with the real %s surface', async (surface) => {
+    const base = createAction('/unused/client-action.mjs', 'open-client');
+    const action: SafeResolvedActionContribution = {
+      ...base,
+      definition: {
+        ...base.definition,
+        surfaces: { ...base.definition.surfaces, agent: true, mcp: true, cli: true },
+        execution: { target: 'client', client: { artifactId: 'client-actions', exportName: 'activate' }, platforms: ['web'] },
+      },
+    };
+    const requests: unknown[] = [];
+    const qualifiedId = formatQualifiedPluginActionId({ pluginId: action.pluginId!, localId: action.definition.id });
+    const baseRegistry = createExecutableRegistry({ action, activateContributionsOnDemand: async () => [] });
+    const runtimeRegistry = {
+      ...baseRegistry,
+      contributes: { ...baseRegistry.contributes, actionsById: new Map([[qualifiedId, action]]) },
+      executeClientAction: createClientActionMachineRpcExecutor(() => ({
+        hasConnectedClientRpcHandler: () => true,
+        callConnectedClientRpc: async (_method, request, options) => {
+          requests.push(request);
+          options.onIssued();
+          return { ok: true, result: { ok: true, result: { handledBy: 'client' } } };
+        },
+      })),
+    };
+    // The injected boundary is the daemon control transport; all dispatch and
+    // machine reverse-RPC admission beneath it remain the production owners.
+    const executor = createDaemonPluginActionExecutor({
+      base: { execute: async () => { throw new Error('Unexpected built-in fallback'); } },
+      requestPluginActionExecution: (request, options) => executeContributedAction({
+        runtimeRegistry, actionId: request.actionId, input: request.input,
+        ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
+        context: { surface: request.surface, defaultSessionId: request.defaultSessionId, signal: options?.signal },
+      }),
+    });
+    await expect(executor.execute('action.invoke', { action: { pluginId: action.pluginId!, localId: action.definition.id }, input: { destination: 'preview' } }, {
+      surface, defaultSessionId: 'session-current', requiredContributedActionDangerLevel: 'safe',
+    })).resolves.toEqual({ ok: true, result: { handledBy: 'client' } });
+    expect(requests).toEqual([{
+      v: 1, action: { pluginId: action.pluginId, localId: action.definition.id },
+      input: { destination: 'preview' }, surface,
+      expectedContributorOccurrenceId: readFixtureOccurrenceId(action.pluginId!),
+      defaultSessionId: 'session-current', requiredDangerLevel: 'safe',
+    }]);
+  });
+
+  it('keeps caller provenance and retired occurrences out of the host client Action transport', async () => {
+    const base = createAction('/unused/client-action.mjs', 'open-client');
+    const action: SafeResolvedActionContribution = {
+      ...base,
+      definition: { ...base.definition,
+        execution: { target: 'client', client: { artifactId: 'client-actions', exportName: 'activate' }, platforms: ['web'] },
+      },
+    };
+    const runtimeRegistry = {
+      ...createExecutableRegistry({ action, activateContributionsOnDemand: async () => [] }),
+      executeClientAction: async () => { throw new Error('A refused caller must not issue a client Action'); },
+    };
+    expect(await executeContributedAction({
+      runtimeRegistry, actionId: action.definition.id, input: {},
+      context: { surface: 'agent', caller: {
+        kind: 'plugin', pluginId: 'acme.caller',
+        occurrenceId: 'caller:1', sourceCustody: { kind: 'development', registeredRootId: 'caller-root' },
+        contribution: { id: 'call', qualifiedId: 'acme.caller/call' },
+      } },
+    })).toMatchObject({ matched: true, result: {
+      ok: false, errorCode: 'plugin_action_client_target_unavailable', actionHandlerInvocation: 'notStarted',
+    } });
+    expect(await executeContributedAction({
+      runtimeRegistry, actionId: action.definition.id, input: {},
+      expectedContributorOccurrenceId: 'retired-occurrence', context: { surface: 'agent' },
+    })).toMatchObject({ matched: true, result: {
+      ok: false, errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted',
+    } });
+    expect(await executeContributedAction({
+      runtimeRegistry, actionId: action.definition.id, input: {},
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'acme.action.plugin/actions/open-client': { enabled: false } } }),
+      context: { surface: 'agent' },
+    })).toMatchObject({ matched: true, result: {
+      ok: false, errorCode: 'plugin_action_unavailable', actionHandlerInvocation: 'notStarted',
+    } });
   });
 
   it('composes public Actions through demand activation with immediate caller attribution', async () => {

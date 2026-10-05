@@ -6,14 +6,15 @@ describe('resolveSessionRowInteractionPolicy', () => {
     it('reuses the same policy object for identical inputs', () => {
         const input = {
             platformOs: 'ios',
+            touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,
             canArchiveSession: true,
             contextMenuItemCount: 2,
             contextMenuOpen: true,
             contextMenuWasOpen: false,
-            nativeInlineDragEnabled: false,
-            hasReorderHandle: false,
+            dragEnabled: false,
+            organizeMode: false,
         } as const;
 
         const first = resolveSessionRowInteractionPolicy(input);
@@ -22,7 +23,8 @@ describe('resolveSessionRowInteractionPolicy', () => {
         expect(first).toBe(second);
         expect(first).toEqual({
             swipeEnabled: true,
-            showReorderHandle: false,
+            wholeRowDrag: false,
+            showDragGrip: false,
             enableLongPressContextMenu: true,
             suppressNextPressOnNativeContextMenuOpen: true,
         });
@@ -31,14 +33,15 @@ describe('resolveSessionRowInteractionPolicy', () => {
     it('suppresses the next press when a native context menu opens', () => {
         const policy = resolveSessionRowInteractionPolicy({
             platformOs: 'ios',
+            touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,
             canArchiveSession: false,
             contextMenuItemCount: 2,
             contextMenuOpen: true,
             contextMenuWasOpen: false,
-            nativeInlineDragEnabled: false,
-            hasReorderHandle: false,
+            dragEnabled: false,
+            organizeMode: false,
         });
 
         expect(policy.enableLongPressContextMenu).toBe(true);
@@ -48,14 +51,15 @@ describe('resolveSessionRowInteractionPolicy', () => {
     it('does not suppress presses while the menu stays open', () => {
         const policy = resolveSessionRowInteractionPolicy({
             platformOs: 'ios',
+            touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,
             canArchiveSession: false,
             contextMenuItemCount: 2,
             contextMenuOpen: true,
             contextMenuWasOpen: true,
-            nativeInlineDragEnabled: false,
-            hasReorderHandle: false,
+            dragEnabled: false,
+            organizeMode: false,
         });
 
         expect(policy.suppressNextPressOnNativeContextMenuOpen).toBe(false);
@@ -64,47 +68,83 @@ describe('resolveSessionRowInteractionPolicy', () => {
     it('uses archive permission for active-session swipe actions', () => {
         const policy = resolveSessionRowInteractionPolicy({
             platformOs: 'ios',
+            touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,
             canArchiveSession: false,
             contextMenuItemCount: 2,
             contextMenuOpen: false,
             contextMenuWasOpen: false,
-            nativeInlineDragEnabled: false,
-            hasReorderHandle: false,
+            dragEnabled: false,
+            organizeMode: false,
         });
 
         expect(policy.swipeEnabled).toBe(false);
     });
 
-    it('delegates iOS long-press context menu opening to native inline drag while it owns reorder', () => {
-        const policy = resolveSessionRowInteractionPolicy({
-            platformOs: 'ios',
-            isActiveSession: true,
-            canStopSession: true,
-            canArchiveSession: false,
-            contextMenuItemCount: 2,
-            contextMenuOpen: false,
-            contextMenuWasOpen: false,
-            nativeInlineDragEnabled: true,
-            hasReorderHandle: true,
-        });
+    const phoneRow = {
+        isActiveSession: true,
+        canStopSession: true,
+        canArchiveSession: true,
+        contextMenuItemCount: 2,
+        contextMenuOpen: false,
+        contextMenuWasOpen: false,
+        dragEnabled: true,
+    } as const;
 
-        expect(policy.enableLongPressContextMenu).toBe(false);
-        expect(policy.showReorderHandle).toBe(true);
+    it.each(['ios', 'android'])('keeps long-press for the menu on %s and shows no grip outside Organize mode (K1)', (platformOs) => {
+        const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs, touchPrimaryPointer: true, organizeMode: false });
+
+        expect(policy.enableLongPressContextMenu).toBe(true);
+        expect(policy.showDragGrip).toBe(false);
+        expect(policy.wholeRowDrag).toBe(false);
+        expect(policy.swipeEnabled).toBe(true);
     });
 
-    it('keeps Android row long-press menus disabled so row presses remain clickable', () => {
+    it('drags only through the grip in phone Organize mode, where swipe and the long-press menu step aside', () => {
+        for (const platformOs of ['ios', 'android', 'web'] as const) {
+            const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs, touchPrimaryPointer: true, organizeMode: true });
+
+            expect(policy.showDragGrip).toBe(true);
+            expect(policy.wholeRowDrag).toBe(false);
+            expect(policy.swipeEnabled).toBe(false);
+            expect(policy.enableLongPressContextMenu).toBe(false);
+        }
+    });
+
+    it('shows no grip in Organize mode for a row that cannot move', () => {
+        const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs: 'android', touchPrimaryPointer: true, organizeMode: true, dragEnabled: false });
+
+        expect(policy.showDragGrip).toBe(false);
+    });
+
+    it('makes the whole desktop row the one drag source, with no separate handle (E1)', () => {
+        const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs: 'web', touchPrimaryPointer: false, organizeMode: false });
+
+        expect(policy.wholeRowDrag).toBe(true);
+        expect(policy.showDragGrip).toBe(false);
+        expect(policy.swipeEnabled).toBe(false);
+    });
+
+    it('never turns a whole row into a drag source in a phone browser, where it would steal scrolling', () => {
+        const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs: 'web', touchPrimaryPointer: true, organizeMode: false });
+
+        expect(policy.wholeRowDrag).toBe(false);
+        expect(policy.showDragGrip).toBe(false);
+    });
+
+    it('does not offer an Android long-press menu when the row has no menu actions', () => {
         const policy = resolveSessionRowInteractionPolicy({
             platformOs: 'android',
+            touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,
             canArchiveSession: false,
-            contextMenuItemCount: 2,
+            contextMenuItemCount: 0,
             contextMenuOpen: false,
             contextMenuWasOpen: false,
-            nativeInlineDragEnabled: false,
-            hasReorderHandle: false,
+            dragEnabled: false,
+            organizeMode: false,
         });
 
         expect(policy.enableLongPressContextMenu).toBe(false);

@@ -217,6 +217,58 @@ describe('initializeVoiceAgentHandle', () => {
         );
     });
 
+    it('uses hydrated layout-1 owner facts with the current list-selected session model', async () => {
+        const previousSettings = state.settings;
+        const previousSession = state.sessions.s1;
+        const rows = state.sessionListRowsByServerId[state.profileScope.serverId];
+        const previousRow = rows.s1;
+        try {
+            state.settings = {
+                ...previousSettings,
+                voice: {
+                    ...previousSettings.voice,
+                    providers: {
+                        ...previousSettings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...previousSettings.voice.providers.local_conversation.config,
+                            agent: {
+                                ...previousSettings.voice.providers.local_conversation.config.agent,
+                                agentSource: 'agent', agentId: 'claude',
+                                chatModelSource: 'session', commitModelSource: 'session',
+                            },
+                        } },
+                    },
+                },
+            };
+            state.sessions.s1 = {
+                ...previousSession, metadataLayoutVersion: 1, modelMode: 'stale-session-model',
+                metadata: { summaryText: 'Shared presentation' },
+                ownerMetadataView: previousSession.metadata,
+            };
+            rows.s1 = {
+                ...previousRow, metadataLayoutVersion: 1, modelMode: 'current-session-model',
+                metadata: { summaryText: 'Current shared presentation' }, ownerMetadataView: null,
+            };
+            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            await initializeVoiceAgentHandle({
+                sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({
+                    start, sendTurn: vi.fn(), welcome: vi.fn(), startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(), cancelTurnStream: vi.fn(), commit: vi.fn(), stop: vi.fn(),
+                }),
+                setDeferredTargetSessionContext: vi.fn(),
+            });
+            expect(start).toHaveBeenCalledWith(expect.objectContaining({
+                agentId: 'claude', profileId: 'raw-profile',
+                chatModelId: 'current-session-model', commitModelId: 'current-session-model',
+            }));
+        } finally {
+            state.settings = previousSettings;
+            state.sessions.s1 = previousSession;
+            rows.s1 = previousRow;
+        }
+    });
+
     it.each<[string, () => void]>([
         ['visible session metadata', () => {
             state.sessions.s1.metadataLayoutVersion = 1;

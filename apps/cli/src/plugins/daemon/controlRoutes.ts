@@ -124,6 +124,7 @@ const PluginDevelopmentControlRequestSchema = z.discriminatedUnion('kind', [
 const PluginActionExecuteRequestSchema = z.object({
   actionId: NonEmptyStringSchema,
   input: z.unknown(),
+  requiredDangerLevel: z.literal('safe').optional(),
   surface: z.enum(['cli', 'mcp', 'agent']),
   defaultSessionId: NonEmptyStringSchema.optional(),
   startedBy: WorkflowRunStartedByV1Schema.optional(),
@@ -156,6 +157,7 @@ export async function executeAppliedDaemonPluginActionWithController(
       runtimeRegistry: lease.registry,
       actionId: request.actionId,
       input: request.input,
+      ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
       ...(request.expectedContributorOccurrenceId === undefined
         ? {}
         : {

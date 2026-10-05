@@ -40,6 +40,7 @@ import type {
 import type { SessionTeamCredentialBindingMetadataPatchV1 } from '@happier-dev/protocol/teams';
 
 import type { AgentState, Metadata } from '@/api/types';
+import { deriveActivitySummaryFromAgentState } from '@/api/session/deriveActivitySummaryFromAgentState';
 import type { StoredCredentials } from '@/persistence';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -801,12 +802,29 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
       );
     }
     let accountEncryptionCurrentness = owner?.accountEncryptionCurrentness;
+    let activitySummaryV1: SessionMetadataOwnerPatchV1['activitySummaryV1'];
+    const mutation = params.mutation;
+    const mutationWithSummary: SessionMetadataEnvelopeTupleMutation = mutation.kind === 'agentState'
+      ? {
+          ...mutation,
+          update: async (previous: AgentState) => {
+            const next = await mutation.update(previous);
+            const summary = deriveActivitySummaryFromAgentState(next, previous);
+            activitySummaryV1 = {
+              pendingPermissionRequestCount: summary.pendingPermissionRequestCount,
+              pendingUserActionRequestCount: summary.pendingUserActionRequestCount,
+              pendingRequestNewestCreatedAt: summary.pendingRequestNewestCreatedAt,
+            };
+            return next;
+          },
+        }
+      : mutation;
     const updated = await updateSessionMetadataTupleWithRetry<
       Metadata,
       AgentState
     >({
       initialSnapshot: toSharedTupleSnapshot(params.initialSnapshot),
-      mutation: params.mutation,
+      mutation: mutationWithSummary,
       crypto: {
         encryptPayload: async (payload) =>
           encryptStoredSessionPayload({
@@ -873,6 +891,9 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
             ...(params.teamVisibilityGrantConsent ? { teamVisibilityGrantConsent: params.teamVisibilityGrantConsent } : {}),
             ...(params.sessionExpectation ? { sessionExpectation: params.sessionExpectation } : {}),
           };
+        }
+        if (activitySummaryV1 && (transportPatch.mode === 'owner' || transportPatch.mode === 'owner_migration')) {
+          transportPatch = { ...transportPatch, activitySummaryV1 };
         }
         const result = await patchSessionMetadataEnvelopeTuple({
           token: params.token,

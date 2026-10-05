@@ -1,4 +1,5 @@
 import { AGENT_IDS } from '@/agents/catalog/catalog';
+import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -43,6 +44,7 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{ sessionId
         mergedProviderProjectionById: inputs.mergedProviderProjectionById,
         mergedBackendProjectionById: inputs.mergedBackendProjectionById,
         discoveredBackendIds: inputs.discoveredBackendIds,
+        pluginProjectionV2: inputs.pluginProjectionV2,
       };
     })()
     : null;
@@ -82,10 +84,15 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{ sessionId
     .map((item) => {
       const defaultTargetKey = resolveBackendTargetKeyV2(resolveReviewEngineTarget(item.id));
       const effectiveTargetKey = enabledTargetKeyByEngineId.get(item.id) ?? defaultTargetKey;
+      const currentAgent = readCurrentProjectedAgentCapabilities({
+        projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+        agentId: item.id,
+      });
       return {
         engineId: item.id,
         label: labelByAgentId.get(item.id) ?? item.label,
         enabled: item.disabled !== true && backendEnabledByTargetKey?.[effectiveTargetKey] !== false,
+        capabilities: { structuredNarration: currentAgent?.capabilities.structuredOutput?.formats.includes('json') === true },
       };
     })
     .filter((item) => includeDisabled || item.enabled);

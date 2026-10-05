@@ -13,6 +13,8 @@ import {
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,6 +73,27 @@ describe('WorkflowActivityView', () => {
         const props = { ...makeToolViewProps(tool), sessionId: 'sess_1', serverId: 'home-exact' };
         return (await renderScreen(React.createElement(WorkflowActivityView, props))).tree;
     }
+
+    it('projects the decoded workflow body and reveals a late agent with unclamped normalized detail', async () => {
+        const module = await import('./WorkflowActivityView');
+        const run = largeSnapshot(20);
+        const summary = 'line\n'.repeat(10) + 'x'.repeat(2200) + 'needle';
+        run.agents[19] = { ...run.agents[19], summary };
+        const tool = makeToolCall({ name: 'Workflow', input: { name: 'Shell', hidden: 'private needle' } });
+        const blocks = module.projectWorkflowActivityDisplayText(tool, null, { workflowRun: run });
+        const detail = blocks.find((block) => block.id === 'tool-workflow-agent-agent-19-detail');
+        expect(detail?.text).toBe(summary.trim());
+        expect(blocks.some((block) => block.text.includes('private'))).toBe(false);
+        useWorkflowRunForToolUseId.mockReturnValue({ runHeadline: null, detail: { state: 'loaded', runId: run.runId, snapshot: run } });
+        const store = createTranscriptFindRowStore();
+        const start = summary.trim().indexOf('needle');
+        store.publish(new Map([['m1', { blocks: [{ id: detail!.id, sourceRanges: [{ start, end: start + 6, current: true }] }] }]]));
+        const { tree } = await renderScreen(<TranscriptFindProvider store={store}>
+            <module.WorkflowActivityView {...makeToolViewProps(tool, { messageId: 'm1', sessionId: 's1' })} />
+        </TranscriptFindProvider>);
+        expect(collectHostText(tree)).toContain('Agent 19');
+        expect(tree.findByTestId('find-match-current')?.props.children).toBe('needle');
+    });
 
     it('passes the transcript owner\'s exact Home to the workflow record observation', async () => {
         useWorkflowRunForToolUseId.mockReturnValue({ runHeadline: null, detail: { state: 'loading', runId: 'wf_1' } });

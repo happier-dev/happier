@@ -27,6 +27,10 @@ function entryRef(overrides: Partial<{ kindId: string; collisionScope: string; e
 }
 
 describe('the detail mount instance key', () => {
+  it('separates the simultaneously mounted header actions from the persistent source body', () => {
+    expect(deriveTriageDetailMountInstanceKey(entryRef(), INSTANCE_ID, 'actions'))
+      .not.toBe(deriveTriageDetailMountInstanceKey(entryRef(), INSTANCE_ID));
+  });
   it('stays under the host ceiling for a contract-legal entry reference', () => {
     // A self-hosted Azure DevOps Server collection base is ordinary and long:
     // `scm-azure-devops/src/triage/identity.ts` notes a Server collection reaches

@@ -1,10 +1,12 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
+import { createDeferred, createSessionMessagesFixture, flushHookEffects, renderHook } from '@/dev/testkit';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { storage } from '@/sync/domains/state/storageStore';
 import { fetchUserMessageHistoryPage } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
+import { useUserMessageHistoryEntries } from './useUserMessageHistoryEntries';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import {
     USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS,
@@ -49,6 +51,8 @@ describe('useUserMessageHistory server role query', () => {
             ...state,
             profileScope: { serverId: 'server-1', accountId: 'account-1' },
             sessionMessages: {},
+            sessions: {},
+            sessionListRowsByServerId: {},
         }));
     });
 
@@ -62,6 +66,206 @@ describe('useUserMessageHistory server role query', () => {
             profileScope: { serverId: 'server-1', accountId: 'account-1' },
             sessionMessages: {},
         }));
+    });
+
+    it('pages global sent history from unhydrated sessions in recency order, one page per demand', async () => {
+        storage.setState({
+            sessions: {
+                older: createSessionFixture({ id: 'older', serverId: 'server-1', updatedAt: 100, meaningfulActivityAt: 10 }),
+                newer: createSessionFixture({ id: 'newer', serverId: 'server-1', updatedAt: 20, meaningfulActivityAt: 20 }),
+                otherHome: createSessionFixture({ id: 'otherHome', serverId: 'server-2', updatedAt: 30 }),
+            },
+            sessionListRowsByServerId: {},
+        });
+        fetchUserMessageHistoryPageMock
+            .mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'm9', routeMessageId: 'server:m9', seq: 9, createdAt: 90, role: 'user', text: 'repeat' },
+                { messageId: 'a9', routeMessageId: 'server:a9', seq: 10, createdAt: 91, role: 'assistant', text: 'answer' },
+            ], hasMore: true, nextBeforeSeq: 9 })
+            .mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'm4', routeMessageId: 'server:m4', seq: 4, createdAt: 40, role: 'user', text: 'repeat' },
+            ], hasMore: false, nextBeforeSeq: null })
+            .mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'm9', routeMessageId: 'server:m9', seq: 9, createdAt: 9, role: 'user', text: 'older session' },
+            ], hasMore: false, nextBeforeSeq: null });
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', enabled: true }));
+        expect(fetchUserMessageHistoryPageMock).not.toHaveBeenCalled();
+        expect(hook.getCurrent().coverage).toBe('loaded');
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(1);
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenNthCalledWith(1, 'newer', { limit: 40 });
+        expect(hook.getCurrent().entries).toEqual([
+            { serverId: 'server-1', sessionId: 'newer', messageId: 'm9', seq: 9, createdAtMs: 90, text: 'repeat' },
+        ]);
+        expect(hook.getCurrent().coverage).toBe('partial');
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenNthCalledWith(2, 'newer', { limit: 40, beforeSeq: 9 });
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenNthCalledWith(3, 'older', { limit: 40 });
+        expect(hook.getCurrent().entries.map((entry) => [entry.sessionId, entry.messageId, entry.text])).toEqual([
+            ['newer', 'm9', 'repeat'], ['newer', 'm4', 'repeat'], ['older', 'm9', 'older session'],
+        ]);
+        expect(hook.getCurrent().progress).toEqual({ pagesLoaded: 3, sessionsSearched: 2, totalSessions: 2 });
+        expect(hook.getCurrent().hasMore).toBe(false);
+        // Ordinary/archived/query membership is paged and cannot attest an entire Account inventory.
+        expect(hook.getCurrent().coverage).toBe('partial');
+        await hook.unmount();
+    });
+
+    it('keeps disabled history inert and Stop rejects late publication while leaving the shared page usable', async () => {
+        const page = createDeferred<Awaited<ReturnType<typeof fetchUserMessageHistoryPage>>>();
+        fetchUserMessageHistoryPageMock.mockReturnValueOnce(page.promise);
+        const hook = await renderHook(
+            (props: { enabled: boolean }) => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1', enabled: props.enabled }),
+            { initialProps: { enabled: false } },
+        );
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).not.toHaveBeenCalled();
+        await hook.rerender({ enabled: true });
+        let pending!: Promise<void>;
+        await act(async () => { pending = hook.getCurrent().loadMore(); });
+        expect(hook.getCurrent().isLoading).toBe(true);
+        await act(async () => {
+            hook.getCurrent().stop();
+            page.resolve({ status: 'loaded', rows: [
+                { messageId: 'm1', routeMessageId: 'server:m1', seq: 1, createdAt: 1, role: 'user', text: 'late' },
+            ], hasMore: false, nextBeforeSeq: null });
+            await pending;
+        });
+        expect(hook.getCurrent().entries).toEqual([]);
+        expect(hook.getCurrent().isLoading).toBe(false);
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(hook.getCurrent().entries[0]?.text).toBe('late');
+        expect(hook.getCurrent().coverage).toBe('complete');
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+    });
+
+    it('does not publish an old Account page into the newly addressed history', async () => {
+        const page = createDeferred<Awaited<ReturnType<typeof fetchUserMessageHistoryPage>>>();
+        fetchUserMessageHistoryPageMock.mockReturnValueOnce(page.promise);
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
+        let pending!: Promise<void>;
+        await act(async () => { pending = hook.getCurrent().loadMore(); });
+        await act(async () => {
+            storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-2' } });
+            await hook.rerender();
+            page.resolve({ status: 'loaded', rows: [
+                { messageId: 'm1', routeMessageId: 'server:m1', seq: 1, createdAt: 1, role: 'user', text: 'private old Account' },
+            ], hasMore: false, nextBeforeSeq: null });
+            await pending;
+        });
+        expect(hook.getCurrent().entries).toEqual([]);
+        expect(hook.getCurrent().coverage).toBe('loaded');
+        fetchUserMessageHistoryPageMock.mockResolvedValueOnce({ status: 'loaded', rows: [], hasMore: false, nextBeforeSeq: null });
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().coverage).toBe('complete');
+        await hook.unmount();
+    });
+
+    it('retains readable records and partial coverage through a failed older page, then retries its cursor', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+        fetchUserMessageHistoryPageMock
+            .mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'm9', routeMessageId: 'server:m9', seq: 9, createdAt: 9, role: 'user', text: 'readable' },
+            ], hasMore: true, nextBeforeSeq: 9 })
+            .mockResolvedValueOnce({ status: 'error' })
+            .mockResolvedValueOnce({ status: 'loaded', rows: [], hasMore: false, nextBeforeSeq: null });
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(hook.getCurrent().entries[0]?.text).toBe('readable');
+        expect(hook.getCurrent().coverage).toBe('partial');
+        expect(hook.getCurrent().error).toBe(true);
+        expect(hook.getCurrent().isLoading).toBe(false);
+        vi.setSystemTime(Date.now() + USER_MESSAGE_HISTORY_REMOTE_RETRY_COOLDOWN_MS);
+        await act(async () => { await hook.getCurrent().retry(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenLastCalledWith('s1', { limit: 40, beforeSeq: 9 });
+        expect(hook.getCurrent().entries[0]?.text).toBe('readable');
+        expect(hook.getCurrent().coverage).toBe('complete');
+        expect(hook.getCurrent().error).toBe(false);
+        await hook.unmount();
+    });
+
+    it('reuses already read history when the picker reopens without issuing another page request', async () => {
+        fetchUserMessageHistoryPageMock.mockResolvedValueOnce({ status: 'loaded', rows: [
+            { messageId: 'm1', routeMessageId: 'server:m1', seq: 1, createdAt: 1, role: 'user', text: 'retained prompt' },
+        ], hasMore: false, nextBeforeSeq: null });
+        const first = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
+        await act(async () => { await first.getCurrent().loadMore(); });
+        await first.unmount();
+        const reopened = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
+        expect(reopened.getCurrent().entries[0]?.text).toBe('retained prompt');
+        expect(reopened.getCurrent().coverage).toBe('complete');
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(1);
+        await reopened.unmount();
+    });
+
+    it('projects local display text and merges by message identity while old servers remain partial', async () => {
+        storage.setState({ sessionMessages: { s1: createSessionMessagesFixture({
+            messageIdsOldestFirst: ['internal-1'],
+            messagesById: { 'internal-1': { kind: 'user-text', id: 'internal-1', realID: 'm1', localId: null, seq: 1,
+                createdAt: 1, text: 'expanded body', displayText: '  readable prompt\n' } },
+        }) } });
+        roleQuerySupportedState.supported = false;
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).not.toHaveBeenCalled();
+        expect(hook.getCurrent().coverage).toBe('partial');
+        expect(hook.getCurrent().error).toBe(true);
+        expect(hook.getCurrent().entries).toEqual([
+            { serverId: 'server-1', sessionId: 's1', messageId: 'm1', seq: 1, createdAtMs: 1, text: '  readable prompt\n' },
+        ]);
+        roleQuerySupportedState.supported = true;
+        fetchUserMessageHistoryPageMock.mockResolvedValueOnce({ status: 'loaded', rows: [
+            { messageId: 'm1', routeMessageId: 'server:m1', seq: 1, createdAt: 1, role: 'user', text: '  readable prompt\n' },
+        ], hasMore: false, nextBeforeSeq: null });
+        await hook.rerender();
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(hook.getCurrent().entries).toHaveLength(1);
+        expect(hook.getCurrent().coverage).toBe('complete');
+        await hook.unmount();
+    });
+
+    it('keeps an explicitly addressed Home isolated from another active Home inventory', async () => {
+        storage.setState({
+            sessions: { s1: createSessionFixture({ id: 's1', serverId: 'server-1' }) },
+            sessionMessages: { s1: createSessionMessagesFixture({ messageIdsOldestFirst: ['m1'], messagesById: {
+                m1: { kind: 'user-text', id: 'm1', localId: null, createdAt: 1, text: 'private active Home' },
+            } }) },
+        });
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'global', serverId: 'server-2' }));
+        expect(hook.getCurrent().entries).toEqual([]);
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).not.toHaveBeenCalled();
+        expect(hook.getCurrent().coverage).toBe('partial');
+        expect(hook.getCurrent().error).toBe(true);
+        await hook.unmount();
+    });
+
+    it('reads the latest history before certifying a shared cache that began below a loaded transcript window', async () => {
+        fetchUserMessageHistoryPageMock
+            .mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'm4', routeMessageId: 'server:m4', seq: 4, createdAt: 4, role: 'user', text: 'older navigation cache' },
+            ], hasMore: false, nextBeforeSeq: null })
+            .mockResolvedValueOnce({ status: 'loaded', rows: [
+                { messageId: 'm9', routeMessageId: 'server:m9', seq: 9, createdAt: 9, role: 'user', text: 'latest prompt' },
+            ], hasMore: true, nextBeforeSeq: 9 })
+            .mockResolvedValueOnce({ status: 'loaded', rows: [], hasMore: false, nextBeforeSeq: null });
+        const navigation = await renderHook(() => useUserMessageHistoryRemoteEntries({ sessionId: 's1', initialBeforeSeq: 20 }));
+        await act(async () => { navigation.getCurrent().requestNextPage(); await flushHookEffects(); });
+        await navigation.unmount();
+        const hook = await renderHook(() => useUserMessageHistoryEntries({ scope: 'perSession', sessionId: 's1' }));
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenNthCalledWith(2, 's1', { limit: 40 });
+        expect(hook.getCurrent().entries.map((entry) => entry.text)).toEqual(['latest prompt', 'older navigation cache']);
+        expect(hook.getCurrent().coverage).toBe('partial');
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenNthCalledWith(3, 's1', { limit: 40, beforeSeq: 9 });
+        expect(hook.getCurrent().coverage).toBe('complete');
+        await hook.unmount();
     });
 
     it('shares one in-flight remote history page across same-scope consumers', async () => {

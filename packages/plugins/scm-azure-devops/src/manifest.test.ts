@@ -9,6 +9,7 @@ import {
   AZURE_DEVOPS_TRIAGE_PURPOSE,
 } from './triage/descriptor.js';
 import { AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS } from './triage/mutationActions.js';
+import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS } from './triage/detailActions.js';
 
 describe('Azure DevOps network authority', () => {
   it('grants exactly the verbs its declared Actions consume, and no others', () => {
@@ -74,24 +75,25 @@ describe('Azure DevOps pull-request write declarations', () => {
     return declaration;
   });
 
-  it('keeps every write unreachable from any agent surface and behind a host confirmation', () => {
+  it('exposes every write to agents with host confirmation by default', () => {
     for (const declaration of declarations) {
-      // The human gate is reachability, not a prompt. A `danger` level plus an agent surface would
-      // only floor an agent invocation to an approval prompt; omitting the surface means there is
-      // no tool, no prompt and no exposure at all.
-      expect(declaration.surfaces).toContain('ui');
-      // Mounted RPC admission validates the lease and host-stamps `ui`; the
-      // provider must not widen this human-only write to the plugin/background
-      // surface merely because its renderer is plugin-contributed.
+      expect(declaration.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(declaration.surfaces).not.toContain('plugin');
-      expect(declaration.surfaces).not.toContain('agent');
-      expect(declaration.surfaces).not.toContain('mcp');
-      expect(declaration.surfaces).not.toContain('cli');
       expect(declaration.dangerLevel).not.toBe('safe');
       expect(declaration.confirmation?.title).toEqual({
         key: expect.any(String),
         fallback: expect.any(String),
       });
+    }
+  });
+
+  it('exposes native detail reads to agents through the same configured-account owner', () => {
+    for (const id of Object.values(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS)) {
+      const declaration = PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === id);
+      expect(declaration?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(declaration?.dangerLevel, id).toBe('safe');
+      expect(declaration?.connectedAccountPurposeBindings, id)
+        .toEqual([{ path: 'instance.binding.account', purpose: AZURE_DEVOPS_TRIAGE_PURPOSE }]);
     }
   });
 

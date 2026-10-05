@@ -15,20 +15,7 @@ vi.mock('@react-navigation/native', async () => {
     return createReactNavigationNativeMock();
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: unknown) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { text: 'text', background: 'background', placeholder: 'placeholder' },
-                border: { default: 'border', strong: 'border-strong' },
-                text: { secondary: 'secondary' },
-                surface: { base: 'surface' },
-                state: { danger: { foreground: 'danger' } },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));

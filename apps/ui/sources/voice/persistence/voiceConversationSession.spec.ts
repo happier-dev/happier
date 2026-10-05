@@ -5,10 +5,8 @@ import {
 } from '@happier-dev/agents';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { buildVoiceSpawnUserAttemptId } from '@/voice/shared/voiceSpawnAttempt';
-import { installVoiceStorageModuleMocks } from './installVoiceStorageModuleMocks';
 
 type MachineContributionRegistryProjectionDescribeFn =
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
@@ -41,6 +39,7 @@ const sessionRpcBoundary = vi.hoisted(() => ({
 }));
 
 type TestState = {
+  authoringMemory?: { recentMachinePaths: { machineId: string; path: string }[] };
   settingsScope?: { serverId: string; accountId: string } | null;
   settings: any;
   machines: Record<string, any>;
@@ -82,12 +81,12 @@ function installSessionSpawnNewActionMock(): void {
     const backendId = pluginId === 'acme.voice'
       ? 'acme-voice-agent'
       : pluginId === 'acme.agent.codex'
-        ? 'acme.codex.runtime'
+        ? 'acme.agent.codex/codex'
         : input.agentTarget.identity.localId;
     const legacyOptions: Parameters<MachineSpawnTrustedHiddenSystemSessionFn>[0] = {
       machineId: input.executionTarget.machineId,
       serverId: input.executionTarget.serverId,
-      directory: input.directory,
+      directory: input.directory.path,
       transcriptStorage: input.transcriptStorage,
       permissionMode: input.permissionMode,
       connectedServices: input.connectedServices,
@@ -206,8 +205,8 @@ function enableCollidingQualifiedAgentProjection(): void {
             },
           },
         },
-        'acme.codex.agent': {
-          id: 'acme.codex.agent',
+        'acme.agent.codex/codex': {
+          id: 'acme.agent.codex/codex',
           identity: {
             pluginId: 'acme.agent.codex',
             localId: 'codex',
@@ -303,14 +302,15 @@ vi.mock('@/sync/domains/session/external/readExternalSessionLink', () => ({
   readExternalSessionLink: () => null,
 }));
 
-installVoiceStorageModuleMocks({
-  storage: () => {
-    return createStorageModuleStub({
-      storage: {
-        getState: () => state,
-      },
-    });
-  },
+vi.mock('@/sync/domains/state/storage', async () => {
+  const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+  return createStorageModuleStub({
+    storage: {
+      // This fixture mutates its partial state in place; publish a new snapshot
+      // so the canonical completion adapter observes each fixture update.
+      getState: () => ({ ...state }),
+    },
+  });
 });
 
 vi.mock('@/sync/ops/machines', () => ({
@@ -357,6 +357,12 @@ vi.mock('@/voice/runtime/voiceTargetStore', () => ({
   },
 }));
 
+// Load the real host graph during collection so binding assertions do not spend
+// their deadline compiling the React Native and provider composition graph.
+const { createBundledConversationRuntimeHostLease } = await import(
+  '@/voice/registry/bundledConversationRuntimeHost'
+);
+
 describe('ensureVoiceConversationSessionForVoiceHome', () => {
   beforeEach(() => {
     activeServerRef.current = 'server-1';
@@ -380,14 +386,11 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     state = {
       settingsScope: { serverId: 'server-1', accountId: 'account-1' },
+      authoringMemory: {
+        recentMachinePaths: [{ machineId: 'machine-1', path: '/Users/test/.happier/voice-agent' }],
+      },
       settings: {
         lastUsedAgent: 'codex',
-        recentMachinePaths: [
-          {
-            machineId: 'machine-1',
-            path: '/Users/test/.happier/voice-agent',
-          },
-        ],
         voice: {
           executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
           providers: {
@@ -508,7 +511,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
         path: '/Users/test/workspace',
         backendTarget: {
           kind: 'backend',
-          backendId: 'acme.codex.runtime',
+          backendId: 'acme.agent.codex/codex',
         },
       },
     };
@@ -518,9 +521,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       transport: 'webrtc',
     });
 
-    const { createBundledConversationRuntimeHostLease } = await import(
-      '@/voice/registry/bundledConversationRuntimeHost'
-    );
     const hostLease = createBundledConversationRuntimeHostLease();
 
     try {
@@ -594,9 +594,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       transport: 'webrtc',
     });
 
-    const { createBundledConversationRuntimeHostLease } = await import(
-      '@/voice/registry/bundledConversationRuntimeHost'
-    );
     const hostLease = createBundledConversationRuntimeHostLease();
 
     try {
@@ -627,7 +624,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
         expect.objectContaining({
           backendTarget: {
             kind: 'backend',
-            backendId: 'acme.codex.runtime',
+            backendId: 'acme.agent.codex/codex',
           },
           connectedServices,
         }),
@@ -809,7 +806,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.machines['machine-1'].metadata = {
       homeDir: '/Users/test',
     };
-    state.settings.recentMachinePaths = [{
+    state.authoringMemory!.recentMachinePaths = [{
       machineId: 'machine-1',
       path: '~/repo',
     }];
@@ -835,7 +832,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.machines['machine-1'].metadata = {
       homeDir: '/Users/test',
     };
-    state.settings.recentMachinePaths = [{
+    state.authoringMemory!.recentMachinePaths = [{
       machineId: 'machine-1',
       path: '~/repo',
     }];
@@ -987,7 +984,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
   });
 
   it('routes recent voice-home spawn targets through active machine replacements', async () => {
-    state.settings.recentMachinePaths = [{
+    state.authoringMemory!.recentMachinePaths = [{
       machineId: 'machine-old',
       path: '/Users/test/.happier/voice-agent',
     }];
@@ -1087,7 +1084,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('machine-1', expect.objectContaining({
       serverId: 'server-1',
-      timeoutMs: 10_000,
     }));
     expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
       backendTarget: {

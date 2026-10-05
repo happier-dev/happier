@@ -8,8 +8,11 @@ import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
 import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
+import type { MarkdownInlineReferences } from '../markdownInlineReferences';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
 import { SpecialMarkdownBlockView } from './SpecialMarkdownBlockView';
+import { MarkdownFindFallback } from './MarkdownFindFallback';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 type MarkdownSegmentViewProps = Readonly<{
     segment: MarkdownRenderSegment;
@@ -32,7 +35,10 @@ type MarkdownSegmentViewProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    findSourceRanges?: readonly FindTextRange[];
+    findActive?: boolean;
     agentTexMath: boolean;
+    inlineReferences?: MarkdownInlineReferences;
 }>;
 
 export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) => {
@@ -41,7 +47,13 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
         markdown: props.segment.markdown,
     }), [props.segment]);
     const highlighted = rangesOverlap(props.segment.sourceRange, props.highlightSourceRange ?? null);
-    const content = props.segment.type === 'enriched-markdown'
+    const content = props.segment.type === 'enriched-markdown' && (props.findActive || props.findSourceRanges?.length)
+        ? <MarkdownFindFallback markdown={props.segment.markdown} sourceStart={props.segment.sourceStart}
+            ranges={props.findSourceRanges ?? EMPTY_FIND_RANGES} profile={props.profile} selectable={props.selectable}
+            first={props.segment.first} last={props.segment.last} onLinkPress={props.onLinkPress}
+            onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle}
+            agentTexMath={props.agentTexMath} inlineReferences={props.inlineReferences} />
+        : props.segment.type === 'enriched-markdown'
         ? (
             <EnrichedMarkdownTextAdapter
                 markdown={props.segment.renderMarkdown ?? props.segment.markdown}
@@ -54,11 +66,15 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 testID="markdown-enriched-run"
                 suppressLeadingTopMargin={props.segment.first}
                 agentTexMath={props.agentTexMath}
+                inlineReferences={props.inlineReferences}
             />
         )
         : (
             <SpecialMarkdownBlockView
                 blocks={props.segment.blocks}
+                findSourceRanges={props.findSourceRanges}
+                sourceStart={props.segment.sourceStart}
+                markdown={props.segment.markdown}
                 first={props.segment.first}
                 last={props.segment.last}
                 selectable={props.selectable}
@@ -101,6 +117,8 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
         </View>
     );
 });
+
+const EMPTY_FIND_RANGES: readonly FindTextRange[] = [];
 
 function rangesOverlap(a: MarkdownSourceRange, b: MarkdownSourceRange | null): boolean {
     if (!b) return false;

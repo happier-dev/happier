@@ -114,6 +114,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
             externalLinkedTakeover: { writerSafety: 'unsupported' },
             sources: [{
               sourceKind: 'antigravityCliPrint',
+              contentSearch: false,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },

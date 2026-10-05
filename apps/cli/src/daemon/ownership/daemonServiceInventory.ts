@@ -6,12 +6,12 @@ import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { readSettings } from '@/persistence';
 import {
   discoverInstalledDaemonServiceEntries,
-  readInstalledDaemonServiceEnvValue,
+  readInstalledDaemonServiceHomeDir,
   type InstalledDaemonServiceEntry,
 } from '@/daemon/service/discoverInstalledDaemonServiceEntries';
 import { type DaemonStartupSource, isDaemonStartupSourceServiceManaged } from '@/daemon/ownership/daemonOwnershipMetadata';
-import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';
-import { resolveDaemonServicePaths, type DaemonServiceCliRuntime, type DaemonServiceListEntry } from '@/daemon/service/paths';
+import { happierHomeDirsMatch } from '@/daemon/ownership/happierHomeDirComparableKey';
+import { type DaemonServiceCliRuntime, type DaemonServiceListEntry } from '@/daemon/service/paths';
 import type { DaemonServiceMode } from '@/daemon/service/plan';
 import { readBackgroundServiceActivity, type BackgroundServiceActivity } from '@/daemon/service/readBackgroundServiceHealth';
 
@@ -135,14 +135,9 @@ function resolveInstalledServiceHomeDir(entry: InstalledDaemonServiceEntry): str
   if (discoveredHomeDir) {
     return discoveredHomeDir;
   }
-  return readInstalledDaemonServiceEnvValue({
+  return readInstalledDaemonServiceHomeDir({
     platform: entry.platform,
     path: entry.path,
-    key: 'HAPPIER_HOME_DIR',
-  }) ?? readInstalledDaemonServiceEnvValue({
-    platform: entry.platform,
-    path: entry.path,
-    key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
   });
 }
 
@@ -151,18 +146,11 @@ async function resolveDefaultFollowingRelayMatchForInstalledService(
   runtime: DaemonServiceCliRuntime,
 ): Promise<boolean> {
   const serviceHomeDir = resolveInstalledServiceHomeDir(entry);
-  if (!serviceHomeDir) {
-    return await resolveDefaultFollowingRelayMatch(runtime);
-  }
+  if (!happierHomeDirsMatch(serviceHomeDir, runtime.happierHomeDir, runtime.platform)) return false;
 
   const serviceSettings = readSettingsSnapshotForHomeDir(serviceHomeDir);
   if (!serviceSettings) {
-    return (
-      resolveHappierHomeDirComparableKey(serviceHomeDir, runtime.platform)
-      === resolveHappierHomeDirComparableKey(runtime.happierHomeDir, runtime.platform)
-    )
-      ? await resolveDefaultFollowingRelayMatch(runtime)
-      : false;
+    return await resolveDefaultFollowingRelayMatch(runtime);
   }
 
   return resolveDefaultFollowingRelayMatchFromSettings(serviceSettings, runtime);
@@ -329,66 +317,13 @@ export function renderDefaultFollowingServiceStandingBy(params: Readonly<{
   };
 }
 
-function normalizeServicePathForComparison(path: string, platform: DaemonServiceCliRuntime['platform']): string {
-  const trimmed = String(path ?? '').trim();
-  if (!trimmed) return '';
-  const normalizedSeparators = platform === 'win32'
-    ? trimmed.replaceAll('/', '\\')
-    : trimmed.replaceAll('\\', '/');
-  return platform === 'win32'
-    ? normalizedSeparators.toLowerCase()
-    : normalizedSeparators;
-}
-
 export function hasInstalledBackgroundServiceConflictForCurrentInstallation(params: Readonly<{
   services: readonly DaemonServiceListEntry[];
   runtime: DaemonServiceCliRuntime;
 }>): boolean {
-  const runtimeHomeComparableKey = resolveHappierHomeDirComparableKey(
+  return params.services.some((service) => happierHomeDirsMatch(
+    service.happierHomeDir ?? readInstalledDaemonServiceHomeDir({ platform: params.runtime.platform, path: service.path }),
     params.runtime.happierHomeDir,
     params.runtime.platform,
-  );
-  for (const service of params.services) {
-    const declaredServiceHome = String(service.happierHomeDir ?? '').trim();
-    if (declaredServiceHome) {
-      const declaredComparableKey = resolveHappierHomeDirComparableKey(
-        declaredServiceHome,
-        params.runtime.platform,
-      );
-      if (declaredComparableKey && declaredComparableKey === runtimeHomeComparableKey) {
-        return true;
-      }
-    }
-
-    const configuredServiceHome = readInstalledDaemonServiceEnvValue({
-      platform: params.runtime.platform,
-      path: service.path,
-      key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
-    }) ?? readInstalledDaemonServiceEnvValue({
-      platform: params.runtime.platform,
-      path: service.path,
-      key: 'HAPPIER_HOME_DIR',
-    });
-    if (configuredServiceHome) {
-      const configuredComparableKey = resolveHappierHomeDirComparableKey(
-        configuredServiceHome,
-        params.runtime.platform,
-      );
-      if (configuredComparableKey && configuredComparableKey === runtimeHomeComparableKey) {
-        return true;
-      }
-    }
-  }
-
-  const expectedPaths = resolveDiscoveryModes(params.runtime.platform)
-    .map((mode) => resolveDaemonServicePaths(params.runtime, { mode }).installedPath)
-    .map((path) => normalizeServicePathForComparison(path, params.runtime.platform));
-  if (expectedPaths.length === 0) {
-    return false;
-  }
-
-  return params.services.some((service) => {
-    const servicePath = normalizeServicePathForComparison(service.path, params.runtime.platform);
-    return expectedPaths.includes(servicePath);
-  });
+  ));
 }

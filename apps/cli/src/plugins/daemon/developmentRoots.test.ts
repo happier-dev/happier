@@ -14,6 +14,12 @@ import {
   createDaemonPluginDevelopmentRootsOwner,
   type DaemonPluginDevelopmentObservation,
 } from './developmentRoots';
+import { createDaemonPluginChangeService } from './changeService';
+import { createDaemonPathPluginChangePreparer } from './pathChangePreparer';
+import { startPluginDevelopmentSourceObserver } from '@/plugins/authoring/sourceObserver';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { handlePluginsCommand } from '@/cli/commands/plugins';
+import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
 const temporaryDirectories: string[] = [];
 const packageRootObservation = {
@@ -34,6 +40,73 @@ describe('daemon plugin development root ownership', () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (path) => {
       await rm(path, { recursive: true, force: true });
     }));
+  });
+
+  it('returns the typed preparation failure for an explicit standalone root and retains its recovery status', async () => {
+    const happyHomeDir = await createDirectory('happier-daemon-dev-install-failure-home-');
+    const sourceRoot = await createDirectory('happier-daemon-dev-install-failure-source-');
+    await mkdir(join(sourceRoot, '.happier-plugin'));
+    await writeFile(join(sourceRoot, 'package.json'), '{"name":"standalone-plugin","version":"1.0.0"}\n');
+    await writeFile(join(sourceRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(
+      createPluginManifestV2Fixture({ id: 'acme.install-failure', entrypoints: undefined }),
+    ));
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: { prepare: async () => { throw new Error('Failed dependencies cannot reach runtime adoption'); } },
+        runManagedPluginPnpm: async () => ({ ok: false, message: 'Fixture managed materializer refused dependencies' }),
+      }),
+    });
+    const owner = createDaemonPluginDevelopmentRootsOwner({
+      happyHomeDir,
+      submitObservation: async ({ request }) => await service.requestPluginChange({
+        ...request,
+        sourceRootPath: request.projectRoot,
+      }),
+      // Watch delivery is the OS boundary; classification, initial observation,
+      // preparation, service failure and status projection all remain real.
+      startCollectionObserver: async () => ({ stop() {} }),
+      startSourceObserver: async (projectRoot, onObservation) => await startPluginDevelopmentSourceObserver({
+        projectRoot,
+        onObservation,
+        startWatchingDirectory: () => ({ ready: Promise.resolve(), stop() {} }),
+      }),
+    });
+    try {
+      await owner.initialize();
+      await expect(owner.control({ kind: 'registerExplicit', rootPath: sourceRoot })).resolves.toMatchObject({
+        kind: 'failed',
+        code: 'plugin_dev_dependency_preparation_failed',
+        message: 'Fixture managed materializer refused dependencies',
+        status: { plugins: [expect.objectContaining({ sourceRootPath: sourceRoot, phase: 'unavailable' })] },
+      });
+      await expect(owner.readPersistedStateForTest()).resolves.toMatchObject({
+        explicitRoots: [{ rootPath: sourceRoot }],
+      });
+      for (const args of [
+        ['install', sourceRoot, '--dev', '--json'],
+        ['dev', sourceRoot, '--json'],
+      ]) {
+        const output = captureStdoutJsonOutput();
+        try {
+          await handlePluginsCommand(args, {
+            ensureDaemon: async () => undefined,
+            controlPluginDevelopment: async (request) => await owner.control(request),
+          });
+          expect(output.json()).toMatchObject({
+            ok: false,
+            error: { code: 'plugin_dev_dependency_preparation_failed' },
+          });
+          expect(process.exitCode).toBe(1);
+        } finally {
+          output.restore();
+          process.exitCode = undefined;
+        }
+      }
+    } finally {
+      await owner.stop();
+      await service.shutdown();
+    }
   });
 
   it('admits only the generated first-party source identity before daemon root initialization', async () => {

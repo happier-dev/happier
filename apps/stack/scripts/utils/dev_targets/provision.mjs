@@ -106,7 +106,7 @@ async function writeSshConfig(path, content) {
   await rename(temporary, path);
 }
 
-function renderSshConfig({
+export function renderSshConfig({
   sshAlias,
   remoteHost,
   remoteUser,

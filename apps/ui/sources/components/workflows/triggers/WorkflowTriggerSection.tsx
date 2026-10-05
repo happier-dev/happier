@@ -8,19 +8,21 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { formatWorkflowInputValue, parseWorkflowInputText } from '@/sync/domains/workflows/workflowInputText';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 
 import { formatTriggerSummary } from './formatTriggerSummary';
-import { createDefaultThen, type TriggerFormValue, type TriggerWhenValue } from './sessionTriggerForm';
+import { createDefaultThen, readScheduleWhen, type TriggerFormValue, type TriggerWhenValue } from './sessionTriggerForm';
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { TriggerRow } from './TriggerRow';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
-import { parseSimpleSchedule } from './triggerSchedule';
 import {
     editWorkflowTriggerDraft,
     projectWorkflowTriggerRows,
@@ -34,6 +36,8 @@ export type WorkflowTriggerSectionProps = Readonly<{
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
+    status: 'loading' | 'ready' | 'failed';
+    onRetry: () => void;
     /** "{machine} · {folder}" of the set's one machine, stated once (07 S4, L8); `null` without a trigger. */
     runsOn: string | null;
     /** The steps have unsaved changes, so the description adds "Save to include your changes." */
@@ -46,10 +50,17 @@ export type WorkflowTriggerSectionProps = Readonly<{
 }>;
 
 function rowWhen(row: WorkflowTriggerRowModel): TriggerWhenValue | null {
-    if (row.schedule === null) return null;
-    const { scheduleExpr, timezone } = row.schedule.schedule;
-    const expression = scheduleExpr ?? '';
-    return { kind: 'schedule', schedule: parseSimpleSchedule(expression), expression, timezone };
+    return row.schedule === null ? null : readScheduleWhen(row.schedule.schedule);
+}
+
+/** "Next run: {time}" for a saved, enabled schedule whose owner has computed its next occurrence. */
+function formatNextRun(set: WorkflowTriggerSetV1 | null, row: WorkflowTriggerRowModel | null): string | undefined {
+    if (row === null || row.kind !== 'saved' || !row.enabled) return undefined;
+    const saved = set?.triggers.find((trigger) => trigger.id === row.triggerId);
+    if (saved?.kind !== 'schedule' || saved.nextRunAt === null) return undefined;
+    return t('workflows.triggers.row.nextRun', {
+        time: formatWithCachedDateTimeFormatter(saved.nextRunAt, getPreferredLanguage(), { dateStyle: 'medium', timeStyle: 'short' }),
+    });
 }
 
 /**
@@ -87,11 +98,23 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const constantInputs: Readonly<Record<string, JsonValue>> = props.draft.context?.inputs ?? props.set?.context?.inputs ?? {};
     const legacy = props.set ? describeLegacyTriggerSet(props.set,
         (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' })) : null;
+    const readState = props.status === 'ready' ? null : rows.length > 0 || legacy ? (
+        <SurfaceFreshnessLine testID={`${props.testIDPrefix}-triggers-read`} busy={props.status === 'loading'}
+            tone={props.status === 'failed' ? 'warning' : 'neutral'}
+            reason={props.status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
+            {...(props.status === 'failed' ? { action: { label: t('workflows.triggers.popover.tryAgain'), onPress: props.onRetry } } : {})} />
+    ) : (
+        <SurfaceStateCard testID={`${props.testIDPrefix}-triggers-read`} size="line"
+            kind={props.status === 'failed' ? 'error' : 'loading'}
+            title={props.status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
+            {...(props.status === 'failed' ? { action: { testID: `${props.testIDPrefix}-triggers-read-retry`, label: t('workflows.triggers.popover.tryAgain'), onPress: props.onRetry } } : {})} />
+    );
     if (legacy && props.set) {
         const set = props.set;
         const retained = set.triggers.filter((trigger) => !props.draft.removes.includes(trigger.id));
         return (
             <ItemGroup title={t('workflows.triggers.editor.title')} description={t('workflows.triggers.editor.editInWorkflows')}>
+                {readState}
                 {retained.length === 0 ? (
                     <Item title={legacy.title} titleLines={0} subtitle={legacy.qualifier} subtitleLines={0} mode="info" />
                 ) : retained.map((trigger) => (
@@ -114,7 +137,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     }
     return (
         <ItemGroup title={t('workflows.triggers.editor.title')} description={description}>
-            {rows.length === 0 ? (
+            {readState}
+            {rows.length === 0 && props.status === 'ready' ? (
                 <Item testID={`${props.testIDPrefix}-triggers-manual`} title={t('workflows.triggers.summary.manual')} mode="info" />
             ) : rows.map((item) => (
                 <WorkflowTriggerRowView
@@ -138,6 +162,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     testID={`${props.testIDPrefix}-trigger-popover`}
                     anchorRef={open.anchor}
                     onRequestClose={() => setOpen(null)}
+                    {...(formatNextRun(props.set, row) === undefined ? {} : { subtitle: formatNextRun(props.set, row) })}
                     whenKinds={['schedule']}
                     sessionId={null}
                     showThen={false}
@@ -174,16 +199,19 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                                     }}
                                 />
                             ))}
-                            {/* Roles for a trigger set wait on the Roles rail (ORC); stated, never hidden. */}
+                            {/* The set's roles are your roles (07 S4); the per-set overrides push S11's
+                                Roles rows once that editor lands here. */}
                             <Item
                                 testID={`${props.testIDPrefix}-trigger-roles`}
                                 title={t('workflows.triggers.editor.roles')}
-                                subtitle={t('workflows.triggers.editor.rolesUnavailable')}
+                                subtitle={t('workflows.triggers.editor.sameForAllTriggers')}
+                                detail={t('workflows.start.rolesYour')}
                                 mode="info"
                             />
                         </>
                     )}
                     onSubmit={async (value, write) => {
+                        if (write.trigger === null) return;
                         if (row === null) {
                             change(editWorkflowTriggerDraft(props.draft, { kind: 'add', clientId: createClientId(), trigger: write.trigger }));
                         } else if (row.kind === 'new') {

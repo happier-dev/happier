@@ -703,12 +703,14 @@ export async function getExecutionRun(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
     params.signal?.throwIfAborted();
-    const runId = ExecutionRunGetRequestSchema.parse(params.request).runId;
+    const request = ExecutionRunGetRequestSchema.parse(params.request);
+    const runId = request.runId;
 
     try {
         const result = await callExecutionRunRpc({
             ...params,
             methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+            ...(request.waitForOutput || request.waitForInputId ? { transportTimeoutMs: null } : {}),
         });
         if (result.ok) {
             const parsed = ExecutionRunGetResponseSchema.safeParse(result.data);

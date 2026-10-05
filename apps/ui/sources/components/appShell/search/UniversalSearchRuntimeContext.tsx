@@ -30,6 +30,7 @@ export function resolveUniversalSearchInvocationScope(input: Readonly<{
 /** What Search opens on: everything (default), or one session's terminals (Jump, terminal lab B4). */
 export type UniversalSearchOpenOptions = Readonly<{
     terminals?: TerminalJumpTarget;
+    source?: 'fileContent';
 }>;
 
 export type UniversalSearchRuntime = Readonly<{

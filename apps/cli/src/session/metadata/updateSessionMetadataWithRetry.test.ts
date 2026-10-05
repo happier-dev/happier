@@ -114,6 +114,53 @@ describe('updateSessionMetadataWithRetry', () => {
     fetchAccountEncryptionCurrentnessMock.mockResolvedValue(plainCurrentness);
   });
 
+  it('recomputes pending summaries from the refreshed Agent-state mutation after a tuple conflict', async () => {
+    const credentials = { token: 'token-1', encryption: null };
+    const initial = buildSessionMetadataEnvelopeFields({
+      credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      metadata: { path: '/repo', host: 'owner' }, agentState: { requests: {} },
+    });
+    const refreshed = buildSessionMetadataEnvelopeFields({
+      credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      metadata: { path: '/repo', host: 'owner' },
+      agentState: { requests: { remote: { tool: 'Write', kind: 'permission', arguments: {}, createdAt: 750 } } },
+    });
+    const raw = {
+      id: 'sess_pending_retry', encryptionMode: 'plain' as const, metadataLayoutVersion: 1,
+      metadata: initial.sharedMetadata.ciphertext, ownerMetadata: initial.ownerMetadata,
+      agentState: initial.agentState, metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: null,
+    };
+    fetchSessionByIdCompatMock.mockResolvedValue({
+      ...raw, metadata: refreshed.sharedMetadata.ciphertext, ownerMetadata: refreshed.ownerMetadata,
+      agentState: refreshed.agentState, metadataVersion: 1, agentStateVersion: 1,
+    });
+    patchSessionMetadataEnvelopeTupleMock
+      .mockResolvedValueOnce({ success: false, error: 'session_metadata_version_conflict' })
+      .mockResolvedValueOnce({ success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: 2 }, agentState: { version: 2 } });
+
+    const updated = await updateSessionMetadataEnvelopeTupleWithRetry({
+      token: credentials.token, sessionId: raw.id, mode: 'plain', ctx: null,
+      authority: { kind: 'owner', credentials, accountEncryptionCurrentness: plainCurrentness },
+      initialSnapshot: readSessionMetadataTupleWriterSnapshot({
+        credentials, accountEncryptionCurrentness: plainCurrentness, rawSession: raw,
+      }),
+      mutation: { kind: 'agentState', update: state => ({
+        ...state, requests: { ...state?.requests,
+          local: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 250 },
+        },
+      }) },
+    });
+
+    expect(updated.value.agentState?.requests).toMatchObject({
+      remote: { createdAt: 750 }, local: { createdAt: 250 },
+    });
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls.map(([request]) => request.patch.activitySummaryV1)).toEqual([
+      { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1, pendingRequestNewestCreatedAt: 250 },
+      { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 1, pendingRequestNewestCreatedAt: 750 },
+    ]);
+  });
+
   it('exposes layout-1 owner state through the canonical discriminated tuple value', () => {
     const credentials = {
       token: 'token-1',

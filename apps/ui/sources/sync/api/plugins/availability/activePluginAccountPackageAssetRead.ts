@@ -206,9 +206,9 @@ export function createActivePluginAccountPackageAssetSource(
                 } : {}),
             });
             if (!isCurrent({ requestedLifetime, capturedLifetime, serverSnapshot, getServerSnapshot: dependencies.getServerSnapshot }) || !envelope) return null;
-            const body = envelope.body.body === null
-                ? null
-                : decodePackageAssetArchiveBodyV1(envelope.body.body);
+            const body = typeof envelope.body.body === 'string'
+                ? decodePackageAssetArchiveBodyV1(envelope.body.body)
+                : null;
             return body ? openPackageAssetArchiveV1({
                 expectedDescriptor: identity.descriptor,
                 header: envelope.header,

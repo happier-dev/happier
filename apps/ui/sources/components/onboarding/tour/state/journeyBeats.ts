@@ -61,7 +61,7 @@ export type JourneyFeatureId =
     | 'providers'
     | 'alive';
 
-export type JourneyConfigStepId = WizardStepId | 'setup_this_computer' | 'providers_optional' | 'attention_micro_choice';
+export type JourneyConfigStepId = WizardStepId | 'setup_this_computer' | 'providers_optional';
 
 export type JourneyNarrationKeys = Readonly<{
     eyebrow: TranslationKey;
@@ -185,7 +185,6 @@ export const journeyBeats: readonly JourneyBeat[] = [
         narrationKeys: narrationKeys('a7'),
         frameId: 'sessions-list.spotlight',
         surfaces: allSurfaces,
-        configStepId: 'attention_micro_choice',
         accentHue: '#FF6B9A',
         skipTarget: JOURNEY_SKIP_TO_SETUP_TARGET,
     },

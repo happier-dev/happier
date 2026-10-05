@@ -28,6 +28,9 @@ import {
     type UseSessionInlineDragResolvedDrop,
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
+import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
+import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
 import {
@@ -124,6 +127,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         }
         return (
             <DraggableFolderHeaderFrame
+                title={props.item.title}
                 sessionKey={rowId}
                 groupKey={props.item.groupKey ?? `folder:${props.item.folderId}`}
                 dataIndex={props.dataIndex ?? 0}
@@ -193,6 +197,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         }
         return (
             <DraggableFolderHeaderFrame
+                title={headerViewState.displayTitle}
                 sessionKey={rowId}
                 groupKey={props.item.groupKey ?? props.item.workspaceKey ?? headerViewState.displayTitle}
                 dataIndex={props.dataIndex ?? 0}
@@ -232,6 +237,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
 });
 
 const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFrame(props: Readonly<{
+    title: string;
     sessionKey: string;
     groupKey: string;
     dataIndex: number;
@@ -243,7 +249,10 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
     onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
     children: React.ReactNode;
 }>) {
-    const enabled = Boolean(props.onDropResult);
+    // Desktop headers carry themselves; a phone header carries only in Organize mode (K1).
+    const organize = useSessionListOrganizeMode();
+    const touchPrimary = isTouchPrimaryPointer();
+    const enabled = Boolean(props.onDropResult) && (!touchPrimary || organize.active);
     const { gesture, animatedStyle } = useSessionInlineDrag({
         enabled,
         sessionKey: props.sessionKey,
@@ -257,11 +266,17 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
         onDropResult: props.onDropResult,
     });
     const content = (
-        <Animated.View style={animatedStyle}>
-            {props.children}
+        <Animated.View style={[animatedStyle, { flexDirection: 'row', alignItems: 'center' }]}>
+            <Animated.View style={{ flex: 1 }}>{props.children}</Animated.View>
+            {touchPrimary && organize.active && gesture ? (
+                <GestureDetector gesture={gesture}>
+                    <EntityDragGrip density="touch" accessibilityLabel={t('entityDragDrop.organize.grip', { item: props.title })}
+                        testID={`session-list-header-drag-grip:${props.sessionKey}`} />
+                </GestureDetector>
+            ) : null}
         </Animated.View>
     );
-    return gesture ? (
+    return !touchPrimary && gesture ? (
         <GestureDetector gesture={gesture}>
             {content}
         </GestureDetector>

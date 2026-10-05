@@ -22,7 +22,8 @@ import {
     useAgentsAdministrationTargetSelection,
     useAgentsMachineScope,
 } from '@/components/settings/agents/collection/useAgentAdministrationCatalog';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { McpValueRefMapEditor } from '@/components/settings/mcpServers/McpValueRefMapEditor';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -317,9 +318,9 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                     </Text>
                 ) : undefined}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <CustomAcpMarkIcon />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
                 actions={(
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

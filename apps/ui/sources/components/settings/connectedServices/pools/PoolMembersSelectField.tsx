@@ -25,6 +25,8 @@ export type PoolMembersSelectFieldProps = Readonly<{
     onOpenChange?: (open: boolean) => void;
     renderTrigger?: React.ComponentProps<typeof PoolMultiSelectField>['renderTrigger'];
     searchPlaceholder?: string;
+    onConnectAccount?: () => void;
+    serviceLabel?: string;
 }>;
 
 export const PoolMembersSelectField = React.memo(function PoolMembersSelectField(
@@ -71,7 +73,7 @@ export const PoolMembersSelectField = React.memo(function PoolMembersSelectField
             selectedIds={selectedAccountIds}
             onCommit={commitDraft}
             title={t('connectedServices.detail.groupActions.manageMembersTitle')}
-            subtitle={(count, total) => t(
+            subtitle={(count, total) => props.serviceLabel ? t('connectedServicesPool.membersSelectionSummary', { count, total, service: props.serviceLabel }) : t(
                 'connectedServices.detail.groupActions.manageMembersSubtitle',
                 { count, total },
             )}
@@ -81,6 +83,8 @@ export const PoolMembersSelectField = React.memo(function PoolMembersSelectField
             disabled={props.disabled}
             testID={props.testID}
             searchable
+            menuChrome={Boolean(props.renderTrigger)}
+            connectAction={props.onConnectAccount ? { label: props.serviceLabel ? t('connectedServicesPool.connectAnotherAccount', { service: props.serviceLabel }) : t('settings.connectAccount'), onPress: props.onConnectAccount } : undefined}
             open={props.open}
             onOpenChange={props.onOpenChange}
             renderTrigger={props.renderTrigger}

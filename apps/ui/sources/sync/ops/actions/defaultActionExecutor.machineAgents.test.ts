@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AccountSettingsV2UpdateRequestSchema, BUILT_IN_ROLES_V1, RoleActionOutputSchemasV1, readLegacyRolesV1 } from '@happier-dev/protocol';
-import { storage } from '@/sync/domains/state/storage';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), session: vi.fn() }));
+// Unused HTTP boundary: machine sign-in never requests recipient-envelope preparation.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Machine Actions unexpectedly reached the recipient-envelope API'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
 // The remote daemon transport is the boundary; registry adaptation, inventory
 // selection, Action admission and daemon-fact projection execute unchanged.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -20,6 +25,7 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 // These imports must follow the harness's doMock boundary installation. Load
 // once during collection so cold transforms do not consume each hook's budget.
+const { storage } = await import('@/sync/domains/state/storage');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 
@@ -40,6 +46,18 @@ describe('UI machine Agent inventory Action transport', () => {
         clearDaemonMergedProjectionCacheForTests();
     });
     afterEach(() => standardCleanup());
+
+    it('searches file content in the addressed Home through the real transport adapter', async () => {
+        const serverId = await harness.addHome({ name: 'Search Home', serverUrl: 'https://search.test', accountId: 'alice' });
+        const signal = new AbortController().signal;
+        const page = { ok: true, files: [], hasMore: false, coverage: 'partial' };
+        rpc.machine.mockResolvedValueOnce(page);
+        expect(await createDefaultActionExecutor().execute('workspace.files.search', {
+            machineId: 'machine', rootPath: '/project', query: 'needle', regex: false,
+        }, { surface: 'ui', serverId, signal })).toEqual({ ok: true, result: page });
+        expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, machineId: 'machine',
+            method: RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH, payload: { rootPath: '/project', query: 'needle', regex: false }, signal }));
+    });
 
     it('lists and mutates Account roles through the ordinary UI executor without a running Session', async () => {
         const serverId = await harness.addHome({ name: 'Roles Home', serverUrl: 'https://roles.test', accountId: 'alice' });
@@ -268,12 +286,12 @@ describe('UI machine Agent inventory Action transport', () => {
         const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, signal };
         expect(await executor.execute('machines.agents.signIn.start', {
             machineId: 'machine-1', agentId: 'acme/helper', method: 'native',
-        }, context)).toEqual({ ok: true, result: { terminalKey: 'provider-login:machine-1:acme/helper' } });
+        }, context)).toEqual({ ok: true, result: { terminalKey: 'provider-login:machine-1:acme/helper', terminalId: 'login-terminal' } });
         expect(await executor.execute('machines.agents.signIn.status', {
             machineId: 'machine-1', agentId: 'acme/helper',
         }, context)).toEqual({ ok: true, result: status });
         expect(rpc.machine.mock.calls.map(([request]) => request)).toEqual([
-            { machineId: 'machine-1', serverId, signal, method: 'daemon.agents.signIn.prepare',
+            { machineId: 'machine-1', serverId, signal: expect.any(AbortSignal), method: 'daemon.agents.signIn.prepare',
                 payload: { agentId: 'acme/helper', method: 'native' } },
             { machineId: 'machine-1', serverId, timeoutMs: undefined, method: 'daemon.terminal.ensure',
                 payload: { terminalKey: 'provider-login:machine-1:acme/helper', launch: { kind: 'agent_login', agentId: 'acme/helper' } } },
@@ -297,5 +315,30 @@ describe('UI machine Agent inventory Action transport', () => {
             { machineId: 'machine-1', serverId, signal, method: 'daemon.connectedAccounts.authentication.command',
                 payload: { v: 1, machineId: 'machine-1', command } },
         ]);
+    });
+
+    it('restarts and cancels the acquired native-login process through the UI Action owner', async () => {
+        const serverId = await harness.addHome({ name: 'Lifecycle Home', serverUrl: 'https://lifecycle.test', accountId: 'alice' });
+        let terminalId = 'first-login';
+        const closed: string[] = [];
+        rpc.machine.mockImplementation(async ({ method, payload }: { method: string; payload: { terminalId?: string } }) => {
+            if (method === 'daemon.agents.signIn.prepare') return { method: 'native', launch: { kind: 'agent_login', agentId: 'codex' } };
+            if (method === 'daemon.terminal.ensure') return { ok: true, terminalId, reused: false };
+            if (method === 'daemon.terminal.list') return { ok: true, terminals: [{ terminalId, terminalKey: 'provider-login:machine-1:codex', cwd: '/fixture', ended: false, exit: null }] };
+            if (method === 'daemon.terminal.close') { closed.push(payload.terminalId!); terminalId = 'second-login'; return { ok: true }; }
+            throw new Error(method);
+        });
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId };
+        expect(await executor.execute('machines.agents.signIn.start', { machineId: 'machine-1', agentId: 'codex', method: 'native' }, context))
+            .toMatchObject({ ok: true, result: { terminalId: 'first-login' } });
+        expect(await executor.execute('machines.agents.signIn.restart', { machineId: 'machine-1', agentId: 'codex', terminalId: 'first-login' }, context))
+            .toMatchObject({ ok: true, result: { terminalId: 'second-login' } });
+        expect(await executor.execute('machines.agents.signIn.cancel', { machineId: 'machine-1', agentId: 'codex', terminalId: 'first-login' }, context))
+            .toMatchObject({ ok: false, errorCode: 'sign_in_terminal_changed' });
+        expect(closed).toEqual(['first-login']);
+        expect(await executor.execute('machines.agents.signIn.cancel', { machineId: 'machine-1', agentId: 'codex', terminalId: 'second-login' }, context))
+            .toEqual({ ok: true, result: { ok: true } });
+        expect(closed).toEqual(['first-login', 'second-login']);
     });
 });

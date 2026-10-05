@@ -128,6 +128,24 @@ Safe next actions are:
 Server at-rest sealing cannot recover client-E2EE ciphertext, and a new plaintext login
 does not manufacture the missing key.
 
+In the current 0.3 development flow, older Automation triggers tied to an encrypted
+Session stay encrypted. A trusted device that retains the original material can use
+them; a keyless device sees a locked trigger and can delete it. Switching the Account
+to plaintext and recovering older triggers keep the old encryption key on that
+device, even when no encrypted history is currently listed.
+
+**Forget the old encryption key** explicitly removes that device's historical key.
+Its confirmation lists known encrypted Sessions, triggers and run history; if the
+list cannot be loaded, the key is kept. Older encrypted Sessions on that device
+become locked, including ones created elsewhere after the list was checked. Restore
+the original key to unlock them. Forgetting the key does not delete Account content.
+
+Older triggers for plaintext Sessions, or for creating a new Session, can instead be
+recovered through Account settings while the original material is available. Recovery
+preserves the template and refuses a conflicting revision; failed decryption leaves
+the trigger locked. This recovery flow is development-only, not a claim of stable
+release availability.
+
 ## What plaintext storage does not mean
 
 Plaintext storage does **not** mean:

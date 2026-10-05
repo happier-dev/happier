@@ -38,6 +38,11 @@ export const GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION = {
       key: 'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure',
       fallback: 'Audio sent for transcription is processed by Google Gemini. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.',
     },
+    privacyFacts: {
+      audioDestination: 'Google',
+      processor: 'Google Gemini',
+      retention: { key: 'settingsVoice.pages.privacy.servicePolicy', fallback: 'Follows your service account settings and terms.' },
+    },
     fields: [
       {
         id: 'model',
@@ -90,6 +95,11 @@ export const GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION = {
     privacyDisclosure: {
       key: 'settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure',
       fallback: 'Text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.',
+    },
+    privacyFacts: {
+      audioDestination: { key: 'settingsVoice.pages.privacy.noMicrophoneAudio', fallback: 'No microphone audio; reply text only.' },
+      processor: 'Google Cloud Text-to-Speech',
+      retention: { key: 'settingsVoice.pages.privacy.servicePolicy', fallback: 'Follows your service account settings and terms.' },
     },
     fields: [
       {

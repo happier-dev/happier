@@ -1,7 +1,7 @@
 import type { WorkflowStep } from './workflowV1.js';
 
 /** Content-derived label shared by private authoring, Run detail and Session creation. */
-export function workflowStepPromptLabel(step: WorkflowStep): string | null {
+export function workflowStepPromptLabel(step: Pick<WorkflowStep, 'document'>): string | null {
   const firstNonemptyLine = step.document.text
     .split(/\r?\n/u)
     .map((line) => line.trim())

@@ -295,6 +295,7 @@ export const CODEX_PLUGIN = definePlugin({
           externalLinkedTakeover: { writerSafety: 'native_prevention' },
           sources: [{
             sourceKind: 'codexHome',
+            contentSearch: true,
             schema: {
               fields: [
                 { name: 'kind', kind: 'literal', value: 'codexHome' },
@@ -406,6 +407,7 @@ export const CODEX_PLUGIN = definePlugin({
     [CODEX_VOICE_PROVIDER_CONTRIBUTION_ID]: {
       declaration: {
         title: 'Codex Realtime Voice — Experimental',
+        mark: { kind: 'agent', agentId: 'codex' },
         kind: 'conversation',
         roles: [
           'conversation_stt',
@@ -426,6 +428,11 @@ export const CODEX_PLUGIN = definePlugin({
           schemaVersion: 2,
           fields: [],
           privacyDisclosure: CODEX_REALTIME_VOICE_PRIVACY_DISCLOSURE,
+          privacyFacts: {
+            audioDestination: 'OpenAI',
+            processor: 'Codex Live · OpenAI',
+            retention: { key: 'settingsVoice.pages.privacy.servicePolicy', fallback: 'Follows your service account settings and terms.' },
+          },
           connectedServicesBinding: {
             id: 'globalConnectedServices',
             title: 'Codex account',

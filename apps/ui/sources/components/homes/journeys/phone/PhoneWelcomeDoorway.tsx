@@ -1,15 +1,22 @@
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { WelcomeActionAdmissionContext } from '@/components/onboarding/preAuth/WelcomeActionList';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { presentUseServiceAsHomeSheet } from '../serviceHome/UseServiceAsHomeSheet';
 import { useJourneyAccountService } from '../useJourneyAccountService';
+import { PaneServiceLabel } from '../alreadyUse/journeyPaneKit';
 import { presentAlreadyUseHappierSheet } from './AlreadyUseHappierSheet';
 
 /**
@@ -25,24 +32,28 @@ export function PhoneWelcomeDoorway(props: Readonly<{
     onScan: () => void;
 }>) {
     const service = useJourneyAccountService();
+    const admission = React.useContext(WelcomeActionAdmissionContext);
+    const { theme } = useUnistyles();
     const serviceUrl = service.discovery?.endpointUrl ?? service.entry.endpoint.url;
     return (
         <>
             <WelcomeActionCard
                 testID="welcome-doorway-scan"
                 primary
-                title={t(props.canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.enterUrlManually')}
+                presentation="button"
+                title={t(props.canScanQr ? 'homesJourneys.phone.scanComputerCode' : 'connect.enterUrlManually')}
                 iconName={props.canScanQr ? 'qr-code' : 'link'}
                 onPress={props.onScan}
             />
             <View style={styles.signIn}>
                 <WelcomeActionCard
                     testID="welcome-doorway-sign-in"
+                    presentation="button"
                     title={t('homesJourneys.signIn')}
                     onPress={() => { presentAlreadyUseHappierSheet('service'); }}
                 />
                 <View style={styles.serviceLine}>
-                    <Text style={styles.serviceText}>{t('homesJourneys.withService', { service: service.name })}</Text>
+                    <PaneServiceLabel service={service.name} style={styles.serviceText} />
                     <Text style={styles.serviceText}>·</Text>
                     <HappierPressable
                         testID="welcome-doorway-change-service"
@@ -54,22 +65,28 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                     </HappierPressable>
                 </View>
             </View>
-            <WelcomeActionCard
+            <ListPresentationProvider value="page">
+            <ItemGroup>
+            <Item
                 testID="welcome-doorway-direct"
                 title={t('homesJourneys.pathDirectTitle')}
                 subtitle={t('homesJourneys.pathDirectSubtitle')}
-                iconName="hard-drives"
-                onPress={() => { presentAlreadyUseHappierSheet('direct'); }}
+                icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
+                disabled={admission.pendingActionId !== null}
+                onPress={() => { void admission.run('welcome-doorway-direct', () => { presentAlreadyUseHappierSheet('direct'); }); }}
             />
             {service.hostsHome ? (
-                <WelcomeActionCard
+                <Item
                     testID="welcome-doorway-service-as-home"
                     title={t('homesJourneys.noComputerYet')}
                     subtitle={t('homesJourneys.serviceAsHomeTitle', { service: service.name })}
-                    iconName="cloud"
-                    onPress={() => { presentUseServiceAsHomeSheet({ serviceName: service.name, serviceUrl }); }}
+                    icon={<AccountServiceMark url={serviceUrl} size={20} />}
+                    disabled={admission.pendingActionId !== null}
+                    onPress={() => { void admission.run('welcome-doorway-service-as-home', () => { presentUseServiceAsHomeSheet({ serviceName: service.name, serviceUrl }); }); }}
                 />
             ) : null}
+            </ItemGroup>
+            </ListPresentationProvider>
         </>
     );
 }

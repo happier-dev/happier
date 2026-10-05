@@ -169,6 +169,21 @@ export const CHANNELS_UI = {
     id: CHANNELS_SESSION_CONVERSATIONS_WIDGET_ID,
     container: 'widget' as const,
     target: { kind: 'session' as const },
+    resources: [
+      { pluginId: CHANNELS_PLUGIN_ID, localId: CHANNELS_SESSION_CONVERSATIONS_RESOURCE_ID },
+      { pluginId: CHANNELS_PLUGIN_ID, localId: 'connections-v1' },
+    ],
+    inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true, optionsSourceId: 'sessions' }] },
+    inputSchema: {
+      type: 'object' as const,
+      properties: { session: {
+        type: 'object' as const,
+        properties: { serverId: { type: 'string' as const, minLength: 1 }, sessionId: { type: 'string' as const, minLength: 1 } },
+        required: ['serverId', 'sessionId'], additionalProperties: false,
+      } },
+      required: ['session'], additionalProperties: false,
+    },
+    sessionInputPath: 'session',
     renderer: CHANNELS_RENDERER_ID,
     title: {
       key: 'plugins.channels.session.title',
@@ -193,6 +208,10 @@ export const CHANNELS_UI = {
     id: CHANNELS_HOME_WIDGET_ID,
     container: 'widget' as const,
     target: { kind: 'app' as const },
+    resources: [
+      { pluginId: CHANNELS_PLUGIN_ID, localId: 'bindings-v1' },
+      { pluginId: CHANNELS_PLUGIN_ID, localId: 'connections-v1' },
+    ],
     renderer: CHANNELS_GLANCE_RENDERER_ID,
     title: { key: 'plugins.channels.widget.title', fallback: 'Channels' },
     icon: 'conversations' as const,
@@ -685,7 +704,7 @@ function createChannelsPlugin() {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingRead,
         title: 'Read conversation binding',
         description: 'Reads the saved conversation binding policy and details.',
-        surfaces: ['cli', 'ui'],
+        surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['secondary'],
         hostAccess: ['account-storage'],
         run: readConversationBindingForInvocation,

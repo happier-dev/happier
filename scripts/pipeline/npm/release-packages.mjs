@@ -516,7 +516,7 @@ async function main() {
         // current source, the bundled plugin inventory is regenerated from those outputs,
         // and the CLI dist build runs after that regeneration.
         for (const step of resolveCliPublicationBuildSteps({ repoRoot })) {
-          run(opts, step.command, step.args, { cwd: step.cwd });
+          run(opts, step.command, step.args, { cwd: step.cwd, env: step.env });
         }
         if (runTests) {
           run(opts, 'yarn', ['prepublishOnly'], { cwd: withinRepo(repoRoot, 'apps/cli') });

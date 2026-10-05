@@ -62,6 +62,7 @@ export type { AgentExternalSessionsResolveSourceRequest } from '../../externalSe
 export type { AgentExternalSessionsResolveSourceResult } from '../../externalSessions.js';
 export type { AgentExternalSessionsResolvedIdentity } from '../../externalSessions.js';
 export type { AgentExternalSessionsResult } from '../../externalSessions.js';
+export type { AgentExternalSessionsRipgrep } from '../../externalSessions.js';
 export type { AgentExternalSessionsTranscriptPage } from '../../externalSessions.js';
 export type { ExternalSessionAgentId } from '../../services/externalSessions.js';
 export { ExternalSessionAgentIdSchema } from '../../services/externalSessions.js';

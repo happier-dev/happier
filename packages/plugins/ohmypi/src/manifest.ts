@@ -119,6 +119,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             externalLinkedTakeover: { writerSafety: 'unsupported' },
             sources: [{
               sourceKind: 'ohMyPiAgentDir',
+              contentSearch: false,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'ohMyPiAgentDir' },

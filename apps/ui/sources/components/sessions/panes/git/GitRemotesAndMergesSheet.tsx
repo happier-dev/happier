@@ -74,7 +74,6 @@ function GitRemotesAndMergesSheetBody(props: Props) {
                     onAddRemote={mutations.addRemote}
                     onSetRemoteUrl={mutations.setRemoteUrl}
                     onRemoveRemote={mutations.removeRemote}
-                    onRefresh={mutations.refresh}
                 />
                 <SourceControlBranchIntegrationSection
                     theme={theme}
@@ -86,7 +85,7 @@ function GitRemotesAndMergesSheetBody(props: Props) {
                     onRebase={mutations.rebaseBranch}
                     onContinue={mutations.continueBranchOperation}
                     onAbort={mutations.abortBranchOperation}
-                    onRefresh={mutations.refresh}
+                    onSkip={mutations.skipBranchOperation}
                 />
             </View>
         </ScrollView>

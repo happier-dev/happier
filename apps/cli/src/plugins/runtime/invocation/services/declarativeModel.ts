@@ -20,6 +20,7 @@ import {
     type PluginDeclarativeStateV2,
     type PluginDeclarativeToneV2,
     type PluginJsonValueV2,
+    type PluginJsonSchemaV2,
     type PluginLocalizedStringV2,
     type NormalizedPluginCollectionUiQueryDescriptorV1,
     type PluginCollectionUiQueryRequestV1,
@@ -124,6 +125,10 @@ export type StablePluginDeclarativeActionNode =
     }>);
 
 export type StablePluginDeclarativeNode =
+    | (Extract<PluginDeclarativeNormalizedNodeV1, { kind: 'metric' | 'table' | 'rows' | 'chart' }>)
+    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'dragSource'; source: StablePluginQualifiedReference; reference: PluginJsonValueV2; organizing?: boolean; children: readonly StablePluginDeclarativeNode[] }>)
+    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'dropTarget'; target: StablePluginQualifiedReference; input?: PluginJsonValueV2; children: readonly StablePluginDeclarativeNode[] }>)
+    | (StablePluginDeclarativeNodeBase & Readonly<{ kind: 'widgetArea'; area: string; context?: Readonly<Record<string, PluginJsonValueV2>> }>)
     | (StablePluginDeclarativeNodeBase & Readonly<{
         kind: 'text';
         text: PluginLocalizedStringV2;
@@ -246,6 +251,8 @@ export type StablePluginDeclarativeSettingsBinding = Readonly<{
 }>;
 
 export type StablePluginDeclarativeInventory = Readonly<{
+    dragSources: readonly (StablePluginQualifiedReference & Readonly<{ referenceSchema: PluginJsonSchemaV2 }>)[];
+    dropTargets: readonly StablePluginQualifiedReference[];
     actions: readonly StablePluginDeclarativeActionBinding[];
     /** Declared same-plugin surface destinations admitted for dynamic documents. */
     destinations: readonly StablePluginDeclarativeDestinationBinding[];
@@ -496,6 +503,8 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
     settings: readonly StablePluginSettingsModel[];
     actions: readonly PluginContributionIdentityV1[];
     /** Current Action catalog labels/icons; row commands never derive them from ids. */
+    dragSources?: readonly Readonly<{ identity: PluginContributionIdentityV1; referenceSchema: PluginJsonSchemaV2 }>[];
+    dropTargets?: readonly PluginContributionIdentityV1[];
     actionPresentations?: readonly StablePluginDeclarativeActionPresentation[];
     /** Same-plugin surface contributions admitted for fixed row navigation. */
     destinations?: readonly PluginContributionIdentityV1[];
@@ -583,6 +592,8 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
             pluginId,
             occurrenceId,
             actions: params.actions,
+            dragSources: params.dragSources ?? [],
+            dropTargets: params.dropTargets ?? [],
             destinations: params.destinations ?? [],
             settings: protocolSettingsInventory,
             uiQueries: uiQueriesInventory,
@@ -610,6 +621,19 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
     function projectNode(source: PluginDeclarativeNormalizedNodeV1): StablePluginDeclarativeNode {
         let projected: StablePluginDeclarativeNode;
         switch (source.kind) {
+            case 'metric':
+            case 'table':
+            case 'rows':
+            case 'chart':
+                projected = Object.freeze({ ...source });
+                break;
+            case 'dragSource':
+            case 'dropTarget':
+                projected = Object.freeze({ ...source, children: projectChildren(source.children) });
+                break;
+            case 'widgetArea':
+                projected = Object.freeze({ ...source });
+                break;
             case 'stack':
                 projected = Object.freeze({
                     kind: source.kind,
@@ -846,6 +870,10 @@ export function createStablePluginDeclarativeModel(params: Readonly<{
         visible: availability?.visible ?? true,
         requiredHostMethods: Object.freeze([]),
         declarativeInventory: Object.freeze({
+            dragSources: Object.freeze((params.dragSources ?? []).map((entry) => Object.freeze({
+                ...qualifiedReference(entry.identity, occurrenceId), referenceSchema: entry.referenceSchema,
+            }))),
+            dropTargets: Object.freeze((params.dropTargets ?? []).map((identity) => qualifiedReference(identity, occurrenceId))),
             actions: actionsInventory,
             destinations: destinationsInventory,
             settings: settingsInventory,

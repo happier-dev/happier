@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
+import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 vi.mock('@/components/ui/forms/Switch', () => ({
   Switch: (props: any) => React.createElement('Switch', props),
@@ -21,12 +22,13 @@ describe('VoicePrivacySection', () => {
       setVoice,
     }));
 
+    const settings = VOICE_PRIVACY_SETTINGS.settings;
     const expectedLabels = [
-      t('settingsVoice.privacy.shareSessionSummary'),
-      t('settingsVoice.privacy.shareRecentMessages'),
-      t('settingsVoice.privacy.shareToolNames'),
-      t('settingsVoice.privacy.shareDeviceInventory'),
-      t('settingsVoice.privacy.sharePermissionRequests'),
+      t(settings.shareSessionSummary.titleKey),
+      t(settings.shareRecentMessages.titleKey),
+      t(settings.shareToolNames.titleKey),
+      t(settings.sharePermissionRequests.titleKey),
+      t(settings.shareDeviceInventory.titleKey),
     ];
     const switches = screen.tree.root.findAllByType('Switch' as any);
     expect(switches.map((control) => control.props.accessibilityLabel)).toEqual(expectedLabels);
@@ -90,5 +92,19 @@ describe('VoicePrivacySection', () => {
       ...voice,
       privacy: { ...voice.privacy, recentMessagesCount: 50 },
     });
+  });
+
+  it('keeps the recent messages count visible but locked until recent messages are shared', async () => {
+    const setVoice = vi.fn();
+    const { VoicePrivacySection } = await import('./VoicePrivacySection');
+    const voice = {
+      ...voiceSettingsDefaults,
+      privacy: { ...voiceSettingsDefaults.privacy, shareRecentMessages: false, recentMessagesCount: 3 },
+    };
+    const screen = await renderScreen(React.createElement(VoicePrivacySection, { voice, setVoice }));
+
+    const field = screen.findByTestId('settings.voice.privacy.recentMessagesCount.field');
+    expect(field?.props.value).toBe('3');
+    expect(field?.props.editable).toBe(false);
   });
 });

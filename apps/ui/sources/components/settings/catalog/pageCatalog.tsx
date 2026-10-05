@@ -289,11 +289,10 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         titleKey: 'settings.voiceAssistant',
                         subtitleKey: 'settings.voiceAssistantSubtitle',
                         route: SETTINGS_ROUTES.voice,
-                        gate: { featureId: 'voice' },
                         keywordsKey: 'settingsSearchKeywords.voice',
                         icon: ({ theme }) => <Icon name="microphone" size={16} color={theme.colors.text.secondary} />,
                         children: [
-                            { id: 'voiceConversations', titleKey: 'settingsVoice.intents.conversations.title', subtitleKey: 'settingsVoice.intents.conversations.subtitle', route: SETTINGS_ROUTES.voiceConversations, keywordsKey: 'settingsSearchKeywords.voiceConversations', icon: ({ theme }) => <Icon name="chat-circle" size={16} color={theme.colors.text.secondary} /> },
+                            { id: 'voiceConversations', titleKey: 'settingsVoice.intents.conversations.title', subtitleKey: 'settingsVoice.intents.conversations.subtitle', route: SETTINGS_ROUTES.voiceConversations, gate: { featureId: 'voice' }, keywordsKey: 'settingsSearchKeywords.voiceConversations', icon: ({ theme }) => <Icon name="chat-circle" size={16} color={theme.colors.text.secondary} /> },
                             { id: 'voiceDictation', titleKey: 'settingsVoice.intents.dictation.title', subtitleKey: 'settingsVoice.intents.dictation.subtitle', route: SETTINGS_ROUTES.voiceDictation, keywordsKey: 'settingsSearchKeywords.voiceDictation', icon: ({ theme }) => <Icon name="microphone" size={16} color={theme.colors.text.secondary} /> },
                             { id: 'voicePrivacy', titleKey: 'settingsVoice.intents.privacy.title', subtitleKey: 'settingsVoice.intents.privacy.subtitle', route: SETTINGS_ROUTES.voicePrivacy, keywordsKey: 'settingsSearchKeywords.voicePrivacy', icon: ({ theme }) => <Icon name="shield-check" size={16} color={theme.colors.text.secondary} /> },
                             { id: 'voiceAdvanced', titleKey: 'settingsVoice.intents.advanced.title', subtitleKey: 'settingsVoice.intents.advanced.subtitle', route: SETTINGS_ROUTES.voiceAdvanced, keywordsKey: 'settingsSearchKeywords.voiceAdvanced', icon: ({ theme }) => <Icon name="sliders-horizontal" size={16} color={theme.colors.text.secondary} /> },

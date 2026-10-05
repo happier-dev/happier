@@ -43,11 +43,12 @@ type SpawnError = Extract<SpawnSessionResult, { type: 'error' }>;
  * own accepted Team binding (lane 10 child 06 L10D-R11, §15; child 01
  * principle 3). Resolved role snapshots also commit here so complete role text
  * reaches the runner through its existing protected attach file, without an
- * operating-system environment-size boundary. Other fresh launches keep
+ * operating-system environment-size boundary. Initial triggers commit with
+ * their Session before the runner starts. Other fresh launches keep
  * runner-side creation.
  */
 export function daemonLaunchRequiresCommittedSession(options: SpawnSessionOptions): boolean {
-  if (options.creationAuthorization || options.initialSessionRolesV1) return true;
+  if (options.creationAuthorization || options.initialSessionRolesV1 || (options.initialTriggers?.length ?? 0) > 0) return true;
   const admitted = ConnectedServicesBindingsIngressSchema.safeParse(options.connectedServices);
   if (!admitted.success || !admitted.data) return false;
   return Object.values(admitted.data.bindingsByServiceId).some((binding) => (
@@ -151,6 +152,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       }),
       state: { controlledByUser: false },
       ...(options.initialAccess !== undefined ? { initialAccess: options.initialAccess } : {}),
+      ...(options.initialTriggers !== undefined ? { initialTriggers: options.initialTriggers } : {}),
       ...(options.reportsTo !== undefined ? { reportsTo: options.reportsTo } : {}),
       ...(options.primaryTeamId !== undefined ? { primaryTeamId: options.primaryTeamId } : {}),
       ...(options.teamCredentialBindings !== undefined
@@ -221,6 +223,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
 export function withoutFreshSessionCreationFields(options: SpawnSessionOptions): SpawnSessionOptions {
   const {
     initialAccess: _initialAccess,
+    initialTriggers: _initialTriggers,
     reportsTo: _reportsTo,
     initialSessionRolesV1: _initialSessionRolesV1,
     originKind: _originKind,

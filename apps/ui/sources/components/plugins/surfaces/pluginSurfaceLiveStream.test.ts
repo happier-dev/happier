@@ -26,7 +26,7 @@ function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Prom
         isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1 }), context),
     } satisfies Partial<ActionExecutorDeps>;
     // Boundary fixture supplies only approval storage/decision ports; unrelated Session ports are not exercised.
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     const actionHost = createPluginSurfaceActionHostApi({ surfaceContext: surface,
         callerSourceCustody: { kind: 'development', registeredRootId: 'viewer-root' },
         callerBinding: { pluginId: surface.pluginId, contributionLocalId: 'viewer', occurrenceId: 'viewer-1',

@@ -1,1 +1,4 @@
-export { EmbedSettingsLayout as default } from '@/components/settings/embeds/EmbedSettingsLayout';
+import { EmbedSettingsLayout } from '@/components/settings/embeds/EmbedSettingsLayout';
+import { createSettingsLayoutRoute } from '@/components/settings/navigation/createSettingsLayoutRoute';
+
+export default createSettingsLayoutRoute(EmbedSettingsLayout, 'embeds');

@@ -887,9 +887,7 @@ describe('the mounted PRs & Issues window store', () => {
                 } else {
                     // A failed walk has no resumable custody. A later clean
                     // first-page walk must not publish its abandoned pages.
-                    const retryAtMs = snapshot.refreshBlocked?.nextEligibleAtMs;
-                    if (retryAtMs === undefined) throw new Error('failed lane did not publish its retry deadline');
-                    harness.clock.nowMs = retryAtMs;
+                    expect(snapshot.refreshBlocked).toBeUndefined();
                     refreshing = false;
                     await store.refresh('manual');
                     expect(store.getSnapshot().window?.coverage).toBe('complete');
@@ -1422,13 +1420,11 @@ describe('the mounted PRs & Issues window store', () => {
         const transportPages = harness.actionInputs.filter(
             (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
         );
-        // The failing lane keeps its own backoff while the healthy lane remains
-        // eligible, so the next mixed request carries only the lane pacing
-        // admits. A mixed result must not turn one source's health into an
-        // aggregate cooldown.
+        // A manual press retries both lanes when neither provider supplied a
+        // retry deadline. Local failure pacing cannot refuse explicit demand.
         expect(transportPages.at(-1)?.sources).toEqual({
             kind: 'selected',
-            sourceInstanceIds: [INSTANCE_A],
+            sourceInstanceIds: [INSTANCE_A, INSTANCE_B],
         });
         store.dispose();
     });
@@ -2085,9 +2081,7 @@ describe('the mounted PRs & Issues window store', () => {
 
         harness.state.sourceAFailure = null;
         harness.state.sourceANeverFinishes = true;
-        const retryAtMs = store.getSnapshot().refreshBlocked?.nextEligibleAtMs;
-        if (retryAtMs === undefined) throw new Error('failed lane did not publish its retry deadline');
-        harness.clock.nowMs = retryAtMs;
+        expect(store.getSnapshot().refreshBlocked).toBeUndefined();
         await store.refresh('manual');
 
         const recoveredIds = store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId) ?? [];

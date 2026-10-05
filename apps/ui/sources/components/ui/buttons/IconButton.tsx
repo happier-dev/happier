@@ -20,6 +20,12 @@ const DEFAULT_SIZE = HAPPIER_ICON_BUTTON_SIZE;
 
 export type IconButtonTone = 'default' | 'primary' | 'danger';
 export type IconButtonVariant = 'outlined' | 'plain';
+/**
+ * A borderless resting fill, for a compact transport where the buttons themselves are the
+ * object (a call's Mute · End): `neutral` is a quiet well, `danger` the tinted terminal action.
+ * Hover deepens the fill; the shape never gains a border.
+ */
+export type IconButtonFill = 'neutral' | 'danger';
 
 const stylesheet = StyleSheet.create((theme) => ({
     pressFrame: {
@@ -102,6 +108,8 @@ export function IconButton(props: Readonly<{
     testID?: string;
     /** Required: icon-only controls must always announce their action. */
     accessibilityLabel: string;
+    /** What the press will do beyond its name ("Coding work already started keeps running"). */
+    accessibilityHint?: string;
     /** Short helper shown on hover/focus (desktop pointer/keyboard users). */
     tooltip?: string;
     tooltipContent?: React.ReactNode;
@@ -132,6 +140,8 @@ export function IconButton(props: Readonly<{
     iconSize?: number;
     tone?: IconButtonTone;
     variant?: IconButtonVariant;
+    /** Borderless resting fill; overrides `variant`. See {@link IconButtonFill}. */
+    fill?: IconButtonFill;
     disabled?: boolean;
     /** Whether this toggle-style action is currently selected. */
     selected?: boolean;
@@ -157,6 +167,9 @@ export function IconButton(props: Readonly<{
     onPress: HappierPressableProps['onPress'];
     /** A secondary invocation (press and hold); when it fires, `onPress` does not. */
     onLongPress?: HappierPressableProps['onLongPress'];
+    onPressIn?: HappierPressableProps['onPressIn'];
+    onPressOut?: HappierPressableProps['onPressOut'];
+    onFocusChange?: HappierPressableProps['onFocusChange'];
     /** The pointer's secondary click on the web, for the same secondary invocation as a long press. */
     onContextMenu?: HappierPressableProps['onContextMenu'];
 }> & IconButtonGlyph): React.ReactElement {
@@ -172,20 +185,49 @@ export function IconButton(props: Readonly<{
 
     const size = props.size ?? DEFAULT_SIZE;
     const iconSize = props.iconSize ?? Math.max(12, size - 10);
-    const variant = props.variant ?? 'outlined';
+    const variant = props.fill ? 'outlined' : props.variant ?? 'outlined';
+    const fillColor = props.fill === 'danger'
+        ? theme.colors.state.danger.background
+        : props.fill === 'neutral'
+            ? theme.colors.state.neutral.background
+            : null;
     const chrome = (state: Readonly<{
         selected: boolean; hovered: boolean; pressed: boolean; focused: boolean; disabled: boolean;
     }>) => resolveHappierIconButtonChrome({
         ...state, size, variant, selectedBackground: props.selectedBackground,
-        colors: {
+        colors: fillColor === null ? {
             background: theme.colors.surface.inset,
             border: theme.colors.border.default,
             hover: theme.colors.surface.selected,
             pressed: theme.colors.surface.pressed,
             selected: theme.colors.surface.pressed,
             focus: theme.colors.border.focus,
+        } : {
+            // The fill is its own edge: the outline the chrome draws matches it, so only the
+            // keyboard focus ring ever shows as a border.
+            background: fillColor,
+            border: fillColor,
+            hover: props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border,
+            pressed: props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border,
+            selected: theme.colors.state.neutral.border,
+            focus: theme.colors.border.focus,
         },
     });
+    /*
+     * A filled well is the drawn square itself: its fill (and its hover/selected step)
+     * paints the visible circle, never the larger touch frame around it, and it has no edge but the
+     * keyboard focus ring. Painting the frame drew a second, wider disc — a double ring on a selected
+     * Mute and a ring around End inside a touch target.
+     */
+    const resolveChrome = (state: Parameters<typeof chrome>[0]) => {
+        const resolved = chrome(state);
+        if (fillColor === null) return resolved;
+        const { backgroundColor, ...frame } = resolved.frame;
+        return {
+            frame,
+            surface: { ...resolved.surface, backgroundColor, ...(state.focused ? null : { borderWidth: 0 }) },
+        };
+    };
     const minimumInteractiveTargetSize = Number.isFinite(props.minimumInteractiveTargetSize)
         ? Math.max(size, Math.round(props.minimumInteractiveTargetSize!))
         : null;
@@ -198,12 +240,11 @@ export function IconButton(props: Readonly<{
      * that does not exist (on Android it is additionally clipped to the parent).
      * The frame is therefore real box model: a larger width/height plus an equal
      * negative margin, which grows the press box on every platform while the
-     * layout still measures the drawn square. Same technique as
+     * layout uses the existing gap first and allocates any remaining width. Same technique as
      * `components/ui/lists/ItemRowActions.tsx`.
      *
      * Vertical is the free axis for an icon control in a row; horizontal is
-     * bounded by {@link IconButton}'s declared neighbour gap so targets meet but
-     * never overlap.
+     * negative margins are bounded by the declared neighbour gap so targets meet but never overlap.
      */
     const targetDeficitPerSide = minimumInteractiveTargetSize === null
         ? 0
@@ -213,7 +254,9 @@ export function IconButton(props: Readonly<{
         : 0;
     const targetExpandY = targetDeficitPerSide;
     const targetExpandX = Math.min(targetDeficitPerSide, neighborGapPx / 2);
-    const frameWidth = size + (targetExpandX * 2);
+    // The declared floor is a physical target. Only margins are gap-limited; layout allocates
+    // any remaining width instead of silently shrinking the target below its contract.
+    const frameWidth = minimumInteractiveTargetSize ?? size;
     const frameHeight = size + (targetExpandY * 2);
     const pressFrame = {
         width: frameWidth,
@@ -241,7 +284,7 @@ export function IconButton(props: Readonly<{
             testID={props.testID}
             accessibilityRole={props.accessibilityRole}
             accessibilityLabel={props.accessibilityLabel}
-            accessibilityHint={props.disabled === true ? props.disabledReason : undefined}
+            accessibilityHint={props.disabled === true && props.disabledReason ? props.disabledReason : props.accessibilityHint}
             disabled={props.disabled}
             selected={props.selected}
             checked={props.checked}
@@ -253,11 +296,14 @@ export function IconButton(props: Readonly<{
             hitSlop={hitSlop}
             onPress={props.onPress}
             onLongPress={props.onLongPress}
+            onPressIn={props.onPressIn}
+            onPressOut={props.onPressOut}
+            onFocusChange={props.onFocusChange}
             onContextMenu={props.onContextMenu}
             style={(state) => [
                 styles.pressFrame,
                 pressFrame,
-                chrome(state).frame,
+                resolveChrome(state).frame,
             ]}
             overlay={hasTooltip ? (state) => (
                 (state.hovered || state.focused) && props.tooltipHidden !== true ? (Platform.OS === 'web' ? (
@@ -280,7 +326,7 @@ export function IconButton(props: Readonly<{
                 <View
                     testID={props.testID ? `${props.testID}-surface` : undefined}
                     style={[
-                        chrome({ ...state, pressed: false }).surface,
+                        resolveChrome({ ...state, pressed: false }).surface,
                     ]}
                 >
                     <View

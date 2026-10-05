@@ -322,6 +322,7 @@ export type SessionAccessActionResultById = {
         useCount: number;
         isConsentRequired: boolean;
         updatedAt: number;
+        url: string;
         keyDerivation?: 'fragment_v1' | 'legacy_token_v1' | undefined;
         isolatedOrigin?: string | undefined;
     };

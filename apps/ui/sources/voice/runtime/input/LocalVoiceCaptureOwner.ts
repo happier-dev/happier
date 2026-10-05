@@ -37,7 +37,7 @@ import {
 } from '@/voice/runtime/input/createRuntimeTurnPolicyController';
 import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import type { SttController, SttSink } from '@/voice/input/sttController';
-import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
+import { isVoiceBargeInEnabled, resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { ensureInterruptionWordSegmentationAvailable } from './segmentInterruptionWords';
 
 type RuntimeCaptureError = Readonly<{
@@ -729,8 +729,12 @@ export function createLocalVoiceCaptureOwner(
             pendingCaptureStart = captureStart;
             try {
                 await waitForPendingFailureCleanup();
-                if (handsFree && (provider === 'device' || provider === 'local_neural')) {
-                    // Endpoint/backchannel policy needs real word boundaries;
+                if (
+                    capturePurpose === 'conversation'
+                    && (handsFree || isVoiceBargeInEnabled(settings ?? deps.getSettings()))
+                    && (provider === 'device' || provider === 'local_neural')
+                ) {
+                    // Endpoint/backchannel and interruption policy need real word boundaries;
                     // refuse setup before acquiring audio on an older binary.
                     ensureInterruptionWordSegmentationAvailable();
                 }

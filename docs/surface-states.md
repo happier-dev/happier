@@ -16,6 +16,35 @@ Notices above retained content share [`HappierBanner`](../packages/plugin-ui/src
 
 Progress and capacity bars share `HappierProgress` in the same presentation module. The app's `MeterBar` supplies the domain's fill and colours; a capacity meter stays silent while named progress reports its value. Numbered setup and checklist markers share [`HappierStep`](../packages/plugin-ui/src/presentation/content/Step.tsx) and its marker renderer. Adapters retain their own step decisions, labels, actions and details.
 
+## Surface material (development)
+
+Public Plugin UI `Surface` and `Card` accept `materialRole="chrome" | "sidebar" | "content" | "floating"`;
+the default is `content`. They consume the existing shared `HappierSurface` presentation owner.
+The same-realm host renders native material through its incumbent glass owner. Unhosted native
+surfaces retain their base color. Web background paint consumes the host's role opacity variables,
+with an opaque default when that projection is absent; text and child controls do not inherit a
+material opacity. Nested surfaces of the same role consume a separate nested coat projection to
+avoid accumulating tint. Material presets, preferences, OS overrides and native availability stay
+host-owned; the public role does not introduce another material policy or a wire capability.
+
+The app's policy is [`glassMaterial.ts`](../apps/ui/sources/components/ui/glass/glassMaterial.ts),
+with one Account-synced table for chrome, sidebar, content and floating surfaces. Solid removes
+glass; Auto uses the W3 layered whole-app coats on a supported desktop and floating surfaces on
+phone/browser; Everywhere uses one uniform coat. Custom opacity runs from fully transparent to
+solid without legibility floors or contrast overrides. Code, terminal, diff, composer and message
+backgrounds inherit the content material rather than introducing near-solid reading fills.
+The phone's floating composer, including a selected workflow, instead consumes the floating
+material; ordinary dialogs and sheets use the same floating owner through `ModalCardFrame`.
+Native material changes replace only the background, preserving child input/scroll state.
+OS Reduce Transparency preserves the stored choice but resolves solid with a visible reason.
+Desktop and Android expose the OS accessibility destination with an observable failure result;
+an honest iOS settings destination remains unresolved in the current build lane. Browsers observe
+the standard reduced-transparency media query where available. Native inactive windows also
+flatten. The main-window owner reports successful
+native backing before the web root clears its opaque canvas. Blur Off can retain transparent
+backing. The 0.2 enable/intensity keys remain inputs; the old device-local backdrop switch is no
+longer a second runtime decision.
+
 ## Retained content and recovery
 
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.

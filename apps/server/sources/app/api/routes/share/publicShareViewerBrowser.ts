@@ -1,9 +1,21 @@
 /// <reference lib="dom" />
 
-import { loadPublicShareViewerContent, renderPublicShareViewer } from "./publicShareViewerClient";
+import { disposePublicShareViewerContent, loadPublicShareViewerContent, renderPublicShareViewer } from "./publicShareViewerClient";
+import { readArtifactHtmlPreviewBundleV1 } from '@happier-dev/protocol/sharing/public-viewer';
+import { renderArtifactHtmlViewer } from './artifactHtmlViewer';
 
 const root = document.getElementById("public-share-viewer");
 if (root) {
+    if (/^\/a\/[^/]+\/?$/u.test(location.pathname)) {
+        const render = (): void => {
+            try {
+                if (location.protocol !== 'https:') throw new Error('HTTPS is required');
+                renderArtifactHtmlViewer(root, readArtifactHtmlPreviewBundleV1(location.hash), 'HTML Artifact');
+            } catch { root.textContent = 'This HTML document could not be opened. JavaScript modules and external assets are unsupported; publish a classic script bundle with local assets.'; }
+        };
+        globalThis.addEventListener('hashchange', render);
+        render();
+    } else {
     let consent = false;
     let text = "";
     let token: string | null = null;
@@ -28,6 +40,7 @@ if (root) {
         }
     };
     globalThis.addEventListener("hashchange", () => {
+        disposePublicShareViewerContent(root);
         consent = false;
         text = "";
         token = null;
@@ -36,4 +49,5 @@ if (root) {
         void load();
     });
     void load();
+    }
 }

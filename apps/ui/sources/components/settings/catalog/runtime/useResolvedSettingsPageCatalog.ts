@@ -7,13 +7,15 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useTeamsSettingsAdmission } from '@/hooks/teams/useTeamsSettingsAdmission';
 import { useTeamsDestinationShown } from '@/hooks/teams/useTeamsDestinationShown';
 import { useHomeAdministrationSettingsAdmission } from '@/hooks/home/useHomeAdministrationSettingsAdmission';
-import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { getPreferredLanguage, t } from '@/text';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { voiceSettingsDeclarationRegistry } from '@/voice/settings/voiceContributedSettingsDeclarations';
+import { projectConversationLanguagePreference } from '@/voice/settings/language/conversationLanguage';
 
 import { SETTINGS_PAGE_CATALOG, flattenSettingsPageCatalog } from '../pageCatalog';
 import { SETTINGS_ROUTES, settingsRoutePathname } from '../routes';
-import { SETTINGS_PAGE_DECLARATIONS } from '../settingsPageDeclarations';
+import { SETTINGS_PAGE_DECLARATIONS, getSettingsPageDeclarations } from '../settingsPageDeclarations';
 import {
     buildSettingHref,
     collectDeclaredFeatureIds,
@@ -22,6 +24,7 @@ import {
     type SettingRef,
     type SettingsHost,
     type SettingsRouteContext,
+    type SettingsPageDeclaration,
 } from '../settingDeclarations';
 import type { ResolvedSettingsPageNode, SettingsPageId, SettingsPageNode, SettingsPageSearchResult } from '../types';
 import { mergeAdmittedPluginSettingsPages } from './pluginSettingsPageCatalog';
@@ -111,9 +114,10 @@ function buildSettingDocs(params: Readonly<{
     features: Readonly<Record<string, boolean>>;
     host: SettingsHost;
     routeContext?: SettingsRouteContext;
+    declarations: readonly SettingsPageDeclaration[];
 }>): SettingsPageSearchDoc[] {
     const docs: SettingsPageSearchDoc[] = [];
-    for (const declaration of SETTINGS_PAGE_DECLARATIONS) {
+    for (const declaration of params.declarations) {
         if (declaration.pageId !== params.pageId) continue;
         // A sub-page's settings open its own route, under the catalog page in the result path.
         const route = declaration.subpage?.route ?? params.pageRoute;
@@ -137,7 +141,7 @@ function buildSettingDoc(params: Readonly<{
     ref: SettingRef;
 }>): SettingsPageSearchDoc {
     const { ref } = params;
-    const title = String(t(ref.titleKey));
+    const title = ref.title ?? String(t(ref.titleKey));
     const sectionTitle = ref.sectionTitleKey ? String(t(ref.sectionTitleKey)) : null;
     const path = sectionTitle && sectionTitle !== title && !params.pagePath.includes(sectionTitle)
         ? [...params.pagePath, sectionTitle]
@@ -146,7 +150,7 @@ function buildSettingDoc(params: Readonly<{
         id: params.pageId,
         route: params.route,
         title,
-        subtitle: ref.descriptionKey ? String(t(ref.descriptionKey)) : '',
+        subtitle: ref.description ?? (ref.descriptionKey ? String(t(ref.descriptionKey)) : ''),
         keywords: (ref.keywordKeys ?? []).map((key) => String(t(key))),
         pathTokens: path,
         setting: { anchor: ref.anchor, title, path },
@@ -159,6 +163,7 @@ function buildSearchDocs(
     host: SettingsHost,
     routeContext: SettingsRouteContext,
     scopedRouteAdmission: Readonly<{ teams: boolean; homeAdministration: boolean }>,
+    declarations: readonly SettingsPageDeclaration[],
 ): SettingsPageSearchDoc[] {
     const out: SettingsPageSearchDoc[] = [];
     const visit = (items: readonly ResolvedSettingsPageNode[], ancestors: readonly string[]) => {
@@ -181,7 +186,7 @@ function buildSearchDocs(
                     ? undefined
                     : routeContext;
                 // A setting opens its own page, never the page's entry link.
-                out.push(...buildSettingDocs({ pageId: item.id, pageRoute: settingsRoutePathname(item.route), pageTitle: title, features, host, routeContext: scopedContext }));
+                out.push(...buildSettingDocs({ pageId: item.id, pageRoute: settingsRoutePathname(item.route), pageTitle: title, features, host, routeContext: scopedContext, declarations }));
             }
 
             if (item.children) {
@@ -286,6 +291,15 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         [pathname, routeParams],
     );
     const appShellPluginUiProjection = useAppShellPluginUiProjection();
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
+    const voiceDeclarationRevision = React.useSyncExternalStore(
+        voiceSettingsDeclarationRegistry.subscribe ?? (() => () => {}),
+        voiceSettingsDeclarationRegistry.getRevision ?? (() => 0),
+        voiceSettingsDeclarationRegistry.getRevision ?? (() => 0),
+    );
+    const voiceProviderId = storage((state) => state.settings.voice.providerId);
+    const voiceLanguageKind = storage((state) => projectConversationLanguagePreference(state.settings.voice, voiceSettingsDeclarationRegistry).kind);
+    const declarations = React.useMemo(() => getSettingsPageDeclarations(localizePluginText, storage.getState().settings), [localizePluginText, voiceDeclarationRevision, voiceProviderId, voiceLanguageKind]);
     const useProfiles = Boolean(useSetting('useProfiles'));
     const devModeEnabled = Boolean(useLocalSetting('devModeEnabled'));
     const { os: hostOs, desktop: tauriDesktop } = resolveSettingsHost();
@@ -337,7 +351,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
     const searchDocs = React.useMemo(() => buildSearchDocs(tree, featureSnapshot, host, routeContext, {
         teams: teamRouteAdmitted,
         homeAdministration: homeRouteAdmitted,
-    }), [featureSnapshot, homeRouteAdmitted, host, routeContext, teamRouteAdmitted, tree]);
+    }, declarations), [declarations, featureSnapshot, homeRouteAdmitted, host, routeContext, teamRouteAdmitted, tree]);
 
     // Pages and rows rank in separate pools. One pool let a page with many declared rows lose to its
     // own rows (every row's path names the page), so typing a page's name never offered the page.

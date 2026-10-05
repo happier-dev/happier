@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
@@ -55,13 +55,9 @@ const ASSEMBLED_AT_MS = 1_760_000_100_000;
 /**
  * The stated wait, in real milliseconds.
  *
- * A provider deadline is an absolute epoch moment, and the thing under test is
- * a mounted control noticing that moment arrive. A fake clock cannot stand in
- * for it here: the surface mounts through the host testkit, whose own settling
- * runs on the real one, so replacing the clock stalls the mount rather than the
- * page. The wait is therefore short and real, and every assertion below is
- * ordered against the SAME deadline this mount published rather than against a
- * sleep that happens to be long enough.
+ * The Date boundary is controlled so a short deadline cannot expire during
+ * asynchronous host mounting. Timers remain real: the mounted control still
+ * has to notice the published deadline without another pass or page render.
  */
 const SHORT_WAIT_MS = 150;
 const LONG_WAIT_MS = 10_000;
@@ -73,6 +69,7 @@ const SETTLE_MS = 150;
  */
 let deadlineMs: number | null = null;
 let secondDeadlineMs: number | null = null;
+let fixtureNowMs = 0;
 /** The shared window scope this mount joined, so the test can read what it published. */
 let mountedScope: ReturnType<typeof createTriageEphemeralSharedScopeFixture> | null = null;
 
@@ -99,9 +96,11 @@ async function waitPastPublishedDeadline(shell: PluginUiTestkit): Promise<void> 
     const published = readTriageListWindowSnapshot(shell.context.hostApi, mountedScope);
     const deadline = published.refreshBlocked?.nextEligibleAtMs;
     if (deadline === undefined) throw new Error('The page published no refusal to wait out.');
+    const remainingMs = Math.max(0, deadline - Date.now());
     await act(async () => {
+        fixtureNowMs = deadline + 1;
         await new Promise((resolve) => {
-            setTimeout(resolve, Math.max(0, deadline - Date.now()) + SETTLE_MS);
+            setTimeout(resolve, remainingMs + SETTLE_MS);
         });
     });
 }
@@ -201,6 +200,8 @@ async function mountShell(options: Readonly<{
 }> = {}): Promise<PluginUiTestkit> {
     deadlineMs = null;
     secondDeadlineMs = null;
+    fixtureNowMs = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => fixtureNowMs);
     const sources = options.sources ?? 'one';
     const waitMs = options.waitMs ?? LONG_WAIT_MS;
     const rows = options.rows ?? 'one';
@@ -241,7 +242,11 @@ async function refreshDisabled(shell: PluginUiTestkit): Promise<boolean> {
 }
 
 afterEach(async () => {
-    for (const fixture of mounted.splice(0)) await fixture.dispose();
+    try {
+        for (const fixture of mounted.splice(0)) await fixture.dispose();
+    } finally {
+        vi.restoreAllMocks();
+    }
 });
 
 describe('the Refresh control while a source has asked us to wait', () => {
@@ -294,6 +299,7 @@ describe('the Refresh control while a source has asked us to wait', () => {
         const shell = await mountShell();
 
         await act(async () => {
+            fixtureNowMs += SHORT_WAIT_MS + SETTLE_MS;
             await new Promise((resolve) => { setTimeout(resolve, SHORT_WAIT_MS + SETTLE_MS); });
         });
 

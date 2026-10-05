@@ -88,7 +88,7 @@ describe('Personal Home shell reveal settling', () => {
         await flushHookEffects({ cycles: 4, turns: 2 });
         expect(screen.findByTestId('normal-shell')).not.toBeNull();
         expect(screen.findByTestId('personal-home-setup-surface')).not.toBeNull();
-        expect(screen.findByTestId('ready-home-content')).toBeNull();
+        expect(screen.findByTestId('ready-home-content')).not.toBeNull();
 
         releaseHome();
         await flushHookEffects({ cycles: 6, turns: 3 });

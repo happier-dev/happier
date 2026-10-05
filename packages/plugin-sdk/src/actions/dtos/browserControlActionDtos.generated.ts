@@ -689,6 +689,11 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
     };
     readonly "browser.control.handBack": {
         v: 1;
@@ -1173,6 +1178,11 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
     };
     readonly "browser.view.open": {
         v: 1;

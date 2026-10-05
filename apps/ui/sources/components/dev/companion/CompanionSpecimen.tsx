@@ -85,7 +85,8 @@ const BOARD = projectSessionBoard({
     items: new Map([
         ['note', boardItem('Open question', { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('Does the phone sheet need the same key?') })],
         ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: { kind: 'html', html: '<main></main>' }, requestedCapabilities: {} })],
-        ['conv', boardItem('External conversations', { kind: 'installedSurface', surface: { pluginId: 'happier.channels', localId: 'conversations' } })],
+        ['conv', boardItem('External conversations', { kind: 'widget', instance: { v: 1, id: 'conv',
+            definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'conversations' } }, bindings: {} } })],
     ]),
     capabilities: { readTranscript: true, editSessionRecords: true },
     freshness: 'fresh',

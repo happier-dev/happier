@@ -1,4 +1,4 @@
-import { act, cloneElement, Fragment, isValidElement, useLayoutEffect, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
+import { act, cloneElement, Fragment, StrictMode, isValidElement, useLayoutEffect, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
 import { Pressable, Text as NativeText, View } from 'react-native';
 
 import {
@@ -32,6 +32,8 @@ import { PLUGIN_UI_PRIVATE_SURFACE_ENTRY_PROVIDER_KEY } from '../privateCarrierK
 
 /** Optional strict targeted-Surface support for the public RNW semantic adapter. */
 export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
+  /** Replay initial effect setup/cleanup at the React root to test mount continuity. */
+  strictMode?: boolean;
   /**
    * Present overlays (`Popover`, `Menu`, `Dropdown`, a `Select` menu) inline
    * while they are open, the way the app host presents them in its portal, so
@@ -523,14 +525,14 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
             ? {}
             : { ephemeralSharedScope: options.ephemeralSharedScope }),
         });
-        if (paneHeader === undefined && detailsPane === undefined) return page;
-        return (
+        const content = paneHeader === undefined && detailsPane === undefined ? page : (
           <>
             {paneHeader === undefined ? null : paneHeader.header}
             {page}
             {detailsPane === undefined ? null : detailsPane.pane}
           </>
         );
+        return options.strictMode === true ? <StrictMode>{content}</StrictMode> : content;
       };
       const mount = await mountRnw(renderPage(context));
       let revision = 0;

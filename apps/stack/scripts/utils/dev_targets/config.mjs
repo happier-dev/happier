@@ -58,11 +58,25 @@ function normalizeManagedRuntime(raw, { name, platform }) {
     throw new Error(`[dev-targets] target ${name}: managedRuntime must be an object`);
   }
   if (platform !== 'posix') {
-    throw new Error(`[dev-targets] target ${name}: managed Lima runtimes must use platform "posix"`);
+    throw new Error(`[dev-targets] target ${name}: managed runtimes must use platform "posix"`);
   }
   const kind = requireNonEmptyString(raw.kind, `target ${name} managedRuntime kind`).toLowerCase();
+  if (kind === 'wsl') {
+    const instance = requireNonEmptyString(raw.instance, `target ${name} WSL instance`);
+    if (!LIMA_INSTANCE_RE.test(instance)) throw new Error(`[dev-targets] target ${name}: invalid WSL instance`);
+    const user = requireNonEmptyString(raw.user, `target ${name} WSL user`);
+    if (!/^[a-z_][a-z0-9_-]*$/.test(user)) throw new Error(`[dev-targets] target ${name}: invalid WSL user`);
+    const host = raw.host;
+    if (host?.kind !== 'ssh' || !/^[A-Za-z0-9._-]+$/.test(host.ssh ?? '')
+      || !String(host.sshConfigFile ?? '').startsWith('/') || /[\0\r\n]/.test(host.sshConfigFile)) {
+      throw new Error(`[dev-targets] target ${name}: WSL requires a configured Windows SSH host`);
+    }
+    const capacity = normalizeManagedRuntimeCapacity(raw.capacity, name);
+    if (!capacity) throw new Error(`[dev-targets] target ${name}: WSL requires explicit capacity`);
+    return { kind, instance, user, host: { kind: 'ssh', ssh: host.ssh, sshConfigFile: host.sshConfigFile }, capacity };
+  }
   if (kind !== 'lima') {
-    throw new Error(`[dev-targets] target ${name}: managedRuntime kind must be "lima"`);
+    throw new Error(`[dev-targets] target ${name}: managedRuntime kind must be "lima" or "wsl"`);
   }
   const instance = requireNonEmptyString(raw.instance, `target ${name} managedRuntime instance`);
   if (!LIMA_INSTANCE_RE.test(instance)) {
@@ -337,6 +351,9 @@ function normalizePlacedConfig(raw, targets) {
     throw new Error('[dev-targets] runtimePlacement must be an object');
   }
   const runtimePlacement = {
+    ...(runtimePlacementRaw?.build ? { build: normalizePlacement(runtimePlacementRaw.build, {
+      label: 'runtimePlacement.build', targetNames,
+    }) } : {}),
     server: normalizePlacement(runtimePlacementRaw?.server, {
       label: 'runtimePlacement.server',
       targetNames,
@@ -434,6 +451,7 @@ export function resolveDevTargetExecutionPolicy(
     throw new Error(`[dev-targets] unsupported configuration version: ${String(config?.version)}`);
   } else {
     policy = {
+      ...(config.runtimePlacement.build ? { build: { ...config.runtimePlacement.build } } : {}),
       server: { ...config.runtimePlacement.server },
       expo: { ...config.runtimePlacement.expo },
       daemons: { ...config.runtimePlacement.daemon },
@@ -460,8 +478,8 @@ export function resolveDevTargetsConfigPath({ stackName, env = process.env }) {
   return join(resolveStackEnvPath(resolvedStack, env).baseDir, 'dev-targets.json');
 }
 
-export async function loadDevTargetsConfig({ stackName, env = process.env, allowMissing = true }) {
-  const path = resolveDevTargetsConfigPath({ stackName, env });
+export async function loadDevTargetsConfig({ stackName, path: configPath, env = process.env, allowMissing = true }) {
+  const path = configPath ?? resolveDevTargetsConfigPath({ stackName, env });
   try {
     const raw = JSON.parse(await readFile(path, 'utf8'));
     return { path, config: parseDevTargetsConfig(raw) };

@@ -38,6 +38,7 @@ export type ExecutionRunPermissionResponseBridgeResult =
  * the plan-only `AgentExecutionRunRuntimeBridge` noun.
  */
 export interface ExecutionRunHostBridgeContract {
+  waitForOutput(runId: string, observation: import('@happier-dev/protocol').ReviewWalkthroughObservation, signal?: AbortSignal): Promise<void>;
   recoverRetainedRuns(): Promise<void>;
   get(runId: string): ExecutionRunState | null;
   getRunningCount(): number;
@@ -92,6 +93,7 @@ export interface ExecutionRunHostBridgeContract {
     params: Readonly<{
       message: string;
       displayMessage?: string;
+      speechSegmentTargetChars?: number;
       resume?: boolean;
       userTranscript?: ExecutionRunUserTranscriptDirective;
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;

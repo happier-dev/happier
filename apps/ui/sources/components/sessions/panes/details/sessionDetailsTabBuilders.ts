@@ -1,6 +1,8 @@
 import { createSessionDetailsTerminalTab } from '@/components/sessions/terminal/embeddedTerminalDocking';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
+import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 export const SESSION_DETAILS_SCM_REVIEW_TAB_KEY = 'scmReview:working';
 export const SESSION_DETAILS_SCM_STASH_TAB_KEY = 'scmStash';
@@ -57,13 +59,13 @@ export function createSessionBoardDetailsTab(focusTarget?: SessionBoardDetailsFo
     };
 }
 
-export function createSessionFileDetailsTab(fullPath: string) {
+export function createSessionFileDetailsTab(fullPath: string, anchor?: FileTargetAnchor, anchorSource?: ReviewCommentSource) {
     const fileName = fullPath.split('/').pop() ?? fullPath;
     return {
         key: `file:${fullPath}`,
         kind: 'file' as const,
         title: fileName,
-        resource: { kind: 'file' as const, path: fullPath },
+        resource: { kind: 'file' as const, path: fullPath, ...(anchor ? { anchor } : {}), ...(anchorSource ? { anchorSource } : {}) },
     };
 }
 
@@ -80,12 +82,66 @@ export function createSessionCommitDetailsTab(sha: string) {
     };
 }
 
-export function createSessionScmReviewDetailsTab() {
+/**
+ * Which code the review destination compares (Walkthrough lab WT6-E2). Selectors only: the host
+ * captures the exact endpoints. A link without one opens the destination's default comparison.
+ */
+export type SessionScmReviewComparison = import('@/sync/domains/scm/diffSummary/selection').ScmReviewComparisonSelector;
+
+export type SessionScmReviewTurnEvidence = 'agent_reported' | 'checkpoint';
+
+/** The views of one comparison: Files, Walkthrough, and Commits (pending changes only). */
+export type SessionScmReviewView = 'files' | 'walkthrough' | 'commits';
+export const SESSION_SCM_REVIEW_VIEWS: readonly SessionScmReviewView[] = ['files', 'walkthrough', 'commits'];
+
+export type SessionScmReviewTarget = Readonly<{
+    comparison?: SessionScmReviewComparison;
+    view?: SessionScmReviewView;
+    explain?: boolean;
+}>;
+
+export function resolveSessionScmReviewComparisonLabel(comparison: SessionScmReviewComparison): string {
+    switch (comparison.kind) {
+        case 'workingTree': return t('scmComparison.scope.workingTree');
+        case 'session': return t('scmComparison.scope.session');
+        case 'turnCheckpoint': return t('scmComparison.scope.turn');
+        case 'branch': return t('scmComparison.scope.branch', { head: comparison.head, base: comparison.base });
+        case 'commit': return t('scmComparison.scope.commit', { commit: comparison.commit.slice(0, 7) });
+        case 'pullRequest': return `${comparison.locator.repository} #${comparison.locator.number}`;
+    }
+}
+
+export function resolveSessionScmReviewViewLabel(view: SessionScmReviewView): string {
+    switch (view) {
+        case 'files': return t('scmComparison.view.files');
+        case 'walkthrough': return t('scmComparison.view.walkthrough');
+        case 'commits': return t('scmComparison.view.commits');
+    }
+}
+
+/**
+ * One review destination per Session: choosing another comparison or view updates this tab in place
+ * (same key), so its scroll and folded files stay with it. Its title says what it shows.
+ */
+export function createSessionScmReviewDetailsTab(target: SessionScmReviewTarget = {}) {
+    const comparison = target.comparison;
+    const view = target.view;
     return {
         key: SESSION_DETAILS_SCM_REVIEW_TAB_KEY,
         kind: 'scmReview' as const,
-        title: t('files.toolbar.review'),
-        resource: { kind: 'scmReview' as const, scope: 'working' as const },
+        title: comparison
+            ? t('scmComparison.tabTitle', {
+                view: resolveSessionScmReviewViewLabel(view ?? 'files'),
+                scope: resolveSessionScmReviewComparisonLabel(comparison),
+            })
+            : t('files.toolbar.review'),
+        resource: {
+            kind: 'scmReview' as const,
+            scope: 'working' as const,
+            ...(comparison ? { comparison } : {}),
+            ...(view ? { view } : {}),
+            ...(typeof target.explain === 'boolean' ? { explain: target.explain } : {}),
+        },
     };
 }
 

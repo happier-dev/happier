@@ -12,6 +12,7 @@ import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { readBundledSpeechSettingsDescriptorFromEntry } from '@/voice/settings/panels/bundledSpeech/descriptor';
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { resolveSelectedVoiceProviderTitleKey } from '@/voice/registry/providerSelection';
+import type { VoiceProviderSettings } from '@happier-dev/protocol';
 
 type LocalizedDisclosure = string | Readonly<{ key: string; fallback: string }>;
 
@@ -20,12 +21,14 @@ export type VoiceProcessingDisclosureProjection = Readonly<{
   providerIds: readonly string[];
   roles: readonly ('conversation' | 'stt' | 'tts')[];
   titleKey: string;
-  disclosure: LocalizedDisclosure;
+  disclosure: LocalizedDisclosure | null;
+  facts: VoiceProviderSettings['privacyFacts'] | null;
 }>;
 
 const defaultRegistry = createDefaultVoiceProviderRegistry();
 
-function disclosureIdentity(disclosure: LocalizedDisclosure): string {
+function disclosureIdentity(disclosure: LocalizedDisclosure | null): string {
+  if (disclosure === null) return 'facts-only';
   return typeof disclosure === 'string'
     ? `text:${disclosure}`
     : `key:${disclosure.key}`;
@@ -46,10 +49,11 @@ export function projectVoiceProcessingDisclosures(
   const add = (
     providerId: string,
     role: 'conversation' | 'stt' | 'tts',
-    disclosure: LocalizedDisclosure,
+    disclosure: LocalizedDisclosure | null,
     titleKey: string,
+    facts: VoiceProviderSettings['privacyFacts'] | null = null,
   ): void => {
-    const identity = disclosureIdentity(disclosure);
+    const identity = `${disclosureIdentity(disclosure)}:${JSON.stringify(facts)}`;
     const existing = byDisclosure.get(identity);
     if (existing) {
       if (!existing.providerIds.includes(providerId) || !existing.roles.includes(role)) {
@@ -69,6 +73,7 @@ export function projectVoiceProcessingDisclosures(
       roles: Object.freeze([role]),
       titleKey,
       disclosure,
+      facts,
     }));
   };
 
@@ -76,12 +81,13 @@ export function projectVoiceProcessingDisclosures(
   if (conversationProviderId) {
     const entry = registry.get(conversationProviderId);
     const disclosure = entry?.providerSettings?.privacyDisclosure;
-    if (entry && disclosure) {
+    if (entry && (disclosure || entry.providerSettings?.privacyFacts)) {
       add(
         conversationProviderId,
         'conversation',
-        disclosure,
+        disclosure ?? null,
         resolveSelectedVoiceProviderTitleKey(voice, registry) ?? conversationProviderId,
+        entry.providerSettings?.privacyFacts ?? null,
       );
     }
   }
@@ -93,12 +99,14 @@ export function projectVoiceProcessingDisclosures(
       add(providerId, role, {
         key: hostDisclosure.disclosureKey,
         fallback: hostDisclosure.disclosureKey,
-      }, hostDisclosure.titleKey);
+      }, hostDisclosure.titleKey, hostDisclosure.facts ?? null);
       return;
     }
     const descriptor = readBundledSpeechSettingsDescriptorFromEntry(providerId, entry);
-    if (!entry || !descriptor?.privacyDisclosure) return;
-    add(providerId, role, descriptor.privacyDisclosure, descriptor.titleKey);
+    if (!entry || !descriptor || entry.kind !== 'voice.speech-engine.v1') return;
+    const facts = entry.declaration?.settings?.privacyFacts ?? null;
+    if (!descriptor.privacyDisclosure && !facts) return;
+    add(providerId, role, descriptor.privacyDisclosure ?? null, descriptor.titleKey, facts);
   };
 
   const dictationRuntime = createVoiceDictationRuntimeSettingsSnapshot({ voice });

@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 
 import { ARTIFACT_KIND_ICONS } from './artifactKindPresentation';
@@ -77,8 +78,9 @@ export const ArtifactCardPreview = React.memo(function ArtifactCardPreview(props
     }
     return (
         <View style={[styles.band, styles.centered]} testID={props.testID} accessible={false} importantForAccessibility="no-hide-descendants">
-            <Icon name={preview.kind === 'image' ? 'image' : preview.kind === 'file' ? 'file' : ARTIFACT_KIND_ICONS[props.kind]} size={26} color={theme.colors.text.tertiary} />
-            {(preview.kind === 'image' || preview.kind === 'file') && preview.name ? <Text numberOfLines={1} style={styles.caption}>{preview.name}</Text> : null}
+            <Icon name={preview.kind === 'image' ? 'image' : preview.kind === 'html' ? 'code' : preview.kind === 'file' ? 'file' : ARTIFACT_KIND_ICONS[props.kind]} size={26} color={theme.colors.text.tertiary} />
+            {(preview.kind === 'image' || preview.kind === 'file' || preview.kind === 'html') && preview.name ? <Text numberOfLines={1} style={styles.caption}>{preview.name}</Text> : null}
+            {preview.kind === 'html' ? <Text numberOfLines={1} style={styles.caption}>{t('artifacts.browser.kindOne.document')}</Text> : null}
             {preview.kind === 'file' ? <Text numberOfLines={1} style={styles.caption}>{`${preview.mime} · ${formatByteSize(preview.sizeBytes)}`}</Text> : null}
         </View>
     );

@@ -6,6 +6,9 @@ import { Text } from '../ui/text/Text';
 import { StreamingTextReveal } from './streaming/StreamingTextReveal';
 import { isStreamingIncompleteLinkHref } from './streaming/streamingMarkdownRepairConfig';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
+import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { MarkdownFindDecorationContext } from './rendering/MarkdownFindDecorationContext';
 
 export type MarkdownSpansViewProps = {
     spans: MarkdownSpan[];
@@ -16,15 +19,21 @@ export type MarkdownSpansViewProps = {
     inlineTextSelectable?: boolean;
     streamingReveal?: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    findRanges?: readonly FindTextRange[];
 };
 
 export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
     const resolveSpanStyle = props.resolveSpanStyle ?? (() => undefined);
     const inlineTextSelectable = props.inlineTextSelectable ?? true;
+    const findDecoration = React.useContext(MarkdownFindDecorationContext);
+    let offset = 0;
 
     return (
         <>
             {props.spans.map((span, index) => {
+                const ranges = findDecoration?.get(span) ?? sliceFindRanges(props.findRanges, offset, span.text.length);
+                offset += span.text.length;
+                const text = ranges?.length ? <FindHighlightedText text={span.text} ranges={ranges} selectable={inlineTextSelectable} /> : span.text;
                 if (span.url) {
                     const linkStyle = [props.linkStyle, span.styles.map(resolveSpanStyle)];
                     // Special blocks render from the same repaired source as prose, so a link
@@ -39,7 +48,7 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                                 selectable={inlineTextSelectable}
                                 style={linkStyle}
                             >
-                                {span.text}
+                                {text}
                             </Text>
                         );
                     }
@@ -52,7 +61,7 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                                 selectable={inlineTextSelectable}
                                 style={linkStyle}
                             >
-                                {span.text}
+                                {text}
                             </Text>
                         );
                     }
@@ -69,13 +78,13 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                             style={isWeb ? linkStyle : undefined}
                         >
                             {isWeb ? (
-                                span.text
+                                text
                             ) : (
                                 <Text
                                     selectable={inlineTextSelectable}
                                     style={linkStyle}
                                 >
-                                    {span.text}
+                                    {text}
                                 </Text>
                             )}
                         </Link>
@@ -83,7 +92,7 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                 }
 
                 const spanStyle = [props.baseStyle, span.styles.map(resolveSpanStyle)];
-                if (props.streamingReveal === true && !span.styles.includes('code')) {
+                if (props.streamingReveal === true && !span.styles.includes('code') && !ranges?.length) {
                     return (
                         <StreamingTextReveal
                             key={index}
@@ -102,7 +111,7 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                         selectable={inlineTextSelectable}
                         style={spanStyle}
                     >
-                        {span.text}
+                        {text}
                     </Text>
                 );
             })}

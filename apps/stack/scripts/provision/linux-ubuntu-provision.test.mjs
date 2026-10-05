@@ -232,6 +232,9 @@ test('linux provision (happier profile) runs corepack enable as root', async () 
   );
   await chmod(apparmorParserPath, 0o755);
 
+  const aaEnabledPath = join(binDir, 'aa-enabled');
+  await writeFile(aaEnabledPath, '#!/usr/bin/env bash\nexit 0\n');
+  await chmod(aaEnabledPath, 0o755);
   const scriptPath = join(__dirname, 'linux-ubuntu-provision.sh');
   const res = spawnSync('bash', [scriptPath, '--profile=happier'], {
     cwd: root,
@@ -359,6 +362,14 @@ test('linux provision (happier profile) runs corepack enable as root', async () 
     encoding: 'utf-8',
   });
   assert.equal(secondResult.status, 0, `expected second exit 0\nstdout:\n${secondResult.stdout}\nstderr:\n${secondResult.stderr}`);
+  // aa-enabled and apparmor_parser are OS boundaries: WSL can ship the
+  // userspace parser without exposing the kernel profile-loading interface.
+  await writeFile(aaEnabledPath, '#!/usr/bin/env bash\nexit 1\n');
+  await writeFile(join(binDir, 'apparmor_parser'), '#!/usr/bin/env bash\nexit 17\n');
+  const unsupportedKernel = spawnSync('bash', [scriptPath, '--profile=happier'], {
+    cwd: root, env: { ...process.env, HOME: root, PATH: `${binDir}:${process.env.PATH ?? ''}`, HAPPIER_PROVISION_BUN_VERSION: '9.9.9', BASH_ENV: bashEnvPath }, encoding: 'utf8',
+  });
+  assert.equal(unsupportedKernel.status, 0, `unsupported AppArmor kernel must remain provisionable: ${unsupportedKernel.stderr}`);
   assert.equal(await readFile(codexConfigPath, 'utf8'), codexConfig, 'expected Codex config convergence to be idempotent');
   assert.equal(await readFile(join(userSystemdUnitDir, 'happier.slice'), 'utf8'), happierSliceUnit);
   assert.equal(await readFile(join(userSystemdUnitDir, 'happier-critical.slice'), 'utf8'), happierCriticalSliceUnit);

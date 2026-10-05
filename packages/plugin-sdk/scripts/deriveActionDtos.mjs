@@ -32,6 +32,11 @@ const supportBindings = [
   ['sessions/metadata/runtimeDescriptorV1.ts', 'PortableRuntimeDescriptorV1', 'PluginActionWorkflowPortableRuntimeDescriptorV1'],
   ...['WorkflowSessionAuthoringSelection', 'WorkflowStepExecutionSelection', 'WorkflowStep', 'WorkflowFailurePolicy', 'WorkflowItemExecutionMode', 'WorkflowEvaluatorHistoryMode', 'WorkflowParallelBranch', 'WorkflowRepetition', 'WorkflowBlock', 'WorkflowIngressBlock'].map(name => ['workflows/workflowV1.ts', name, `PluginAction${name}V1`]),
   ['actions/actionSpecs.ts', 'PluginInvocableActionSpec', 'ActionSpec'],
+  ...['EntityDragItemV1', 'EntityDragScopeV1', 'EntityDragKindV1', 'EntityDropAdmissionV1', 'EntityDropEffectV1', 'EntityDropPreviewV1', 'EntityDropReasonV1', 'EntityDropOutcomeV1'].map(name => ['plugins/ui/entityDragDrop.ts', name]),
+  ...['PluginUiReadEntityDragItemRequestV1', 'PluginUiUpdateEntityDragDropRequestV1', 'PluginUiUpdateEntityDragDropResultV1', 'PluginUiWatchEntityDragDropRequestV1', 'PluginUiEntityDragDropStateV1', 'PluginUiEntityDropDestinationV1'].map(name => ['plugins/ui/entityDragDropHost.ts', name]),
+  ...['PluginUiWidgetAreaRequestV1', 'PluginUiWidgetAreaResultV1', 'PluginUiWidgetAreaOperationV1'].map(name => ['plugins/ui/widgetArea.ts', name]),
+  ['sessions/presentation/currentSessionPresentationV1.ts', 'SessionCompanionPresentationAuthorItemRefV1', 'SessionCompanionPresentationItem'],
+  ['sessions/presentation/currentSessionPresentationV1.ts', 'CurrentSessionPresentationAuthorIntentV1', 'CurrentSessionPresentationIntentV1'],
 ];
 const uiBindings = [
   ...['PluginUiToneV1', 'PluginUiIconTokenV1'].map(name => ['plugins/contributions/ui/tokens.ts', name]),
@@ -62,6 +67,10 @@ function selectSchemaRows(protocol, keys, readSource) {
       if (ts.isImportDeclaration(node) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
         const found = node.importClause.namedBindings.elements.find(n => n.name.text === name);
         if (found && node.moduleSpecifier.text.startsWith('.')) return variable(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')), (found.propertyName ?? found.name).text);
+      }
+      if (ts.isExportDeclaration(node) && node.moduleSpecifier?.text.startsWith('.') && node.exportClause && ts.isNamedExports(node.exportClause)) {
+        const found = node.exportClause.elements.find(n => n.name.text === name);
+        if (found) return variable(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')), (found.propertyName ?? found.name).text);
       }
     }
     return null;
@@ -138,12 +147,49 @@ function selectSchemaRows(protocol, keys, readSource) {
   const specPaths = new Set([actionPath]);
   for (const node of source(actionPath).statements) {
     if (ts.isImportDeclaration(node) && node.moduleSpecifier.text.startsWith('.') && node.importClause?.namedBindings
-      && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.namedBindings.elements.some(n => /ACTION_SPECS$/u.test(n.name.text))) {
+      && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.namedBindings.elements.some(n => /ACTION_SPECS(?:_V\d+)?$/u.test((n.propertyName ?? n.name).text))) {
       specPaths.add(resolve(dirname(actionPath), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')));
     }
   }
+  const stringArray = (path, expression) => {
+    const node = unwrapped(expression);
+    if (ts.isIdentifier(node)) {
+      const found = variable(path, node.text);
+      return found ? stringArray(found.path, found.node) : [];
+    }
+    if (!ts.isArrayLiteralExpression(node)) return [];
+    return node.elements.flatMap(n => ts.isStringLiteral(n) ? [n.text]
+      : ts.isSpreadElement(n) ? stringArray(path, n.expression) : []);
+  };
   for (const path of specPaths) {
     const visit = node => {
+      // Some canonical spec owners map declared Action ids through schema maps.
+      // Resolve those maps by the actual id, never by evaluating runtime specs.
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map') {
+        const callback = node.arguments[0];
+        if (callback && ts.isArrowFunction(callback) && callback.parameters.length === 1 && ts.isIdentifier(callback.parameters[0].name)) {
+          const parameter = callback.parameters[0].name.text;
+          const rows = ts.isBlock(callback.body) ? callback.body.statements.filter(ts.isReturnStatement).map(n => n.expression) : [callback.body];
+          for (const expression of rows) {
+            const row = expression && unwrapped(expression);
+            if (!row || !ts.isObjectLiteralExpression(row)) continue;
+            const id = row.properties.find(n => n.name?.text === 'id');
+            const idExpression = id && (ts.isShorthandPropertyAssignment(id) ? id.name : ts.isPropertyAssignment(id) ? id.initializer : undefined);
+            if (!idExpression || !ts.isIdentifier(idExpression) || idExpression.text !== parameter) continue;
+            for (const key of stringArray(path, node.expression.expression)) {
+              if (!keys.includes(key) || selected.has(key)) continue;
+              const keyed = name => {
+                const field = property(path, row, name);
+                if (!field || !ts.isElementAccessExpression(field.node) || !ts.isIdentifier(field.node.argumentExpression)
+                  || field.node.argumentExpression.text !== parameter) return null;
+                return property(field.path, field.node.expression, key);
+              };
+              const input = keyed('inputSchema'), output = keyed('outputSchema');
+              if (input && output) selected.set(key, [input, output]);
+            }
+          }
+        }
+      }
       if (ts.isObjectLiteralExpression(node)) {
         const id = node.properties.find(n => ts.isPropertyAssignment(n) && n.name.text === 'id');
         if (id && ts.isStringLiteral(id.initializer) && keys.includes(id.initializer.text) && !selected.has(id.initializer.text)) {
@@ -241,7 +287,10 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
   const actionSpecs = resolve(protocol, 'actions/actionSpecs.ts');
   const inputs = new Map();
   const options = { strict: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler };
+    module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
+    // Match Protocol's ambient contract. Imported declarations still resolve;
+    // unrelated application @types must not inflate every family or its input identity.
+    types: ['node'] };
   const host = ts.createCompilerHost(options);
   const read = host.readFile.bind(host);
   const overlays = new Map();
@@ -441,7 +490,7 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
       if (!output) throw Error('Missing canonical declarative effect schema output');
       projectedType = checker.getTypeOfSymbolAtLocation(output, location);
     }
-    render(symbol, outputName, input, projectedType);
+    render(symbol, outputName ?? renames.get(name) ?? name, input, projectedType);
   }
   if (!keys) for (const name of extraNames) references.add(name);
   for (const name of references) {
@@ -449,7 +498,7 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
     // Family dependencies live in the one generated support module; its own
     // derivation closes these canonical aliases rather than copying old DTOs.
     if (keys) continue;
-    render(findSymbol(name));
+    render(findSymbol(name), renames.get(name) ?? name);
   }
   return { declarations: [...declarations], references: [...references],
     inputDigests: [...inputs].map(([path, text]) => [path, createHash('sha256').update(text).digest('hex')]), maxRssKiB: process.resourceUsage().maxRSS };

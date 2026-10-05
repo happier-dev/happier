@@ -158,6 +158,19 @@ describe('createPluginActionInvocation', () => {
     }));
   });
 
+  it('admits a waived dangerous agent Action without current intent while retaining its danger metadata', async () => {
+    const action = { committed: true };
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => ({
+        ...currentIntentResolution(),
+        action,
+        policy: { ...currentIntentResolution().policy, surfaces: ['agent'], approvalRequiredByActionSettings: false },
+      }),
+    });
+    await expect(gate.admit({ input: { title: 'ship it' }, surface: 'agent', invocationSurface: 'agent' }))
+      .resolves.toEqual({ status: 'admitted', action });
+  });
+
   it('prompts for a safe Action only when the host stamps Action-settings approval', async () => {
     const present = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
       status: 'approved' as const,

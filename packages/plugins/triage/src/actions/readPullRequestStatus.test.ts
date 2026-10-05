@@ -11,7 +11,7 @@ import { createTriageReadPullRequestStatusActionHandler } from './readPullReques
 const fixture = createTriageSourceV1Fixture();
 const status: TriagePullRequestStatusV1 = { kind: 'status', observedAtMs: 1000, checks: null, review: null, merge: null, branch: null, facts: [] };
 
-async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boolean; unsupported?: boolean; foreignCaller?: boolean }> = {}) {
+async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boolean; unsupported?: boolean; foreignCaller?: boolean; hostAgent?: boolean }> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
     const configured = fixture.configuredInstance;
     control.sourceInstances.seed(toCorpusStoredValue({
@@ -24,7 +24,8 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
     let disposed = false;
     // Host-stamped context, Account persistence, admission and dispatch are genuine system boundaries.
     const context = {
-        caller: { kind: 'plugin', pluginId: options.foreignCaller ? 'happier.other.forge' : 'happier.triage' },
+        surface: options.hostAgent ? 'agent' : 'plugin',
+        ...(options.hostAgent ? {} : { caller: { kind: 'plugin', pluginId: options.foreignCaller ? 'happier.other.forge' : 'happier.triage' } }),
         services: {
             storage: { account: { collection: (definition: PluginAccountCollectionDefinition) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID ? collections.sourceInstances : collections.userMarks } },
             targetedContributions: { observeForSelf: () => ({
@@ -46,8 +47,8 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
 }
 
 describe('the mounted PR-status action', () => {
-    it('uses one exact admitted source operation with the existing configured get input', async () => {
-        const actual = await boundary();
+    it.each([false, true])('uses one exact admitted source operation with the existing configured get input (host agent: %s)', async (hostAgent) => {
+        const actual = await boundary({ hostAgent });
         expect(actual.result).toEqual(status);
         expect(actual.requests).toEqual([{ operation: { handle: 'exact-admitted-status' }, input: fixture.getInput }]);
         expect(actual.disposed).toBe(true);

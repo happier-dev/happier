@@ -11,13 +11,16 @@ import type { CustomModalConfig, CustomModalInjectedProps } from '@/modal/types'
 import { t } from '@/text';
 import { useIsTablet } from '@/utils/platform/responsive';
 
+import { HomeWidgetAddPopover } from '@/components/widgets/add/HomeWidgetAddPopover';
+
 import { HomeLayoutEditor } from '../layout/HomeLayoutEditor';
 
 const CUSTOMIZE_POPOVER_WIDTH_PX = 360;
 const CUSTOMIZE_POPOVER_MAX_HEIGHT_PX = 640;
 
-function HomeCustomizeSheetContent(_props: CustomModalInjectedProps) {
-    return <HomeLayoutEditor presentation="popover" />;
+/** The phone sheet's editor; Add widgets hands over to the Add to Home sheet. */
+function HomeCustomizeSheetContent(props: CustomModalInjectedProps & Readonly<{ onAddWidgets: () => void }>) {
+    return <HomeLayoutEditor presentation="popover" onAddWidgets={props.onAddWidgets} />;
 }
 
 /**
@@ -34,6 +37,14 @@ export const HubCustomizeButton = React.memo(function HubCustomizeButton(props: 
     const { onOpenChange } = props;
     const toggle = React.useCallback(() => onOpenChange(!props.open), [onOpenChange, props.open]);
     const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
+    // Customize arranges what is on Home; Add widgets opens the shared gallery in its place, anchored
+    // to the same button (lab dbind G / dadd A).
+    const [addOpen, setAddOpen] = React.useState(false);
+    const openAdd = React.useCallback(() => {
+        onOpenChange(false);
+        setAddOpen(true);
+    }, [onOpenChange]);
+    const closeAdd = React.useCallback(() => setAddOpen(false), []);
     // A phone's header has no room beside the greeting for a labelled button: the glyph alone (I1p).
     const compact = !useIsTablet();
     const sheetTitle = t('homeIndex.customizeTitle');
@@ -41,6 +52,7 @@ export const HubCustomizeButton = React.memo(function HubCustomizeButton(props: 
         id: 'home-customize',
         type: 'custom',
         component: HomeCustomizeSheetContent,
+        props: { onAddWidgets: openAdd },
         chrome: {
             kind: 'card',
             header: 'none',
@@ -48,7 +60,7 @@ export const HubCustomizeButton = React.memo(function HubCustomizeButton(props: 
             phonePresentation: 'sheet',
             testID: 'home-hub.customize.sheet',
         },
-    }), [sheetTitle]);
+    }), [openAdd, sheetTitle]);
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
             {compact ? (
@@ -91,12 +103,13 @@ export const HubCustomizeButton = React.memo(function HubCustomizeButton(props: 
                                 keyboardShouldPersistTaps="always"
                                 containerStyle={{ width: Math.min(maxWidth, CUSTOMIZE_POPOVER_WIDTH_PX) }}
                             >
-                                <HomeLayoutEditor presentation="popover" />
+                                <HomeLayoutEditor presentation="popover" onAddWidgets={openAdd} />
                             </FloatingOverlay>
                         </View>
                     )}
                 </Popover>
             ) : null}
+            <HomeWidgetAddPopover open={addOpen} anchorRef={anchorRef} onRequestClose={closeAdd} testID="home-hub.add" />
         </View>
     );
 });

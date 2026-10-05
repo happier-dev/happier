@@ -26,7 +26,9 @@ const projectedExternalRollbackCapabilities: NonNullable<
     },
 };
 
-const projectedCodexRollbackCapabilities: CurrentProjectedAgentCapabilities = {
+const projectedCodexRollbackCapabilities: NonNullable<
+    Parameters<typeof resolveTranscriptRollbackActions>[0]['currentAgentCapabilities']
+> = {
     agentId: 'codex',
     identity: {
         pluginId: 'happier.agent.codex',

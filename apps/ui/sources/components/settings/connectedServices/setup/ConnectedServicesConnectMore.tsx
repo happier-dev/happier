@@ -15,6 +15,7 @@ import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { t } from '@/text';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { homeConnectServiceStepId } from '../home/selectHomeConnectInvitations';
 import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark';
@@ -26,6 +27,7 @@ import {
     resolveConnectMoreBlockForRequest,
     selectConnectMoreOffer,
     signsInWithAnAccount,
+    buildConnectedServiceSetupRoute,
 } from './connectMoreBlocks';
 import {
     ConnectedServiceSetupPanel,
@@ -53,6 +55,7 @@ export type ConnectedServicesConnectMoreProps = Readonly<{
     loading?: boolean;
     /** Preview only: the fixture frames draw a flow without a machine. */
     renderServiceFlow?: ConnectedServiceSetupPanelProps['renderServiceFlow'];
+    targetSelection?: ConnectedServiceSetupPanelProps['targetSelection'];
     testID?: string;
 }>;
 
@@ -66,6 +69,7 @@ export type ConnectedServicesConnectMoreProps = Readonly<{
  */
 export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMoreProps) {
     const phone = useDeviceType() === 'phone';
+    const router = useRouter();
     const { hidden, dismiss } = useHomeSetupDismissals();
     const catalog = React.useMemo(() => buildConnectedServiceSetupCatalog(props.model), [props.model]);
     const addable = catalog.filter((entry) => entry.canAdd);
@@ -90,6 +94,11 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     placesRef.current = { offered, hasBrowse };
     React.useEffect(() => {
         if (!request) return;
+        if (phone && !props.renderServiceFlow) {
+            router.push(buildConnectedServiceSetupRoute(request));
+            onRequestHandled();
+            return;
+        }
         const places = placesRef.current;
         setTarget(request);
         setOpenId((current) => resolveConnectMoreBlockForRequest({
@@ -102,7 +111,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         const node = rootRef.current as unknown as { scrollIntoView?: (options: Readonly<{ block: string; behavior: string }>) => void } | null;
         node?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
         onRequestHandled();
-    }, [onRequestHandled, request]);
+    }, [onRequestHandled, phone, props.renderServiceFlow, request, router]);
 
     const settle = React.useCallback((account: QualifiedConnectedAccountRef, serviceKey: string) => {
         setOpenId(null);
@@ -118,6 +127,8 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
             onClose={close}
             onConnected={settle}
             renderServiceFlow={props.renderServiceFlow}
+            targetSelection={props.targetSelection}
+            chrome="frame"
         />
     );
 
@@ -125,6 +136,10 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         id: entry.serviceKey,
         renderTile: ({ open }) => {
             const start = () => {
+                if (phone && !props.renderServiceFlow) {
+                    router.push(buildConnectedServiceSetupRoute({ kind: 'service', serviceKey: entry.serviceKey }));
+                    return;
+                }
                 setTarget({ kind: 'service', serviceKey: entry.serviceKey });
                 open();
             };
@@ -158,8 +173,12 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     }));
     if (hasBrowse) {
         const rest = addable.filter((entry) => !offered.includes(entry));
-        const marked = (tools.length > 0 ? tools : rest).slice(0, 3);
+        const marked = (props.layout === 'firstRun' ? rest : tools.length > 0 ? tools : rest).slice(0, 3);
         const browse = (open: () => void) => () => {
+            if (phone && !props.renderServiceFlow) {
+                router.push(buildConnectedServiceSetupRoute({ kind: 'catalog' }));
+                return;
+            }
             setTarget({ kind: 'catalog' });
             open();
         };
@@ -227,13 +246,15 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         />
     ) : null;
 
+    // A flow opened inline keeps its grid ancestry across resize; new phone opens still push
+    // the dedicated connect route above. Moving an existing flow into that page loses its draft.
     if (props.layout === 'firstRun') {
         return (
             <View ref={rootRef} testID={props.testID ?? 'connected-services-connect-more'} style={styles.firstRun}>
                 <SurfaceStateCard
                     testID="connected-services-first-run"
                     kind="empty"
-                    size="page"
+                    size="pane"
                     icon={(
                         <View style={styles.firstRunMarks}>
                             {FIRST_RUN_MARK_SERVICE_IDS.map((serviceId) => (

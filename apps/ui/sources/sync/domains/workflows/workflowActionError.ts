@@ -2,6 +2,7 @@ import {
     WORKFLOW_OPERATION_ERROR_CODES_V1,
     type WorkflowOperationErrorCodeV1,
 } from '@happier-dev/protocol';
+import type { WorkflowActionFailureV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /**
  * A workflow operation that failed at its canonical owner.
@@ -19,11 +20,13 @@ import {
 export class WorkflowActionError extends Error {
     readonly code: WorkflowOperationErrorCodeV1 | null;
     readonly rawCode: string | null;
+    readonly failure: WorkflowActionFailureV1 | null;
 
-    constructor(params: Readonly<{ message: string; rawCode: string | null }>) {
+    constructor(params: Readonly<{ message: string; rawCode: string | null; failure?: WorkflowActionFailureV1 }>) {
         super(params.message);
         this.name = 'WorkflowActionError';
         this.rawCode = params.rawCode;
+        this.failure = params.failure ?? null;
         this.code = isWorkflowOperationErrorCode(params.rawCode) ? params.rawCode : null;
     }
 }

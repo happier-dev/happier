@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Image, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,7 +14,7 @@ installSettingsViewCommonModuleMocks();
 
 // The menu is exercised through the real shared DropdownMenu / SelectableRow path; only platform
 // boundaries are mocked (by the common helper above).
-const { PageHeaderMarkTile, PageHeaderMenu } = await import('@/components/ui/layout/PageHeaderEntityParts');
+const { PageHeaderMenu } = await import('@/components/ui/layout/PageHeaderEntityParts');
 const { SelectableRow } = await import('@/components/ui/lists/SelectableRow');
 const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
 const { OverlayPortalProvider, OverlayPortalHost } = await import('@/components/ui/popover/OverlayPortal');
@@ -42,24 +42,6 @@ function findRow(screen: Awaited<ReturnType<typeof renderScreen>>, title: string
     return screen.findAllByType(SelectableRow as never)
         .find((node) => node.props.title === title) ?? null;
 }
-
-describe('PageHeaderMarkTile', () => {
-    it('keeps page and row artwork visible without a backing or clipping', async () => {
-        for (const size of ['page', 'row'] as const) {
-            const screen = await renderScreen(
-                <PageHeaderMarkTile testID="entity-mark" size={size}>
-                    <Image testID="entity-artwork" accessibilityLabel="Agent" source={{ uri: 'agent.png' }} />
-                </PageHeaderMarkTile>,
-            );
-            const style = flattenTestStyle(screen.findByTestId('entity-mark')?.props.style);
-            expect(style.backgroundColor).toBeUndefined();
-            expect(style.borderWidth).toBeUndefined();
-            expect(style.overflow).not.toBe('hidden');
-            expect(screen.findByTestId('entity-artwork')?.props.accessibilityLabel).toBe('Agent');
-            await screen.unmount();
-        }
-    });
-});
 
 describe('PageHeaderMenu', () => {
     let restoreGlobals: (() => void) | null = null;

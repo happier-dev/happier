@@ -424,7 +424,7 @@ export class PushNotificationClient {
     async sendToAllDevicesAsync(
         title: string,
         body: string,
-        data?: Record<string, any>,
+        data?: Record<string, unknown>,
         options?: PushNotificationDeliveryOptions,
     ): Promise<boolean> {
         const debugPush = isPushDebugEnabled()

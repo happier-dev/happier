@@ -56,12 +56,11 @@ function buildPreViewerRuntimeInput(
 /**
  * When this Session's personal attention would change by the clock alone.
  *
- * Only pre-viewer Homes have such an instant: their `user_action_required` is
+ * Only pre-viewer Homes have such an instant: their pending-request attention is
  * gated on a freshness budget that elapses while nothing arrives, so a mounted
  * surface that never re-projects keeps showing retired attention. A modern
- * viewer row is server-owned and expires nowhere on the client, and an
- * unresolved permission is deliberately not time-gated at all, so neither
- * contributes a boundary.
+ * viewer row is server-owned and expires nowhere on the client. Both legacy
+ * permission and user-action freshness use the existing runtime owner budget.
  */
 export function readSessionPersonalAttentionExpirationsForViewer(
     session: Session,

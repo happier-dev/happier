@@ -29,7 +29,7 @@ async function boundResponse(payload: { method: string; params: unknown }, value
 }
 
 type MachineRpcSpy = (machineId: string, method: string, params: unknown, options?: {
-    timeoutMs?: number;
+    timeoutMs?: number | null;
     authorization?: SocketRpcAuthorizationContext;
     onIssued?: () => void;
 }) => Promise<unknown>;
@@ -163,6 +163,15 @@ function installDefaultPeerMediationFallback(): void {
         reasonCode: 'server_required',
     }));
 }
+
+// Keep the real crypto and RPC graph construction outside individual deadlines.
+// This suite's retained runtime stub must be valid when real Sync initializes.
+getActiveServerSnapshotSpy.mockReturnValue({
+    serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+});
+await import('@/sync/encryption/encryption');
+await import('./serverScopedMachineRpc');
+getActiveServerSnapshotSpy.mockReset();
 
 describe('machineRpcWithServerScope', () => {
     it.each(['envelope', 'custody'] as const)('rejects unavailable Machine %s before opening a socket and retires its previous cipher', async (failure) => {
@@ -485,6 +494,71 @@ describe('machineRpcWithServerScope', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('keeps an admitted exact active observation past the setup timeout without replay', async () => {
+        vi.useFakeTimers();
+        try {
+            getActiveServerSnapshotSpy.mockReturnValue({
+                serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+            });
+            let resolveResult!: (value: unknown) => void;
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                options?.onIssued?.();
+                return await new Promise((resolve) => { resolveResult = resolve; });
+            });
+            const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+            const result = machineRpcWithServerScope({
+                machineId: 'machine-1', method: 'execution.run.get', payload: { runId: 'run-1' },
+                operationTimeoutMs: null, onIssued: () => undefined,
+            });
+            const settled = vi.fn();
+            void result.then(settled, settled);
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(settled).not.toHaveBeenCalled();
+            expect(machineRpcSpy.mock.calls[0]?.[3]).toMatchObject({ timeoutMs: null });
+            expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+            resolveResult({ run: { runId: 'run-1', status: 'running' } });
+            await expect(result).resolves.toMatchObject({ run: { status: 'running' } });
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('decrypts a scoped E2EE observation after its caller-owned wait without an expired setup budget', async () => {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { createFakeCryptoWorker } = await import('@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker');
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        const worker = createFakeCryptoWorker();
+        encryption.configureNativeCryptoWorker({ worker: {
+            ...worker,
+            // Native crypto completion is an OS boundary; retain its real codec
+            // while making response work outlast the exhausted 1ms setup budget.
+            decryptSecretboxJson: async (request) => {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                return await worker.decryptSecretboxJson(request);
+            },
+        }, routing: { mode: 'require', minPayloadBytes: 0 } });
+        getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
+        listServerProfilesSpy.mockReturnValue([{ id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' }]);
+        getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: SECRET_B });
+        createEncryptionSpy.mockResolvedValue(encryption);
+        mockScopedMachineFetch({ id: 'machine-1', dataEncryptionKey: null });
+        let resolveAck!: (value: unknown) => void;
+        const emitWithAck = vi.fn(() => new Promise((resolve) => { resolveAck = resolve; }));
+        const socket = { timeout: vi.fn(() => ({ emitWithAck })), emitWithAck, emit: vi.fn(), disconnect: vi.fn() };
+        createEphemeralSocketSpy.mockResolvedValue(socket);
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const pending = machineRpcWithServerScope({ serverId: 'server-b', machineId: 'machine-1',
+            method: 'execution.run.get', payload: { runId: 'run-1' }, operationTimeoutMs: null, onIssued: () => undefined });
+        const settled = vi.fn();
+        void pending.then(settled, settled);
+        await vi.waitFor(() => expect(emitWithAck).toHaveBeenCalledOnce());
+        const ciphertext = await encryption.getMachineEncryption('machine-1')!.encryptRaw({ run: { status: 'running' } });
+        const startedAt = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(startedAt + 31_000);
+        resolveAck({ ok: true, result: ciphertext });
+        await expect(pending).resolves.toMatchObject({ run: { status: 'running' } });
+        expect(socket.timeout).not.toHaveBeenCalled();
+        expect(socket.disconnect).toHaveBeenCalledOnce();
     });
 
     it.each(['exact', 'ordered'] as const)('fences delayed active preparation after %s scoped fallback starts', async (dispatchMode) => {

@@ -2,9 +2,11 @@ import * as React from 'react';
 
 import {
   Button,
+  ErrorState,
   Item,
   ItemGroup,
   Label,
+  LoadingState,
   Menu,
   Stack,
   Status,
@@ -51,12 +53,24 @@ function statusDetail(candidate: TriageFixPullRequestV1, text: Text): string | u
  * PRs a reader can name are the ones their list already shows.
  */
 export function TriageFixPullRequests(props: Readonly<{
-  state: Extract<TriageFixPullRequestsStateV1, Readonly<{ kind: 'ready' }>>;
+  state: TriageFixPullRequestsStateV1;
   pickable: readonly TriageFixPullRequestPickV1[];
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const { state } = props;
+  if (state.kind === 'reading') {
+    return <LoadingState titleKey="plugins.triage.surface.detail.fixPr.title" title="Fix pull request" />;
+  }
+  if (state.kind === 'unreachable') {
+    return <ErrorState
+      titleKey="plugins.triage.surface.detail.fixPr.readFailed"
+      title="Fix pull request links could not be read."
+      action={<Button titleKey="plugins.triage.surface.actions.retry" title="Retry"
+        accessibilityLabel={`${text('plugins.triage.surface.actions.retry', 'Retry')}: ${text('plugins.triage.surface.detail.fixPr.title', 'Fix pull request')}`}
+        variant="secondary" onPress={state.retry} />}
+    />;
+  }
   const linkedKeys = new Set(state.candidates.map((candidate) => refKey(candidate.entryRef)));
   const offers = props.pickable.filter((pick) => !linkedKeys.has(refKey(pick.entryRef)));
   const heading = text('plugins.triage.surface.detail.fixPr.title', 'Fix pull request');
@@ -115,12 +129,6 @@ export function TriageFixPullRequests(props: Readonly<{
           tone="warning"
           labelKey="plugins.triage.surface.detail.fixPr.conflict"
           label="That link was changed somewhere else. Showing the current state."
-        />
-      ) : state.refusal === 'full' ? (
-        <Status
-          tone="warning"
-          labelKey="plugins.triage.surface.detail.fixPr.full"
-          label="This entry already has as many fix pull requests as it can hold. Unlink one first."
         />
       ) : state.refusal === 'failed' ? (
         <Status

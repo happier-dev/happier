@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
+import { VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol';
 import {
     readVoiceAgentActionEffectId,
     type VoiceAgentAcceptedOutputV1,
@@ -8,6 +9,37 @@ import {
 } from './types';
 
 describe('streamVoiceAgentTurn', () => {
+    it('returns the useful incomplete predecessor reply through the real consumer without cancelling it', async () => {
+        const text = '你好🙂'.repeat(15_000);
+        const accepted: VoiceAgentAcceptedOutputV1[] = [];
+        const handle = {
+            backend: 'daemon', rpcSessionId: 'sys_voice', voiceAgentId: 'run_1', agentBackendId: 'claude',
+            client: {
+                start: vi.fn(), sendTurn: vi.fn(), welcome: vi.fn(), commit: vi.fn(), stop: vi.fn(),
+                startTurnStream: vi.fn(async () => ({ streamId: 'stream-incomplete' })),
+                readTurnStream: vi.fn(async () => ({
+                    streamId: 'stream-incomplete',
+                    events: [
+                        { t: 'delta' as const, textDelta: text },
+                        { t: 'done' as const, assistantText: text, actions: [{ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } }] },
+                    ],
+                    nextCursor: 2, done: true,
+                })),
+                cancelTurnStream: vi.fn(async () => ({ ok: true as const })),
+            },
+        } satisfies Omit<VoiceAgentHandle, 'accountLifetime' | 'metadataSessionId'>;
+        const result = await streamVoiceAgentTurn({
+            sessionId: 'sys_voice', handle, userText: 'hello', displayUserText: 'hello',
+            options: { onOutputEvent: (output) => { accepted.push(output); } },
+        });
+        const spoken = accepted.flatMap((output) => output.effects).filter((effect) => effect.kind === 'speak').map((effect) => effect.text).join('');
+        expect(result.assistantText.startsWith(spoken)).toBe(true);
+        expect(result.assistantText.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(true);
+        expect(result.actions).toEqual([]);
+        expect(accepted.at(-1)?.effects).toEqual([{ kind: 'persist_final', text: result.assistantText }]);
+        expect(handle.client.cancelTurnStream).not.toHaveBeenCalled();
+    });
+
     it('projects the legacy daemon wire through the single canonical output-event boundary', async () => {
         const onOutputEvent = vi.fn(async (_output: VoiceAgentAcceptedOutputV1) => {});
         const handle = {

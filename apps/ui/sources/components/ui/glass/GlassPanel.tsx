@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { buildGlassCastShadowStyle, type ShadowLevel } from '@/shadowElevation';
 
 import { GlassSurface } from './GlassSurface';
-import { useGlassBlurSetting } from './useGlassBlurSetting';
+import type { GlassSurfaceGroup } from './glassMaterial';
 
 /** Full-capsule radius — the default iOS-26 floating-chrome shape. */
 const CAPSULE_RADIUS = 999;
@@ -35,13 +35,6 @@ export type GlassPanelProps = Readonly<{
      * heavier than on a tall bar.
      */
     innerShadow?: boolean;
-    /**
-     * Force the opaque solid tier (skip Liquid Glass / blur) regardless of the
-     * user's glass preference — e.g. behind editable text where translucency hurts
-     * legibility. The rim + inner shadow are still applied so the shape stays
-     * aligned with the other glass chrome.
-     */
-    forceSolid?: boolean;
     /** Fill color for the solid tier. Defaults to `surface.base` (matches the tab bar). */
     surfaceColor?: string;
     glassEffectStyle?: 'regular' | 'clear';
@@ -57,6 +50,7 @@ export type GlassPanelProps = Readonly<{
      */
     frameStyle?: StyleProp<ViewStyle>;
     testID?: string;
+    surfaceGroup?: GlassSurfaceGroup;
 }>;
 
 /**
@@ -72,7 +66,6 @@ export type GlassPanelProps = Readonly<{
  */
 export const GlassPanel = React.memo(function GlassPanel(props: GlassPanelProps) {
     const { theme } = useUnistyles();
-    const { blurEnabled, blurIntensity } = useGlassBlurSetting();
     const radius = props.radius ?? CAPSULE_RADIUS;
     const shadowLevel = props.shadowLevel ?? DEFAULT_SHADOW_LEVEL;
 
@@ -89,8 +82,7 @@ export const GlassPanel = React.memo(function GlassPanel(props: GlassPanelProps)
         >
             <GlassSurface
                 testID={props.testID}
-                enabled={props.forceSolid === true ? false : blurEnabled}
-                blurIntensity={blurIntensity}
+                surfaceGroup={props.surfaceGroup}
                 glassEffectStyle={props.glassEffectStyle}
                 solidColor={props.surfaceColor}
                 style={[

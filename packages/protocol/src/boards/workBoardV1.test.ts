@@ -7,6 +7,7 @@ import {
     createWorkBoardV1,
     DEFAULT_WORK_BOARDS_V1,
     readWorkBoardItemKeyV1,
+    WorkBoardIntentV1Schema,
     WorkBoardsV1Schema,
     type BoardItemRefV1,
     type WorkBoardsV1,
@@ -25,6 +26,62 @@ function applied(result: ReturnType<typeof applyWorkBoardIntentV1>): WorkBoardsV
 }
 
 describe('WorkBoardV1', () => {
+    it('preserves a Board with a wrong-surface widget as unreadable without breaking neighboring Boards', () => {
+        const healthy = createWorkBoardV1({ id: 'healthy', name: 'Healthy' });
+        const damaged = { ...createWorkBoardV1({ id: 'damaged', name: 'Damaged' }), widgets: [{
+            kind: 'widget', width: 1,
+            ref: { surface: { serverId: 'home', accountId: 'owner', owner: { kind: 'home' } }, instanceId: 'copy' },
+            instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'summary' }, bindings: {} },
+        }] };
+        expect(WorkBoardsV1Schema.parse({ v: 1, boards: [damaged, healthy] })).toEqual({
+            v: 1, boards: [healthy], unreadable: [damaged],
+        });
+    });
+    it('keeps qualified widget positions and independent copies beside smart work membership', () => {
+        const surface = { serverId: 'home-a', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
+        const instance = { v: 1, id: 'copy-a', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
+        const ref = { surface, instanceId: instance.id };
+        const key = JSON.stringify(['widget', 'home-a', 'owner', 'b1', 'copy-a']);
+        let state = boardsWith({ ...createWorkBoardV1({ id: 'b1', name: 'B' }), source: { picked: [session('home-a', 's1')], sections: ['running'] } });
+        const edit = (input: unknown) => { state = applied(applyWorkBoardIntentV1(state, WorkBoardIntentV1Schema.parse(input))); };
+        edit({ kind: 'widget_add', boardId: 'b1', ref, instance, width: 2, position: { x: 12, y: 24 } });
+        edit({ kind: 'widget_add', boardId: 'b1', ref: { surface, instanceId: 'copy-b' }, instance: { ...instance, id: 'copy-b' } });
+        edit({ kind: 'widget_inputs', boardId: 'b1', ref, bindings: { session: { kind: 'value', value: 's2' } } });
+        edit({ kind: 'set_positions', boardId: 'b1', positionsByItemRef: {}, membership: { liveItemKeys: [], unavailableServerIds: [] } });
+        edit({ kind: 'update', boardId: 'b1', patch: { mode: 'by_status' } });
+        const board = state.boards[0]!;
+        expect(board).toMatchObject({ mode: 'by_status', widgets: [
+            { kind: 'widget', ref, instance: { ...instance, bindings: { session: { kind: 'value', value: 's2' } } }, width: 2 },
+            { kind: 'widget', instance: { id: 'copy-b', bindings: {} }, width: 1 },
+        ], positionsByItemRef: { [key]: { x: 12, y: 24 } } });
+        edit({ kind: 'widget_remove', boardId: 'b1', ref });
+        expect(state.boards[0]!.positionsByItemRef[key]).toBeUndefined();
+        expect(state.boards[0]!.source).toEqual(board.source);
+    });
+    it('preserves omitted source settings and custody while explicitly clearing either setting', () => {
+        const filter = normalizeSessionListFilterV1();
+        const base = boardsWith({ ...createWorkBoardV1({ id: 'b1', name: 'B' }), source: {
+            sections: ['running'], filter, picked: [session('home-a', 's1')],
+            unknown: { sections: ['future-section'], picked: [{ kind: 'future-item' }] },
+        } });
+        const sectionEdit = applied(applyWorkBoardIntentV1(base, WorkBoardIntentV1Schema.parse({
+            kind: 'update', boardId: 'b1', patch: { source: { sections: ['needs_you'] } },
+        })));
+        expect(sectionEdit.boards[0]!.source).toEqual({ ...base.boards[0]!.source, sections: ['needs_you'] });
+        const filterClear = applied(applyWorkBoardIntentV1(sectionEdit, WorkBoardIntentV1Schema.parse({
+            kind: 'update', boardId: 'b1', patch: { source: { filter: null } },
+        })));
+        expect(filterClear.boards[0]!.source).toEqual({
+            sections: ['needs_you'], picked: base.boards[0]!.source.picked, unknown: base.boards[0]!.source.unknown,
+        });
+        const sectionClear = applied(applyWorkBoardIntentV1(base, WorkBoardIntentV1Schema.parse({
+            kind: 'update', boardId: 'b1', patch: { source: { sections: null } },
+        })));
+        expect(sectionClear.boards[0]!.source.filter).toEqual(filter);
+        expect(sectionClear.boards[0]!.source.sections).toEqual([]);
+        expect(sectionClear.boards[0]!.source.unknown).toEqual(base.boards[0]!.source.unknown);
+    });
+
     it('round-trips a qualified item key and keeps the same id on two Homes distinct', () => {
         const a = buildWorkBoardItemKeyV1(session('home-a', 's1'));
         const b = buildWorkBoardItemKeyV1(session('home-b', 's1'));

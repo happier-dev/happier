@@ -77,9 +77,11 @@ export function useWorkspaceRepositoryTreeWebDropState(params: Readonly<{
 
     const onDropTargetChange = React.useCallback((target: WorkspaceRepositoryTreeWebDropTarget) => {
         if (!enabled) return;
+        if (dropTarget.destinationDir === target.destinationDir && dropTarget.hoverPath === target.hoverPath
+            && dropTarget.autoExpandDirectoryPath === target.autoExpandDirectoryPath) return;
         setDropTarget(target);
         scheduleAutoExpand(target.autoExpandDirectoryPath ?? null);
-    }, [enabled, scheduleAutoExpand]);
+    }, [dropTarget, enabled, scheduleAutoExpand]);
 
     const onFileDragActiveChange = React.useCallback((active: boolean) => {
         if (!enabled) {
@@ -93,28 +95,17 @@ export function useWorkspaceRepositoryTreeWebDropState(params: Readonly<{
         }
     }, [enabled, resetDropTarget]);
 
-    const setRootDropTarget = React.useCallback(() => {
-        if (!enabled) return;
-        onDropTargetChange({
-            destinationDir: '',
-            hoverPath: null,
-            autoExpandDirectoryPath: null,
-        });
-    }, [enabled, onDropTargetChange]);
-
     return React.useMemo(() => ({
         fileDragActive,
         dropDestinationDir: dropTarget.destinationDir,
         dropHoverPath: dropTarget.hoverPath,
         onDropTargetChange,
         onFileDragActiveChange,
-        setRootDropTarget,
     }), [
         dropTarget.destinationDir,
         dropTarget.hoverPath,
         fileDragActive,
         onDropTargetChange,
         onFileDragActiveChange,
-        setRootDropTarget,
     ]);
 }

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
@@ -25,10 +26,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('ConnectedAccountDeviceForm', () => {
-    it('opens the daemon-provided verification URL and exposes poll and resume commands', async () => {
+    it('opens the daemon-provided verification URL while automatic approval checks wait without duplicate recovery controls', async () => {
         const onPoll = vi.fn(async () => {});
         const onResume = vi.fn(async () => {});
-        const { ConnectedAccountDeviceForm } = await import('./ConnectedAccountDeviceForm');
         const tree = (await renderScreen(
             <ConnectedAccountDeviceForm
                 verificationUri="https://provider.example/device"
@@ -43,19 +43,24 @@ describe('ConnectedAccountDeviceForm', () => {
         await pressTestInstanceAsync(
             tree.find((node) => node.props.testID === 'connected-account-device:open'),
         );
-        await pressTestInstanceAsync(
-            tree.find((node) => node.props.testID === 'connected-account-device:poll'),
-        );
-        await pressTestInstanceAsync(
-            tree.find((node) => node.props.testID === 'connected-account-device:resume'),
-        );
 
         expect(openExternalUrlMock).toHaveBeenCalledWith(
             'https://provider.example/device?code=ABCD',
         );
-        expect(onPoll).toHaveBeenCalledOnce();
-        expect(onResume).toHaveBeenCalledOnce();
+        expect(tree.findAll((node) => node.props.testID === 'connected-account-device:poll')).toHaveLength(0);
+        expect(tree.findAll((node) => node.props.testID === 'connected-account-device:resume')).toHaveLength(0);
+        expect(onPoll).not.toHaveBeenCalled();
+        expect(onResume).not.toHaveBeenCalled();
         expect(tree.find((node) => node.props.testID === 'connected-account-device:code').props.children)
             .toBe('ABCD');
+    });
+
+    it('offers a new code after the provider expiry, without an inoperable check action', async () => {
+        const onResume = vi.fn();
+        const screen = await renderScreen(<ConnectedAccountDeviceForm userCode="ABCD" expiresAtMs={Date.now() - 1000}
+            busy={false} onPoll={vi.fn()} onResume={onResume} />);
+        expect(screen.tree.findAll((node) => node.props.testID === 'connected-account-device:poll')).toHaveLength(0);
+        await pressTestInstanceAsync(screen.tree.find((node) => node.props.testID === 'connected-account-device:resume'));
+        expect(onResume).toHaveBeenCalledOnce();
     });
 });

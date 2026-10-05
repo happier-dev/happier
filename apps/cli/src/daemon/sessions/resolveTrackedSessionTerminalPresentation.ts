@@ -8,9 +8,17 @@ import type { TrackedSession } from '../types';
 export async function resolveDaemonSessionTerminalPresentation(
   surfaces: Pick<BackendExecutionSurfaces, 'resolveTerminalPresentation'>,
   selection: Parameters<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>>[0],
-  _originalExistingSessionId?: string,
+  originalExistingSessionId?: string,
+  retainedTerminalRecovery?: 'adopt',
 ): Promise<Awaited<ReturnType<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>>>> {
-  return await surfaces.resolveTerminalPresentation?.(selection) ?? { kind: 'none' };
+  const presentation = await surfaces.resolveTerminalPresentation?.(selection) ?? { kind: 'none' };
+  if (originalExistingSessionId?.trim() && retainedTerminalRecovery === 'adopt'
+    && presentation.kind !== 'none' && presentation.retainedTerminalRecovery === 'adopt') {
+    return { ...presentation, kind: 'managed_terminal', startingMode: 'remote' };
+  }
+  return presentation.kind === 'provider_attach' && originalExistingSessionId?.trim()
+    ? { ...presentation, startingMode: 'remote' }
+    : presentation;
 }
 
 /** Reuse the admitted runtime descriptor, never today's account runtime default. */

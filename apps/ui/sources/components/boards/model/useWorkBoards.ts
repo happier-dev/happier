@@ -11,7 +11,7 @@ import { apiSocket } from '@/sync/api/session/apiSocket';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createWorkBoardAccountStore } from './workBoardAccountStore';
-import { projectDisplayedWorkBoards, type WorkBoardSaveQueue, type WorkBoardSaveState } from './workBoardSaveQueue';
+import { projectDisplayedWorkBoards, type WorkBoardSaveOutcome, type WorkBoardSaveQueue, type WorkBoardSaveState } from './workBoardSaveQueue';
 
 type MountedBoards = ReturnType<typeof createWorkBoardAccountStore> & Readonly<{ retain(demand: string): () => void; isCurrent(): boolean }>;
 const stores = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<AuthCredentials, MountedBoards>>();
@@ -128,6 +128,17 @@ export function useWorkBoard(boardId: string | null): WorkBoardV1 | null {
     return boardId ? displayed.boards.find(board => board.id === boardId) ?? null : null;
 }
 
-export function useDispatchWorkBoardIntent(): (intent: WorkBoardIntentV1) => Promise<void> {
+export function useDispatchWorkBoardIntent(): (intent: WorkBoardIntentV1) => Promise<WorkBoardSaveOutcome> {
     return useWorkBoardSaveQueue().dispatch;
+}
+
+/**
+ * One Board as the Account last acknowledged it, without this device's pending edits: what arrived
+ * from elsewhere (an agent's Action) is read here, never an optimistic local write. It rides the
+ * displayed Board's demand rather than retaining its own.
+ */
+export function useAcknowledgedWorkBoard(boardId: string): WorkBoardV1 | null {
+    const store = useBoardStore('inactive');
+    const acknowledged = React.useSyncExternalStore(store.subscribe, store.getBoards, store.getBoards);
+    return acknowledged.boards.find(board => board.id === boardId) ?? null;
 }

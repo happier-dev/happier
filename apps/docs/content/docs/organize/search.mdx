@@ -20,7 +20,9 @@ command, message, or file you meant.
 There is one Search and several ways in, all reaching the same surface:
 
 - **Shortcut** — <kbd>Alt</kbd>+<kbd>K</kbd> on web, or
-  <kbd>Mod</kbd>+<kbd>K</kbd> elsewhere, opens Search almost anywhere. The
+  <kbd>Mod</kbd>+<kbd>K</kbd> elsewhere (<kbd>⌘</kbd>+<kbd>K</kbd> on Apple
+  devices, <kbd>Ctrl</kbd>+<kbd>K</kbd> on other platforms), opens Search
+  when app focus permits. The
   command is called **Open Search** and its shortcut can be rebound or disabled
   under [Keyboard shortcuts](/apps/keyboard-shortcuts). Disabling the shortcut
   does not disable the sidebar, native action, deep link, or session-list entry.
@@ -53,6 +55,9 @@ local groups are instant while remote ones fill in as they arrive:
   source described [below](#where-message-results-come-from).
 - **Settings** — settings pages, matched on their titles and keywords.
 - **Files** — files in the exact workspace you currently have open.
+- **Text in files** — text matches in that same workspace, grouped by file
+  with line numbers and nearby context. The machine must be online and running
+  a Happier build that supports content search.
 - **Commits** — commits reachable from the current Git branch or the current
   Sapling parent set in that workspace.
 - **Plugin results** — entities from trusted plugins that provide a search
@@ -64,6 +69,99 @@ Opening Search and hovering over the results before you type costs nothing
 remote: an empty query shows recent sessions, recent projects, and suggested
 commands from what is already on the device. Not a ranking system — just the
 things you had open. The moment you type, the wider groups join in.
+
+## Search inside workspace files
+
+Choose **Text in files** to search file contents rather than filenames, or
+press <kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> on Apple devices
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> elsewhere) with app focus to
+open that scope directly. Searches treat your text literally and ignore case
+by default; use **Match case** or **Regular expression** when you need them.
+Results come in one page. **Refine your search** means more matches remain;
+make the query more specific to narrow the results. Partial coverage means the
+answer is not exhaustive, including when the search stops early or a file
+cannot be represented as searchable text.
+
+You can also paste a file link or enter `path:line` to open a particular line.
+Windows drive prefixes and colons inside filenames remain part of the path.
+An older machine build shows an update hint; an invalid regular expression
+shows a pattern error rather than pretending there were no matches.
+
+Opening a text hit takes you to its matching line in the session or project
+file pane and opens Find with the same query. Monaco seeds its own Find
+widget. The query travels in memory; it is not saved in the file URL. This
+search reads files on the selected machine without creating a content index.
+
+## Find inside the current surface
+
+Use <kbd>⌘</kbd>+<kbd>F</kbd> (<kbd>Ctrl</kbd>+<kbd>F</kbd> elsewhere)
+inside chat, a text file, a diff, a review, or a supported terminal to open
+Find there. In a session, composer focus opens chat Find. On touch, use
+**Find in chat** in the session menu or the surface's Find control.
+
+Find highlights matches and shows your position. <kbd>⌘</kbd>+<kbd>G</kbd>
+steps forward and <kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> steps back
+(use Ctrl instead of ⌘ on other platforms). In the Find input,
+<kbd>Enter</kbd> and <kbd>Shift</kbd>+<kbd>Enter</kbd> do the same.
+<kbd>Esc</kbd> closes Find and restores focus. **Match case** and
+**Regular expression** change how the query matches.
+
+Chat Find searches decrypted display text on your device, including text
+inside collapsed groups and tool output. Loaded messages are searched first;
+search older messages on demand and use **Stop** to pause that work. Incomplete
+or unreadable history stays identified as incomplete, so zero matches in the
+loaded range does not mean zero in the whole conversation. E2EE text is never
+sent to a server search by Find.
+
+On web, the browser's Find remains available outside a findable surface.
+Press the Find shortcut again from the open Find input to use browser Find.
+See [files, review and terminal Find](/code/files-and-editor#find-in-files-diffs-and-review)
+for editor and terminal limits.
+
+## Search conversations outside Happier
+
+To look through Agent conversations on one machine, type your phrase in
+Search, then choose **Search Claude Code and Codex conversations for “…”**.
+This is an explicit scan: typing alone does not search conversation bodies,
+and Happier does not scan every machine. The selected machine must be online
+and advertise conversation-search support.
+
+You can also open **Browse Existing Sessions**, select the machine and
+Agent source, switch from **Titles** to **Conversations**, enter a phrase,
+and choose **Search**. Results show matching text. **Search more conversations**
+continues the scan; **Stop** leaves the results marked incomplete.
+
+Claude Code and Codex conversations stored in searchable local transcript
+files are supported. Codex app-server-only threads and unsupported Agent
+sources are **Not searchable**. Older daemons show an update hint. Partial
+coverage or an unsupported source is not a claim that no conversation matched.
+This scan creates no persistent conversation-content index.
+
+Choose **Open in Happier** to link and open a result, with Find on the query
+at the mapped message when available. **Show in External sessions** keeps the
+same machine and source in the browser. Opening a search hit does not take
+over the Agent conversation.
+
+## Go to the next session waiting on you
+
+Next takes you to the oldest pending question, permission or user action you
+can answer in another session. On desktop, use
+<kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> on Windows/Linux).
+In a web browser, use <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>
+(<kbd>⌥</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> on macOS).
+
+The header's **N need you** pill counts other answerable sessions, not
+individual requests. On phone, use the amber count capsule in session
+navigation. After you answer, a **Next** pill above the composer offers the
+next session. Next lands on the request and focuses its answer control;
+you still choose the answer yourself.
+
+Next uses request creation time, with unknown times after known times.
+Unavailable details are reported rather than counted as no pending work.
+If someone answers while you are opening the request, the settled state lets
+you continue to the next one. Unread messages and failed delivery belong to
+the Inbox, rather than this pending-request order.
 
 ## Where message results come from
 
@@ -134,7 +232,7 @@ Local memory search **excludes archived sessions by default**. Turning on
 **Search archived sessions** for a machine makes its archived sessions
 eligible, and turning it off removes them from that machine's search index.
 The control lives with the machine's memory settings under
-**Settings → Local Memory Search**.
+**Settings → Local memory search**.
 
 Two honest details about that switch. First, enabling it does not
 retroactively index everything: what gets indexed still follows the machine's
@@ -164,7 +262,7 @@ truncated it says so instead of posing as the complete list.
 ## Settings configures, Search searches
 
 Settings pages are a search *result*, not a search *entry*. Configure a
-machine's local index under **Settings → Local Memory Search**; its experimental
+machine's local index under **Settings → Local memory search**; its experimental
 `memory.search` switch lives under **Settings → Features**. Personal Home
 search is separate: the Home operator controls its availability, and there is
 no app setting that turns it on for an individual machine. Then search from
@@ -190,6 +288,10 @@ Search, the sidebar, or the session list like everywhere else.
 
 ## Related
 
+- [Files and the editor](/code/files-and-editor) — file, review and terminal
+  Find, with editor and platform limits.
+- [Prompts, skills and templates](/extending/prompts-and-skills) — reuse a
+  library prompt or something you sent before.
 - [Local memory search](/organize/local-memory-search) — the machine-local
   transcript index and its settings.
 - [Organizing sessions](/organize/session-organization) — folders, tags, and

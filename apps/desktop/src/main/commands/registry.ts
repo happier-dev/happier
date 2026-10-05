@@ -1,6 +1,7 @@
 import { formatNotImplementedError } from '../../shared/bridge';
 import type { DesktopEventBus } from '../ipc/eventBus';
 import type { DesktopQuitLifecycle } from '../quitLifecycle';
+import { readDesktopWindowState } from '../windowState';
 import { readStackBootCredentials } from './bootCredentials';
 import { HttpPluginState, registerHttpPluginCommands } from './httpPlugin';
 import { EVENT_PLUGIN_COMMANDS, isKnownTauriDesktopCommand } from './inventory';
@@ -257,9 +258,9 @@ export function createCommandRegistry(dependencies: RegistryDependencies): Comma
         strategy: resolveWindowChromeStrategy(platform),
     }));
 
-    registry.set('desktop_get_window_state', (_args, context: CommandContext) => ({
-        isMaximized: context.window?.isMaximized() === true,
-    }));
+    registry.set('desktop_get_window_state', (_args, context: CommandContext) => (
+        readDesktopWindowState(context.window)
+    ));
 
     registry.set('desktop_minimize_window', (_args, context: CommandContext) => {
         if (!context.window) return false;

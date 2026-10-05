@@ -7,12 +7,14 @@ import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1 } from '@happier-dev/pro
 import { changeTextTestInstance, renderScreen } from '@/dev/testkit';
 import { installSessionMessageCardCommonModuleMocks } from '@/components/sessions/sessionMessageCardTestHelpers';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
-import { renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource as renderTranscriptCard } from '@/dev/testkit/sessionTranscriptSource';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resetReviewRunCommentsForTests } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,6 +30,13 @@ const submitMessageSpy = vi.fn(async (..._args: any[]) => undefined);
 const useSessionMessagesSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => ({ messages: [], isLoaded: true }));
 const homeRoute = vi.hoisted(() => ({ current: null as null | ((request: any) => Response | undefined) }));
 const home = vi.hoisted(() => ({ serverId: '', otherServerId: '' }));
+
+function renderWithSessionTranscriptSource(element: React.ReactElement, source = createTestSessionTranscriptSource({
+    sessionId: 'sess_1', serverId: home.serverId,
+    authorship: { viewerScope: { serverId: home.serverId, accountId: 'account-1' }, hasOtherNamedCollaborator: false },
+})) {
+    return renderTranscriptCard(element, source);
+}
 
 installSessionMessageCardCommonModuleMocks({
     text: async () => {
@@ -59,9 +68,6 @@ installSessionMessageCardCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/markdown/MarkdownView', () => ({
-    MarkdownView: (props: any) => React.createElement('MarkdownView', props),
-}));
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunAction: (...args: any[]) => sessionExecutionRunActionSpy(...args),
     sessionExecutionRunList: (...args: any[]) => sessionExecutionRunListSpy(...args),
@@ -238,11 +244,66 @@ afterEach(() => {
 // Imported after the module mocks above are installed (a static import would load the real modules),
 // once, so no single test pays the card's cold import.
 let ReviewFindingsMessageCard!: typeof import('./ReviewFindingsMessageCard').ReviewFindingsMessageCard;
+let StructuredFindMessageProvider!: typeof import('@/components/sessions/transcript/structured/structuredFindText').StructuredFindMessageProvider;
+let renderExecutionRunStructuredMeta!: typeof import('@/components/sessions/runs/renderExecutionRunStructuredMeta').renderExecutionRunStructuredMeta;
 beforeAll(async () => {
+    ({ StructuredFindMessageProvider } = await import('@/components/sessions/transcript/structured/structuredFindText'));
     ({ ReviewFindingsMessageCard } = await import('./ReviewFindingsMessageCard'));
+    ({ renderExecutionRunStructuredMeta } = await import('@/components/sessions/runs/renderExecutionRunStructuredMeta'));
 }, 600_000);
 
 describe('ReviewFindingsMessageCard', () => {
+    it('uses follow-up findings from its transcript source instead of another loaded session view', async () => {
+        const payload = payloadFor([finding('f1', 'low')]);
+        const followUpMessage = (title: string) => ({ id: 'follow_up_1', kind: 'agent-text' as const, localId: null, createdAt: 2, text: '', meta: { happier: { kind: 'review_follow_up.v1', payload: {
+            parentRunRef: payload.runRef, threadId: 'thread_f1', findingIds: ['f1'], requestMarkdown: 'Question', answerMarkdown: 'Answer',
+            updatedFindings: [finding('f1', 'low', { title })], generatedAtMs: 2,
+        } } } });
+        useSessionMessagesSpy.mockReturnValue({ isLoaded: true, messages: [followUpMessage('Ambient title')] });
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, messages: [followUpMessage('Source title')] });
+        const screen = await renderWithSessionTranscriptSource(<ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages={false} />, source);
+        expect(screen.getTextContent()).toContain('Source title');
+        expect(screen.getTextContent()).not.toContain('Ambient title');
+    });
+
+    it('does not read authenticated Home comments for a transcript without a viewer account scope', async () => {
+        let reads = 0;
+        serveComments([commentFor('f1')], () => { reads += 1; });
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId });
+        await renderWithSessionTranscriptSource(<ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'low')])} sessionId="sess_1" canSendMessages={false} />, source);
+        await flush();
+        expect(reads).toBe(0);
+    });
+
+    it('reveals and highlights a finding beyond the message card disclosure', async () => {
+        serveComments([]);
+        const store = createTranscriptFindRowStore();
+        const payload = payloadFor(['f1', 'f2', 'f3', 'f1:child'].map((id) => finding(id, 'low')));
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, authorship: { viewerScope: { serverId: home.serverId, accountId: 'account-1' }, hasOtherNamedCollaborator: false }, messages: [{
+            id: 'follow_up_child', kind: 'agent-text', localId: null, createdAt: 2, text: '', meta: { happier: { kind: 'review_follow_up.v1', payload: {
+                parentRunRef: payload.runRef, threadId: 'thread_child', findingIds: ['f1:child'], requestMarkdown: 'Question',
+                answerMarkdown: '**needle** answer', generatedAtMs: 2,
+            } } },
+        }] });
+        const screen = await renderWithSessionTranscriptSource(<TranscriptFindProvider store={store}>
+            <StructuredFindMessageProvider messageId="review-message">
+                <ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages />
+            </StructuredFindMessageProvider>
+        </TranscriptFindProvider>, source);
+        expect(screen.findAllHostsByTestId('review-finding:f1:child')).toHaveLength(0);
+        await act(() => store.publish(new Map([['review-message', {
+            blocks: [{ id: 'structured-review-finding:f1:child:title', sourceRanges: [{ start: 9, end: 14, current: true }] }],
+            reveal: { blockId: 'structured-review-finding:f1:child:title', requestId: 1 },
+        }]])));
+        expect(screen.findAllHostsByTestId('review-finding:f1:child')).toHaveLength(1);
+        expect(screen.findByTestId('find-match-current')?.props.children).toBe('child');
+        expect(screen.getTextContent()).not.toContain('needle');
+        await act(() => store.publish(new Map([['review-message', {
+            blocks: [{ id: 'structured-review-finding:f1:child:thread:thread_child:2:0:answer', sourceRanges: [{ start: 2, end: 8, current: true }] }],
+            reveal: { blockId: 'structured-review-finding:f1:child:thread:thread_child:2:0:answer', requestId: 2 },
+        }]])));
+        expect(screen.findByTestId('find-match-current')?.props.children).toBe('needle');
+    });
     it('reads each decision from the finding\'s ReviewComment and writes a new one as a CAS transition, visible in every mount', async () => {
         const server = serveComments([commentFor('f1', { reviewTriageStatus: 'reject', state: 'dismissed' }), commentFor('f2')]);
         const payload = payloadFor([finding('f1', 'high'), finding('f2', 'low')]);
@@ -389,13 +450,114 @@ describe('ReviewFindingsMessageCard', () => {
         );
         await flush();
 
-        expect(screen.findAllByType('Text').some((node) => node.props.children === '4 findings · 1 high')).toBe(true);
+        // The total heads the card's foot; the per-severity counts are the summary under the lead (lab WT5-R8).
+        expect(screen.findAllByType('Text').some((node) => node.props.children === '4 findings')).toBe(true);
+        expect(screen.findByTestId('review-findings-severity-summary')).not.toBeNull();
         expect(screen.findByTestId('review-finding:f2')).not.toBeNull();
         expect(screen.findByTestId('review-finding:f4')).toBeNull();
         await act(async () => {
             await screen.pressByTestIdAsync('review-findings-show-more');
         });
         expect(screen.findByTestId('review-finding:f4')).not.toBeNull();
+    });
+
+    it.each([3, 0, undefined])('shows the captured inventory file count %s before walkthrough interaction, never guessing when absent', async (fileCount) => {
+        serveComments([]);
+        const navigate = vi.fn();
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, workspacePath: '/repo', navigate });
+        const content = renderExecutionRunStructuredMeta({
+            meta: { kind: 'review_findings.v2', payload: {
+                ...payloadFor([finding('f1', 'high'), finding('f2', 'low')]), comparisonId: 'cmp_1',
+                ...(fileCount === undefined ? {} : { fileCount }),
+            } },
+            sessionId: 'sess_1', serverId: home.serverId,
+            interaction: { canSendMessages: true, canApprovePermissions: false },
+        });
+        expect(content).not.toBeNull();
+        const screen = await renderWithSessionTranscriptSource(content!, source);
+        await flush();
+        const started = screen.findByTestId('review-findings-started');
+        if (fileCount === undefined) {
+            expect(started).toBeNull();
+        } else {
+            expect(started?.props.children).toBe(`reviewWalkthrough.started.transcript:${JSON.stringify({ engineCount: 1, fileCount })}`);
+        }
+        expect(sessionExecutionRunActionSpy).not.toHaveBeenCalled();
+        expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it.each(['turn', 'receipt'] as const)('offers Walk me through this on a finished review captured by %s, saying honestly whether the review Run continues or a narrator writes', async (capturedBy) => {
+        serveComments([]);
+        const navigate = vi.fn();
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, workspacePath: '/repo', navigate });
+        const resumable = { ...payloadFor([finding('f1', 'high'), finding('f2', 'low')]), comparisonId: 'cmp_1' };
+        const screen = await renderWithSessionTranscriptSource(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={resumable} sessionId="sess_1" canSendMessages />,
+            source,
+        );
+        await flush();
+        expect(screen.findByTestId('review-findings-walkthrough-hint')!.findAllByType('Text').map((node) => node.props.children))
+            .toContain('reviewWalkthrough.finished.continues');
+
+        sessionExecutionRunActionSpy.mockResolvedValueOnce({ ok: true, result: { runId: 'run_1', callId: 'call_1', sidechainId: 'side_1',
+            mode: 'continued_review', state: 'writing', comparisonId: 'cmp_1', reviewRunIds: ['run_1'], comparison: {
+            id: 'cmp_1', source: { kind: 'turnCheckpoint', ...(capturedBy === 'turn' ? { turnId: 'turn-4' } : { checkpointReceiptId: 'receipt-4' }), evidenceMode: 'checkpoint' },
+            repository: { rootPath: '/repo' }, endpoints: { before: 'before', after: 'after' },
+            inventory: { state: 'complete', files: [], reasons: [] },
+        } } });
+        await act(async () => {
+            await screen.pressByTestIdAsync('review-findings-walk-me-through');
+        });
+        await flush();
+        // The host decides continue-or-narrate; the card only names the review and its captured comparison.
+        expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+            runId: 'run_1', actionId: 'review.walkthrough', input: { reviewRunIds: ['run_1'], comparisonId: 'cmp_1' },
+        }), expect.anything());
+        expect(navigate).toHaveBeenCalledWith(expect.stringContaining('view=walkthrough'));
+        expect(navigate).toHaveBeenCalledWith(expect.stringContaining('comparison=turnCheckpoint'));
+        expect(navigate).toHaveBeenCalledWith(expect.stringContaining(capturedBy === 'turn' ? 'turnId=turn-4' : 'checkpointReceiptId=receipt-4'));
+        expect(navigate).toHaveBeenCalledWith(expect.stringContaining('comparisonId=cmp_1'));
+
+        const ended = { ...payloadFor([finding('f1', 'high')], { retentionPolicy: 'ephemeral' }), comparisonId: 'cmp_1' };
+        const endedScreen = await renderWithSessionTranscriptSource(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={ended} sessionId="sess_1" canSendMessages />,
+            source,
+        );
+        await flush();
+        expect(endedScreen.findByTestId('review-findings-walkthrough-hint')!.findAllByType('Text').map((node) => node.props.children))
+            .toContain('reviewWalkthrough.finished.narrates:{"count":1}');
+    });
+
+    it('draws a navigable finished review compactly and keeps triage, Ask and Implement fixes one press away in Open findings', async () => {
+        serveComments([commentFor('f1')]);
+        const navigate = vi.fn();
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, workspacePath: '/repo', navigate });
+        const payload = { ...payloadFor([finding('f1', 'low'), finding('f2', 'high'), finding('f3', 'medium'), finding('f4', 'nit')]), generatedAtMs: Date.UTC(2026, 9, 3, 11, 4) };
+        const card = await renderWithSessionTranscriptSource(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages />,
+            source,
+        );
+        await flush();
+
+        expect(card.findByTestId('review-findings-finished-header')).not.toBeNull();
+        expect(card.findByTestId('review-findings-severity-summary')).not.toBeNull();
+        // One line per finding, most severe first, three shown and the rest counted.
+        expect(card.findByTestId('review-finding-compact:f2')).not.toBeNull();
+        expect(card.findByTestId('review-finding-compact:f4')).toBeNull();
+        expect(card.findByTestId('review-findings-more')).not.toBeNull();
+        // Decisions, questions and fixes live on the review's own page, which Open findings opens.
+        expect(card.findByTestId('review-finding-triage:f1:accept')).toBeNull();
+        expect(card.findByTestId('review-findings-publish-accepted')).toBeNull();
+        await act(async () => { await card.pressByTestIdAsync('review-findings-open-result'); });
+        expect(navigate).toHaveBeenCalledWith(expect.stringContaining('run_1'));
+
+        const page = await renderScreen(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages presentation="page" />,
+        );
+        await flush();
+        expect(page.findByTestId('review-finding-triage:f1:accept')).not.toBeNull();
+        expect(page.findByTestId('review-finding-ask:f1')).not.toBeNull();
+        expect(page.findByTestId('review-findings-publish-accepted')).not.toBeNull();
     });
 
     it('offers no decision, question or fix once the transcript is read-only', async () => {

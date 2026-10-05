@@ -8,6 +8,7 @@ import {
   WorkflowSessionAuthoringSelectionSchema,
   WorkflowInputDefinitionSchema,
   WorkflowStepSchema,
+  workflowInputToFieldHint,
   type WorkflowDefinitionV1,
 } from './workflowV1.js';
 import {
@@ -43,6 +44,19 @@ function codesOf(result: ReturnType<typeof validateWorkflowDefinition>): string[
 }
 
 describe('workflow input option sources', () => {
+  it('adapts declared choices without importing Workflow defaults into field selection', () => {
+    expect(workflowInputToFieldHint({ name: 'channel', valueType: 'string', required: true,
+      optionsSourceId: 'notifications.channels.available' })).toMatchObject({
+        path: 'channel', widget: 'select', required: true, requireExplicitSelection: true,
+        optionsSourceId: 'notifications.channels.available',
+      });
+    expect(workflowInputToFieldHint({ name: 'mode', valueType: 'string', required: false,
+      default: 'safe', enum: ['safe', 'fast'] }, { title: 'Mode', optionLabels: { safe: 'Safe mode' } }))
+      .toEqual({ path: 'mode', title: 'Mode', widget: 'select', required: false, requireExplicitSelection: true,
+        options: [{ value: 'safe', label: 'Safe mode' }, { value: 'fast', label: 'fast' }] });
+    expect(WorkflowInputDefinitionSchema.safeParse({ name: 'channel', valueType: 'string', required: true,
+      default: 'push', optionsSourceId: 'notifications.channels.available' }).success).toBe(false);
+  });
   it('preserves a declared string enum and rejects incompatible types and defaults', () => {
     const input = { name: 'apply', valueType: 'string', required: false, default: 'fix', enum: ['fix', 'report'] };
     expect(WorkflowInputDefinitionSchema.parse(input)).toEqual(input);
@@ -62,6 +76,17 @@ describe('workflow input option sources', () => {
 });
 
 describe('workflow definition normalization', () => {
+  it('keeps item counter references path-free and reports their lexical scope', () => {
+    const outOfScope = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
+      blocks: [textStep('root', 'Work', { input: [{ kind: 'item', field: 'count' }] })] });
+    expect(codesOf(outOfScope)).toContain('invalid_reference_scope');
+    const inScope = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
+      blocks: [{ kind: 'loop', id: 'items', repetition: { kind: 'items',
+        items: { kind: 'literal', value: ['A'] }, execution: 'sequential', failurePolicy: 'fail_stop' },
+        body: [textStep('work', 'Work', { input: [{ kind: 'item', field: 'count' }] })] }] });
+    expect(inScope.valid).toBe(true);
+    expect(inScope.normalizedDefinition?.blocks[0]).toMatchObject({ body: [{ input: [{ kind: 'item', field: 'count' }] }] });
+  });
   it('normalizes role-backed Agent and non-Agent leaves through the canonical owner', () => {
     const result = validateWorkflowDefinition({ version: 1,
       roles: [{ roleId: 'builder', name: 'Builder', instructions: 'Build carefully', runsAs: { kind: 'session' } }],

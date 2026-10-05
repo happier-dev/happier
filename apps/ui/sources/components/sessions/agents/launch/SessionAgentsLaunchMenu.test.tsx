@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import type { WorkflowDefinitionListResultV1 } from '@happier-dev/protocol';
 
 import { SessionAgentsLaunchMenu } from './SessionAgentsLaunchMenu';
 import type { SessionAgentLauncher } from './useSessionAgentLauncher';
@@ -112,7 +113,16 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
     });
 
     function definition(definitionId: string) {
-        return { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${definitionId}` } };
+        return {
+            kind: 'workflow-definition.v1',
+            definitionId,
+            revision: { headerVersion: 1, bodyVersion: 1 },
+            metadata: { title: `Workflow ${definitionId}` },
+            stepCount: 1,
+            triggers: [],
+            nextRunAt: null,
+            contentStatus: 'available',
+        } satisfies WorkflowDefinitionListResultV1['definitions'][number];
     }
 
     function workflowItems(tree: renderer.ReactTestRenderer) {
@@ -163,9 +173,11 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
         expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list')).toHaveLength(1);
         const items = workflowItems(tree!);
         const builtIn = items.filter((item) => item.id.startsWith('builtin:'));
-        // Session-scoped built-ins (Keep going, Review & converge) need this session as their origin,
-        // which the run start cannot carry yet; the rest start from here.
-        expect(builtIn.map((item) => item.id)).toEqual(['builtin:builtin:plan-with-a-panel', 'builtin:builtin:open-a-pull-request']);
+        // Session launches now carry their origin, including the scoped built-ins.
+        expect(builtIn.map((item) => item.id)).toEqual(expect.arrayContaining([
+            'builtin:builtin:keep-going', 'builtin:builtin:review-and-converge',
+            'builtin:builtin:plan-with-a-panel', 'builtin:builtin:open-a-pull-request',
+        ]));
         const saved = items.find((item) => item.id === 'workflow:wf-1');
         expect(saved).toBeTruthy();
         expect(saved?.category).not.toBe(builtIn[0]?.category);

@@ -1,6 +1,6 @@
 export {
   bindCurrentUiContextVoiceToolPortToAdmission,
-} from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+} from '@/components/appShell/currentUiContext/currentUiContextVoiceToolBinding';
 import type { CurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 
 /**

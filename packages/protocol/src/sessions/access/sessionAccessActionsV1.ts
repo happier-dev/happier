@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { PrincipalRefV1Schema } from '../../teams/principal.js';
 import { SessionAccessLevelV1Schema, SessionGrantIntentV1Schema } from './sessionAccessGrantV1.js';
 import { RequiredSessionTeamCredentialV1Schema, SessionAccessGrantsListRequestV1Schema } from './sessionAccessOperationsV1.js';
+import { buildStoredContentPublicShareUrlV1 } from '../../sharing/storedContentPublicShareV1.js';
 
 /** Public logical input: recipient envelopes are materialized by the host crypto owner. */
 export const SessionAccessGrantSetActionInputV1Schema = z.object({
@@ -26,8 +27,8 @@ export const SessionPublicLinkCreateActionInputV1Schema = z.object({
 }).strict();
 
 /**
- * Publication settings may be observed by automation; the bearer and wrapped
- * key may not.
+ * Publication reads contain settings only. Approved creation adds the complete
+ * URL for its caller; the wrapped key remains an HTTP-only field.
  *
  * `id` and `updatedAt` are publication metadata, not bearer identity. Public
  * reads can mutate `updatedAt`, and token rotation keeps the row `id`, so
@@ -49,6 +50,7 @@ export const SessionPublicLinkSettingsV1Schema = z.object({
 }).strict();
 export type SessionPublicLinkSettingsV1 = z.infer<typeof SessionPublicLinkSettingsV1Schema>;
 export const SessionPublicLinkGetActionResultV1Schema = SessionPublicLinkSettingsV1Schema.nullable();
+export const SessionPublicLinkCreateActionResultV1Schema = SessionPublicLinkSettingsV1Schema.extend({ url: z.string().url() }).strict();
 export const SessionPublicLinkRemoveActionResultV1Schema = z.object({ changed: z.boolean() }).strict();
 
 /** The released owner route is additive; project only explicitly public settings. */
@@ -63,4 +65,15 @@ export function projectSessionPublicLinkActionResultV1(value: unknown): SessionP
     ...(keyDerivation ? { keyDerivation } : {}),
     ...(response.isolatedOrigin ? { isolatedOrigin: response.isolatedOrigin } : {}),
   };
+}
+
+/** Complete approved result built from host-held material, never from server bearer fields. */
+export function projectSessionPublicLinkCreateActionResultV1(
+  value: unknown,
+  material: Readonly<{ lookupId: string; secret: string }>,
+): z.infer<typeof SessionPublicLinkCreateActionResultV1Schema> {
+  const settings = projectSessionPublicLinkActionResultV1(value);
+  if (!settings || !settings.isolatedOrigin || settings.keyDerivation !== 'fragment_v1') throw new Error('public_link_publication_unconfirmed');
+  return SessionPublicLinkCreateActionResultV1Schema.parse({ ...settings,
+    url: buildStoredContentPublicShareUrlV1({ origin: settings.isolatedOrigin, ...material }) });
 }

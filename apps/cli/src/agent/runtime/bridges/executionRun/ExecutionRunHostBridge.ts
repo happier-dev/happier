@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
 
 import {
   type ExecutionRunHostRuntime,
@@ -34,6 +35,9 @@ import {
   buildQualifiedPluginContributionKey,
   sameQualifiedConnectedAccountRef,
   type StructuredQuestionAnswersV1,
+  readActionCompletionRunObservationV1,
+  isActionCompletionRunObservationPendingV1,
+  type ReviewWalkthroughObservation,
 } from '@happier-dev/protocol';
 
 import { VoiceAgentError, VoiceAgentManager } from '../../../voice/agent/VoiceAgentManager';
@@ -82,6 +86,7 @@ import { applyExecutionRunAction } from './executionRunApplyAction';
 import { getExecutionRunAvailableActionIds } from './availableActionIds';
 import { executeBoundedBackendRun } from './bounded/loop';
 import { ensureExecutionRun, type ExecutionRunEnsureResult } from './ensureExecutionRun';
+import { applyReviewWalkthroughAction, applyReviewExplainFindingsAction } from './reviewNarrationAction';
 import { finishExecutionRun } from './finishExecutionRun';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import {
@@ -91,6 +96,7 @@ import {
 } from './runOccurrenceWitness';
 import { createExecutionRunPendingInputConsumer } from './pending/executionRunPendingInputConsumer';
 import { createRetainedExecutionRunInputDelivery } from './pending/retainedExecutionRunInputDelivery';
+import { publishExecutionRunTurn } from './publishExecutionRunTurn';
 import {
   acknowledgeExecutionRunWorkerUpdate,
   readPendingExecutionRunWorkerUpdates,
@@ -268,9 +274,16 @@ async function prepareExecutionRunManagerStartParams(
     params.profileId,
     params.profileSourceCustody,
   );
+  const input = params.intentInput && typeof params.intentInput === 'object' && !Array.isArray(params.intentInput)
+    ? params.intentInput as Readonly<Record<string, unknown>> : {};
+  const offeredModel = (params.intent === 'scm_diff_summary'
+    || (params.intent === 'review' && Array.isArray(input.outputs) && input.outputs.includes('walkthrough')))
+    ? await readExecutionRunOfferedModel({ ...params, cwd }) : undefined;
   const startProfilePatch = await profile.prepareStartParams?.({
+    sessionId: params.sessionId,
     request: omitExecutionRunRoleCompositionContext(params) as unknown as ExecutionRunStartRequest,
     cwd,
+    ...(offeredModel?.contextWindowTokens ? { contextWindowTokens: offeredModel.contextWindowTokens } : {}),
   });
 
   const prepared: Record<string, unknown> = {
@@ -627,10 +640,49 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       controller,
       controllers: this.controllers,
     });
+    const publishTurn = async (turn: Readonly<{ turnId: string; inputIds?: readonly string[]; rawText: string; finishedAtMs: number;
+      diagnostic?: Readonly<{ code: string; message?: string }>; admittedInputId?: string }>): Promise<void> => {
+      await publishExecutionRunTurn({
+        ...turn, runId, controller, runs: this.runs, controllers: this.controllers,
+        profileCatalog: this.executionRunProfileCatalog, sendAcp: this.sendAcp, parentProvider: this.parentProvider,
+        reviewComments: this.reviewComments,
+        onPublicStateUpdated: (id) => this.emitPublicStateUpdated(id),
+        admitNextInput: async ({ instructions, localId }) => {
+          if (!isCurrent() || controller.cancelled) return { status: 'rejected', code: 'execution_run_not_allowed' };
+          const admit = host.session.enqueueSessionUserMessageWithDisposition;
+          if (!admit) return { status: 'rejected', code: 'execution_run_not_allowed', message: 'Canonical retained continuation admission is unavailable' };
+          const result = await admit.call(host.session, { text: instructions, localId,
+            recipient: { kind: 'execution_run', runId }, requestedAction: { v: 1, kind: 'enqueue' } });
+          return result.status === 'rejected' || result.status === 'outcomeUnknown'
+            ? { status: result.status, code: result.code } : { status: 'accepted' };
+        },
+      });
+    };
     const runInput = createRetainedExecutionRunInputDelivery({
       runId,
       controller,
       onInputTurnUpdated: () => this.emitPublicStateUpdated(params.runId),
+      onTurnComplete: publishTurn,
+      onTurnFailed: publishTurn,
+      beforeProviderInput: async (localId) => {
+        // Settle prior output before a new turn can reset its buffer or capture an obsolete saved revision.
+        await controller.pendingHostBarrier;
+        const start = this.runs.get(runId);
+        if (!start || !isCurrent()) throw createExecutionRunTranscriptCustodyError();
+        const profile = resolveExecutionRunIntentProfileFromCatalog(this.executionRunProfileCatalog,
+          start.intent, start.profileId, start.profileSourceCustody);
+        await profile.onBeforeRetainedInput?.({ start, localId });
+        // Pending has supplied this exact admitted input for delivery. Deferred
+        // provisioning alone is not evidence of an initial part admission.
+        await publishTurn({ turnId: '', rawText: '', finishedAtMs: Date.now(), admittedInputId: localId });
+      },
+      readInitialProfileContext: () => {
+        const start = this.runs.get(runId);
+        if (!start) return '';
+        const profile = resolveExecutionRunIntentProfileFromCatalog(this.executionRunProfileCatalog,
+          start.intent, start.profileId, start.profileSourceCustody);
+        return profile.buildInitialInputContext?.({ start, structuredMeta: start.structuredMeta }) ?? '';
+      },
       sessionRunContext: buildExecutionRunSessionPromptContext({
         sessionId: host.session.sessionId,
         launchOrigin: this.runs.get(runId)?.launch?.launchOrigin,
@@ -1305,7 +1357,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const run = this.runs.get(runId);
     if (!run) return null;
     const controller = this.controllers.get(runId);
-    const runtimeId = run.retentionPolicy === 'resumable' ? readBackendResumableRuntimeId(controller ?? null) : null;
+    const runtimeId = run.retentionPolicy === 'resumable' ? readBackendResumableRuntimeId(controller ?? null, run.resumeHandle) : null;
     const inputTurns = this.projectInputTurns(run, controller);
     return {
       ...run, ...(inputTurns ? { inputTurns } : {}),
@@ -1383,6 +1435,25 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     );
     // If there's no controller, the run is either unknown or already terminal.
     return;
+  }
+
+  async waitForOutput(runId: string, observation: ReviewWalkthroughObservation, signal?: AbortSignal): Promise<void> {
+    await this.recoverRetainedRuns();
+    const settled = (): boolean => {
+      const run = this.runs.get(runId);
+      if (!run || run.status !== 'running') return true;
+      return !isActionCompletionRunObservationPendingV1(readActionCompletionRunObservationV1({
+        run, structuredMeta: run.structuredMeta, latestToolResult: run.latestToolResult,
+      }, observation));
+    };
+    while (!settled()) {
+      const waiting = this.waitForRunStateChange(runId, signal);
+      if (settled()) this.emitPublicStateUpdated(runId);
+      await waiting;
+    }
+    const controller = this.controllers.get(runId);
+    if (controller?.kind === 'backend') await awaitExecutionRunObservation(controller.pendingHostBarrier ?? Promise.resolve(), signal);
+    if (this.runs.get(runId)?.status !== 'running') await this.waitForTerminal(runId, { signal });
   }
 
   async waitForInputTurn(
@@ -1703,11 +1774,16 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           intentInput: { ...intentInput, reviewedFingerprint: fingerprint.kind === 'available' ? fingerprint.fingerprint : null },
         };
       }
-      const preparedParams = await prepareExecutionRunManagerStartParams(
+      let preparedParams = await prepareExecutionRunManagerStartParams(
         params,
         params.cwd ?? this.cwd,
         resolution.profileCatalog,
       );
+      if (params.reviewNarration) {
+        const input = preparedParams.intentInput && typeof preparedParams.intentInput === 'object' && !Array.isArray(preparedParams.intentInput)
+          ? preparedParams.intentInput as Readonly<Record<string, unknown>> : {};
+        preparedParams = { ...preparedParams, intentInput: { ...input, reviewNarration: params.reviewNarration } };
+      }
       const secretReferenceOverlay = preparedParams.secretReferenceOverlay;
       const runInteractionStore = preparedParams.getPermissionRequestStore?.() ?? null;
       const started = await startExecutionRun({
@@ -2029,6 +2105,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       try {
         result = await sendBackendLongLivedRun({
           runId,
+          reviewComments: this.reviewComments,
           params,
           runs: this.runs,
           controllers: this.controllers,
@@ -2155,6 +2232,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
     result = await sendBackendLongLivedRun({
       runId,
+      reviewComments: this.reviewComments,
       params,
       runs: this.runs,
       controllers: this.controllers,
@@ -2260,15 +2338,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const run = this.runs.get(runId);
       if (!run) return false;
       if (run.sessionId !== host.sessionId) return true;
-      // Loss settles the interrupted input, not an already queued *new* input.
-      // Rejoin its exact retained target through ensure; never replay the lost turn.
-      if (run.status !== 'running' && run.error?.code !== 'execution_run_host_lost') return true;
       if (
         run.runClass !== 'long_lived'
         || run.retentionPolicy !== 'resumable'
         || run.ioMode !== 'streaming'
       ) return true;
       const controller = this.controllers.get(runId);
+      // A newly queued input may reopen this exact retained provider session after terminalization.
+      // Lifecycle owns resume eligibility; a historical status is not a second decision-maker.
       if (!controller) return resolveExecutionRunLifecycle(run, null).projection.state === 'unavailable';
       return controller.cancelled
         || controller.kind !== 'backend'
@@ -2337,6 +2414,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     params: Readonly<{
       message: string;
       displayMessage?: string;
+      speechSegmentTargetChars?: number;
       resume?: boolean;
       userTranscript?: ExecutionRunUserTranscriptDirective;
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
@@ -2356,6 +2434,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runId,
       params: {
         message: params.message,
+        ...(params.speechSegmentTargetChars !== undefined
+          ? { speechSegmentTargetChars: params.speechSegmentTargetChars }
+          : {}),
         ...(typeof params.displayMessage === 'string' ? { displayMessage: params.displayMessage } : {}),
         ...(params.userTranscript ? { userTranscript: params.userTranscript } : {}),
         ...(params.causalPermissionAuthority
@@ -2744,6 +2825,32 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           : {}),
         ...(this.materializeReviewHostAction ? { materializeReviewHostAction: this.materializeReviewHostAction } : {}),
         ...(this.reviewComments ? { reviewComments: this.reviewComments } : {}),
+        applyReviewNarrationAction: async (actionId, input) => {
+          const enqueue = this.sessionInteractionHost?.session.enqueueSessionUserMessageWithDisposition;
+          if (!enqueue) return { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Canonical Session Pending admission is unavailable' };
+          const host = {
+            runId, input, cwd: this.cwd, runs: this.runs, controllers: this.controllers,
+            startRun: this.start.bind(this),
+            ensureRun: (id: string) => this.ensure(id, { resume: true, ...(opts?.causalPermissionAuthority ? { causalPermissionAuthority: opts.causalPermissionAuthority } : {}) }),
+            waitForTerminal: (id: string, signal: AbortSignal) => this.waitForTerminal(id, { signal }),
+            enqueueInput: ({ runId: id, text, localId }: Readonly<{ runId: string; text: string; localId: string }>) => enqueue.call(this.sessionInteractionHost!.session,
+              { text, localId, recipient: { kind: 'execution_run' as const, runId: id }, requestedAction: { v: 1 as const, kind: 'enqueue' as const } }),
+            onStateUpdated: (id: string) => this.emitPublicStateUpdated(id),
+            failNarration: async (id: string, inputId: string | undefined, code: string, message: string) => {
+              const controller = this.controllers.get(id);
+              if (controller?.kind !== 'backend' || controller.cancelled) return;
+              const publication = await this.resolveExecutionRunProfileCatalog();
+              try { await publishExecutionRunTurn({ runId: id, turnId: inputId ?? `review-narration-failed:${id}`, ...(inputId ? { inputIds: [inputId] } : {}),
+                rawText: '', finishedAtMs: this.getNowMs(), diagnostic: { code, message }, controller,
+                controllers: this.controllers, runs: this.runs, profileCatalog: publication.profileCatalog,
+                sendAcp: this.sendAcp, parentProvider: this.parentProvider,
+                reviewComments: this.reviewComments,
+                onPublicStateUpdated: (updatedId) => this.emitPublicStateUpdated(updatedId) });
+              } finally { await publication.release?.(); }
+            },
+          };
+          return actionId === 'review.walkthrough' ? await applyReviewWalkthroughAction(host) : await applyReviewExplainFindingsAction(host);
+        },
         onVoiceAgentWelcomed: async (welcomedRunId, welcomedEpoch) => {
           if (this.runs.get(welcomedRunId)?.sessionId === null) return;
           const callback = this.onVoiceAgentWelcomed;

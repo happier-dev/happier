@@ -172,7 +172,7 @@ describe('sync forked transcript paging', () => {
         kvStore.clear();
         requestMock.mockReset();
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const syncForTest = sync as unknown as SyncForkPagingTestAccess;
         syncForTest.disconnectServer();
         syncForTest.credentials = { token: 'token', secret: 'secret' };
@@ -212,7 +212,7 @@ describe('sync forked transcript paging', () => {
             observedFirstSeqs.push(fork.combinedMessagesById[fork.combinedMessageIdsOldestFirst[0]!]?.seq);
         });
         try {
-            const { sync } = await import('./sync');
+            const { sync } = await import('./syncEngine');
             await (sync as unknown as SyncForkPagingTestAccess).fetchMessages('child');
             expect(observedFirstSeqs.length).toBeGreaterThan(0);
             expect(observedFirstSeqs.every((seq) => seq === 2)).toBe(true);

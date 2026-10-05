@@ -53,6 +53,8 @@ export type PluginHostApiProviderInternalProps = PluginHostApiProviderProps & Re
    */
   accountLifetime?: PluginUiResourceAccountLifetime | null;
   resourceStoreGeneration?: unknown;
+  /** Host-owned shared exact Resource binding; its lease owns disposal. */
+  resourceStore?: PluginUiResourceStore;
   mountedPluginId?: string;
   /** Host-validated Composer mount identity; never author-supplied. */
   composerRef?: ComposerRefV1 | null;
@@ -78,6 +80,7 @@ export function PluginHostApiProvider(props: PluginHostApiProviderProps) {
       ...(privateProps.resourceStoreGeneration === undefined
         ? {}
         : { resourceStoreGeneration: privateProps.resourceStoreGeneration }),
+      ...(privateProps.resourceStore === undefined ? {} : { resourceStore: privateProps.resourceStore }),
       ...(privateProps.mountedPluginId === undefined
         ? {}
         : { mountedPluginId: privateProps.mountedPluginId }),
@@ -103,6 +106,7 @@ export function PluginHostApiProviderInternal({
   hostApi,
   accountLifetime = null,
   resourceStoreGeneration,
+  resourceStore: injectedResourceStore,
   mountedPluginId,
   composerRef = null,
   surfaceActivity,
@@ -115,14 +119,14 @@ export function PluginHostApiProviderInternal({
     [hostApi],
   );
   const resourceStore = useMemo(
-    () => createPluginUiResourceStore({
+    () => injectedResourceStore ?? createPluginUiResourceStore({
       client: resourceClient,
       accountLifetime,
       ...(mountedPluginId === undefined ? {} : { pluginId: mountedPluginId }),
     }),
-    [resourceClient, accountLifetime, resourceStoreGeneration, mountedPluginId],
+    [resourceClient, accountLifetime, resourceStoreGeneration, mountedPluginId, injectedResourceStore],
   );
-  useEffect(() => () => resourceStore.dispose(), [resourceStore]);
+  useEffect(() => injectedResourceStore ? undefined : () => resourceStore.dispose(), [resourceStore, injectedResourceStore]);
   const value = useMemo(
     () => Object.freeze({
       hostApi,

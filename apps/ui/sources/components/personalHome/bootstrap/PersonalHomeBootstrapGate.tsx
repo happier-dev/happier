@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
@@ -70,7 +70,17 @@ export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.R
         : null;
     return (
         <View style={{ flex: 1 }}>
-            {gating ? setupSurface : props.children}
+            <View
+                testID="personal-home-bootstrap-backdrop"
+                style={{ flex: 1 }}
+                pointerEvents={gating ? 'none' : 'auto'}
+                accessibilityElementsHidden={gating}
+                importantForAccessibility={gating ? 'no-hide-descendants' : 'auto'}
+                {...(Platform.OS === 'web' && gating ? { inert: true } : {})}
+            >
+                {props.children}
+            </View>
+            {gating ? <View style={StyleSheet.absoluteFill}>{setupSurface}</View> : null}
             {!gating && revealSnapshot ? (
                 <PersonalHomeSetupReveal onSettled={handleRevealSettled}>
                     {setupSurface}

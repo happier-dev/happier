@@ -50,10 +50,12 @@ describe('projectAccountTriggerRows', () => {
         expect(rows).toEqual([
             {
                 automationId: 'digest',
-                title: 'workflows.triggers.summary.more(first=workflows.triggers.summary.everyDayAt(time=07:00),count=1)',
+                triggerId: 't1',
+                title: 'workflows.triggers.summary.everyDayAt(time=07:00)',
                 subtitle: 'Morning digest',
                 off: false,
             },
+            expect.objectContaining({ automationId: 'digest', triggerId: 't2', title: 'workflows.triggers.summary.everyDayAt(time=19:00)' }),
             // Off when every trigger of the set is off, not only when the set is.
             expect.objectContaining({ automationId: 'off', off: true }),
             expect.objectContaining({ automationId: 'gone', subtitle: 'workflows.triggers.row.workflowDeleted' }),

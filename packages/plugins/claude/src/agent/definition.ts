@@ -49,6 +49,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       vendorResumeContinuityProofField: 'claudeTranscriptPath',
     },
     sessionStorage: { direct: true, persisted: true },
+    structuredOutput: { formats: ['json'] },
     sessionCapabilities: {
       sessionListing: 'supported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },

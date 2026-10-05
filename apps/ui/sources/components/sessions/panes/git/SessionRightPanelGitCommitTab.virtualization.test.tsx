@@ -85,6 +85,10 @@ function makeGitTheme() {
     };
 }
 
+// Prepare the real component graph before any renderer is opened. A cold module transform is setup,
+// not a row interaction, and timing out inside act leaves every following renderer unmounted.
+await import('./SessionRightPanelGitCommitTab');
+
 describe('SessionRightPanelGitCommitTab (virtualization)', () => {
     it('hides changed-file view mode chips when only repository view is available', async () => {
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
@@ -876,6 +880,52 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
             'AGENTS.md',
             'docs/notes.md',
         ]);
+    });
+
+    it('collapses a change group without changing selection or hiding the timeline', async () => {
+        const toggleSelection = vi.fn();
+        const { screen } = await renderGroupedCommitTab({ onToggleGroupSelection: toggleSelection, listFooter: <ViewForTest /> });
+        await screen.pressByTestIdAsync('scm-change-group-collapse:elsewhere');
+        const list = screen.tree.findByType(VirtualizedList);
+        expect(list.props.data.filter((item: { fullPath?: string }) => item.fullPath).map((item: { fullPath: string }) => item.fullPath))
+            .toEqual(['apps/ui/modal.tsx']);
+        expect(toggleSelection).not.toHaveBeenCalled();
+        expect(list.props.ListFooterComponent).toBeTruthy();
+        await screen.pressByTestIdAsync('scm-change-group-collapse:elsewhere');
+        expect(screen.tree.findByType(VirtualizedList).props.data).toHaveLength(5);
+    });
+
+    it('starts Elsewhere folded on a phone and lets the person expand it', async () => {
+        const { screen } = await renderGroupedCommitTab({ phone: true });
+        expect(screen.tree.findByType(VirtualizedList).props.data.filter((item: { fullPath?: string }) => item.fullPath)).toHaveLength(1);
+        await screen.pressByTestIdAsync('scm-change-group-collapse:elsewhere');
+        expect(screen.tree.findByType(VirtualizedList).props.data).toHaveLength(5);
+    });
+
+    it('folds both change groups for a landed operation without removing the timeline', async () => {
+        const { screen } = await renderGroupedCommitTab({ completedOperationId: 'push-landed', listFooter: <ViewForTest /> });
+        const list = screen.tree.findByType(VirtualizedList);
+        expect(list.props.data.filter((item: { fullPath?: string }) => item.fullPath)).toHaveLength(0);
+        expect(list.props.ListFooterComponent).toBeTruthy();
+        await screen.pressByTestIdAsync('scm-change-group-collapse:session');
+        expect(screen.tree.findByType(VirtualizedList).props.data.filter((item: { fullPath?: string }) => item.fullPath)).toHaveLength(1);
+    });
+
+    function ViewForTest() { return React.createElement('View', { testID: 'timeline-footer' }); }
+
+    it('keeps conflicts out of commit selection and offers Open directly', async () => {
+        const conflict = { ...groupedFile('src/conflict.ts'), status: 'conflicted' as const };
+        const onFilePress = vi.fn();
+        const renderFileActions = vi.fn(() => React.createElement('View', { testID: 'commit-select' }));
+        const { screen } = await renderGroupedCommitTab({ allRepositoryChangedFiles: [conflict], sessionAttributedFiles: [], hasConflicts: true, renderFileActions, onFilePress });
+        const row = screen.tree.findByType('ScmChangeRow');
+        expect(row.props.leadingElement).toBeNull();
+        expect(row.props.onToggleSelection).toBeUndefined();
+        const action = await renderScreen(row.props.trailingElement);
+        await action.pressByTestIdAsync('scm-conflict-open:src/conflict.ts');
+        expect(onFilePress).toHaveBeenCalledWith(conflict);
+        expect(renderFileActions).not.toHaveBeenCalled();
+        expect(screen.findAllHostsByTestId('scm-change-group-select:conflicts')).toHaveLength(0);
     });
 
 });

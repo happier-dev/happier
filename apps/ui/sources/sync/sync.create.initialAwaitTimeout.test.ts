@@ -244,7 +244,7 @@ describe('sync.create initial awaits', () => {
         expect(getActiveServerSnapshot().serverUrl).toBe('http://localhost:53288');
 
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const syncWithTuning = sync as unknown as {
             syncTuning: SyncTuning;
         };
@@ -385,7 +385,7 @@ describe('sync.create initial awaits', () => {
 
         upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
 
-        const { syncCreate, syncSwitchServer } = await import('./sync');
+        const { syncCreate, syncSwitchServer } = await import('./syncEngine');
 
         const credentials: AuthCredentials = {
             token: buildTokenWithSub('server-auth-failed'),
@@ -425,7 +425,7 @@ describe('sync.create initial awaits', () => {
 
         upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
 
-        const { sync, syncCreate, syncSwitchServer } = await import('./sync');
+        const { sync, syncCreate, syncSwitchServer } = await import('./syncEngine');
         const resumeSpy = vi.fn(async () => {});
         (sync as unknown as { resumeSync: (reason: string) => Promise<void> }).resumeSync = resumeSpy;
 

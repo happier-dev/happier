@@ -2,8 +2,11 @@ import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
     buildWorkBoardItemKeyV1,
+    buildWorkBoardWidgetKeyV1,
+    resolveWorkBoardItemOrderV1,
     type BoardItemRefV1,
     type WorkBoardV1,
+    type WorkBoardWidgetPlacementV1,
 } from '@happier-dev/protocol';
 
 import { useInboxModelWhen } from '@/hooks/inbox/useInboxModel';
@@ -104,13 +107,21 @@ function useNeedsYouRefs(enabled: boolean, activeServerId: string | null): reado
     return useStableRefs(refs);
 }
 
-function useRunningRefs(enabled: boolean, activeServerId: string | null): readonly BoardItemRefV1[] | null {
+function useRunningRefs(enabled: boolean, activeServerId: string | null) {
     const window = useWorkflowRunWindow('active', { enabled });
+    // Running promises the active window's membership, not only its first page. Traverse through
+    // that owner's continuation; a failed continuation waits for its existing retry path.
+    React.useEffect(() => {
+        if (enabled && activeServerId && window.status === 'loaded' && window.hasMore
+            && !window.loadingMore && !window.loadMoreFailed) window.loadMore();
+    }, [activeServerId, enabled, window.hasMore, window.loadMore, window.loadMoreFailed, window.loadingMore, window.status]);
     const refs = React.useMemo(() => {
         if (!enabled || !activeServerId || window.status === 'loading') return null;
         return window.rows.map((row) => runRef(activeServerId, row.id));
     }, [activeServerId, enabled, window.rows, window.status]);
-    return useStableRefs(refs);
+    const stable = useStableRefs(refs);
+    return { refs: stable, complete: activeServerId !== null && window.status === 'loaded'
+        && !window.hasMore && !window.loadingMore && !window.loadMoreFailed };
 }
 
 function useMachineRefs(enabled: boolean, machineLists: Readonly<Record<string, Machine[] | null>>): readonly BoardItemRefV1[] | null {
@@ -194,13 +205,24 @@ export function useBoardMembership(board: WorkBoardV1, homes: BoardHomes): Board
     const filtered = useFilteredWorkRefs(board, homes);
     return React.useMemo(() => projectBoardMembership(board, {
         isHomeMounted: homes.isHomeMounted,
-        sections: { needs_you: needsYou, running, my_machines: myMachines },
+        isSourceAvailable: (ref) => (ref.kind !== 'workflow_run' && ref.kind !== 'workflow')
+            || (homes.activeServerId !== null && areServerProfileIdentifiersEquivalent(homes.activeServerId, ref.qualifiedId.serverId)),
+        sections: { needs_you: needsYou, running: running.refs, my_machines: myMachines },
+        sectionComplete: { running: running.complete },
         filtered: filtered.refs,
         filterComplete: filtered.complete,
-    }), [board, filtered.complete, filtered.refs, homes.isHomeMounted, myMachines, needsYou, running]);
+    }), [board, filtered.complete, filtered.refs, homes.activeServerId, homes.isHomeMounted, myMachines, needsYou, running.complete, running.refs]);
 }
 
 const NO_CARDS: readonly BoardCard[] = Object.freeze([]);
+
+/** Widget content is already in the Board document; it never enters work-status classification. */
+export function useBoardWidgets(board: WorkBoardV1) {
+    return React.useMemo(() => {
+        const order = resolveWorkBoardItemOrderV1(board);
+        return (board.widgets ?? []).slice().sort((a, b) => order.indexOf(buildWorkBoardWidgetKeyV1(a.ref)) - order.indexOf(buildWorkBoardWidgetKeyV1(b.ref)));
+    }, [board.widgets, board.itemOrder, board.source.picked]);
+}
 
 /** One summary card per member, from the kinds' own stores; identity kept for unchanged cards. */
 export function useBoardCards(membership: BoardMembership, homes: BoardHomes): readonly BoardCard[] {
@@ -257,6 +279,7 @@ export function useBoardCards(membership: BoardMembership, homes: BoardHomes): r
                 const summary = summaries?.get(ref.qualifiedId.id) ?? null;
                 return {
                     title: definition.metadata.title,
+                    triggers: definition.triggers,
                     summary: summary ? { needsYouCount: summary.needsYouCount, lastRun: summary.lastRun } : null,
                 };
             },
@@ -275,9 +298,11 @@ export function useBoardLiveCards(board: WorkBoardV1): Readonly<{
     homes: BoardHomes;
     membership: BoardMembership;
     cards: readonly BoardCard[];
+    widgets: readonly WorkBoardWidgetPlacementV1[];
 }> {
     const homes = useBoardHomes();
     const membership = useBoardMembership(board, homes);
     const cards = useBoardCards(membership, homes);
-    return { homes, membership, cards };
+    const widgets = useBoardWidgets(board);
+    return { homes, membership, cards, widgets };
 }

@@ -1,7 +1,5 @@
-import {
-    getCurrentAuth,
-    type AuthCredentialLifecycleResult,
-} from '@/auth/context/AuthContext';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
+import type { AuthCredentialLifecycleResult } from '@/auth/context/AuthContext';
 import {
     abandonAccountEncryptionFirstKeyExternalAuth,
     recoverAccountEncryptionFirstKeyRejectedCredential,

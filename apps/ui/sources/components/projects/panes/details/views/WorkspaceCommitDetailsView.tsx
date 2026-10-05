@@ -104,7 +104,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
                 commit={commitEntry}
                 actions={files.length > 0 ? (
                     <>
-                        {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                        {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton presentation="segmented" /> : null}
                         <WrapLinesToggleButton />
                     </>
                 ) : null}

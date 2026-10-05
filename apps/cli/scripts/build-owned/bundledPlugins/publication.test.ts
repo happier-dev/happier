@@ -5,13 +5,207 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { withWorkspaceBundleLock } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { withWorkspaceBundleLock, type WorkspaceBundleLockContext } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { createWorkspaceChildBuildEnv } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { publishCoherentProjectionOutputs } from './outputs.ts';
 import { withGeneratorSingleFlight, withPreparedGeneratorPublication } from './publication.ts';
-import { readWorkspacePackageInputFingerprint } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { ensureWorkspacePackagesBuiltByName, readWorkspacePackageInputFingerprint } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 describe('bundled generator single-flight', () => {
+  it('publishes the prepared input fingerprint without repeating preparation after outputs advance', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-prepared-inputs-'));
+    const dependency = join(root, 'dependency');
+    const stampPath = join(root, 'readiness.json');
+    writeFileSync(dependency, 'previous-built-input');
+    let preparations = 0;
+    try {
+      await withGeneratorSingleFlight({
+        readFingerprint: () => readFileSync(dependency, 'utf8'),
+        prepare: async () => { preparations++; writeFileSync(dependency, 'actual-built-input'); },
+        run: async (lease) => {
+          lease.assertOwned();
+          writeFileSync(join(root, 'published'), readFileSync(dependency, 'utf8'));
+        },
+        stampPath,
+        lockOptions: { lockPath: join(root, 'publication.lock') },
+      });
+      expect(readFileSync(join(root, 'published'), 'utf8')).toBe('actual-built-input');
+      expect(JSON.parse(readFileSync(stampPath, 'utf8')).publication.fingerprint).toBe('actual-built-input');
+      expect(preparations).toBe(1);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['prepare', 'publication'] as const)('converges a failed %s child after its consumed inputs change', async (phase) => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-convergence-'));
+    writeFileSync(join(root, 'source'), 'first');
+    const childSource = `
+      import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+      const [root] = process.argv.slice(1);
+      const input = readFileSync(root + '/source', 'utf8');
+      appendFileSync(root + '/attempts', input + '\\n');
+      if (input === 'first') {
+        writeFileSync(root + '/source', 'settled');
+        throw new Error('prepared graph no longer matches its inputs');
+      }
+      writeFileSync(root + '/output', input);
+    `;
+    const runChild = async () => {
+      await promisify(execFile)(process.execPath, ['--input-type=module', '-e', childSource, root]);
+    };
+    try {
+      await withGeneratorSingleFlight({
+        readFingerprint: () => readFileSync(join(root, 'source'), 'utf8'),
+        stampPath: join(root, 'readiness.json'),
+        lockOptions: { lockPath: join(root, 'publication.lock') },
+        ...(phase === 'prepare' ? { prepare: runChild } : {}),
+        run: async (lease) => { lease.assertOwned(); if (phase === 'publication') await runChild(); },
+      });
+      expect(readFileSync(join(root, 'attempts'), 'utf8').trim().split('\n')).toEqual(['first', 'settled']);
+      expect(readFileSync(join(root, 'output'), 'utf8')).toBe('settled');
+      expect(JSON.parse(readFileSync(join(root, 'readiness.json'), 'utf8')).publication.error).toBeNull();
+      expect(existsSync(join(root, 'publication.lock'))).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('does not retry a dependency failure when consumed inputs stayed unchanged', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-stable-failure-'));
+    let attempts = 0;
+    try {
+      await expect(withGeneratorSingleFlight({
+        readFingerprint: () => 'unchanged',
+        stampPath: join(root, 'readiness.json'),
+        lockOptions: { lockPath: join(root, 'publication.lock') },
+        prepare: async () => { attempts++; throw new Error('invalid current source'); },
+        run: async () => { throw new Error('must not publish'); },
+      })).rejects.toThrow('invalid current source');
+      expect(attempts).toBe(1);
+      expect(existsSync(join(root, 'readiness.json'))).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['prepare', 'publication'] as const)('propagates continuing %s failures after the existing single trailing pass', async (phase) => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-unsettled-'));
+    let version = 0;
+    const fail = async () => { version++; throw new Error('inputs still moving'); };
+    try {
+      await expect(withGeneratorSingleFlight({
+        readFingerprint: () => String(version),
+        stampPath: join(root, 'readiness.json'),
+        lockOptions: { lockPath: join(root, 'publication.lock') },
+        ...(phase === 'prepare' ? { prepare: fail } : {}),
+        run: async () => { if (phase === 'publication') await fail(); },
+      })).rejects.toThrow('inputs still moving');
+      expect(version).toBe(2);
+      expect(existsSync(join(root, 'publication.lock'))).toBe(false);
+      if (existsSync(join(root, 'readiness.json'))) {
+        expect(JSON.parse(readFileSync(join(root, 'readiness.json'), 'utf8')).publication.error).not.toBeNull();
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['settled', 'continuing', 'compile-error'] as const)('uses workspace convergence without multiplying the generator retry (%s)', async (mode) => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-packages-'));
+    const names = ['@happier-dev/changed', '@happier-dev/unchanged'];
+    const dirs = names.map((name) => join(root, 'packages', name.split('/')[1]));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['packages/*'] }));
+    writeFileSync(join(root, 'yarn.lock'), '# fixture');
+    for (const app of ['cli', 'ui', 'server']) {
+      mkdirSync(join(root, 'apps', app), { recursive: true });
+      writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+    }
+    for (const [index, dir] of dirs.entries()) {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'index.ts'), 'export const value = 1;\n');
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: names[index], main: './dist/index.js', scripts: { build: 'fixture-compiler' } }));
+    }
+    const compiled: string[] = [];
+    let preparations = 0;
+    try {
+      await withGeneratorSingleFlight({
+        readFingerprint: () => JSON.stringify(dirs.map((packageDir) => readWorkspacePackageInputFingerprint({ packageDir }))),
+        stampPath: join(root, 'readiness.json'),
+        lockOptions: { lockPath: join(root, 'publication.lock') },
+        prepare: async () => {
+          preparations++;
+          const preparation = await ensureWorkspacePackagesBuiltByName(root, names, {
+            quiet: true,
+            workspaceBuildBoundary: {
+              prepareEnv: async (_packageDir: string, env: NodeJS.ProcessEnv) => ({ ...env }),
+              runPackageBuild: async (packageDir: string, { env }: { env: NodeJS.ProcessEnv }) => {
+                compiled.push(packageDir);
+                await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+                  import { readFileSync, writeFileSync } from 'node:fs';
+                  const [source, output, mode, moving] = process.argv.slice(1);
+                  const input = readFileSync(source, 'utf8');
+                  if (moving === 'true' && (input.includes('value = 1') || mode === 'continuing' || mode === 'compile-error')) {
+                    writeFileSync(source, input + '// changed\\n');
+                    // Settled mode changes only the initial input.
+                    if (mode === 'settled') writeFileSync(source, 'export const value = 2;\\n');
+                    if (mode === 'compile-error') throw new Error('fixture compiler error');
+                  }
+                  writeFileSync(output, input);
+                `, join(packageDir, 'src', 'index.ts'), join(String(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR), 'index.js'), mode, String(packageDir === dirs[0])]);
+              },
+            },
+          });
+          expect(preparation.skipped).toEqual([]);
+        },
+        run: async (lease) => { lease.assertOwned(); },
+      }).then(() => {
+        expect(mode).toBe('settled');
+      }, (error: unknown) => {
+        if (mode === 'settled') throw error;
+        expect(error).toMatchObject(mode === 'continuing'
+          ? { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true }
+          : { code: 'WORKSPACE_PACKAGE_BUILD_FAILED' });
+      });
+      expect(preparations).toBe(1);
+      expect(compiled.filter((dir) => dir === dirs[0])).toHaveLength(mode === 'compile-error' ? 1 : 2);
+      expect(compiled.filter((dir) => dir === dirs[1])).toHaveLength(1);
+      if (mode === 'settled') expect(readFileSync(join(dirs[0], 'dist', 'index.js'), 'utf8')).toContain('value = 2');
+      else expect(existsSync(join(dirs[0], 'dist', 'index.js'))).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('does not reserve publication admission while its dependency preparation is pending', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-convoy-'));
+    const lockPath = join(root, 'publication.lock');
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    let preparing = false;
+    const input = {
+      readFingerprint: () => 'same',
+      stampPath: join(root, 'readiness.json'),
+      lockOptions: { lockPath, pollIntervalMs: 10 },
+      prepare: async () => { preparing = true; started(); await pending; },
+      // The old enclosing lease reaches run without calling preparation. Keep
+      // that path suspended too, so the failure measures admission, not timing.
+      run: async (lease: WorkspaceBundleLockContext) => {
+        started();
+        await pending;
+        lease.assertOwned();
+        writeFileSync(join(root, 'output'), 'published');
+      },
+    };
+    const publication = withGeneratorSingleFlight(input);
+    await ready;
+    const contender = withWorkspaceBundleLock(async (lease) => {
+      lease.assertOwned();
+      return 'finished';
+    }, { lockPath, pollIntervalMs: 10 });
+    try {
+      expect(await Promise.race([contender, sleep(250).then(() => 'blocked')])).toBe('finished');
+      expect(preparing).toBe(true);
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      release();
+      await Promise.all([publication, contender]);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('fingerprints shipped source assets without treating produced runtimes as new source', () => {
     const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-inputs-'));
     try {
@@ -37,7 +231,42 @@ describe('bundled generator single-flight', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('forwards the preparation lease to a fresh child without taking the publication lock', async () => {
+  it('releases admission before preparing the trailing publication', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-trailing-'));
+    const lockPath = join(root, 'publication.lock');
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    let version = 0;
+    let preparations = 0;
+    const publication = withGeneratorSingleFlight({
+      readFingerprint: () => String(version),
+      stampPath: join(root, 'readiness.json'),
+      lockOptions: { lockPath, pollIntervalMs: 10 },
+      prepare: async () => {
+        if (++preparations === 2) { started(); await pending; }
+      },
+      run: async (lease) => {
+        lease.assertOwned();
+        writeFileSync(join(root, 'output'), String(version));
+        version = 1;
+      },
+    });
+    await ready;
+    const contender = withWorkspaceBundleLock(async () => 'finished', { lockPath, pollIntervalMs: 10 });
+    try {
+      expect(await Promise.race([contender, sleep(250).then(() => 'blocked')])).toBe('finished');
+    } finally {
+      release();
+      await Promise.all([publication, contender]);
+    }
+    try {
+      expect(readFileSync(join(root, 'output'), 'utf8')).toBe('1');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('forwards authentic publication admission to a fresh final child', async () => {
     const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-child-'));
     const lockPath = join(root, 'derivation.lock');
     try {
@@ -98,11 +327,14 @@ describe('bundled generator single-flight', () => {
     };
     const first = withGeneratorSingleFlight(input);
     await ready;
-    // Corrupt the filesystem output at the waiter's owner recheck, after
-    // the real producer has recorded completion.
-    let reads = 0;
+    // Corrupt the output only at the admitted recheck after completion, not
+    // during the now-independent preparation/fingerprint reads.
+    let corrupted = false;
     const waiter = withGeneratorSingleFlight({ ...input, readFingerprint: () => {
-      if (++reads === 2) writeFileSync(output, 'changed-after-publication');
+      if (!corrupted && existsSync(input.stampPath)) {
+        corrupted = true;
+        writeFileSync(output, 'changed-after-publication');
+      }
       return 'same';
     } });
     release();
@@ -112,7 +344,7 @@ describe('bundled generator single-flight', () => {
       expect(readFileSync(output, 'utf8')).toBe('current');
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
-  it.each([false, true])('shares one preparation across four processes (changed inputs: %s)', async (changed) => {
+  it.each([false, true])('coalesces final publication after independent preparation in four processes (changed inputs: %s)', async (changed) => {
     const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-'));
     const sourcePath = join(root, 'source');
     const eventsPath = join(root, 'events');
@@ -121,7 +353,7 @@ describe('bundled generator single-flight', () => {
     const childSource = `
       import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
       import { setTimeout as sleep } from 'node:timers/promises';
-      import { withGeneratorSingleFlight, withPreparedGeneratorPublication } from ${JSON.stringify(new URL('./publication.ts', import.meta.url).href)};
+      import { withGeneratorSingleFlight } from ${JSON.stringify(new URL('./publication.ts', import.meta.url).href)};
       import { normalizeCanonicalGeneratorPublication, parseGeneratorCliArgs } from ${JSON.stringify(new URL('./options.ts', import.meta.url).href)};
       const [root, caller] = process.argv.slice(1);
       const argv = caller === 'syncSharedDeps' ? ['--workspace', 'plugins-fixture'] : [];
@@ -130,21 +362,15 @@ describe('bundled generator single-flight', () => {
       await withGeneratorSingleFlight({
         readFingerprint: () => JSON.stringify([options.workspaceNames, readFileSync(root + '/source', 'utf8')]),
         stampPath: root + '/readiness.json',
-        lockOptions: { lockPath: root + '/derivation.lock', pollIntervalMs: 10 },
-        run: async () => {
-          await withPreparedGeneratorPublication({
-            prepare: async () => {
-              const source = readFileSync(root + '/source', 'utf8');
-              appendFileSync(root + '/events', source + '\\n');
-              while (!existsSync(root + '/release')) await sleep(10);
-              return () => {};
-            },
-            publish: async (lease) => {
-              lease.assertOwned();
-              writeFileSync(root + '/output', readFileSync(root + '/source', 'utf8'));
-            },
-            lockOptions: { lockPath: root + '/publication.lock', pollIntervalMs: 10 },
-          });
+        lockOptions: { lockPath: root + '/publication.lock', pollIntervalMs: 10 },
+        prepare: async () => {
+          appendFileSync(root + '/events', readFileSync(root + '/source', 'utf8') + '\\n');
+          while (!existsSync(root + '/release')) await sleep(10);
+        },
+        run: async (lease) => {
+          lease.assertOwned();
+          appendFileSync(root + '/publications', 'published\\n');
+          writeFileSync(root + '/output', readFileSync(root + '/source', 'utf8'));
         },
       });
     `;
@@ -152,7 +378,7 @@ describe('bundled generator single-flight', () => {
       ['--experimental-strip-types', '--input-type=module', '-e', childSource, root,
         index % 2 === 0 ? 'direct' : 'syncSharedDeps']));
     try {
-      while (!existsSync(eventsPath) || !existsSync(join(root, 'arrivals'))
+      while (!existsSync(eventsPath) || readFileSync(eventsPath, 'utf8').trim().split('\n').length !== 4 || !existsSync(join(root, 'arrivals'))
         || readFileSync(join(root, 'arrivals'), 'utf8').trim().split('\n').length !== 4) await sleep(10);
       // Every child has arrived while the first preparation is suspended.
       await sleep(100);
@@ -160,7 +386,12 @@ describe('bundled generator single-flight', () => {
       if (changed) writeFileSync(sourcePath, 'second');
       writeFileSync(releasePath, 'release');
       await Promise.all(children);
-      expect(readFileSync(eventsPath, 'utf8').trim().split('\n')).toEqual(changed ? ['first', 'second'] : ['first']);
+      const preparations = readFileSync(eventsPath, 'utf8').trim().split('\n');
+      expect(preparations.filter((value) => value === 'first')).toHaveLength(4);
+      // Source used by generation is pinned after dependency preparation;
+      // changing it while that independent preparation waits needs no rebuild.
+      expect(preparations.includes('second')).toBe(false);
+      expect(readFileSync(join(root, 'publications'), 'utf8').trim().split('\n')).toEqual(['published']);
       expect(readFileSync(join(root, 'output'), 'utf8')).toBe(changed ? 'second' : 'first');
     } finally {
       writeFileSync(releasePath, 'release');

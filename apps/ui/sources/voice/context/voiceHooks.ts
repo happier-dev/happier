@@ -26,6 +26,9 @@ import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/u
 import type { HostAuthoredContextClass, VoiceHostAuthoredContextScope } from '@/voice/session/types';
 import { resolveVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 import { areSessionAddressesEqual, normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { buildVoiceBrief, type VoiceBriefSource } from './buildVoiceBrief';
+import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
+import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -347,9 +350,27 @@ export const voiceHooks = {
     );
   },
 
+  /** Explicit Brief gesture; only the established context channel may disclose its projection. */
+  onBriefRequested(controlSessionId: string, inbox: VoiceBriefSource): boolean {
+    const snapshot = getVoiceSessionSnapshot();
+    if (snapshot.status !== 'connected' || snapshot.sessionId !== controlSessionId) return false;
+    const sink = getVoiceContextSinkForSession(controlSessionId);
+    if (!sink || !sinkAcceptsHostAuthoredContext(sink, 'session_context')) return false;
+    // Re-project at the explicit gesture, so a privacy change since rendering
+    // cannot disclose a stale, previously authorized Brief context.
+    const brief = buildVoiceBrief({ inbox, settings: storage.getState().settings,
+      currentTarget: useVoiceTargetStore.getState().primaryActionSessionAddress });
+    sink.sendContextualUpdate(controlSessionId, `INBOX BRIEF\n\n${brief.context}`, 'session_context');
+    sink.sendTextMessage(controlSessionId, 'Brief me on this known Inbox work: needs-you, failures, then ready work. Say when information is incomplete. Approvals are tap-only in the canonical UI; do not approve or deny a request.');
+    return true;
+  },
+
   onMessages(addressInput: SessionAddress, messages: Message[]) {
     const address = normalizeLifecycleAddress(addressInput);
     if (!address) return;
+    // This is the incumbent newly-applied sync channel, not a transcript scan.
+    // Local microphone retirement is lifecycle, independent of provider disclosure toggles.
+    getVoiceSessionLifecycleController()?.observeSyncedConversationMessages(address, messages);
     const sessionId = address.sessionId;
     if (VOICE_CONFIG.DISABLE_MESSAGES) return;
     const policy = resolvePolicy(address);

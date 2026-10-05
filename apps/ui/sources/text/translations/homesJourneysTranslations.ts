@@ -8,6 +8,19 @@ type Home = Readonly<{ home: string }>;
  * is the configured service's own (`accountServiceDisplayName`), never a product constant.
  */
 type HomesJourneysTranslation = Readonly<{
+    phone: Readonly<{
+        reconcileTitle: string;
+        reconcileLead: string;
+        showMySessions: string;
+        scanComputerCode: string;
+        serviceLead: string;
+        serviceAsHomeLead: (params: Service) => string;
+        factAlwaysOnDetail: string;
+        factAgents: string;
+        factAgentsDetail: string;
+        fromDeviceHelp: string;
+        scan: string;
+    }>;
     /** The portable identity on the default service. */
     happierAccount: string;
     /** …and on any other sign-in service. */
@@ -134,6 +147,19 @@ type HomesJourneysTranslation = Readonly<{
 }>;
 
 const en: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Your Homes are here",
+        reconcileLead: "This phone now follows your Homes together.",
+        showMySessions: "Show my sessions",
+        scanComputerCode: "Scan the code on your computer",
+        serviceLead: "Your Homes are found after you sign in. This phone then follows them all.",
+        serviceAsHomeLead: ({ service }) => `Your sessions live on ${service}, always reachable. Add a computer to run agents whenever you’re ready.`,
+        factAlwaysOnDetail: "Reach your sessions any time.",
+        factAgents: "Your computers run the agents",
+        factAgentsDetail: "Add one later with a QR code.",
+        fromDeviceHelp: "On it, open Settings → Add your phone, then scan its code with this phone’s camera or paste its Home link.",
+        scan: "Scan",
+    },
     happierAccount: 'Happier account',
     serviceAccount: ({ service }) => `${service} account`,
 
@@ -246,6 +272,19 @@ const en: HomesJourneysTranslation = {
 };
 
 const ca: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Els teus Homes són aquí",
+        reconcileLead: "Aquest telèfon ara segueix els teus Homes junts.",
+        showMySessions: "Mostra les meves sessions",
+        scanComputerCode: "Escaneja el codi del teu ordinador",
+        serviceLead: "Els teus Homes es troben quan inicies sessió. Aquest telèfon els segueix tots.",
+        serviceAsHomeLead: ({ service }) => `Les teves sessions són a ${service}, sempre accessibles. Afegeix un ordinador per executar agents quan vulguis.`,
+        factAlwaysOnDetail: "Accedeix a les teves sessions en qualsevol moment.",
+        factAgents: "Els teus ordinadors executen els agents",
+        factAgentsDetail: "Afegeix-ne un més tard amb un codi QR.",
+        fromDeviceHelp: "Obre-hi Configuració → Afegeix el teu telèfon i escaneja’n el codi amb la càmera d’aquest telèfon o enganxa’n l’enllaç del Home.",
+        scan: "Escaneja",
+    },
     happierAccount: 'compte de Happier',
     serviceAccount: ({ service }) => `compte de ${service}`,
 
@@ -358,6 +397,19 @@ const ca: HomesJourneysTranslation = {
 };
 
 const de: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Deine Homes sind hier",
+        reconcileLead: "Dieses Telefon folgt jetzt deinen Homes gemeinsam.",
+        showMySessions: "Meine Sitzungen anzeigen",
+        scanComputerCode: "Scanne den Code auf deinem Computer",
+        serviceLead: "Nach der Anmeldung werden deine Homes gefunden. Dieses Telefon folgt dann allen.",
+        serviceAsHomeLead: ({ service }) => `Deine Sitzungen liegen auf ${service} und sind jederzeit erreichbar. Füge einen Computer für Agenten hinzu, wenn du bereit bist.`,
+        factAlwaysOnDetail: "Erreiche deine Sitzungen jederzeit.",
+        factAgents: "Deine Computer führen die Agenten aus",
+        factAgentsDetail: "Füge später einen mit einem QR-Code hinzu.",
+        fromDeviceHelp: "Öffne dort Einstellungen → Telefon hinzufügen und scanne den Code mit der Kamera dieses Telefons oder füge den Home-Link ein.",
+        scan: "Scannen",
+    },
     happierAccount: 'Happier-Konto',
     serviceAccount: ({ service }) => `${service}-Konto`,
 
@@ -470,6 +522,19 @@ const de: HomesJourneysTranslation = {
 };
 
 const es: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Tus Homes están aquí",
+        reconcileLead: "Este teléfono ahora sigue tus Homes juntos.",
+        showMySessions: "Mostrar mis sesiones",
+        scanComputerCode: "Escanea el código de tu ordenador",
+        serviceLead: "Tus Homes se encuentran al iniciar sesión. Este teléfono los sigue a todos.",
+        serviceAsHomeLead: ({ service }) => `Tus sesiones están en ${service}, siempre accesibles. Añade un ordenador para ejecutar agentes cuando quieras.`,
+        factAlwaysOnDetail: "Accede a tus sesiones en cualquier momento.",
+        factAgents: "Tus ordenadores ejecutan los agentes",
+        factAgentsDetail: "Añade uno después con un código QR.",
+        fromDeviceHelp: "Abre allí Ajustes → Añade tu teléfono y escanea el código con la cámara de este teléfono o pega el enlace del Home.",
+        scan: "Escanear",
+    },
     happierAccount: 'cuenta de Happier',
     serviceAccount: ({ service }) => `cuenta de ${service}`,
 
@@ -582,6 +647,19 @@ const es: HomesJourneysTranslation = {
 };
 
 const fr: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Tes Homes sont ici",
+        reconcileLead: "Ce téléphone suit maintenant tous tes Homes.",
+        showMySessions: "Afficher mes sessions",
+        scanComputerCode: "Scanne le code sur ton ordinateur",
+        serviceLead: "Tes Homes sont trouvés après la connexion. Ce téléphone les suit tous.",
+        serviceAsHomeLead: ({ service }) => `Tes sessions sont sur ${service}, toujours accessibles. Ajoute un ordinateur pour exécuter les agents quand tu veux.`,
+        factAlwaysOnDetail: "Accède à tes sessions à tout moment.",
+        factAgents: "Tes ordinateurs exécutent les agents",
+        factAgentsDetail: "Ajoutes-en un plus tard avec un code QR.",
+        fromDeviceHelp: "Ouvre Réglages → Ajouter ton téléphone sur cet appareil, puis scanne son code avec la caméra de ce téléphone ou colle son lien Home.",
+        scan: "Scanner",
+    },
     happierAccount: 'compte Happier',
     serviceAccount: ({ service }) => `compte ${service}`,
 
@@ -694,6 +772,19 @@ const fr: HomesJourneysTranslation = {
 };
 
 const it: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "I tuoi Home sono qui",
+        reconcileLead: "Questo telefono ora segue tutti i tuoi Home.",
+        showMySessions: "Mostra le mie sessioni",
+        scanComputerCode: "Scansiona il codice sul tuo computer",
+        serviceLead: "I tuoi Home vengono trovati dopo l’accesso. Questo telefono li segue tutti.",
+        serviceAsHomeLead: ({ service }) => `Le tue sessioni sono su ${service}, sempre raggiungibili. Aggiungi un computer per eseguire gli agenti quando vuoi.`,
+        factAlwaysOnDetail: "Accedi alle tue sessioni in qualsiasi momento.",
+        factAgents: "I tuoi computer eseguono gli agenti",
+        factAgentsDetail: "Aggiungine uno più tardi con un codice QR.",
+        fromDeviceHelp: "Su quel dispositivo apri Impostazioni → Aggiungi il tuo telefono, poi scansiona il codice con la fotocamera di questo telefono o incolla il link Home.",
+        scan: "Scansiona",
+    },
     happierAccount: 'account Happier',
     serviceAccount: ({ service }) => `account ${service}`,
 
@@ -806,6 +897,19 @@ const it: HomesJourneysTranslation = {
 };
 
 const pt: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Os teus Homes estão aqui",
+        reconcileLead: "Este telefone acompanha agora todos os teus Homes.",
+        showMySessions: "Mostrar as minhas sessões",
+        scanComputerCode: "Lê o código no teu computador",
+        serviceLead: "Os teus Homes são encontrados após iniciares sessão. Este telefone acompanha-os todos.",
+        serviceAsHomeLead: ({ service }) => `As tuas sessões estão em ${service}, sempre acessíveis. Adiciona um computador para executar agentes quando quiseres.`,
+        factAlwaysOnDetail: "Acede às tuas sessões a qualquer momento.",
+        factAgents: "Os teus computadores executam os agentes",
+        factAgentsDetail: "Adiciona um mais tarde com um código QR.",
+        fromDeviceHelp: "Nesse dispositivo, abre Definições → Adicionar o teu telefone e lê o código com a câmara deste telefone ou cola o link do Home.",
+        scan: "Ler código",
+    },
     happierAccount: 'conta Happier',
     serviceAccount: ({ service }) => `conta ${service}`,
 
@@ -918,6 +1022,19 @@ const pt: HomesJourneysTranslation = {
 };
 
 const ja: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Home が見つかりました",
+        reconcileLead: "このスマートフォンですべての Home をまとめて確認できます。",
+        showMySessions: "セッションを表示",
+        scanComputerCode: "コンピューターのコードをスキャン",
+        serviceLead: "サインインすると Home が見つかり、このスマートフォンですべてを確認できます。",
+        serviceAsHomeLead: ({ service }) => `セッションは ${service} に保存され、いつでもアクセスできます。準備ができたらエージェントを実行するコンピューターを追加してください。`,
+        factAlwaysOnDetail: "いつでもセッションにアクセスできます。",
+        factAgents: "コンピューターがエージェントを実行します",
+        factAgentsDetail: "後で QR コードを使って追加できます。",
+        fromDeviceHelp: "接続済みの端末で「設定 → スマートフォンを追加」を開き、このスマートフォンのカメラでコードをスキャンするか、Home リンクを貼り付けてください。",
+        scan: "スキャン",
+    },
     happierAccount: 'Happier アカウント',
     serviceAccount: ({ service }) => `${service} アカウント`,
 
@@ -1028,6 +1145,19 @@ const ja: HomesJourneysTranslation = {
 };
 
 const pl: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Twoje Homes są tutaj",
+        reconcileLead: "Ten telefon śledzi teraz wszystkie Twoje Homes.",
+        showMySessions: "Pokaż moje sesje",
+        scanComputerCode: "Zeskanuj kod na swoim komputerze",
+        serviceLead: "Twoje Homes zostaną znalezione po zalogowaniu. Ten telefon będzie je wszystkie śledzić.",
+        serviceAsHomeLead: ({ service }) => `Twoje sesje są na ${service}, zawsze dostępne. Dodaj komputer do uruchamiania agentów, gdy będziesz gotowy.`,
+        factAlwaysOnDetail: "Korzystaj z sesji w dowolnej chwili.",
+        factAgents: "Twoje komputery uruchamiają agentów",
+        factAgentsDetail: "Dodaj komputer później za pomocą kodu QR.",
+        fromDeviceHelp: "Otwórz na nim Ustawienia → Dodaj telefon, a następnie zeskanuj kod aparatem tego telefonu lub wklej link Home.",
+        scan: "Skanuj",
+    },
     happierAccount: 'konto Happier',
     serviceAccount: ({ service }) => `konto ${service}`,
 
@@ -1147,6 +1277,19 @@ function ruTimes(count: number): string {
 }
 
 const ru: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "Ваши Home найдены",
+        reconcileLead: "Теперь этот телефон показывает все ваши Home вместе.",
+        showMySessions: "Показать мои сессии",
+        scanComputerCode: "Сканировать код на компьютере",
+        serviceLead: "После входа будут найдены ваши Home. Этот телефон покажет их все.",
+        serviceAsHomeLead: ({ service }) => `Ваши сессии хранятся в ${service} и всегда доступны. Добавьте компьютер для запуска агентов, когда будете готовы.`,
+        factAlwaysOnDetail: "Доступ к сессиям в любое время.",
+        factAgents: "Ваши компьютеры запускают агентов",
+        factAgentsDetail: "Добавьте компьютер позже с помощью QR-кода.",
+        fromDeviceHelp: "На подключённом устройстве откройте Настройки → Добавить телефон, затем сканируйте код камерой этого телефона или вставьте ссылку Home.",
+        scan: "Сканировать",
+    },
     happierAccount: 'аккаунт Happier',
     serviceAccount: ({ service }) => `аккаунт ${service}`,
 
@@ -1259,6 +1402,19 @@ const ru: HomesJourneysTranslation = {
 };
 
 const zhHans: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "你的 Home 都在这里",
+        reconcileLead: "这部手机现在可以一起查看你的所有 Home。",
+        showMySessions: "显示我的会话",
+        scanComputerCode: "扫描电脑上的二维码",
+        serviceLead: "登录后即可找到你的 Home。这部手机随后可以查看它们全部。",
+        serviceAsHomeLead: ({ service }) => `你的会话保存在 ${service}，随时可访问。准备好后，添加一台电脑来运行智能体。`,
+        factAlwaysOnDetail: "随时访问你的会话。",
+        factAgents: "你的电脑运行智能体",
+        factAgentsDetail: "稍后通过二维码添加电脑。",
+        fromDeviceHelp: "在已连接的设备上打开「设置 → 添加手机」，用这部手机的相机扫描二维码，或粘贴 Home 链接。",
+        scan: "扫描",
+    },
     happierAccount: 'Happier 账户',
     serviceAccount: ({ service }) => `${service} 账户`,
 
@@ -1369,6 +1525,19 @@ const zhHans: HomesJourneysTranslation = {
 };
 
 const zhHant: HomesJourneysTranslation = {
+    phone: {
+        reconcileTitle: "你的 Home 都在這裡",
+        reconcileLead: "這支手機現在可以一起查看你的所有 Home。",
+        showMySessions: "顯示我的工作階段",
+        scanComputerCode: "掃描電腦上的 QR 碼",
+        serviceLead: "登入後即可找到你的 Home。這支手機隨後可以查看它們全部。",
+        serviceAsHomeLead: ({ service }) => `你的工作階段儲存在 ${service}，隨時可存取。準備好後，新增一台電腦來執行代理。`,
+        factAlwaysOnDetail: "隨時存取你的工作階段。",
+        factAgents: "你的電腦執行代理",
+        factAgentsDetail: "稍後透過 QR 碼新增電腦。",
+        fromDeviceHelp: "在已連線的裝置上開啟「設定 → 新增手機」，用這支手機的相機掃描 QR 碼，或貼上 Home 連結。",
+        scan: "掃描",
+    },
     happierAccount: 'Happier 帳號',
     serviceAccount: ({ service }) => `${service} 帳號`,
 

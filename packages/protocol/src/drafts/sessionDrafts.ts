@@ -6,6 +6,7 @@ import {
   type JsonValue as StrictJsonValue,
 } from '../json/strictJsonValue.js';
 import { ParticipantRecipientV1Schema } from '../messages/structured/participantMessageV1.js';
+import { ScmDiffSummaryDiscussInputSchema } from '../scm/diffSummaryResult.js';
 import {
   SyncedSessionAuthoringValueV1Schema,
 } from '../sessions/authoring/syncedSessionAuthoringV1.js';
@@ -97,6 +98,13 @@ export const SessionDraftRecipientValueV1Schema = z.union([
     mode: z.literal('manual'),
     recipient: ParticipantRecipientV1Schema.nullable(),
   }).strict(),
+  z.object({
+    mode: z.literal('scm_diff_summary'),
+    recipient: ParticipantRecipientV1Schema.nullable(),
+    target: ScmDiffSummaryDiscussInputSchema.omit({ message: true }),
+  }).strict().refine((value) => value.target.startNew === true
+    ? value.recipient === null
+    : value.recipient?.kind === 'execution_run', 'Discussion must name a Run or explicitly start a new one'),
 ]);
 export type SessionDraftRecipientValueV1 = z.infer<typeof SessionDraftRecipientValueV1Schema>;
 

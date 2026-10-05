@@ -79,6 +79,25 @@ export type QualifiedConnectedAccountUiGroup = Readonly<{
     members: readonly QualifiedConnectedAccountUiGroupMember[];
 }>;
 
+/** A response may settle only against its captured Account/source and pool revision. */
+export function isQualifiedConnectedAccountGroupRevisionCurrent(params: Readonly<{
+    state: Readonly<{ basis: object | null; groups: readonly QualifiedConnectedAccountUiGroup[] }>;
+    basis: object | null;
+    group: QualifiedConnectedAccountUiGroup;
+    allowAbsent?: boolean;
+}>): boolean {
+    if (params.state.basis !== params.basis) return false;
+    const current = params.state.groups.find((candidate) => (
+        sameQualifiedConnectedAccountGroupRef(candidate.ref, params.group.ref)
+    ));
+    // A successful DELETE may be reflected by a refresh before its acknowledgement.
+    // Absence can settle that DELETE, but cannot admit a late mutation or a replacement row.
+    if (!current) return params.allowAbsent === true;
+    return current.revision.generation === params.group.revision.generation
+        && current.revision.incarnation === params.group.revision.incarnation
+        && current.revision.runtimeStateRevision === params.group.revision.runtimeStateRevision;
+}
+
 /**
  * Spacing of the member priority ladder. Priorities are rewritten as
  * `(index + 1) * MEMBER_PRIORITY_STEP` on reorder, so the gap left between two

@@ -19,11 +19,13 @@ export function createActionMenuTriggerChip(params: Readonly<{
             ref={params.anchorRef}
             key="action-menu"
             testID="agent-input-action-menu-button"
+            accessibilityRole="button"
+            accessibilityLabel={t('agentInput.actionMenu.title')}
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}
         >
-            <Icon name="sliders-horizontal" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />
+            <Icon name={params.showLabel ? 'sliders-horizontal' : 'plus'} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />
             {params.showLabel ? (
                 <Text style={params.textStyle}>{t('agentInput.actionMenu.title')}</Text>
             ) : null}

@@ -32,6 +32,7 @@ export function SessionActionDraftCard(props: Readonly<{ draft: SessionActionDra
         router.push(buildScopedSessionRouteHref({
           sessionId,
           serverId: options?.serverId ?? sessionServerId,
+          query: options?.query,
         }) as any);
       },
     }),
@@ -42,7 +43,17 @@ export function SessionActionDraftCard(props: Readonly<{ draft: SessionActionDra
   // F-4 (2026-08-11): ONE owner for "which options does this field show". This card used to resolve
   // it inline; the transcript row's size key now needs the same answer for an OFFSCREEN row, and two
   // implementations of it would be exactly the drift the height-bearing descriptor exists to prevent.
-  const resolveFieldOptions = useSessionActionFieldOptions(sessionId, sessionServerId);
+  const resolveSessionFieldOptions = useSessionActionFieldOptions(sessionId, sessionServerId);
+  const resolveFieldOptions = React.useMemo(() => {
+    const context = { actionId: props.draft.actionId, draftInput: input };
+    const resolveState = resolveSessionFieldOptions.state;
+    return Object.assign(
+      (field: Parameters<typeof resolveSessionFieldOptions>[0]) => resolveSessionFieldOptions(field, context),
+      { state: resolveState ? (field: Parameters<typeof resolveState>[0]) => resolveState(field, context) : undefined,
+        retry: resolveSessionFieldOptions.retry,
+        pickerContext: resolveSessionFieldOptions.pickerContext },
+    );
+  }, [resolveSessionFieldOptions, props.draft.actionId, input]);
   const submitInFlightRef = React.useRef(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const draftScope = React.useMemo(() => ({
@@ -152,7 +163,7 @@ export function SessionActionDraftCard(props: Readonly<{ draft: SessionActionDra
                 fields={fields as any}
                 input={input}
                 editable={props.draft.status !== 'running' && !isSubmitting}
-                resolveFieldOptions={(field) => resolveFieldOptions(field as any)}
+                resolveFieldOptions={resolveFieldOptions}
                 onPatch={setInputPatch}
               />
             ) : (

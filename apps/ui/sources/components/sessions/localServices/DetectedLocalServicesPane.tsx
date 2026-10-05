@@ -162,9 +162,7 @@ function ServicesScopeBar(props: Readonly<{
                 onSelectTab={props.onChangeScope}
                 accessibilityLabel={t('localServices.scope.toggleA11y')}
                 testIDPrefix={props.testID}
-                segmentSizing="content"
                 slidingThumb
-                compact
             />
         </View>
     );
@@ -460,7 +458,8 @@ export function DetectedLocalServicesPane(props: Readonly<{
                                 </ItemGroup>
                             ) : (
                                 <ItemGroup
-                                    title={sectionTitle(entry.section, machineName)}
+                                    title={`${sectionTitle(entry.section, machineName)} ${entry.rows.length}`}
+                                    surface="none"
                                     selectableItemCountOverride={entry.rows.length}
                                 >
                                     {entry.rows.map(renderRow)}

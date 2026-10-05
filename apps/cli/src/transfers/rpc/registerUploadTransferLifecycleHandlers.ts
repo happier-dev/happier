@@ -1,17 +1,17 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
-import { createTransferRecipientKeyPair } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
 import { logger } from '@/ui/logger';
 
-import { TransferSessionStore } from '../core/transferSessionStore';
-import type { UploadTransferTarget } from '../targets/uploadTransferTarget';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
+import type { UploadTransferTarget } from '@happier-dev/transfers/node';
 import {
   createTransferSessionLifecycle,
   openUploadTransferSession,
   writeUploadTransferChunk,
   finalizeUploadTransferSession,
   abortUploadTransferSession,
-} from '../core/transferSessionLifecycle';
+} from '@happier-dev/transfers/node';
 import {
   buildTransferLifecycleDiagnosticFields,
   type TransferLifecycleDiagnosticContext,

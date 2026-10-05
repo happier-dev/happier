@@ -6,6 +6,10 @@ import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains
 import { resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
 import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createBundledHostedConversationService } from '@/voice/registry/bundledConversationRuntimeHost';
+import { createElevenLabsSessionLifecycle } from '../../../../../../packages/plugins/elevenlabs/src/ui/voice/runtime/sessionLifecycle';
+
 const credentials = { token: 'test' } satisfies AuthCredentials;
 const fetchSpy = vi.fn<RuntimeFetch>();
 
@@ -98,6 +102,44 @@ describe('apiVoice', () => {
     });
 
     describe('completeHappierVoiceSession', () => {
+        it.each(['processing', 'transport'])('retries retained hosted lifecycle identity through HTTP after %s failure', async (failure) => {
+            vi.spyOn(TokenStorage, 'getCredentials').mockResolvedValue(credentials);
+            let completionAttempts = 0;
+            const completedBodies: unknown[] = [];
+            fetchSpy.mockImplementation(async (input, init) => {
+                const url = String(input);
+                if (url.endsWith('/v1/voice/token')) {
+                    return new Response(JSON.stringify({
+                        allowed: true, token: 'provider-token', leaseId: 'lease-1', bindingNonce: 'nonce-1', expiresAtMs: 12_000,
+                    }));
+                }
+                expect(url).toBe('https://api.example.test/v1/voice/session/complete');
+                expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer test');
+                completedBodies.push(JSON.parse(String(init?.body)));
+                if (++completionAttempts === 1) {
+                    if (failure === 'transport') throw new TypeError('network unavailable');
+                    return new Response(JSON.stringify({ ok: false, reason: 'upstream_error' }), { status: 503 });
+                }
+                return new Response(JSON.stringify({ ok: true, durationSeconds: 5 }));
+            });
+            const service = createBundledHostedConversationService({ signal: new AbortController().signal, isCurrent: () => true });
+            await service.start({ sessionId: 'session-1' });
+            const lifecycle = createElevenLabsSessionLifecycle({ takeHostedConversation: () => service });
+            const prepared = { sessionConfig: {}, sessionState: { billingMode: 'happier' as const, leaseId: 'lease-1', expiresAtMs: 12_000 } };
+            lifecycle.prepared(1, prepared);
+            lifecycle.started({ controlSessionId: 'control-1', conversationId: 'conversation-1', attemptId: 1, prepared });
+            await expect(lifecycle.ended()).rejects.toThrow();
+            await expect(service.complete({ providerConversationId: 'conversation-2' })).rejects.toMatchObject({
+                code: 'hosted_conversation_identity_mismatch',
+            });
+            await lifecycle.ended();
+            await lifecycle.ended();
+            expect(completedBodies).toEqual([
+                { leaseId: 'lease-1', providerConversationId: 'conversation-1' },
+                { leaseId: 'lease-1', providerConversationId: 'conversation-1' },
+            ]);
+        });
+
         it('passes an AbortSignal to fetch', async () => {
             fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 

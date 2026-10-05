@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -119,21 +120,34 @@ export function useGithubCapabilities(
     localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities,
   }), []);
   const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
+  const request = useTriageDetailRequest(input);
+  const { instance, localRef } = request;
   const routingToken = useGithubRoutingToken(input);
-  const { instance } = input;
+  const { active, activeSignal } = useTabPanelActivity();
   const [state, setState] = useState<GithubReadStateV1<GithubRepositoryCapabilitiesV1>>(
     { kind: 'loading' },
   );
+  const authority = useMemo(() => ({ request, routingToken }), [request, routingToken]);
+  const previousAuthority = useRef(authority);
+  const settledAuthority = useRef<typeof authority | null>(null);
+  if (previousAuthority.current !== authority) {
+    previousAuthority.current = authority;
+    setState({ kind: 'loading' });
+  }
   useEffect(() => {
+    if (!active || activeSignal.aborted || settledAuthority.current === authority) return undefined;
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    activeSignal.addEventListener('abort', abort);
     if (routingToken === null) {
       setState({ kind: 'unavailable', failure: ROUTE_UNAVAILABLE });
-      return () => controller.abort();
+      settledAuthority.current = authority;
+      return () => { activeSignal.removeEventListener('abort', abort); controller.abort(); };
     }
     void execute({ v: 1, instance, localRef, routingToken }, { signal: controller.signal })
       .then((execution: ExecuteResult) => {
         if (controller.signal.aborted) return;
+        settledAuthority.current = authority;
         if (execution.status !== 'success') {
           setState({ kind: 'unavailable', failure: dispatchFailure(
             execution.status,
@@ -150,8 +164,8 @@ export function useGithubCapabilities(
           setState({ kind: 'ready', value: parsed.data });
         }
       });
-    return () => controller.abort();
-  }, [execute, instance, localRef, routingToken]);
+    return () => { activeSignal.removeEventListener('abort', abort); controller.abort(); };
+  }, [active, activeSignal, authority, execute, instance, localRef, routingToken]);
   return state;
 }
 

@@ -2,8 +2,14 @@ import * as React from 'react';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 
 export type DiffPresentationStyle = 'unified' | 'split';
+
+/** Phone code wraps for reading; the saved desktop preference is neither changed nor discarded. */
+export function useEffectiveDiffWrapLines(preference: boolean | undefined): boolean | undefined {
+    return useSurfaceStateSize() === 'phone' ? true : preference;
+}
 
 /**
  * The narrowest container a split diff is drawn in. Two sides of code with their own number and

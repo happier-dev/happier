@@ -41,8 +41,8 @@ export const SessionPresentedSurfacePresentationTarget = React.memo(
         React.useEffect(() => {
             if (!address || !props.presented) return;
             return registerSessionPresentationOnlyTarget(address, {
-                applySessionPresentationIntent: (intent) => (
-                    applierRef.current?.(intent) ?? { status: 'unavailable' }
+                applySessionPresentationIntent: (intent, onCompanionMutation) => (
+                    applierRef.current?.(intent, onCompanionMutation) ?? { status: 'unavailable' }
                 ),
                 isCurrent: () => applierRef.current !== null,
             });

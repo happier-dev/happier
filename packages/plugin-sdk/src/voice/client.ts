@@ -479,7 +479,12 @@ export type RealtimeVoiceProviderProtocol = Readonly<{
 export type VoiceRealtimeAttemptPolicy = Readonly<{
     instructions: string;
     assistantLanguage: string | null;
-    welcome: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
+    welcome: Readonly<{
+        enabled: boolean;
+        mode: 'immediate' | 'on_first_turn';
+        /** Host-composed literal in the admitted reply language, when available. */
+        text?: string;
+    }>;
 }>;
 
 export type RealtimeVoiceProviderSettingsOperations = Readonly<{

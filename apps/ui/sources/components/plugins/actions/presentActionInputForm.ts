@@ -2,6 +2,7 @@ import { Modal } from '@/modal';
 
 import { ActionInputFormModal } from './ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from './actionInputForm';
+import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 
 type AnyActionInputForm = ActionInputForm<
     ActionInputFormSubmissionResult,
@@ -13,6 +14,8 @@ type AnyActionInputForm = ActionInputForm<
 export function presentActionInputForm(params: Readonly<{
     form: AnyActionInputForm;
     signal?: AbortSignal;
+    pickerContext?: InputTypePickerHostContext;
+    actionId?: string;
 }>): void {
     let modalId = '';
     let retired = false;
@@ -42,6 +45,8 @@ export function presentActionInputForm(params: Readonly<{
         component: ActionInputFormModal,
         props: {
             form: params.form,
+            pickerContext: params.pickerContext,
+            actionId: params.actionId,
             onRetire: retire,
         },
         onRequestClose: cancel,

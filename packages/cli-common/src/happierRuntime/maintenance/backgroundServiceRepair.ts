@@ -64,6 +64,15 @@ export function buildBackgroundServiceRepairPlan(params: Readonly<{
     preferredMode: BackgroundServiceRepairMode;
     services: readonly HappierService[];
 }>): BackgroundServiceRepairPlan {
+    const unverifiedServices = params.services.filter((service) => service.serviceType === 'daemon' && service.installed && service.verification !== 'verified');
+    if (unverifiedServices.length > 0) {
+        return {
+            currentReleaseChannel: params.currentReleaseChannel,
+            existingServices: [...params.services],
+            actions: [],
+            manualWarnings: [`Background service ownership could not be verified (${unverifiedServices.map((service) => service.label).join(', ')}). Automatic repair will not replace or remove these services; repair their definitions first.`],
+        };
+    }
     const repairableServices = toRepairableDaemonServices(params.services);
     const missingHomeServices = repairableServices.filter((service) => (
         service.targetMode === 'default-following'

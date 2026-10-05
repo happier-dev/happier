@@ -23,6 +23,18 @@ const MINIMAL_SESSIONS = {
 } as const;
 
 describe('projectAgentCapabilitiesV2FromDefinition', () => {
+  it('projects JSON output only from the definition-owned capability, independently of Session resume', () => {
+    const sessions = { ...MINIMAL_SESSIONS, open: ['create'] as const };
+    expect(projectAgentCapabilitiesV2FromDefinition({ ...NO_CAPABILITIES,
+      structuredOutput: { formats: ['json'] },
+    }, { sessions })).toMatchObject({ structuredOutput: { formats: ['json'] } });
+    expect(projectAgentCapabilitiesV2FromDefinition(NO_CAPABILITIES, { sessions }))
+      .not.toHaveProperty('structuredOutput');
+    expect(projectAgentCapabilitiesV2FromDefinition({ ...NO_CAPABILITIES,
+      structuredOutput: { formats: ['xml'] },
+    }, { sessions })).not.toHaveProperty('structuredOutput');
+  });
+
   it('advertises usage reporting only from a positive definition-owned declaration', () => {
     const project = (usageReporting?: string) => projectAgentCapabilitiesV2FromDefinition({
       sessionCapabilities: { ...NO_CAPABILITIES.sessionCapabilities, usageReporting },

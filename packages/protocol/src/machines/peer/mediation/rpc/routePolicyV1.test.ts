@@ -15,6 +15,16 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('keeps explicit machine log reads on the classified Account and Machine server route', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    expect(protocol.resolveMachineRpcRoutePolicy('daemon.session.log.tail')).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'ambiguous',
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
+    });
+    expect(protocol.resolveEphemeralRunnerMachineRpcAuthority('daemon.session.log.tail')).toBeNull();
+  });
+
   it('admits session-filtered browser view discovery through exact-machine internal transport', async () => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;
@@ -36,16 +46,30 @@ describe('MachineRpcRoutePolicyV1', () => {
 
     const result = protocol.validateMachineRpcRoutePolicies();
 
-    expect(result.ok).toBe(true);
     expect(result.missingMethods).toEqual([]);
     expect(result.unknownMethods).toEqual([]);
     expect(result.duplicateMethods).toEqual([]);
+    expect(result.invalidMethods).toEqual([]);
+    expect(result.ok).toBe(true);
     // Two classified methods are owned outside the two method literal maps:
     // the host-private plugin install decision and the closed server-origin
     // public Action dispatch.
     expect(result.policies).toHaveLength(
       Object.keys(RPC_METHODS).length + Object.keys(SESSION_RPC_METHODS).length + 2,
     );
+  });
+
+  it('keeps workspace content search on the Account and Machine server route with its read Action authority', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    expect(resolveMachineRpcGovernance(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH)).toEqual({
+      rpcClassification: 'action_spec_bound', actionSpecId: 'workspace.files.search',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH)).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'ambiguous',
+      rpcClassification: 'action_spec_bound', actionSpecId: 'workspace.files.search',
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
+    });
   });
 
   it('keeps durable session writes and unknown methods server-routed by default', async () => {

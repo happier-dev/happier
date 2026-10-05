@@ -933,7 +933,7 @@ describe('server routed machine transfer', () => {
       requestServerRoutedTransferToFile,
     } = await import('./serverRoutedTransport');
     const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
-    const { createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -981,7 +981,7 @@ describe('server routed machine transfer', () => {
       requestServerRoutedTransferToFile,
     } = await import('./serverRoutedTransport');
     const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
-    const { createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -1442,7 +1442,7 @@ describe('server routed machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     let recipientPublicKeyBase64FromOpen: string | null = null;
 
     const unregister = source.onEnvelope((payload) => {
@@ -1655,7 +1655,7 @@ describe('server routed machine transfer', () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-padded-base64-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
     const plainPayload = Buffer.from('padded', 'utf8'); // <= 8 bytes
 
     const target = {
@@ -1730,7 +1730,7 @@ describe('server routed machine transfer', () => {
     const payload = Buffer.from('abcdefghijklmno', 'utf8');
 
     const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
-    const { createTransferRecipientKeyPair } = await import('./transferChunkEncryption');
+    const { createTransferRecipientKeyPair } = await import('@happier-dev/transfers/node');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -1804,7 +1804,7 @@ describe('server routed machine transfer', () => {
     const payload = Buffer.from('abcdefghijklmno', 'utf8');
 
     const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
-    const { createTransferRecipientKeyPair } = await import('./transferChunkEncryption');
+    const { createTransferRecipientKeyPair } = await import('@happier-dev/transfers/node');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -1900,7 +1900,7 @@ describe('server routed machine transfer', () => {
         const recipientPublicKeyBase64 = payload.envelope.recipientPublicKeyBase64;
 
         void (async () => {
-          const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+          const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
           const fullPayload = Buffer.from('duplicate-safe-payload', 'utf8');
           const firstChunk = fullPayload.subarray(0, 9);
           const secondChunk = fullPayload.subarray(9);

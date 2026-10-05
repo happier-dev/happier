@@ -74,7 +74,8 @@ export const PI_PLUGIN = definePlugin({
           displayName: 'Pi Coding Agent CLI',
           executable: {
             binaryName: 'pi',
-            knownUserBinDirSuffixes: null,
+            knownUserBinDirSuffixes: ['.pi/agent/bin'],
+            knownEnvironmentBinDirs: [{ envVar: 'PI_CODING_AGENT_DIR', relativeDir: 'bin' }],
             sourcePreference: 'system-first',
           },
           install: {
@@ -121,6 +122,7 @@ export const PI_PLUGIN = definePlugin({
             externalLinkedTakeover: { writerSafety: 'unsupported' },
             sources: [{
               sourceKind: 'piAgentDir',
+              contentSearch: false,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'piAgentDir' },

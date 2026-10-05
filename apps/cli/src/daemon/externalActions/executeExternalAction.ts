@@ -118,8 +118,8 @@ export async function executeExternalAction(input: Readonly<{
   resolveEncryption?: ResolveExternalActionEncryption;
   resolveTarget: ResolveExternalActionTarget;
   executor: ExternalActionExecutor;
-  /** Host-owned interactive ingress classification; never accepted from an external envelope. */
-  surface?: 'ui' | 'cli';
+  /** Host-owned ingress classification; never accepted from an external envelope. */
+  surface?: 'ui' | 'cli' | 'mcp';
   /** Home-minted invocation authority relayed or exchanged at admission. */
   executionAuthorization?: ExternalActionExecutionAuthorizationV1;
   /** Existing installation private key; never serialized into Action context or approval storage. */

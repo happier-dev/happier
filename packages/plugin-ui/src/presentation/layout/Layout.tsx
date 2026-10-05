@@ -53,6 +53,7 @@ export type HappierScreenProps = Readonly<{
 export type HappierScrollAreaProps = Readonly<{
   children?: ReactNode;
   horizontal?: boolean;
+  scrollEnabled?: boolean;
   keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
   onScroll?: (event: HappierScrollEvent) => void;
   scrollEventThrottle?: number;

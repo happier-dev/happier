@@ -243,6 +243,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
   ctx: SessionEncryptionContext | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
   timeoutMs: number;
+  signal?: AbortSignal;
   initialTurnActivity: SessionTurnActivity;
   initialTurnActivityRequiresTranscriptIdleEvidence?: boolean;
   recheckTurnActivity?: () => Promise<SessionTurnActivity>;
@@ -290,6 +291,8 @@ export async function waitForIdleViaSocket(params: Readonly<{
     const cleanup = () => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      params.signal?.removeEventListener('abort', abort);
       if (idleConfirmTimer) {
         clearTimeout(idleConfirmTimer);
         idleConfirmTimer = null;
@@ -301,6 +304,16 @@ export async function waitForIdleViaSocket(params: Readonly<{
       cleanup();
       reject(new Error('timeout'));
     }, timeoutMs);
+
+    const abort = () => {
+      cleanup();
+      reject(params.signal?.reason ?? new Error('cancelled'));
+    };
+    params.signal?.addEventListener('abort', abort, { once: true });
+    if (params.signal?.aborted) {
+      abort();
+      return;
+    }
 
     const applyRecheckedTurnActivity = (latestTurnActivity: SessionTurnActivity): boolean => {
       if (!latestTurnActivity.turnInFlight && pendingInputTurnsAwaitingMaterialization > 0) {

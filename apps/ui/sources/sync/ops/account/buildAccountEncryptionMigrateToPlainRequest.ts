@@ -68,6 +68,7 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     ref: QualifiedConnectedAccountRef,
   ) => Promise<QualifiedConnectedAccountConfigurationSnapshotV4>;
   decryptAutomationTemplateRaw: (payloadCiphertext: string) => Promise<unknown | null>;
+  resolveSession?: Parameters<typeof convertAccountEncryptionMigrationTemplate>[0]['resolveSession'];
 }>): Promise<AccountEncryptionMigrateRequest> {
   const settingsSecretsReadKeys = (() => {
     try {
@@ -176,13 +177,15 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
       templates.push({
         automationId: automation.id,
         expectedTemplateVersion: automation.templateVersion,
+        triggerDefinitionEnvelopes: [],
         templateCiphertext: await convertAccountEncryptionMigrationTemplate({
           id: automation.id, templateCiphertext: automation.templateCiphertext, toMode: 'plain',
           decryptRaw: params.decryptAutomationTemplateRaw,
+          resolveSession: params.resolveSession,
         }),
       });
     }
-    return { action: 'migrate' as const, templates };
+    return { action: 'migrate' as const, templates, runs: [] };
   })();
   const sessionDrafts = buildAccountEncryptionSessionDraftsDirective({
     candidates: params.sessionDrafts ?? [],

@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
@@ -155,6 +156,32 @@ describe('EmbeddedTerminalPaneFrame states (terminal lab ST)', () => {
 });
 
 describe('EmbeddedTerminalPaneFrame', () => {
+    it('keeps every paint around the renderer nested in the content material', async () => {
+        const { applyGlassDocumentPresentation } = await import('@/components/ui/glass/glassDocumentPresentation');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const screen = await renderScreen(<EmbeddedTerminalPaneFrame title="zsh" controller={makeController({ detectedUrl: { url: 'http://localhost:5173', kind: 'generic' } })} surface={React.createElement('TerminalSurface')} testIdPrefix="material-term" platformOS="web" />);
+        const rootColor = flattenStyle(screen.findByTestId('material-term-root')?.props.style).backgroundColor;
+        const bannerColor = flattenStyle(screen.findByTestId('material-term-url-banner')?.props.style).backgroundColor;
+        const toolbarColor = flattenStyle(embeddedTerminalPaneStyles.toolbar).backgroundColor;
+        const doc = document.implementation.createHTMLDocument();
+        for (const opacity of [0, 0.2, 1]) {
+            for (const reduceTransparency of [false, true]) {
+                const stop = applyGlassDocumentPresentation(doc, { glassSurfaceMaterials: {
+                    ...glassPresetMaterials('everywhere'), content: { blur: 'strong', opacity },
+                } }, { desktopWindow: true, nativeWindowMaterialLive: true, reduceTransparency });
+                try {
+                    for (const color of [rootColor, toolbarColor, bannerColor]) {
+                        const variable = typeof color === 'string' ? color.match(/var\((--happier-glass-content-nested-opacity),/) : null;
+                        const alpha = variable ? parseFloat(doc.documentElement.style.getPropertyValue(variable[1]!)) / 100 : 1;
+                        // One coat belongs to the shell; terminal paints add none
+                        // at 0/.2, and restore semantic solid hues on OS recovery.
+                        expect(alpha).toBe(reduceTransparency || opacity === 1 ? 1 : 0);
+                    }
+                } finally { stop(); }
+            }
+        }
+    });
+
     it('keeps the failure overlay inside the terminal surface so toolbar actions remain accessible', async () => {
         const controller: EmbeddedTerminalPaneController = {
             status: 'error',

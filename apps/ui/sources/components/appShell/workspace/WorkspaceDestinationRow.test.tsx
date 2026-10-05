@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { View } from 'react-native';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
@@ -10,7 +10,7 @@ import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceDestinationRow } from './WorkspaceDestinationRow';
-import { decodeWorkspaceDragData } from './workspaceDragData';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WORKSPACE_OPEN_IN_NEW_TAB_ID, WORKSPACE_OPEN_TO_RIGHT_ID } from './useWorkspaceOpenActions';
 import { buildProjectRouteHref } from '@/components/projects/detail/projectRouteState';
@@ -18,9 +18,16 @@ import { DetailsTabStrip } from '@/components/appShell/panes/details/workspace/D
 import { WorkflowRunItemBody } from '@/components/sessions/shell/row/WorkflowRunItemBody';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
+import { ENTITY_DRAG_DELIVERY_MIME_V1 } from '@happier-dev/protocol/plugins/ui';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 
 installPanelCommonModuleMocks();
+// Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace owner test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
 // The DOM portal is a browser boundary; the real menu remains inside this renderer's tree.
 vi.mock('@/utils/web/reactDomCjs', () => ({
     requireReactDOM: () => ({ createPortal: (children: React.ReactNode) => children }),
@@ -37,7 +44,9 @@ function harness() {
     });
     const workspace: WorkspaceNavigationContextValue = {
         active: true, get state() { return state; }, canGoBack: false, canGoForward: false,
-        openHref: adapter.openHref, activateTab: adapter.activateTab, closeTab: adapter.closeTab,
+        openHref: adapter.openHref, activateTab: adapter.activateTab, closeTab: adapter.closeTab, closeTabs: adapter.closeTabs,
+        findOpenHref: adapter.findOpenHref,
+        catalog: resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: true, friends: false } }),
         dispatch: adapter.dispatch, navigationForTab: () => { throw new Error('Unexpected instance navigation'); },
         registerBackStep: () => () => {}, back: () => adapter.step(-1), forward: () => adapter.step(1),
         canvasControlsRef: { current: {
@@ -49,7 +58,19 @@ function harness() {
 }
 
 describe('workspace destination row browser gestures', () => {
-    afterEach(standardCleanup);
+    const runtime = useEntityDragDropRuntime();
+    let previousScope: ReturnType<typeof storage.getState>['profileScope'];
+    beforeEach(() => {
+        previousScope = storage.getState().profileScope;
+        storage.setState({ profileScope: { serverId: 'home-b', accountId: 'account-a' } });
+    });
+    afterEach(() => {
+        act(() => {
+            runtime.cancel();
+            storage.setState({ profileScope: previousScope });
+        });
+        standardCleanup();
+    });
     it('opens the mixed-list Workflow Run row through the same kept-tab gesture owner', async () => {
         const previous = storage.getState();
         const h = harness();
@@ -110,9 +131,9 @@ describe('workspace destination row browser gestures', () => {
         const destination = screen.root.findByType(WorkspaceDestinationRow);
         destination.findAllByType('View')[0].props.ref(host);
         host.dispatchEvent(drag);
-        const data = decodeWorkspaceDragData(setData.mock.calls.at(-1)?.[1]);
-        expect(data?.kind).toBe('href');
-        if (data?.kind !== 'href') throw new Error('Expected a shareable Details file destination');
+        const data = runtime.getSnapshot().item;
+        expect(data?.kind).toBe('destination');
+        if (data?.kind !== 'destination') throw new Error('Expected a shareable Details file destination');
         const href = new URL(data.href, 'https://happier.test');
         expect(href.pathname).toBe('/session/B1/details');
         expect(Object.fromEntries(href.searchParams)).toMatchObject({ serverId: 'home-b', details: 'file', path: 'src/app.ts' });
@@ -164,7 +185,11 @@ describe('workspace destination row browser gestures', () => {
         const drag = new Event('dragstart', { bubbles: true, cancelable: true });
         Object.defineProperty(drag, 'dataTransfer', { value: { setData, effectAllowed: '' } });
         root.dispatchEvent(drag);
-        expect(decodeWorkspaceDragData(setData.mock.calls[0]?.[1])).toEqual({ kind: 'href', href });
+        expect(runtime.getSnapshot().item).toEqual({ kind: 'session',
+            scope: { serverId: 'home-b', accountId: 'account-a' }, address: { serverId: 'home-b', sessionId: 'B1' } });
+        // The browser sees only a delivery hint, never the scoped Session identity.
+        expect(setData.mock.calls).toEqual([[ENTITY_DRAG_DELIVERY_MIME_V1, '']]);
+        runtime.cancel();
 
         await act(async () => { root.dispatchEvent(new MouseEvent('contextmenu', { clientX: 20, clientY: 30, bubbles: true, cancelable: true })); });
         const menu = screen.root.findByType(DropdownMenu);
@@ -182,7 +207,8 @@ describe('workspace destination row browser gestures', () => {
             <WorkspaceDestinationRow href={projectHref}><ViewBoundary /></WorkspaceDestinationRow>
         </WorkspaceNavigationContext.Provider>); });
         root.dispatchEvent(drag);
-        expect(decodeWorkspaceDragData(setData.mock.calls.at(-1)?.[1])).toEqual({ kind: 'href', href: projectHref });
+        expect(runtime.getSnapshot().item).toEqual({ kind: 'destination',
+            scope: { serverId: 'home-b', accountId: 'account-a' }, href: projectHref });
         primary.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true }));
         expect(Object.values(h.state().tabs).find(tab => tab.target.kind === 'project')).toMatchObject({
             preview: false, target: { params: { workspaceRefId: 'project-b', worktreeId: 'branch-b', initialFile: 'src/app.ts' } },

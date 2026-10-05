@@ -21,6 +21,22 @@ export type BundledConversationProviderClient = Readonly<{
 
 type BundledVoiceSettingsConfig = Readonly<Record<string, unknown>>;
 
+/** One contribution-owned catalog port for settings UI and Actions. */
+export function createVoiceSettingsCatalogClient(providerId: string, readCurrentProviderConfig: () => BundledVoiceSettingsConfig): BundledConversationProviderClient | null {
+  const settingsOperations = getExternalVoiceProviderRegistration(providerId)?.settingsOperations;
+  return settingsOperations?.listCatalog ? Object.freeze({
+    async fetchVoiceCatalog(signal?: AbortSignal | null) {
+      const items = await settingsOperations.listCatalog!({ catalog: 'voices',
+        providerConfig: VoiceRealtimeJsonValueSchema.parse(readCurrentProviderConfig()), signal: signal ?? new AbortController().signal });
+      return items.flatMap(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+        const row = item as Readonly<Record<string, unknown>>;
+        return typeof row.id === 'string' && typeof row.name === 'string' ? [{ id: row.id, name: row.name, metadata: row.metadata }] : [];
+      });
+    },
+  }) : null;
+}
+
 type GenericSettingsOwner = Readonly<{
   currentSchemaVersion: number;
   defaultConfig: Readonly<Record<string, unknown>>;
@@ -83,27 +99,7 @@ export function createBundledConversationUi(providerId: string): Readonly<{
       : null;
     return settingsOwner.parseConfig(current) ?? settingsOwner.defaultConfig;
   };
-  const registration = getExternalVoiceProviderRegistration(providerId);
-  const settingsOperations = registration?.settingsOperations;
-  const publicClient: BundledConversationProviderClient | null = settingsOperations?.listCatalog
-    ? Object.freeze({
-        async fetchVoiceCatalog(signal?: AbortSignal | null) {
-          const operationSignal = signal ?? new AbortController().signal;
-          const items = await settingsOperations.listCatalog!({
-            catalog: 'voices',
-            providerConfig: VoiceRealtimeJsonValueSchema.parse(readCurrentProviderConfig()),
-            signal: operationSignal,
-          });
-          return items.flatMap((item) => {
-            if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-            const row = item as Readonly<Record<string, unknown>>;
-            return typeof row.id === 'string' && typeof row.name === 'string'
-              ? [{ id: row.id, name: row.name, metadata: row.metadata }]
-              : [];
-          });
-        },
-      })
-    : null;
+  const publicClient = createVoiceSettingsCatalogClient(providerId, readCurrentProviderConfig);
   return Object.freeze({
     client: publicClient,
     settingsDescriptor,

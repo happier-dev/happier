@@ -5,6 +5,7 @@ import { createRecipientContractDigestV1 } from '@happier-dev/protocol';
 import { log } from '@/log';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import {

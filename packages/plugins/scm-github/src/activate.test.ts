@@ -258,13 +258,17 @@ describe('activate', () => {
     const semanticEvents = (PLUGIN_MANIFEST.contributes.events ?? []).filter(
       ({ id }) => id.startsWith('automation/'),
     );
-    expect(semanticEvents.map(({ id }) => id)).toEqual([
+    expect(semanticEvents.map(({ id }) => id).sort()).toEqual([
       'automation/issue-opened-v1',
       'automation/pull-request-merged-v1',
       'automation/pull-request-opened-v1',
       'automation/repository-pushed-v1',
-    ]);
-    expect(semanticEvents).toEqual(semanticEvents.map((event) => expect.objectContaining({
+      'automation/pull-request-checks-completed-v1',
+      'automation/pull-request-checks-failed-v1',
+      'automation/pull-request-checks-passed-v1',
+    ].sort());
+    const repositoryEvents = semanticEvents.filter(({ id }) => !id.startsWith('automation/pull-request-checks-'));
+    expect(repositoryEvents).toEqual(repositoryEvents.map((event) => expect.objectContaining({
       kind: 'event',
       payloadSchema: expect.objectContaining({
         type: 'object',
@@ -307,7 +311,7 @@ describe('activate', () => {
     }
     // The cold Event projection widens `automation` to an opaque object, so the
     // declared webhook source is read through its published shape.
-    const repositoryEventAutomationSource = (semanticEvents[0]?.automation as
+    const repositoryEventAutomationSource = (repositoryEvents[0]?.automation as
       | Readonly<{ source?: Readonly<{ webhookContributionRef?: unknown }> }>
       | undefined)?.source;
     expect(repositoryEventAutomationSource?.webhookContributionRef).toEqual({

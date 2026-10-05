@@ -155,6 +155,7 @@ export async function startVoiceAgentTurnStream(args: Readonly<{
   params: Readonly<{
     message: string;
     displayMessage?: string;
+    speechSegmentTargetChars?: number;
     userTranscript?: ExecutionRunUserTranscriptDirective;
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   }>;
@@ -248,6 +249,9 @@ export async function startVoiceAgentTurnStream(args: Readonly<{
     const started = await args.voiceAgentManager.startTurnStream({
       voiceAgentId: ctrl.voiceAgentId,
       userText,
+      ...(args.params.speechSegmentTargetChars !== undefined
+        ? { speechSegmentTargetChars: args.params.speechSegmentTargetChars }
+        : {}),
       ...(args.params.userTranscript?.localId
         ? { durableUserTranscriptLocalId: args.params.userTranscript.localId }
         : {}),

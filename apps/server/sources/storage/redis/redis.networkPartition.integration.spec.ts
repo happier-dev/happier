@@ -182,7 +182,6 @@ describe("Redis client silent network partition recovery", () => {
             grantId: "redis-restart-admission-grant",
             grantExpiresAt: Date.now() + 30_000,
             machineId,
-            maxDurationMs: 30_000,
             nowMs: Date.now(),
             onMachineEnvelope: vi.fn(),
             onMachineDisconnect: vi.fn(),

@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
+import { admitScmCommitPolicy } from '@happier-dev/protocol/scm';
 import { expect } from 'vitest';
 
 import type { ScmBackend, ScmBackendContext } from '../types';
@@ -200,6 +201,23 @@ async function assertCommitCreateSupported(input: ScmBackendContractOperationInp
     });
     assertSupportedResult(commit);
     expect(commit.commitSha).toBeTruthy();
+}
+
+async function assertCommitExpectedBaseSupported(input: ScmBackendContractOperationInput): Promise<void> {
+    writeFileSync(join(input.fixture.rootPath, input.fixture.trackedPath), 'commit-captured-base-change\n');
+    const expectedRef = `refs/heads/${input.fixture.branchName}`;
+    const refused = await input.backend.commitCreate({
+        context: input.context,
+        request: { message: 'stale base', expectedHeadOid: '0'.repeat(40), expectedRef, scope: { kind: 'all-pending' } },
+    });
+    expect(refused).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_HEAD_CHANGED, publication: { state: 'not_published' } });
+    expect(runScmExecutable(input.fixture.rootPath, 'git', ['rev-parse', 'HEAD'])).toBe(input.fixture.headCommit);
+    const committed = await input.backend.commitCreate({
+        context: input.context,
+        request: { message: 'captured base', expectedHeadOid: input.fixture.headCommit, expectedRef, scope: { kind: 'all-pending' } },
+    });
+    assertSupportedResult(committed);
+    expect(committed.publication).toMatchObject({ state: 'published', expectedHeadOid: input.fixture.headCommit, expectedRef });
 }
 
 async function assertCommitPathSelectionSupported(input: ScmBackendContractOperationInput): Promise<void> {
@@ -797,6 +815,16 @@ export function createScmBackendContractOperations(): readonly ScmBackendContrac
                     scope: { kind: 'paths', include: [input.fixture.trackedPath] },
                 },
             })),
+        },
+        {
+            path: { group: 'commit', leaf: 'expectedBase' },
+            assertSupported: assertCommitExpectedBaseSupported,
+            assertUnsupported: async (input) => {
+                const mode = input.context.detection.mode;
+                if (!mode) throw new Error('Expected-base contract requires a detected repository mode');
+                expect(admitScmCommitPolicy({ expectedHeadOid: input.fixture.headCommit }, input.backend.getCapabilities({ mode })))
+                    .toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED });
+            },
         },
         {
             path: { group: 'commit', leaf: 'lineSelection' },

@@ -162,9 +162,7 @@ export function assertAutomationTemplateEnvelopeForAccountMode(
 
     const currentEnvelope = AutomationTemplateEnvelopeSchema.safeParse(parsed);
     let envelope = currentEnvelope.success ? currentEnvelope.data : null;
-    const canReadLegacyEnvelope = targetType === "existing_session"
-        || legacyTemplateEnvelopeAdmission?.kind
-            === "legacy-encrypted-existing-session-v1";
+    const canReadLegacyEnvelope = targetType === "existing_session";
     if (!envelope && legacyTemplateEnvelopeAdmission && canReadLegacyEnvelope) {
         if (legacyTemplateEnvelopeAdmission.kind === "legacy-encrypted-existing-session-v1") {
             const legacy = LegacyEncryptedAutomationTemplateEnvelopeSchema.safeParse(parsed);
@@ -210,13 +208,15 @@ export function assertAutomationTemplateEnvelopeForAccountMode(
 
     if (
         envelope.kind === AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND
+        && !currentEnvelope.success
         && targetType === "existing_session"
+        && legacyTemplateEnvelopeAdmission?.kind === "legacy-encrypted-existing-session-v1"
     ) {
         return;
     }
     if (envelope.kind === AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND) {
         throw new AutomationValidationError(
-            "templateCiphertext: encrypted templates in a plain account are reserved for existing_session targets",
+            "templateCiphertext: encrypted templates in a plain account require an explicit retained existing_session target",
         );
     }
     if (envelope.kind !== AUTOMATION_TEMPLATE_PLAIN_V1_KIND) {

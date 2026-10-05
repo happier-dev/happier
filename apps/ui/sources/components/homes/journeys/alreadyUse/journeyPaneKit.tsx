@@ -1,11 +1,10 @@
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { View, type StyleProp, type TextStyle } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
 
 /**
  * The few pieces every "Already use Happier?" pane is made of (lab `.hi-cxr`): a title with its
@@ -47,6 +46,17 @@ export function PaneLink(props: Readonly<{ label: string; onPress: () => void; t
     );
 }
 
+/** Keep the service's identity distinct within the translated "with <service>" line. */
+export function PaneServiceLabel(props: Readonly<{ service: string; style?: StyleProp<TextStyle>; numberOfLines?: number }>) {
+    const label = t('homesJourneys.withService', { service: props.service });
+    const at = label.indexOf(props.service);
+    return (
+        <Text style={props.style} numberOfLines={props.numberOfLines}>
+            {label.slice(0, at)}<Text style={styles.serviceName}>{props.service}</Text>{label.slice(at + props.service.length)}
+        </Text>
+    );
+}
+
 /** The service or Home a pane is about: its mark, name and one fact, with at most one trailing thing. */
 export function PaneIdentityRow(props: Readonly<{
     mark: React.ReactNode;
@@ -67,13 +77,12 @@ export function PaneIdentityRow(props: Readonly<{
     );
 }
 
-/** "✓ Found" / "✓ Connected" beside an identity row. */
-export function PaneConfirmed(props: Readonly<{ label: string }>) {
-    const { theme } = useUnistyles();
+/** A quiet connected-presence dot beside an identity row. */
+export function PaneConfirmed(props: Readonly<{ label: string; dotOnly?: boolean }>) {
     return (
-        <View style={styles.confirmed}>
-            <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.state.success.foreground} />
-            <Text style={styles.confirmedText}>{props.label}</Text>
+        <View style={styles.confirmed} accessibilityLabel={props.label}>
+            <View style={styles.confirmedDot} />
+            {props.dotOnly ? null : <Text style={styles.confirmedText}>{props.label}</Text>}
         </View>
     );
 }
@@ -132,6 +141,7 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         textDecorationLine: 'underline',
     },
+    serviceName: { ...Typography.default('medium'), color: theme.colors.text.primary },
     identity: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -166,8 +176,9 @@ const styles = StyleSheet.create((theme) => ({
     confirmedText: {
         ...Typography.default('medium'),
         fontSize: 12.5,
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.text.secondary,
     },
+    confirmedDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.state.success.foreground },
     or: {
         flexDirection: 'row',
         alignItems: 'center',

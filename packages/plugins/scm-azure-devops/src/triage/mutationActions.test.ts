@@ -145,6 +145,7 @@ type Captured = Readonly<{ url: string; method: string; body: unknown }>;
  */
 function harness(input: Readonly<{
   reads: readonly unknown[];
+  controller?: AbortController;
   /** Answers a request before the pull-request read sequence sees it. */
   respond?: (request: Readonly<{ url: string; method: string }>) => Reply | undefined;
 }>) {
@@ -215,7 +216,7 @@ function harness(input: Readonly<{
     contribution: { id: 'azure-devops-forge', qualifiedId: 'x/contributions/azure-devops-forge' },
     surface: 'background',
     caller: { kind: 'plugin', pluginId: 'happier.triage' },
-    signal: new AbortController().signal,
+    signal: (input.controller ?? new AbortController()).signal,
     services: services as unknown as PluginInvocationContext['services'],
   } as unknown as PluginInvocationContext;
   return { context, requests };
@@ -309,8 +310,15 @@ describe('Azure DevOps pull-request completion', () => {
     expect(requests.every((request) => request.url.includes('api-version='))).toBe(true);
   });
 
-  it('never reports a queued completion as applied, and says when auto-complete owns it', async () => {
-    const { context } = harness({
+  it('reports pending when cancellation prevents confirming an accepted queued completion', async () => {
+    const controller = new AbortController();
+    let observations = 0;
+    const { context, requests } = harness({
+      controller,
+      respond: ({ method, url }) => {
+        if (method === 'GET' && !url.includes('/_apis/connectionData') && ++observations === 2) controller.abort();
+        return undefined;
+      },
       reads: [
         pullRequest(),
         // Accepted and still queued: `lastMergeCommit` is documented as empty while the merge is
@@ -328,7 +336,21 @@ describe('Azure DevOps pull-request completion', () => {
     );
 
     if (settled.kind !== 'pending') throw new Error('a queued completion is not applied');
-    expect(settled.autoCompleteEnabled).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+    expect(writes(requests)).toHaveLength(1);
+  });
+
+  it('observes completion after more than three queued reads without re-dispatching the merge', async () => {
+    const { context, requests } = harness({ reads: [
+      pullRequest(),
+      ...Array.from({ length: 4 }, () => pullRequest({ status: 'completed', mergeStatus: 'queued' })),
+      completed({ deleteSourceBranch: false, transitionWorkItems: false, bypassPolicy: false }),
+    ] });
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(completeInput(), context),
+    );
+    expect(settled.kind).toBe('applied');
+    expect(writes(requests)).toHaveLength(1);
   });
 
   it('reports a policy rejection as its own terminal outcome with Azure\'s own message', async () => {

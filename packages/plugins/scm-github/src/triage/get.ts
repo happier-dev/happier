@@ -279,7 +279,7 @@ export type GithubPullRequestReadV1 = Readonly<{
   overview: GithubPullRequestOverviewV1 | null;
 }>;
 
-function readGithubPullRequestReviewRevision(
+export function readGithubPullRequestReviewRevision(
   raw: Readonly<Record<string, unknown>>,
   headRevision: string | null,
 ): GithubTriageReviewRevisionV1 | null {

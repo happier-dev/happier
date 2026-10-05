@@ -110,9 +110,6 @@ function readInventoryEntryIdFromTarget(target: LocalServiceLaunchTarget): strin
     if (target.sourceClass?.kind === 'inventory_entry') {
         return normalizeNonEmptyString(target.sourceClass.inventoryEntryId);
     }
-    if (target.id.startsWith('inventory:')) {
-        return normalizeNonEmptyString(target.id.slice('inventory:'.length));
-    }
     return undefined;
 }
 

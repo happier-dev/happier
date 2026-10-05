@@ -252,17 +252,6 @@ describe('Git correctness and recovery', () => {
         } finally { cleanup(); }
     });
 
-    it('reports an existing commit as an applied effect when live-index synchronization fails', async () => {
-        const { cwd, context, cleanup } = workspace();
-        try {
-            writeFileSync(join(cwd, 'a.txt'), 'committed\n');
-            const runtime = createRealGitScmBackendRuntimeServices();
-            const result = await runWithGitScmCommandRunner((input) => input.args[0] === 'reset'
-                ? Promise.resolve({ success: false, stdout: '', stderr: 'index sync failed', exitCode: 1 }) : runtime.runCommand(input), () => gitCommitCreate({ context, request: { message: 'changed', scope: { kind: 'paths', include: ['a.txt'] } } }));
-            expect(result.outcome).toMatchObject({ kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: git(cwd, 'rev-parse', 'HEAD') }, nextActions: [{ kind: 'reconcile_index' }] });
-            expect(git(cwd, 'show', 'HEAD:a.txt')).toBe('committed');
-        } finally { cleanup(); }
-    });
     it('amends only the message while preserving staged and unstaged selections', async () => {
         const { cwd, context, cleanup } = workspace();
         try {
@@ -331,7 +320,7 @@ describe('Git correctness and recovery', () => {
         { outputLimitExceeded: true, exitCode: 1 },
         { exitCode: -1 },
     ] as const;
-    it.each(uncertainTerminations)('does not claim a commit failed after uncertain process termination %j', async (termination) => {
+    it.each(uncertainTerminations)('resolves its known commit after uncertain ref-process termination %j', async (termination) => {
         const { cwd, context, cleanup } = workspace();
         try {
             const before = git(cwd, 'rev-parse', 'HEAD');
@@ -339,10 +328,11 @@ describe('Git correctness and recovery', () => {
             const runtime = createRealGitScmBackendRuntimeServices();
             const result = await runWithGitScmCommandRunner(async (input) => {
                 const actual = await runtime.runCommand(input);
-                return input.args[0] === 'commit' ? { ...actual, ...termination, success: false } : actual;
+                return input.args[0] === 'update-ref' && input.stdinInteraction ? { ...actual, ...termination, success: false } : actual;
             }, () => gitCommitCreate({ context, request: { message: 'changed', scope: { kind: 'paths', include: ['a.txt'] } } }));
             expect(git(cwd, 'rev-parse', 'HEAD')).not.toBe(before);
-            expect(result.outcome).toMatchObject({ kind: 'outcome_unknown', reconciliation: { kind: 'repository_status', cwd }, nextActions: [{ kind: 'refresh' }] });
+            expect(result.commitSha).toBe(git(cwd, 'rev-parse', 'HEAD'));
+            expect(result.publication).toMatchObject({ state: 'published', candidateOid: result.commitSha, indexReconciliation: 'reconciled' });
         } finally { cleanup(); }
     });
     it.each(uncertainTerminations)('does not claim an integration failed after uncertain process termination %j', async (termination) => {

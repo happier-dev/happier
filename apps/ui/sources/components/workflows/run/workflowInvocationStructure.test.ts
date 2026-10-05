@@ -65,13 +65,25 @@ describe('projectWorkflowInvocationStructure', () => {
             invocationPath: { blockId: 'same', scope: [{ kind: 'workflow', blockId: 'call' }] },
             attempt: '0', logicalInvocationRecordId: 'loop',
         };
+        const openedWait: WorkflowProgressEnvelopeV1 = {
+            kind: 'happier.workflow-progress.v1', blockKind: 'wait',
+            invocationPath: { blockId: 'same', scope: [{ kind: 'workflow', blockId: 'call' },
+                { kind: 'iteration', blockId: 'same', index: 1 }, { kind: 'workflow', blockId: 'inner' }] },
+            frame: { ownerBlockId: 'same', source: { kind: 'item', index: '1' } },
+            attempt: '0', logicalInvocationRecordId: 'wait-1',
+        };
+        const openedInner: WorkflowProgressEnvelopeV1 = {
+            ...openedWait, blockKind: 'workflow', logicalInvocationRecordId: 'inner-1',
+            invocationPath: { blockId: 'inner', scope: openedWait.invocationPath.scope.slice(0, -1) },
+        };
         const projection = projectWorkflowFlow(definition, frozenChildren);
         // Opened and unopened ancestry must make the same join even with colliding ids.
-        for (const progressByInvocationId of [undefined, new Map([['loop', openedLoop]])]) {
+        for (const progressByInvocationId of [undefined, new Map([['loop', openedLoop]]),
+            new Map([['wait-1', openedWait]]), new Map([['inner-1', openedInner]])]) {
             const structure = projectWorkflowInvocationStructure({ definition, frozenChildren, invocations, progressByInvocationId });
             expect(structure.get('loop')?.nodeId).not.toBe('same');
             const wait = structure.get('wait-1')!;
-            expect(wait).toMatchObject({ coverageKind: 'executable', occurrence: [
+            expect(wait).toMatchObject({ isFrame: false, coverageKind: 'executable', occurrence: [
                 { kind: 'workflow', blockId: 'call' }, { kind: 'item', blockId: 'same', index: 1 },
                 { kind: 'workflow', blockId: 'inner' },
             ] });

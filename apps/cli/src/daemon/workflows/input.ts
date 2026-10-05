@@ -1,6 +1,7 @@
 import {
   MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
   sameStrictJsonValue,
+  readWorkflowValuePathV1,
   WorkflowSessionContextV1Schema,
   type WorkflowSessionContextV1,
   type WorkflowAuthoredProducerRef,
@@ -140,16 +141,8 @@ export function selectWorkflowResultPath(
   path: readonly (string | number)[],
   missingCode: 'invalid_reference_scope' | 'missing_reference' = 'invalid_reference_scope',
 ): WorkflowJsonValue {
-  let selected = value;
-  for (const segment of path) {
-    const next = Array.isArray(selected)
-      ? (typeof segment === 'number' ? selected[segment] : segment === 'last' ? selected.at(-1) : undefined)
-      : isWorkflowJsonObject(selected) && typeof segment === 'string'
-        ? selected[segment]
-        : undefined;
-    if (next === undefined) throw new WorkflowInputResolutionError(missingCode);
-    selected = next;
-  }
+  const selected = readWorkflowValuePathV1(value, path);
+  if (selected === undefined) throw new WorkflowInputResolutionError(missingCode);
   return selected;
 }
 

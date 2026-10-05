@@ -5,8 +5,8 @@ import { ExecutionRunResultContractV1Schema } from '../execution/runs/resultCont
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
 import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
 import {
-  SESSION_AUTHORING_FIELD_CATALOG,
-} from '../sessions/authoring/fieldCatalog.js';
+  SessionAuthoringSelectionFieldsV1,
+} from '../sessions/authoring/selectionFieldsV1.js';
 import { PortableRuntimeDescriptorV1Schema } from '../sessions/metadata/runtimeDescriptorV1.js';
 import { WorkflowStepComposerDocumentSchema } from './workflowComposerDocumentV1.js';
 import {
@@ -23,6 +23,9 @@ import { WorkflowWorkspaceSelectionSchema } from './workflowWorkspaceV1.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { WorkflowRoleV1Schema, type WorkflowRoleV1 } from '../prompts/roles/rolesV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.js';
+import type { InputFieldHint } from '../inputs/inputFields.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 export {
   WorkflowStepComposerDocumentSchema,
@@ -46,7 +49,11 @@ export const WorkflowInputDefinitionSchema = z.object({
   default: StrictJsonValueSchema.optional(),
   description: z.string().optional(),
   optionsSourceId: z.string().min(1).optional(),
+  inputType: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.inputType && (value.optionsSourceId || value.enum)) {
+    ctx.addIssue({ code: 'custom', path: ['inputType'], message: 'A typed input uses its declared options owner' });
+  }
   if (value.enum !== undefined && (value.valueType !== 'string'
     || (value.default !== undefined && (typeof value.default !== 'string' || !value.enum.includes(value.default))))) {
     ctx.addIssue({ code: 'custom', path: ['enum'], message: 'String choices require a string input and a matching default' });
@@ -60,6 +67,28 @@ export const WorkflowInputDefinitionSchema = z.object({
   }
 });
 export type WorkflowInputDefinition = z.infer<typeof WorkflowInputDefinitionSchema>;
+
+/** Presentation adapter only: Workflow admission, defaults and references stay Workflow-owned. */
+export function workflowInputToFieldHint(
+  definition: WorkflowInputDefinition,
+  presentation?: Readonly<{ title?: string; optionLabels?: Readonly<Record<string, string>> }>,
+): InputFieldHint {
+  const hasChoices = definition.enum !== undefined || definition.optionsSourceId !== undefined || definition.inputType !== undefined;
+  return {
+    path: definition.name,
+    title: presentation?.title ?? definition.name,
+    ...(definition.description === undefined ? {} : { description: definition.description }),
+    widget: hasChoices ? definition.valueType === 'json' && !definition.inputType ? 'multiselect' : 'select'
+      : definition.valueType === 'string' ? 'text' : definition.valueType,
+    required: definition.required,
+    ...(definition.inputType ? { inputType: definition.inputType } : {}),
+    ...(hasChoices ? { requireExplicitSelection: true } : {}),
+    ...(definition.enum === undefined ? {} : {
+      options: definition.enum.map((value) => ({ value, label: presentation?.optionLabels?.[value] ?? value })),
+    }),
+    ...(definition.optionsSourceId === undefined ? {} : { optionsSourceId: definition.optionsSourceId }),
+  };
+}
 
 export const WorkflowResultContractSchema = ExecutionRunResultContractV1Schema;
 export type WorkflowResultContract = z.infer<typeof WorkflowResultContractSchema>;
@@ -80,25 +109,25 @@ export type WorkflowResultContract = z.infer<typeof WorkflowResultContractSchema
  * definitions.
  */
 const WORKFLOW_SESSION_AUTHORING_SELECTION_SHAPE = {
-  agentTarget: SESSION_AUTHORING_FIELD_CATALOG.agentTarget.schema.optional(),
+  agentTarget: SessionAuthoringSelectionFieldsV1.agentTarget.optional(),
   // The catalog entry carries a `.default(null)` for draft hydration. A workflow
   // definition must distinguish omission from an explicit null, so this consumes
   // the underlying selection schema without that default.
   modelSelection: SessionModelSelectionV1Schema.nullable().optional(),
-  profileId: SESSION_AUTHORING_FIELD_CATALOG.profileId.schema.optional(),
-  permissionMode: SESSION_AUTHORING_FIELD_CATALOG.permissionMode.schema.optional(),
-  acpSessionModeId: SESSION_AUTHORING_FIELD_CATALOG.acpSessionModeId.schema.optional(),
-  sessionConfigOptionOverrides: SESSION_AUTHORING_FIELD_CATALOG.sessionConfigOptionOverrides.schema.optional(),
-  mcpSelection: SESSION_AUTHORING_FIELD_CATALOG.mcpSelection.schema.optional(),
+  profileId: SessionAuthoringSelectionFieldsV1.profileId.optional(),
+  permissionMode: SessionAuthoringSelectionFieldsV1.permissionMode.optional(),
+  acpSessionModeId: SessionAuthoringSelectionFieldsV1.acpSessionModeId.optional(),
+  sessionConfigOptionOverrides: SessionAuthoringSelectionFieldsV1.sessionConfigOptionOverrides.optional(),
+  mcpSelection: SessionAuthoringSelectionFieldsV1.mcpSelection.optional(),
   // Portable definitions normalize supported V1 persistence into the strict
   // current selection so native/profile/group/team-resource intent survives
   // without carrying unknown fields into exported JSON.
   connectedServices: ConnectedServiceBindingsV2IngressSchema.nullable().optional(),
-  transcriptStorage: SESSION_AUTHORING_FIELD_CATALOG.transcriptStorage.schema.optional(),
-  terminal: SESSION_AUTHORING_FIELD_CATALOG.terminal.schema.optional(),
-  windowsRemoteSessionLaunchMode: SESSION_AUTHORING_FIELD_CATALOG.windowsRemoteSessionLaunchMode.schema.optional(),
-  windowsRemoteSessionConsole: SESSION_AUTHORING_FIELD_CATALOG.windowsRemoteSessionConsole.schema.optional(),
-  windowsTerminalWindowName: SESSION_AUTHORING_FIELD_CATALOG.windowsTerminalWindowName.schema.optional(),
+  transcriptStorage: SessionAuthoringSelectionFieldsV1.transcriptStorage.optional(),
+  terminal: SessionAuthoringSelectionFieldsV1.terminal.optional(),
+  windowsRemoteSessionLaunchMode: SessionAuthoringSelectionFieldsV1.windowsRemoteSessionLaunchMode.optional(),
+  windowsRemoteSessionConsole: SessionAuthoringSelectionFieldsV1.windowsRemoteSessionConsole.optional(),
+  windowsTerminalWindowName: SessionAuthoringSelectionFieldsV1.windowsTerminalWindowName.optional(),
   runtimeDescriptorV1: PortableRuntimeDescriptorV1Schema.nullable().optional(),
 } as const;
 
@@ -493,7 +522,7 @@ export type WorkflowIngress = WorkflowIngressV1;
  * cannot be caller-forged.
  */
 export const WorkflowIngressContextV1Schema = z.object({
-  agentTarget: SESSION_AUTHORING_FIELD_CATALOG.agentTarget.schema.optional(),
+  agentTarget: SessionAuthoringSelectionFieldsV1.agentTarget.optional(),
   machineId: z.string().min(1).optional(),
   directory: z.string().min(1).optional(),
 }).strict();

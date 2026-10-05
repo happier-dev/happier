@@ -7,7 +7,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const exactTargetService = {
       serverId: 'default',
       name: 'Default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/home/alice/.config/systemd/user/happier-daemon.default.service',
       platform: 'linux' as const,
       mode: 'user' as const,
@@ -45,7 +45,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const exactTargetService = {
       serverId: 'default',
       name: 'Default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/home/alice/.config/systemd/user/happier-daemon.default.service',
       platform: 'linux' as const,
       mode: 'user' as const,
@@ -83,7 +83,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const existingService = {
       serverId: 'default',
       name: 'Default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/home/alice/.config/systemd/user/happier-daemon.default.service',
       platform: 'linux' as const,
       mode: 'user' as const,
@@ -114,7 +114,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const baseService = {
       serverId: 'default',
       name: 'Default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/service-definition',
       mode: 'user' as const,
       happierHomeDir: '/c/Work/.happier',
@@ -160,7 +160,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const previewService = {
       serverId: 'default',
       name: 'Preview default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/home/alice/.config/systemd/user/happier-daemon.preview.default.service',
       platform: 'linux' as const,
       mode: 'user' as const,
@@ -197,7 +197,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const staleDefaultService = {
       serverId: 'default',
       name: 'Default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/Users/alice/Library/LaunchAgents/com.happier.cli.daemon.default.plist',
       platform: 'darwin' as const,
       mode: 'user' as const,
@@ -230,7 +230,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const foreignService = {
       serverId: 'legacy-custom',
       name: 'Legacy custom background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/Users/alice/Library/LaunchAgents/com.happier.cli.daemon.legacy-custom.plist',
       platform: 'darwin' as const,
       mode: 'user' as const,
@@ -261,7 +261,7 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     const pinnedService = {
       serverId: 'company',
       name: 'Company',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: '/Users/alice/Library/LaunchAgents/com.happier.cli.daemon.company.plist',
       platform: 'darwin' as const,
       mode: 'user' as const,

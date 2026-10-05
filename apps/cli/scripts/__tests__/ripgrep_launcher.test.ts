@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type LauncherRun = SpawnSyncReturns<string>
 const require = createRequire(import.meta.url)
@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url)
 const fixtureRoots: string[] = []
 
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -37,6 +38,19 @@ function createPackagedLauncherFixture(): { launcherPath: string; toolsDir: stri
 }
 
 describe('ripgrep launcher behavior', () => {
+  it('reports missing native ripgrep distinctly instead of simulating an empty successful search', () => {
+    const launcher = require(join(__dirname, '../ripgrep_launcher.cjs')) as { main: (argv: string[]) => number }
+    // These are native filesystem/process lookup boundaries, not launcher domain logic.
+    vi.spyOn(require('fs') as typeof import('node:fs'), 'existsSync').mockReturnValue(false)
+    vi.spyOn(require('child_process') as typeof import('node:child_process'), 'execFileSync').mockImplementation(() => {
+      throw new Error('fixture: no system ripgrep')
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    expect(launcher.main([JSON.stringify(['needle'])])).toBe(127)
+    expect(launcher.main([JSON.stringify(['--version'])])).toBe(127)
+  })
   it('exits with an error when JSON argv is missing', () => {
     const result = runLauncher([])
 

@@ -129,9 +129,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
       // refused by the host, and the panel would report a contract break the user
       // cannot act on.
       expect(action, `${id} must be declared`).toBeDefined();
-      // `ui` only: the mounted detail body reaches them as present-user
-      // authority; the aggregate and other plugin code are refused.
-      expect(action?.surfaces).toEqual(['ui']);
+      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
       // Every detail plane carries a configured instance, so every one binds the

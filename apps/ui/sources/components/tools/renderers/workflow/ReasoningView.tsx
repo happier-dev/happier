@@ -3,6 +3,9 @@ import { View } from 'react-native';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { useToolFindState } from '../core/ToolFindText';
+import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
 
 function extractReasoningMarkdown(result: unknown): string | null {
     if (!result) return null;
@@ -21,14 +24,19 @@ function truncate(text: string, maxChars: number): string {
     return text.slice(0, Math.max(0, maxChars - 1)) + '…';
 }
 
-export const ReasoningView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const projectReasoningDisplayText: ToolDisplayTextProjector = (tool) =>
+    toolTextBlock('tool-reasoning', extractReasoningMarkdown(tool.result), 'markdown');
+
+export const ReasoningView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, findBodyBlockId }) => {
+    const find = useToolFindState(messageId);
+    const findActive = useTranscriptFindActive();
     const markdown = extractReasoningMarkdown(tool.result);
     if (!markdown) return null;
 
     return (
         <ToolSectionView fullWidth={detailLevel === 'full'}>
             <View style={{ width: '100%' }}>
-                <MarkdownView markdown={detailLevel === 'full' ? markdown : truncate(markdown, 900)} agentTexMath />
+                <MarkdownView markdown={find.active || detailLevel === 'full' ? markdown : truncate(markdown, 900)} findActive={findActive} findSourceRanges={find.ranges(findBodyBlockId ?? 'tool-reasoning')} agentTexMath />
             </View>
         </ToolSectionView>
     );

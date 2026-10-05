@@ -94,7 +94,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     const actionMenuChip = params.hasActionMenuPopoverSections ? createActionMenuTriggerChip({
         anchorRef: params.actionMenuAnchorRef,
         tint: params.tint,
-        showLabel: params.showChipLabels,
+        showLabel: params.showChipLabels && !params.actionBarIsCollapsed,
         chipStyle: params.chipStyle,
         textStyle: params.textStyle,
         onPress: params.onActionMenuPress,

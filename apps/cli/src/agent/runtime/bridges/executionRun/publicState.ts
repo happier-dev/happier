@@ -20,6 +20,7 @@ export function projectExecutionRunPublicState(run: ExecutionRunState, controlle
     ...(controller?.kind === 'backend' ? { turnInFlight: controller.turnInFlight } : {}),
     ...(controller?.kind === 'backend' && controller.backend.interaction ? { interaction: controller.backend.interaction } : {}),
     ...(run.voiceAgentConfig?.transcript ? { transcript: run.voiceAgentConfig.transcript } : {}),
+    ...(run.voiceAgentConfig?.voicePolicy ? { voicePolicy: run.voiceAgentConfig.voicePolicy } : {}),
     startedAtMs: run.startedAtMs, ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
     ...(run.finishedAtMs !== undefined ? { finishedAtMs: run.finishedAtMs } : {}), ...(run.error ? { error: run.error } : {}),
   });

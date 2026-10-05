@@ -71,6 +71,7 @@ import type {
 } from '../../connectedAccounts.js';
 import type { BackgroundServiceRunner } from '../../backgroundServices.js';
 import type { PluginCaptureSourceRuntime } from '../../captureSources.js';
+import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '../../entityDragDrop.js';
 import type { JsonValue } from '../../identity.js';
 import type { PromptAssetAdapter } from '../../resources.js';
 import type { PluginDynamicResourceRuntime } from '../../services/resources.js';
@@ -223,6 +224,8 @@ const REGISTRATION_FAMILY = Object.freeze({
     voiceProviders: 'voiceProviders',
     backgroundServices: 'backgroundServices',
     captureSources: 'captureSources',
+    dragSources: 'dragSources',
+    dropTargets: 'dropTargets',
     promptAssets: 'promptAssets',
     dynamicResources: 'resources',
     composerReferences: 'composerReferences',
@@ -2061,6 +2064,8 @@ export function createPluginRegistrationScope(
     const clientApi: PluginClientApi = Object.freeze({
         actions: clientActions,
         voiceProviders,
+        dragSources: Object.freeze({ register: (id: string, runtime: PluginDragSourceRuntime) => register(REGISTRATION_FAMILY.dragSources, id, runtime) }),
+        dropTargets: Object.freeze({ register: (id: string, runtime: PluginDropTargetRuntime) => register(REGISTRATION_FAMILY.dropTargets, id, runtime) }),
     });
     const api: PluginApi | PluginClientApi = params.target.realm === 'client'
         ? clientApi

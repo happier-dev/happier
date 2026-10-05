@@ -99,7 +99,8 @@ export type PluginUiResourceAccountLifetime = Readonly<{
 export type PluginUiResourceEntry = Readonly<{
   getSnapshot(): PluginUiResourceSnapshot;
   subscribe(listener: () => void, live: boolean): () => void;
-  refresh(): void;
+  /** Settles after this requested canonical reread, including failure or retirement. */
+  refresh(): Promise<PluginUiResourceSnapshot>;
 }>;
 
 export type PluginUiResourceStore = Readonly<{
@@ -129,6 +130,8 @@ type MutableEntry = {
    */
   readQueuedExpectedDigest: string | null;
   readController: AbortController | null;
+  refreshWaiters: Set<(snapshot: PluginUiResourceSnapshot) => void>;
+  queuedRefreshWaiters: Set<(snapshot: PluginUiResourceSnapshot) => void>;
   watchController: AbortController | null;
   watch: Disposable | null;
   watchEstablishing: boolean;
@@ -296,6 +299,16 @@ export function createPluginUiResourceStore(input: Readonly<{
     for (const listener of [...entry.listeners]) listener();
   }
 
+  function settleRefreshWaiters(entry: MutableEntry, queued = false, code?: string): void {
+    const waiters = queued ? entry.queuedRefreshWaiters : entry.refreshWaiters;
+    const snapshot = code ? Object.freeze({ ...entry.snapshot, pending: 'idle' as const,
+      freshness: entry.snapshot.value === undefined ? 'unknown' as const : 'stale' as const,
+      error: Object.freeze({ code, message: 'Resource operation was retired.' }),
+    }) : entry.snapshot;
+    for (const resolve of waiters) resolve(snapshot);
+    waiters.clear();
+  }
+
   function snapshotForPending(entry: MutableEntry, pending: 'initial' | 'refresh'): PluginUiResourceSnapshot {
     const previous = entry.snapshot;
     const hasValue = previous.value !== undefined;
@@ -364,6 +377,8 @@ export function createPluginUiResourceStore(input: Readonly<{
         subscription: 'ended',
       }));
     }
+    settleRefreshWaiters(entry, false, 'plugin_surface_retired');
+    settleRefreshWaiters(entry, true, 'plugin_surface_retired');
     entries.delete(entry.key);
   }
 
@@ -378,6 +393,8 @@ export function createPluginUiResourceStore(input: Readonly<{
     entry.readQueuedExpectedDigest = null;
     clearRereadRetry(entry);
     stopWatch(entry, true);
+    settleRefreshWaiters(entry, false, 'plugin_resource_aborted');
+    settleRefreshWaiters(entry, true, 'plugin_resource_aborted');
   }
 
   function requestRead(
@@ -462,6 +479,7 @@ export function createPluginUiResourceStore(input: Readonly<{
           subscription: previous.subscription,
         });
         clearRereadRetry(entry);
+        settleRefreshWaiters(entry);
       },
       (error) => {
         if (!isEntryCurrent(entry) || controller.signal.aborted) return;
@@ -475,6 +493,7 @@ export function createPluginUiResourceStore(input: Readonly<{
           error: readError(error),
           subscription: previous.subscription,
         });
+        settleRefreshWaiters(entry);
         if (!retryable) {
           // A terminal read failure cannot be made current by replaying a
           // queued invalidation. Drop that wakeup and its retry intent while
@@ -483,6 +502,7 @@ export function createPluginUiResourceStore(input: Readonly<{
           entry.readQueuedRetryOnFailure = false;
           entry.readQueuedRetainsFreshSnapshot = false;
           entry.readQueuedExpectedDigest = null;
+          settleRefreshWaiters(entry, true);
         }
         if (
           options?.retryOnFailure === true
@@ -517,6 +537,8 @@ export function createPluginUiResourceStore(input: Readonly<{
       ) {
         return;
       }
+      for (const resolve of entry.queuedRefreshWaiters) entry.refreshWaiters.add(resolve);
+      entry.queuedRefreshWaiters.clear();
       requestRead(
         entry,
         entry.snapshot.value === undefined ? 'initial' : 'refresh',
@@ -730,6 +752,8 @@ export function createPluginUiResourceStore(input: Readonly<{
       readQueuedRetainsFreshSnapshot: false,
       readQueuedExpectedDigest: null,
       readController: null,
+      refreshWaiters: new Set(),
+      queuedRefreshWaiters: new Set(),
       watchController: null,
       watch: null,
       watchEstablishing: false,
@@ -774,7 +798,10 @@ export function createPluginUiResourceStore(input: Readonly<{
               // snapshot owner starts this read; watch admission never becomes
               // a competing route to Resource bytes.
               requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
-            } else {
+            } else if (!entry!.reading) {
+              // A static subscriber may retain a read already requested by an
+              // Action. That current read supplies its baseline; joining it
+              // must not queue a second read or shorten the Action's lifetime.
               requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
             }
           } else if (live && hadNoLiveSubscribers) {
@@ -803,8 +830,16 @@ export function createPluginUiResourceStore(input: Readonly<{
             }
           };
         },
-        refresh(): void {
-          requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
+        refresh(): Promise<PluginUiResourceSnapshot> {
+          return new Promise(resolve => {
+            if (!isEntryCurrent(entry!)) {
+              resolve(Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended',
+                error: Object.freeze({ code: 'plugin_surface_retired', message: 'Resource surface is retired.' }) }));
+              return;
+            }
+            (entry!.reading ? entry!.queuedRefreshWaiters : entry!.refreshWaiters).add(resolve);
+            requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
+          });
         },
       });
     },

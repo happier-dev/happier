@@ -1,13 +1,9 @@
 import { z } from 'zod';
+import { VoiceDictationLanguageSchema } from '@happier-dev/protocol';
 
 import {
   VoiceLocalSttSchema,
 } from '@/sync/domains/settings/voiceLocalSttSettings';
-
-const VoiceDictationLanguageSchema = z.preprocess(
-  (value) => typeof value === 'string' ? value.trim() || null : value,
-  z.string().max(64).nullable(),
-);
 
 export const VoiceDictationSettingsSchema = z.object({
   sttBinding: z.enum(['explicit', 'same_as_local']).default('explicit'),

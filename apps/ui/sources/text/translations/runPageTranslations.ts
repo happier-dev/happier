@@ -57,7 +57,6 @@ type RunPageTranslations = Readonly<{
         reviewers: string;
         findingTotal: (params: Count) => string;
         moreFindings: (params: Count) => string;
-        openResult: string;
         fixesToImplement: (params: Count) => string;
         verifiedFirst: string;
         replies: (params: Count) => string;
@@ -167,7 +166,6 @@ export const runPageTranslations = {
             reviewers: 'Reviewers',
             findingTotal: ({ count }) => (count === 1 ? '1 finding' : `${count} findings`),
             moreFindings: ({ count }) => (count === 1 ? '1 more finding' : `${count} more findings`),
-            openResult: 'Open result',
             fixesToImplement: ({ count }) => (count === 1 ? '1 fix to implement' : `${count} fixes to implement`),
             verifiedFirst: 'Each is verified first, then fixed',
             replies: ({ count }) => (count === 1 ? '1 reply' : `${count} replies`),
@@ -279,7 +277,6 @@ export const runPageTranslations = {
             reviewers: 'Revisors',
             findingTotal: ({ count }) => (count === 1 ? '1 troballa' : `${count} troballes`),
             moreFindings: ({ count }) => (count === 1 ? '1 troballa més' : `${count} troballes més`),
-            openResult: 'Obre el resultat',
             fixesToImplement: ({ count }) => (count === 1 ? '1 correcció per aplicar' : `${count} correccions per aplicar`),
             verifiedFirst: 'Cadascuna es verifica primer i després es corregeix',
             replies: ({ count }) => (count === 1 ? '1 resposta' : `${count} respostes`),
@@ -391,7 +388,6 @@ export const runPageTranslations = {
             reviewers: 'Prüfer',
             findingTotal: ({ count }) => (count === 1 ? '1 Befund' : `${count} Befunde`),
             moreFindings: ({ count }) => (count === 1 ? '1 weiterer Befund' : `${count} weitere Befunde`),
-            openResult: 'Ergebnis öffnen',
             fixesToImplement: ({ count }) => (count === 1 ? '1 Korrektur umzusetzen' : `${count} Korrekturen umzusetzen`),
             verifiedFirst: 'Jede wird erst geprüft, dann behoben',
             replies: ({ count }) => (count === 1 ? '1 Antwort' : `${count} Antworten`),
@@ -503,7 +499,6 @@ export const runPageTranslations = {
             reviewers: 'Revisores',
             findingTotal: ({ count }) => (count === 1 ? '1 hallazgo' : `${count} hallazgos`),
             moreFindings: ({ count }) => (count === 1 ? '1 hallazgo más' : `${count} hallazgos más`),
-            openResult: 'Abrir resultado',
             fixesToImplement: ({ count }) => (count === 1 ? '1 corrección por aplicar' : `${count} correcciones por aplicar`),
             verifiedFirst: 'Cada una se verifica primero y luego se corrige',
             replies: ({ count }) => (count === 1 ? '1 respuesta' : `${count} respuestas`),
@@ -615,7 +610,6 @@ export const runPageTranslations = {
             reviewers: 'Relecteurs',
             findingTotal: ({ count }) => (count === 1 ? '1 constat' : `${count} constats`),
             moreFindings: ({ count }) => (count === 1 ? '1 constat de plus' : `${count} constats de plus`),
-            openResult: 'Ouvrir le résultat',
             fixesToImplement: ({ count }) => (count === 1 ? '1 correctif à appliquer' : `${count} correctifs à appliquer`),
             verifiedFirst: 'Chacun est vérifié d’abord, puis corrigé',
             replies: ({ count }) => (count === 1 ? '1 réponse' : `${count} réponses`),
@@ -727,7 +721,6 @@ export const runPageTranslations = {
             reviewers: 'Revisori',
             findingTotal: ({ count }) => (count === 1 ? '1 rilievo' : `${count} rilievi`),
             moreFindings: ({ count }) => (count === 1 ? '1 altro rilievo' : `${count} altri rilievi`),
-            openResult: 'Apri il risultato',
             fixesToImplement: ({ count }) => (count === 1 ? '1 correzione da applicare' : `${count} correzioni da applicare`),
             verifiedFirst: 'Ognuna viene prima verificata, poi corretta',
             replies: ({ count }) => (count === 1 ? '1 risposta' : `${count} risposte`),
@@ -839,7 +832,6 @@ export const runPageTranslations = {
             reviewers: 'レビュアー',
             findingTotal: ({ count }) => (count === 1 ? '1件の指摘' : `${count}件の指摘`),
             moreFindings: ({ count }) => (count === 1 ? 'ほか1件の指摘' : `${count}件のその他の指摘`),
-            openResult: '結果を開く',
             fixesToImplement: ({ count }) => (count === 1 ? '1件の修正を実施' : `${count}件の修正を実施`),
             verifiedFirst: 'それぞれ確認してから修正します',
             replies: ({ count }) => (count === 1 ? '1件の返信' : `${count}件の返信`),
@@ -951,7 +943,6 @@ export const runPageTranslations = {
             reviewers: 'Recenzenci',
             findingTotal: ({ count }) => (count === 1 ? '1 uwaga' : `${count} uwag`),
             moreFindings: ({ count }) => (count === 1 ? '1 uwaga więcej' : `${count} uwag więcej`),
-            openResult: 'Otwórz wynik',
             fixesToImplement: ({ count }) => (count === 1 ? '1 poprawka do wdrożenia' : `${count} poprawek do wdrożenia`),
             verifiedFirst: 'Każda jest najpierw sprawdzana, potem poprawiana',
             replies: ({ count }) => (count === 1 ? '1 odpowiedź' : `${count} odpowiedzi`),
@@ -1063,7 +1054,6 @@ export const runPageTranslations = {
             reviewers: 'Revisores',
             findingTotal: ({ count }) => (count === 1 ? '1 apontamento' : `${count} apontamentos`),
             moreFindings: ({ count }) => (count === 1 ? 'mais 1 apontamento' : `${count} apontamentos a mais`),
-            openResult: 'Abrir resultado',
             fixesToImplement: ({ count }) => (count === 1 ? '1 correção a implementar' : `${count} correções a implementar`),
             verifiedFirst: 'Cada uma é verificada primeiro e depois corrigida',
             replies: ({ count }) => (count === 1 ? '1 resposta' : `${count} respostas`),
@@ -1175,7 +1165,6 @@ export const runPageTranslations = {
             reviewers: 'Ревьюеры',
             findingTotal: ({ count }) => (count === 1 ? '1 замечание' : `${count} замечаний`),
             moreFindings: ({ count }) => (count === 1 ? 'ещё 1 замечание' : `${count} замечаний ещё`),
-            openResult: 'Открыть результат',
             fixesToImplement: ({ count }) => (count === 1 ? '1 исправление к внедрению' : `${count} исправлений к внедрению`),
             verifiedFirst: 'Каждое сначала проверяется, затем исправляется',
             replies: ({ count }) => (count === 1 ? '1 ответ' : `${count} ответов`),
@@ -1287,7 +1276,6 @@ export const runPageTranslations = {
             reviewers: '审查者',
             findingTotal: ({ count }) => (count === 1 ? '1 条发现' : `${count}条发现`),
             moreFindings: ({ count }) => (count === 1 ? '还有 1 条发现' : `${count}条更多发现`),
-            openResult: '打开结果',
             fixesToImplement: ({ count }) => (count === 1 ? '1 项待实施的修复' : `${count}项待实施的修复`),
             verifiedFirst: '每项都先验证，再修复',
             replies: ({ count }) => (count === 1 ? '1 条回复' : `${count}条回复`),
@@ -1399,7 +1387,6 @@ export const runPageTranslations = {
             reviewers: '審查者',
             findingTotal: ({ count }) => (count === 1 ? '1 條發現' : `${count}條發現`),
             moreFindings: ({ count }) => (count === 1 ? '還有 1 條發現' : `${count}條更多發現`),
-            openResult: '開啟結果',
             fixesToImplement: ({ count }) => (count === 1 ? '1 項待實作的修正' : `${count}項待實作的修正`),
             verifiedFirst: '每項都先驗證，再修正',
             replies: ({ count }) => (count === 1 ? '1 則回覆' : `${count}則回覆`),

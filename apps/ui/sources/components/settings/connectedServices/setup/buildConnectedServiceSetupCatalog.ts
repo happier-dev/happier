@@ -1,5 +1,6 @@
 import type { ConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
 import type { ConnectedServiceSetupCatalogEntry } from './ConnectedServiceSetupPanel';
+import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 /**
  * The setup catalog from the Connected services index: every service an online machine publishes,
@@ -35,5 +36,8 @@ export function buildConnectedServiceSetupCatalog(
             canAdd: true,
         })),
     ];
-    return entries.sort((left, right) => left.label.localeCompare(right.label));
+    return entries.sort((left, right) =>
+        (getConnectedServiceSetupPresentation(left.service)?.order ?? Infinity)
+        - (getConnectedServiceSetupPresentation(right.service)?.order ?? Infinity)
+        || left.label.localeCompare(right.label));
 }

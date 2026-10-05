@@ -20,7 +20,10 @@ describe('resolveWorkStatusTone', () => {
         } } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Settled' });
         expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Stalled', update: {
             ...base, workerKind: 'session', workerId: 'worker', ownerState: 'stalled', wake: 'stalled',
-        } } })).toEqual({ bucket: 'offline', tone: 'attention', word: 'Stalled' });
+        } } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Stalled' });
+        expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Stalled', update: {
+            ...base, workerKind: 'session', workerId: 'worker', ownerState: 'stalled', wake: 'finished',
+        } } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Stalled' });
         expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Failed', update: {
             ...base, workerKind: 'workflow_run', workerId: 'workflow', ownerState: 'failed', wake: 'finished',
         } } })).toEqual({ bucket: 'finished', tone: 'danger', word: 'Failed' });
@@ -64,7 +67,10 @@ describe('resolveWorkStatusTone', () => {
     it('distinguishes offline nonterminal work, terminal steps, and manual pause or interruption', () => {
         expect(resolveWorkStatusTone({ kind: 'workflow_step', facts: {
             lifecycle: 'running', machineReachable: false, word: 'Running',
-        } })).toEqual({ bucket: 'offline', tone: 'attention', word: 'Running' });
+        } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Running' });
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
+            state: 'running', machineReachable: false, word: 'Running',
+        } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Running' });
         expect(resolveWorkStatusTone({ kind: 'workflow_step', facts: {
             lifecycle: 'completed', machineReachable: false, word: 'Completed',
         } }).bucket).toBe('finished');
@@ -89,7 +95,8 @@ describe('resolveWorkStatusTone', () => {
     });
 
     it('orders machine presence before attention before running session counts', () => {
-        expect(resolveWorkStatusTone({ kind: 'machine', facts: { online: false, needsYouCount: 1, runningSessionCount: 2, word: 'Offline' } }).bucket).toBe('offline');
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { online: false, needsYouCount: 1, runningSessionCount: 2, word: 'Offline' } }))
+            .toEqual({ bucket: 'offline', tone: 'neutral', word: 'Offline' });
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { online: true, needsYouCount: 1, runningSessionCount: 2, word: 'Needs you' } }))
             .toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Needs you' });
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { online: true, needsYouCount: 0, runningSessionCount: 2, word: 'Working' } }).bucket).toBe('working');
@@ -125,6 +132,15 @@ describe('resolveWorkStatusTone', () => {
         } })).toEqual({ bucket: 'needs_you', tone: 'danger', word: 'Failed' });
     });
 
+    it('keeps an offline session quiet unless its owner reports actionable work', () => {
+        expect(resolveWorkStatusTone({ kind: 'session', facts: {
+            awareness: { runtime: 'offline', operational: { primary: 'none', reasons: ['runtime_offline'] } }, word: 'Offline',
+        } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Offline' });
+        expect(resolveWorkStatusTone({ kind: 'session', facts: {
+            awareness: { runtime: 'offline', operational: { primary: 'permission_required', reasons: ['permission_required', 'runtime_offline'] } }, word: 'Needs your permission',
+        } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Needs your permission' });
+    });
+
     it('reads agent activity (runs, sub-agents, teammates) from its own vocabulary: waiting asks for you, only failure is danger', () => {
         const tone = (status: AgentActivityStatusV1) =>
             resolveWorkStatusTone({ kind: 'agent_activity', facts: { status, word: status } });
@@ -141,4 +157,3 @@ describe('resolveWorkStatusTone', () => {
         expect(tone('unknown')).toEqual({ bucket: 'idle', tone: 'neutral', word: 'unknown' });
     });
 });
-

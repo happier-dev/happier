@@ -20,6 +20,17 @@ const routerMocks = vi.hoisted(() => ({
     replace: vi.fn(),
     back: vi.fn(),
 }));
+const modalSpies = vi.hoisted(() => ({ show: vi.fn(() => 'personalize-modal') }));
+const personalizeChunkState = vi.hoisted(() => ({ loads: 0 }));
+// Observe chunk loading; the flow's internal implementation remains real.
+vi.mock('@/components/onboarding/personalize/PersonalizeFlowView', async (importOriginal) => {
+    personalizeChunkState.loads += 1;
+    return importOriginal<typeof import('@/components/onboarding/personalize/PersonalizeFlowView')>();
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: modalSpies }).module;
+});
 
 const loginMock = vi.hoisted(() =>
     vi.fn(async () => ({ kind: 'completed' as const })),
@@ -354,6 +365,8 @@ describe('PreAuthOnboardingWizardEntry', () => {
         routerMocks.push.mockReset();
         routerMocks.replace.mockReset();
         routerMocks.back.mockReset();
+        modalSpies.show.mockClear();
+        personalizeChunkState.loads = 0;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
         desktopWindowBridgeState.getDesktopWindowState.mockReset();
         desktopWindowBridgeState.listenDesktopWindowState.mockReset();
@@ -394,6 +407,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         ]);
         expect(journeyHostState.moduleLoads).toBe(0);
         expect(journeyHostState.renderCount).toBe(0);
+        expect(personalizeChunkState.loads).toBe(0);
         expect(screen.findByType('OnboardingWizardSurfacePresentation' as never)).toBeTruthy();
     });
 
@@ -508,6 +522,62 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(screen.findByType('OnboardingWizardSurfacePresentation' as never)).toBeTruthy();
         expect(screen.findAllByType('OnboardingJourneyHost' as never)).toHaveLength(0);
         expect(journeyHostState.renderCount).toBe(0);
+    });
+
+    it.each([390, 1280])('hands the consumed authenticated Done exit to the Personalize owner at width %s', async (width) => {
+        reactNativeState.windowWidth = width;
+        vi.stubGlobal('navigator', width === 390
+            ? { userAgent: 'iPhone', maxTouchPoints: 1 }
+            : { userAgent: 'X11', maxTouchPoints: 0 });
+        onboardingTourFeatureState.state = 'enabled';
+        authState.isAuthenticated = true;
+        journeySessionState.active = true;
+        localSettingsState.hasCompletedAuthOnce = true;
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+        const exit = journeyHostState.lastProps?.onExit;
+        expect(exit).toBeTypeOf('function');
+        await act(async () => { (exit as (completion?: { completedBeatId: 'S5' }) => void)({ completedBeatId: 'S5' }); });
+        if (width === 390) {
+            expect(modalSpies.show).toHaveBeenCalledWith(expect.objectContaining({
+                chrome: expect.objectContaining({ testID: 'personalize-sheet.modal', phonePresentation: 'sheet' }),
+            }));
+            expect(routerMocks.push).not.toHaveBeenCalled();
+        } else {
+            expect(routerMocks.push).toHaveBeenCalledWith('/personalize');
+            expect(modalSpies.show).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each([true, false])('does not personalize a setup dismissal or an unauthenticated completion (authenticated=%s)', async (isAuthenticated) => {
+        onboardingTourFeatureState.state = 'enabled';
+        authState.isAuthenticated = isAuthenticated;
+        journeySessionState.active = true;
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+        const exit = journeyHostState.lastProps?.onExit;
+        expect(exit).toBeTypeOf('function');
+        await act(async () => { (exit as (completion?: { completedBeatId: 'S5' }) => void)(isAuthenticated ? undefined : { completedBeatId: 'S5' }); });
+        expect(modalSpies.show).not.toHaveBeenCalled();
+        expect(routerMocks.push).not.toHaveBeenCalled();
+    });
+
+    it('retires the consumed replay URL before opening the phone Personalize sheet', async () => {
+        onboardingTourFeatureState.state = 'enabled';
+        authState.isAuthenticated = true;
+        localSettingsState.hasCompletedAuthOnce = true;
+        vi.stubGlobal('navigator', { userAgent: 'iPhone', maxTouchPoints: 1 });
+        vi.stubGlobal('window', {
+            location: { href: 'https://app.example.test/?happier_journey_beat=A13', search: '?happier_journey_beat=A13' },
+        });
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+        const exit = journeyHostState.lastProps?.onExit;
+        expect(exit).toBeTypeOf('function');
+        await act(async () => { (exit as (completion: { completedBeatId: 'S5' }) => void)({ completedBeatId: 'S5' }); });
+        expect(routerMocks.replace).toHaveBeenCalledWith('/');
+        expect(modalSpies.show).toHaveBeenCalledOnce();
+        expect(routerMocks.replace.mock.invocationCallOrder[0]).toBeLessThan(modalSpies.show.mock.invocationCallOrder[0]);
     });
 
     it('keeps rendering the journey for a returning user while a journey session is active', async () => {

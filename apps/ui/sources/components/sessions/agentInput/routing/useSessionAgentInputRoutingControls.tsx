@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import type { ParticipantRecipientV1, PendingRequestedActionV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1, PendingRequestedActionV1, ScmDiffSummaryDiscussInput } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createRecipientActionChip } from '@/components/sessions/agentInput/definitions/createRecipientActionChip';
@@ -17,6 +18,7 @@ type SessionRecipientStateLike = Readonly<{
     setManualRecipient: (next: ParticipantRecipientV1 | null) => void;
     executionRunRequestedAction: PendingRequestedActionV1;
     setExecutionRunRequestedAction: (next: PendingRequestedActionV1) => void;
+    scmDiffSummaryDiscussion?: Omit<ScmDiffSummaryDiscussInput, 'message'> | null;
 }>;
 
 export type SessionAgentInputRoutingControls = Readonly<{
@@ -35,12 +37,14 @@ export function useSessionAgentInputRoutingControls(params: Readonly<{
             participantTargets: params.participantTargets,
             recipient: params.recipientState.recipient,
             onRecipientChange: params.recipientState.setManualRecipient,
+            ...(params.recipientState.scmDiffSummaryDiscussion ? { pendingLabel: t('walkthrough.eyebrow') } : {}),
         });
     }, [
         params.isReadOnly,
         params.participantTargets,
         params.recipientState.recipient,
         params.recipientState.setManualRecipient,
+        params.recipientState.scmDiffSummaryDiscussion,
     ]);
 
     const participantRoutingDescriptor = React.useMemo(() => {

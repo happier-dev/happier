@@ -1,4 +1,5 @@
 import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
+import { localNotificationForegroundStorageBinding, localNotificationStorageBinding } from '@/components/settings/notifications/localNotificationPreferences';
 
 /** The searchable settings of the `notifications` page. Rows render their labels from these declarations. */
 export const NOTIFICATIONS_SETTINGS = defineSettingsPage({
@@ -69,12 +70,12 @@ export const NOTIFICATIONS_SETTINGS = defineSettingsPage({
         local: {
             titleKey: 'settingsNotifications.local.title',
             settings: {
-                localEnabled: { titleKey: 'common.enabled', descriptionKey: 'settingsNotifications.local.enabledSubtitle' },
-                ready: { titleKey: 'settingsNotifications.local.readyTitle', descriptionKey: 'settingsNotifications.local.readySubtitle' },
-                readyPreview: { titleKey: 'settingsNotifications.local.readyPreviewTitle', descriptionKey: 'settingsNotifications.local.readyPreviewSubtitle' },
-                requestPreview: { titleKey: 'settingsNotifications.local.requestPreviewTitle', descriptionKey: 'settingsNotifications.local.requestPreviewSubtitle' },
-                localPermissionRequests: { titleKey: 'settingsNotifications.local.permissionRequestsTitle', descriptionKey: 'settingsNotifications.local.permissionRequestsSubtitle' },
-                localUserActions: { titleKey: 'settingsNotifications.local.userActionsTitle', descriptionKey: 'settingsNotifications.local.userActionsSubtitle' },
+                localEnabled: { titleKey: 'common.enabled', descriptionKey: 'settingsNotifications.local.enabledSubtitle', storage: localNotificationStorageBinding('enabled') },
+                ready: { titleKey: 'settingsNotifications.local.readyTitle', descriptionKey: 'settingsNotifications.local.readySubtitle', storage: localNotificationStorageBinding('ready') },
+                readyPreview: { titleKey: 'settingsNotifications.local.readyPreviewTitle', descriptionKey: 'settingsNotifications.local.readyPreviewSubtitle', storage: localNotificationStorageBinding('readyPreview') },
+                requestPreview: { titleKey: 'settingsNotifications.local.requestPreviewTitle', descriptionKey: 'settingsNotifications.local.requestPreviewSubtitle', storage: localNotificationStorageBinding('requestPreview') },
+                localPermissionRequests: { titleKey: 'settingsNotifications.local.permissionRequestsTitle', descriptionKey: 'settingsNotifications.local.permissionRequestsSubtitle', storage: localNotificationStorageBinding('permissionRequests') },
+                localUserActions: { titleKey: 'settingsNotifications.local.userActionsTitle', descriptionKey: 'settingsNotifications.local.userActionsSubtitle', storage: localNotificationStorageBinding('userActions') },
             },
         },
         push: {
@@ -106,7 +107,7 @@ export const NOTIFICATIONS_SETTINGS = defineSettingsPage({
         foreground: {
             titleKey: 'settingsNotifications.foregroundBehavior.title',
             settings: {
-                foregroundBehavior: { titleKey: 'settingsNotifications.foregroundBehavior.rowTitle', keywordKeys: ['settingsNotifications.foregroundBehavior.silent'] },
+                foregroundBehavior: { titleKey: 'settingsNotifications.foregroundBehavior.rowTitle', keywordKeys: ['settingsNotifications.foregroundBehavior.silent'], storage: localNotificationForegroundStorageBinding },
             },
         },
         webhooks: {

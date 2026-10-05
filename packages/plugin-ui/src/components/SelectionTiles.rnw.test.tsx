@@ -5,6 +5,7 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { SelectionTiles, Text, type SelectionTilesOption } from './index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
+import { HappierSelectionTiles } from '../presentation/form/SelectionTiles.js';
 
 function mountTiles(element: React.ReactElement, context = createSurfaceContext()) {
   return mountThroughReactNativeWeb(
@@ -55,6 +56,42 @@ async function pressKey(target: HTMLElement, key: string): Promise<void> {
 }
 
 describe('SelectionTiles', () => {
+  it('presents author-supplied bare marks, badges and current option footers without losing choice semantics', async () => {
+    const onChange = vi.fn();
+    const mount = mountTiles(<SelectionTiles
+      accessibilityLabel="Speech service" value="one" onChange={onChange}
+      options={[{ id: 'one', title: 'One', mark: <Text>Identity</Text>, badge: 'Preview' },
+        { id: 'two', title: 'Two' }]}
+      density="compact" minimumColumns={2} maximumColumns={2} minimumTileWidth={170} subtitleLines={0}
+      renderOptionFooter={({ option, selected }) => <Text>{`${option.id}:${selected ? 'selected' : 'available'}`}</Text>}
+    />);
+    expect(mount.container.textContent).toContain('Identity');
+    expect(mount.container.textContent).toContain('Preview');
+    expect(mount.container.textContent).toContain('one:selected');
+    expect(mount.container.textContent).toContain('two:available');
+    await act(async () => { radios(mount.container)[1]?.click(); });
+    expect(onChange).toHaveBeenLastCalledWith('two');
+    mount.unmount();
+  });
+  it('wraps a four-option visual picker into the requested two columns without changing selection order', async () => {
+    const onChange = vi.fn();
+    const mount = mountThroughReactNativeWeb(<HappierSelectionTiles
+      variant="visual" tileSizing="fill" maximumColumns={2}
+      accessibilityLabel="Starting style" options={DENSITY_OPTIONS} value="compact" onChange={onChange}
+      colors={{ tileBackground: 'white', tileBorder: 'gray', selection: 'black', glyph: 'black', ring: 'black',
+        previewBackground: 'white', actionBackground: 'white', actionBorderHovered: 'black' }}
+      renderText={({ text }) => <span>{text}</span>}
+      renderGlyph={() => null}
+    />);
+    // RNW exposes the wrapping basis in the real DOM. Three bases plus two gaps cannot fit
+    // a row, so the four previews wrap into two equal pairs instead of being squeezed together.
+    const basis = getComputedStyle(radios(mount.container)[0]!).flexBasis;
+    expect(basis.endsWith('%')).toBe(true);
+    expect(Number.parseFloat(basis) * 3).toBeGreaterThanOrEqual(100);
+    await pressKey(radios(mount.container)[1]!, 'ArrowDown');
+    expect(onChange).toHaveBeenLastCalledWith('cozy');
+    mount.unmount();
+  });
   it('is one named radio group whose tiles say which option is chosen, and a press chooses', async () => {
     const onChange = vi.fn();
     const mount = mountTiles(<ControlledSingle onChange={onChange} />);

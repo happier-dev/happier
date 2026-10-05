@@ -635,8 +635,7 @@ mod tests {
     use std::io::Read;
     use std::io::{BufRead, BufReader};
     use std::path::PathBuf;
-    use std::sync::mpsc;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use std::thread;
     use std::time::Duration;
     use std::time::Instant;
@@ -648,7 +647,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn spawned_hsetup_receives_spec_over_stdin_without_putting_it_in_argv() {
-        let _env_guard = env_lock().lock().expect("env lock should not be poisoned");
+        let _env_guard = env_lock();
         let temp_dir = create_temp_dir("system-task-stdin");
         let script_path = temp_dir.join("inspect-hsetup.sh");
         fs::write(
@@ -685,7 +684,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn request_child_cancel_does_not_depend_on_shell_path_resolution() {
-        let _env_guard = env_lock().lock().expect("env lock should not be poisoned");
+        let _env_guard = env_lock();
         let temp_dir = create_temp_dir("system-task-cancel");
         let script_path = temp_dir.join("trap-term.sh");
         fs::write(&script_path, "#!/bin/sh\nwhile :; do :; done\n").expect("script should write");
@@ -714,9 +713,24 @@ mod tests {
         let _ = fs::remove_dir_all(temp_dir);
     }
 
-    fn env_lock() -> &'static Mutex<()> {
+    fn env_lock() -> MutexGuard<'static, ()> {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        ENV_LOCK.get_or_init(|| Mutex::new(()))
+        // This mutex only serializes environment access; a failed test cannot corrupt ().
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn env_serialization_survives_a_panicking_test() {
+        let failure = std::panic::catch_unwind(|| {
+            let _env_guard = env_lock();
+            panic!("simulate a failed assertion while holding the environment lock");
+        });
+        assert!(failure.is_err());
+
+        let _env_guard = env_lock();
     }
 
     fn create_temp_dir(prefix: &str) -> PathBuf {
@@ -732,7 +746,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn prompt_answers_can_be_sent_to_running_hsetup_tasks_over_stdin() {
-        let _env_guard = env_lock().lock().expect("env lock should not be poisoned");
+        let _env_guard = env_lock();
         let temp_dir = create_temp_dir("system-task-prompt-answer");
         let script_path = temp_dir.join("prompt.sh");
         fs::write(
@@ -750,13 +764,7 @@ mod tests {
             spawn_hsetup_child(&script_path, spec_json).expect("child should start successfully");
 
         let stdout = child.stdout.take().expect("stdout should be piped");
-        let reader = BufReader::new(stdout);
-        let (tx, rx) = mpsc::channel::<String>();
-        thread::spawn(move || {
-            for line in reader.lines().flatten() {
-                let _ = tx.send(line);
-            }
-        });
+        let mut lines = BufReader::new(stdout).lines();
 
         let child = std::sync::Arc::new(std::sync::Mutex::new(child));
         let state = SystemTasksState::default();
@@ -764,20 +772,31 @@ mod tests {
             .insert_running_task("task_1", child.clone())
             .expect("task should insert");
 
-        let first_line = rx
-            .recv_timeout(Duration::from_secs(1))
+        // Wait for protocol output, not a wall-clock assumption about child scheduling.
+        let first_line = lines
+            .next()
+            .expect("stdout should remain open until the prompt")
             .expect("should receive prompt event");
         assert!(first_line.contains("\"type\":\"prompt\""));
+        assert!(
+            child
+                .lock()
+                .expect("child mutex should not be poisoned")
+                .try_wait()
+                .expect("child state should be readable")
+                .is_none(),
+            "child should still be waiting for the answer"
+        );
 
         send_prompt_answer_to_task(&state, "task_1", r#"{"trusted":true}"#)
             .expect("answer should be sent");
 
-        let start = Instant::now();
-        let second_line = rx
-            .recv_timeout(Duration::from_secs(1))
+        let second_line = lines
+            .next()
+            .expect("stdout should remain open until the result")
             .expect("should receive completion result after answering");
-        assert!(start.elapsed() < Duration::from_secs(1));
         assert!(second_line.contains("\"ok\":true"));
+        assert!(second_line.contains("\"received\":true"));
 
         let status = child
             .lock()
@@ -917,7 +936,7 @@ mod tests {
 
     #[test]
     fn normalize_system_task_log_path_accepts_paths_inside_happier_root() {
-        let _env_guard = env_lock().lock().expect("env lock should not be poisoned");
+        let _env_guard = env_lock();
         let temp_dir = create_temp_dir("system-task-log-path");
         let home_dir = temp_dir.join("home");
         let allowed_root = home_dir.join(".happier");
@@ -946,7 +965,7 @@ mod tests {
 
     #[test]
     fn normalize_system_task_log_path_rejects_paths_outside_happier_root() {
-        let _env_guard = env_lock().lock().expect("env lock should not be poisoned");
+        let _env_guard = env_lock();
         let temp_dir = create_temp_dir("system-task-log-path-outside");
         let home_dir = temp_dir.join("home");
         let allowed_root = home_dir.join(".happier");

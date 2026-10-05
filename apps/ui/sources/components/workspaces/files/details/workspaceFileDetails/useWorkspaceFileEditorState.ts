@@ -12,6 +12,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { workspaceFileEditorDraftCache } from './workspaceFileEditorDraftCache';
 import type { FileDisplayMode } from '@/components/workspaces/files/file/FileActionToolbar';
+import { showWorkspaceFileEditorComparison } from './WorkspaceFileEditorComparison';
 
 function isGuardedWriteConflictError(error: string | undefined): boolean {
     if (!error) return false;
@@ -38,6 +39,7 @@ export type WorkspaceFileEditorState = Readonly<{
     startEditingFile: () => void;
     cancelEditingFile: () => void;
     saveFileEdits: () => void;
+    compareFileEdits: () => void;
 }>;
 
 export function useWorkspaceFileEditorState(input: Readonly<{
@@ -451,6 +453,15 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     saveEditsRef.current = saveEdits;
 
     const saveFileEdits = React.useCallback(() => saveEdits(false), [saveEdits]);
+    const compareFileEdits = React.useCallback(() => {
+        const latestInput = latestInputRef.current;
+        if (!isEditingFileRef.current || typeof latestInput.fileText !== 'string') return;
+        showWorkspaceFileEditorComparison({
+            oldText: latestInput.fileText,
+            newText: editorHandleRef.current?.getValue?.() ?? editorTextRef.current,
+            filePath: latestInput.filePath,
+        });
+    }, []);
 
     React.useEffect(() => {
         if (input.filesEditorAutoSave && editorDirty && isEditingFile && !fileChangedExternally) {
@@ -482,5 +493,6 @@ export function useWorkspaceFileEditorState(input: Readonly<{
         startEditingFile,
         cancelEditingFile,
         saveFileEdits,
+        compareFileEdits,
     };
 }

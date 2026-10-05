@@ -5,8 +5,13 @@ import { dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { SessionMetadataTuplePatchV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 
 const inventory = vi.hoisted(() => ({ socketPath: '', inheritedSpawns: 0, startedServers: [] as string[] }));
+const sessionTransport = vi.hoisted(() => ({ io: vi.fn() }));
+vi.mock('socket.io-client', async original => ({ ...await original<typeof import('socket.io-client')>(), io: sessionTransport.io }));
+vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => null }));
 // Only executable inventory and child spawning are substituted; sockets, adapters,
 // current-pane verification, and attachment persistence use their real owners.
 vi.mock('node:child_process', async (importOriginal) => {
@@ -79,6 +84,13 @@ import { resolveInheritedHerdrRuntime } from '@/terminal/runtime/inheritedHerdrR
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
 import { buildTerminalMetadataFromHostHandle } from '@/terminal/runtime/terminalMetadata';
 import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
+import { withSessionRunnerOwnership } from '@/daemon/sessionRunnerLock';
+import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
+import { configuration } from '@/configuration';
+import { ApiSessionClient } from '@/api/session/sessionClient';
+import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
+import { createApiSessionSocketStub, bindApiSessionSocketPairMock } from '@/testkit/backends/apiSessionSocketHarness';
+import { createPlainSessionFixture, createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { createSessionHooksService } from '@/plugins/runtime/hooks/session/service';
 import { createEventsFixture, createPluginContextFixture } from '../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import { createClaudeUnifiedTerminalTurnOperations } from '../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations';
@@ -91,6 +103,116 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createDefaultPluginTerminalHostService, createDefaultPreparedTerminalHostOwner, createPluginTerminalHostService } from './terminalHost';
 
 describe('plugin terminal-host creation rollback', () => {
+    it.each(['current', 'predecessor', 'ordinary', 'borrowed', 'mismatched', 'unreadable', 'absent', 'retired', 'snapshot-unavailable', 'plain-current', 'plain-predecessor', 'missing-current', 'missing-predecessor', 'fresh'] as const)('preserves the exact retained provider through real headless initialization and adoption (%s)', async (format) => {
+        await withTempDir('retained-startup-', async happyHomeDir => await withHerdrApi(async api => {
+            inventory.socketPath = api.socketPath;
+            const previousHome = configuration.happyHomeDir;
+            Object.assign(configuration, { happyHomeDir });
+            const sessionId = `retained-startup-${format}`;
+            api.panes.add('original-provider');
+            const attachment = await writeTerminalHostAttachmentInfo({ happyHomeDir, sessionId, lifecycle: format === 'borrowed' ? 'borrowed' : 'owned',
+                handle: { kind: 'herdr', sessionName: 'work', socketPath: api.socketPath, terminalId: 'original-provider', paneId: 'original-provider',
+                    attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' } } });
+            const terminal = buildTerminalMetadataFromHostHandle(attachment.handle)!;
+            const missingAssociation = format.startsWith('plain-') || format.startsWith('missing-');
+            const predecessor = format === 'predecessor' || format.endsWith('-predecessor');
+            const snapshotTerminal = format.startsWith('missing-') ? undefined
+                : format.startsWith('plain-') || format === 'fresh' ? { mode: 'plain' as const }
+                : format === 'mismatched'
+                ? { ...terminal, herdr: { ...terminal.herdr!, terminalId: 'different-provider' } }
+                : format === 'retired' ? { ...terminal, controlServiceabilityV1: { ...terminal.controlServiceabilityV1!, retired: true } } : terminal;
+            if (format === 'unreadable') await writeFile(join(happyHomeDir, 'terminal', 'sessions', `${sessionId}.host.json`), '{');
+            if (format === 'absent' || format === 'fresh') await unlink(join(happyHomeDir, 'terminal', 'sessions', `${sessionId}.host.json`));
+            if (predecessor) {
+                // The supported predecessor persists the exact v2 binding in the display filename.
+                await writeFile(join(happyHomeDir, 'terminal', 'sessions', `${sessionId}.json`), JSON.stringify({ ...attachment, terminal }));
+                await unlink(join(happyHomeDir, 'terminal', 'sessions', `${sessionId}.host.json`));
+            }
+            const fixture = createPlainSessionFixture({ id: sessionId, metadata: createTestMetadata({ startedBy: 'daemon', terminal: snapshotTerminal }) });
+            const retainedRecordPath = join(happyHomeDir, 'terminal', 'sessions', `${sessionId}.${predecessor ? 'json' : 'host.json'}`);
+            const retainedRecord = missingAssociation ? await readFile(retainedRecordPath, 'utf8') : null;
+            let row: ReturnType<typeof V2SessionByIdResponseSchema.parse>['session'] & { agentStateVersion: number } = {
+                ...createSessionNotificationContextFixture(sessionId), active: true, metadata: JSON.stringify(fixture.metadata),
+                metadataVersion: fixture.metadataVersion, agentState: null, agentStateVersion: fixture.agentStateVersion,
+                encryptionMode: 'plain', metadataLayoutVersion: 0, share: null,
+            };
+            const originalMetadata = row.metadata;
+            const socket = createApiSessionSocketStub({ connected: true });
+            const userSocket = createApiSessionSocketStub({ connected: true });
+            bindApiSessionSocketPairMock(sessionTransport.io, { sessionSocket: socket, userSocket });
+            vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+                if (path === `/v2/sessions/${sessionId}`) {
+                    if (format === 'snapshot-unavailable') {
+                        setImmediate(() => userSocket.trigger('disconnect', 'transport close'));
+                        throw new Error('Snapshot transport unavailable');
+                    }
+                    return { status: 200, data: V2SessionByIdResponseSchema.parse({ session: row }) };
+                }
+                throw new Error(`Unexpected HTTP path ${path}`);
+            });
+            vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
+                const patch = SessionMetadataTuplePatchV1Schema.parse(body);
+                if (patch.mode === 'shared_editor') throw new Error('Unexpected shared editor');
+                const target = patch.mode === 'owner_migration' ? patch.target : patch;
+                row = { ...row, metadataLayoutVersion: 1, metadata: target.sharedMetadata.ciphertext,
+                    metadataVersion: row.metadataVersion + 1, ownerMetadata: target.ownerMetadata,
+                    agentState: target.agentState.ciphertext, agentStateVersion: row.agentStateVersion + 1 };
+                return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+                    sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
+            });
+            let client: ApiSessionClient | undefined;
+            try {
+                await withSessionRunnerOwnership(async () => {
+                    const initialize = {
+                        api: { getOrCreateSession: async () => { throw new Error('Must not create another Session'); },
+                            sessionSyncClient: (base: Parameters<typeof createTestApiSessionClient>[2]) => {
+                                client = createTestApiSessionClient(ApiSessionClient, 'fixture-token', base,
+                                    { metadataAuthority: { kind: 'owner', credentials: { token: 'fixture-token', encryption: null } } });
+                                return client;
+                            } },
+                        existingSessionId: sessionId, sessionTag: sessionId, metadata: createTestMetadata({ startedBy: 'daemon', terminal: { mode: 'plain', requested: 'herdr' } }),
+                        sessionAttachSecret: { encryptionMode: 'plain' as const, snapshot: { metadata: fixture.metadata,
+                            metadataVersion: format === 'snapshot-unavailable' ? -1 : fixture.metadataVersion, agentState: fixture.agentState, agentStateVersion: fixture.agentStateVersion } },
+                        state: { controlledByUser: false }, uiLogPrefix: '[retained-test]',
+                        startupMetadataOverrides: { permissionModeOverride: { mode: 'default' as const, updatedAt: 1 } },
+                        ...(format === 'ordinary' ? {} : { retainedTerminalRecovery: 'adopt' as const }),
+                    };
+                    if (missingAssociation || format === 'mismatched' || format === 'unreadable' || format === 'absent' || format === 'snapshot-unavailable') {
+                        const outcome = await initializeBackendRunSession(initialize).then(() => 'completed', (error: unknown) => error);
+                        if (missingAssociation) {
+                            expect(await readFile(retainedRecordPath, 'utf8')).toBe(retainedRecord);
+                            expect(row.metadata).toBe(originalMetadata);
+                            expect(await readTerminalHostAttachmentInfo({ happyHomeDir, sessionId })).toMatchObject({ version: 2, attachmentId: attachment.attachmentId });
+                        }
+                        expect(outcome).toMatchObject({ code: 'PLUGIN_TERMINAL_HOST_UNAVAILABLE' });
+                        expect(row.metadataVersion).toBe(fixture.metadataVersion);
+                        expect(row.metadata).toBe(originalMetadata);
+                        return;
+                    }
+                    const initialized = await initializeBackendRunSession(initialize);
+                    const retained = format === 'current' || format === 'predecessor';
+                    expect(initialized.session.getMetadataSnapshot()?.terminal).toEqual(retained ? terminal : initialize.metadata.terminal);
+                    const currentAttachment = await readTerminalHostAttachmentInfo({ happyHomeDir, sessionId });
+                    if (format === 'fresh') expect(currentAttachment).toBeNull();
+                    else expect(currentAttachment).toMatchObject({ version: attachment.version, attachmentId: attachment.attachmentId });
+                    const service = createDefaultPluginTerminalHostService({ happyHomeDir, hasCapability: capability => capability === 'terminalHost',
+                        readSessionId: () => sessionId, readSessionMetadata: () => initialized.session.getMetadataSnapshot(),
+                        currentTerminalMetadata: { terminal: initialize.metadata.terminal } });
+                    if (retained) await expect(service.adoptExistingHost?.()).resolves.toMatchObject({ kind: 'herdr', terminalId: 'original-provider', attachmentId: attachment.attachmentId });
+                    else if (format === 'borrowed' || format === 'fresh') await expect(service.adoptExistingHost?.()).resolves.toBeNull();
+                    else await expect(service.adoptExistingHost?.()).rejects.toMatchObject({ code: 'PLUGIN_TERMINAL_HOST_UNAVAILABLE' });
+                    expect(api.requests.some(request => request.method === 'layout.apply' || request.method === 'pane.close')).toBe(false);
+                });
+            } finally {
+                await client?.close();
+                Object.assign(configuration, { happyHomeDir: previousHome });
+                vi.restoreAllMocks(); vi.unstubAllGlobals();
+            }
+        }));
+    });
     it('keeps the admitted Herdr endpoint before a native provider selects a different ambient configuration root', async () => {
         await withTempDir('admitted-herdr-endpoint-', async happyHomeDir => await withHerdrApi(async admitted => await withHerdrApi(async ambient => {
             inventory.socketPath = ambient.socketPath;
@@ -172,7 +294,7 @@ describe('plugin terminal-host creation rollback', () => {
         }));
     });
 
-    it('hosts only the prepared same-server native client, retaining the admitted Session after its pane exits', async () => {
+    it('hosts only the prepared same-server native client, retaining the admitted Session after its pane exits', async ({ task }) => {
         await withTempDir('prepared-native-host-', async happyHomeDir => await withHerdrApi(async api => {
             inventory.socketPath = api.socketPath;
             const sessionId = 'prepared-native-session';
@@ -202,7 +324,11 @@ describe('plugin terminal-host creation rollback', () => {
                 const result = await surface.attachManaged({ sessionId, metadata: { path: happyHomeDir, runtimeDescriptorV1: {
                 v: 1, agentId: 'opencode', agent: { backendMode: 'server', providerSessionId: 'native-session-one',
                     serverBaseUrl: 'http://127.0.0.1:4312', serverBaseUrlExplicit: true },
-            } }, onAttached: async () => { attached = true; nativeBoundary.child?.kill('SIGTERM'); }, hostPresentation: {
+            } }, onAttached: async () => {
+                // Startup IPC proves spawning, not that this fixture's own write ran.
+                await vi.waitFor(async () => { expect(JSON.parse(await readFile(record, 'utf8')).args).toBeDefined(); }, { timeout: task.timeout });
+                attached = true; nativeBoundary.child?.kill('SIGTERM');
+            }, hostPresentation: {
                 owner, preference: 'herdr', sessionName: 'work', workingDirectory: happyHomeDir,
                 startupDeadline: () => Date.now() + 10_000, startupPollIntervalMs: 5,
                 bindHost: async handle => { await session.updateMetadata(current => ({ ...current!, terminal: buildTerminalMetadataFromHostHandle(handle) })); },

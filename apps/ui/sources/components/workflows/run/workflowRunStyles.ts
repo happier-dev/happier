@@ -60,10 +60,18 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     outcome: {
         gap: theme.margins.sm,
     },
-    pageTitle: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-        flexShrink: 1,
+    /** Pause at boundary, Stop and `⋯` at the header's trailing edge (07 §3 identity-first headers). */
+    headerControls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.margins.sm,
+    },
+    /** The view switch hugs its labels at the start of its row rather than spanning the column. */
+    viewSwitch: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: theme.margins.sm,
     },
     /**
      * The completion moment's visible half: a brief semantic success wash on
@@ -78,11 +86,6 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         paddingVertical: theme.margins.sm,
         marginHorizontal: -theme.margins.md,
         marginVertical: -theme.margins.sm,
-    },
-    outcomeHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.margins.sm,
     },
     outcomeSentence: {
         ...Typography.default('semiBold'),
@@ -126,6 +129,11 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         color: theme.colors.text.secondary,
     },
+    /** A body section's heading ("Needs you"), in the row-title role. */
+    sectionTitle: {
+        ...Typography.rowTitle(),
+        color: theme.colors.text.primary,
+    },
     sectionHeading: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -137,21 +145,38 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         ...Typography.tabular(),
         color: theme.colors.text.secondary,
     },
-    attentionStack: {
-        gap: theme.margins.xs,
-        paddingVertical: theme.margins.sm,
+    /** The Needs-you rows share one card; the ring and tint come from the Work status owner. */
+    attentionCard: {
+        borderRadius: theme.borderRadius.lg,
+        overflow: 'hidden',
     },
     attentionRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.margins.sm,
+        gap: theme.margins.md,
         paddingVertical: theme.margins.sm,
+        paddingHorizontal: theme.margins.md,
         minHeight: MINIMUM_TARGET_SIZE,
     },
+    attentionRowDivided: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.subtle,
+    },
+    attentionRowSelected: {
+        backgroundColor: theme.colors.surface.pressedOverlay,
+    },
+    attentionText: {
+        flex: 1,
+        minWidth: 0,
+        gap: 2,
+    },
     attentionLabel: {
-        ...Typography.default('regular'),
+        ...Typography.rowTitle(),
         color: theme.colors.text.primary,
-        flexShrink: 1,
+    },
+    attentionMeta: {
+        ...Typography.rowMeta(),
+        color: theme.colors.text.secondary,
     },
     detailRow: {
         flexDirection: 'row',

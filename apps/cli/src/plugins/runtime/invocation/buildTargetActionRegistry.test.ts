@@ -4,6 +4,9 @@ import {
     createPluginContributionIdentity,
     PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
     PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+    type PluginActionContributionV2,
+    createActionExecutor,
+    formatQualifiedPluginActionId,
 } from '@happier-dev/protocol';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
 import {
@@ -15,7 +18,7 @@ import {
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import { normalizePluginManifestV2, readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import {
     createResolvedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -49,6 +52,12 @@ import {
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createPluginActionCallerMaterializationFixture } from './services/actionCaller.testkit';
 import type { TargetActionAuthorizationFacts } from '../policy/evaluate';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
+import { createPluginReloadController } from '../reload/controller';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '../reload/runtimeLease';
+import { unexpectedCaptureSourceResolution } from '@/plugins/testkit/unexpectedCaptureSourceResolution';
+import { createCommittedContributedActionDefinitionLister } from './actions/createCommittedContributedActionDeps';
+import { createUnavailablePluginServices } from './services/unavailable';
 
 type BuildRegistryParams = Omit<
     Parameters<typeof buildTargetActionInvocationRegistry>[0],
@@ -90,9 +99,12 @@ function manifest(params: Readonly<{
     dangerLevel?: 'safe' | 'writesLocal' | 'writesRemote' | 'externalSideEffect' | 'destructive';
     surfaces?: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin')[];
     inputSchema?: Readonly<Record<string, unknown>>;
+    inputHints?: PluginActionContributionV2['inputHints'];
+    inputTypes?: NonNullable<ReturnType<typeof readCanonicalPluginManifest>>['contributes']['inputTypes'];
     resultSchema?: Readonly<Record<string, unknown>>;
     availability?: Readonly<Record<string, unknown>>;
     operation?: ActionOperationDeclarationV1;
+    execution?: PluginActionContributionV2['execution'];
 }> = {}) {
     const surfaces = params.surfaces ?? ['cli'];
     const rawManifest = createPluginManifestV2Fixture({
@@ -100,9 +112,10 @@ function manifest(params: Readonly<{
         version: '1.2.3',
         hostAccess: params.hostAccess ?? { required: [], optional: [] },
         contributes: {
+            ...(params.inputTypes ? { inputTypes: params.inputTypes } : {}),
             actions: [{
                 id: 'run', title: 'Run', description: 'Run', scopes: ['global'], surfaces,
-                execution: { target: 'daemon' },
+                execution: params.execution ?? { target: 'daemon' },
                 ...(params.operation ? { operation: params.operation } : {}),
                 placementBindings: ['commandPalette'], dangerLevel: params.dangerLevel ?? 'safe',
                 ...(params.dangerLevel
@@ -118,14 +131,13 @@ function manifest(params: Readonly<{
                     : {}),
                 ...(params.actionHostAccess ? { hostAccess: params.actionHostAccess } : {}),
                 ...(params.inputSchema ? { inputSchema: params.inputSchema } : {}),
+                ...(params.inputHints ? { inputHints: params.inputHints } : {}),
                 ...(params.resultSchema ? { resultSchema: params.resultSchema } : {}),
                 ...(params.availability ? { availability: params.availability } : {}),
             }],
         },
     });
-    const value = readCanonicalPluginManifest(rawManifest);
-    if (!value) throw new Error('canonical action manifest fixture is invalid');
-    return value;
+    return normalizePluginManifestV2(rawManifest);
 }
 
 function connectedAccountActionHostAccess(params: Readonly<{
@@ -317,6 +329,7 @@ function historyGapResetActionManifest() {
                 surfaces: ['plugin'],
                 execution: { target: 'daemon' },
                 dangerLevel: 'safe',
+                inputSchema: { type: 'object', additionalProperties: false },
                 resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
             }],
             events: [{
@@ -442,9 +455,10 @@ function registry(params: Readonly<{
         sourceSpec: activation.sourceSpec,
         manifest: pluginManifest,
     } satisfies LoadedPlugin;
-    const normalizedAction = buildPluginContributionRegistry({
+    const normalized = buildPluginContributionRegistry({
         loadedPlugins: [loadedPlugin],
-    }).actions[0];
+    });
+    const normalizedAction = normalized.actions[0];
     if (!normalizedAction) throw new Error('Expected normalized Action fixture');
     const resolvedAction: ResolvedActionContribution = {
         provenance: 'external',
@@ -453,6 +467,9 @@ function registry(params: Readonly<{
     };
     const resolved = createResolvedContributionRegistry({
         actions: [resolvedAction],
+        inputTypes: normalized.inputTypes.map(type => ({ provenance: 'external' as const, source: { kind: 'path' as const }, ...type,
+            identity: createPluginContributionIdentity({ pluginId: type.pluginId, localId: type.definition.id }), manifestPath: activation.manifestPath })),
+        occurrenceIdsByPluginId: { 'acme.alpha': '7' as PluginRuntimeOccurrenceId },
         materializationIdsByPluginId: {
             'acme.alpha': 'materialization-alpha-current',
         },
@@ -504,6 +521,102 @@ function fact(overrides: Partial<PluginTargetActivationFact> = {}): PluginTarget
 }
 
 describe('buildTargetActionInvocationRegistry', () => {
+    it('keeps a current client Action discoverable without a daemon handler registration', async () => {
+        const contributes = registry({ pluginManifest: manifest({
+            surfaces: ['agent', 'mcp', 'cli'],
+            execution: {
+                target: 'client',
+                client: { artifactId: 'client-action', exportName: 'activate' },
+                platforms: ['web'],
+            },
+        }) });
+        let admitted = true;
+        const occurrenceId = '7' as PluginRuntimeOccurrenceId;
+        const sourceCustody = { kind: 'managed', immutableGenerationId: 'immutable-alpha', installSource: 'archive' } as const;
+        let currentSourceCustody: typeof sourceCustody | null = sourceCustody;
+        const target = buildRegistry({
+            contributes,
+            targetRegistrations: [],
+            targetActivationFacts: [],
+            readCurrentPluginOccurrenceId: () => occurrenceId,
+            readCurrentPluginSourceCustody: () => currentSourceCustody,
+            resolveAuthorizationFacts: () => authorizationFacts({ desiredGeneration: admitted ? '7' : null }),
+        });
+        // These surfaces came through the real manifest and registry normalizers.
+        expect(contributes.actions[0]?.definition).toMatchObject({
+            execution: { target: 'client' },
+            surfaces: { agent: true, mcp: true, cli: true },
+        });
+        expect(target.has('acme.alpha', 'run')).toBe(false);
+        const runtime: ResolvedExecutablePluginRuntimeRegistry = {
+            contributes, targetActionInvocations: target,
+            hookHandlersByHookId: new Map(), agentRuntimesByAgentId: new Map(), scmHostingProvidersById: new Map(),
+            pluginDiagnosticsByPluginId: {}, activatedPluginIds: new Set(),
+            readPluginOccurrenceId: () => occurrenceId,
+            readPluginSourceCustody: () => sourceCustody,
+            activateContributionsOnDemand: async () => { throw new Error('Discovery must not activate a daemon handler'); },
+            resolveCaptureSource: unexpectedCaptureSourceResolution,
+            resolvePromptAssetBlocks: async () => [],
+            addRuntimeDisposable: (_pluginId, disposable) => disposable,
+            createAgentInvocationServices: async () => createUnavailablePluginServices(),
+            retireConsumers: () => {}, dispose: async () => {},
+        };
+        const controller = createPluginReloadController();
+        await controller.adoptPreparedRuntimeRegistry({
+            registry: runtime, changedPluginIds: ['acme.alpha'], durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+        });
+        const listContributedActionDefinitions = createCommittedContributedActionDefinitionLister({
+            tryAcquireRuntimeRegistryLease: () => tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller }),
+        });
+        const executor = createActionExecutor({ listContributedActionDefinitions });
+        const id = formatQualifiedPluginActionId({ pluginId: 'acme.alpha', localId: 'run' });
+        try {
+            expect(listContributedActionDefinitions().map((definition) => definition.id)).toEqual([id]);
+            for (const surface of ['agent', 'mcp', 'cli'] as const) {
+                await expect(executor.execute('action.spec.search', { query: id }, { surface })).resolves.toMatchObject({
+                    ok: true, result: { actionSpecs: expect.arrayContaining([expect.objectContaining({
+                        id,
+                        surfaces: expect.objectContaining({ agent: true, mcp: true, cli: true }),
+                    })]) },
+                });
+            }
+            expect(target.evaluateCatalogPolicy('acme.alpha', 'run')).toMatchObject({
+                outcome: 'visible', requiresCurrentIntent: false,
+            });
+            admitted = false;
+            expect(listContributedActionDefinitions()).toEqual([]);
+            expect(target.evaluateCatalogPolicy('acme.alpha', 'run')).toMatchObject({
+                outcome: 'unavailable', code: 'plugin_action_generation_retired',
+            });
+            admitted = true;
+            currentSourceCustody = null;
+            expect(listContributedActionDefinitions()).toEqual([]);
+            expect(target.evaluateCatalogPolicy('acme.alpha', 'run')).toMatchObject({
+                outcome: 'unavailable', code: 'plugin_action_handler_missing',
+            });
+        } finally {
+            await controller.shutdown();
+        }
+    });
+
+    it('keeps client Action catalog visibility behind declared HostAccess policy', () => {
+        const pluginManifest = manifest({
+            hostAccess: { required: [{ id: 'api', capability: 'network', reason: 'API', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }], methods: ['GET'] } }], optional: [] },
+            actionHostAccess: ['api'],
+            surfaces: ['agent', 'mcp', 'cli'],
+            execution: { target: 'client', client: { artifactId: 'client-action', exportName: 'activate' }, platforms: ['web'] },
+        });
+        const target = buildRegistry({
+            contributes: registry({ pluginManifest }),
+            targetRegistrations: [],
+            targetActivationFacts: [],
+        });
+        expect(target.evaluateCatalogPolicy('acme.alpha', 'run')).toMatchObject({
+            outcome: 'unavailable', code: 'plugin_host_access_service_unavailable',
+        });
+    });
+
     it('delegates daemon Action present-user policy to the runtime final-policy owner', () => {
         const policy = Object.freeze({
             qualifiedId: 'acme.alpha/actions/run',
@@ -751,7 +864,7 @@ describe('buildTargetActionInvocationRegistry', () => {
             localId: 'reset-history',
             input: {
                 automationId: 'automation-1',
-                triggerId: 'history-gap-trigger',
+                triggerId: '11111111-1111-4111-8111-111111111111',
                 triggerRevision: 3,
                 sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
             },
@@ -948,6 +1061,32 @@ describe('buildTargetActionInvocationRegistry', () => {
         expect(actionFormConnectedAccounts.resolveBindingIntent).not.toHaveBeenCalled();
         expect(actionFormConnectedAccounts.activatePurposeBindings).not.toHaveBeenCalled();
         expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('refuses a headless submitted plugin-type value before the target handler without discarding it', async () => {
+        const inputType = { pluginId: 'acme.alpha', localId: 'repository' };
+        const pluginManifest = manifest({
+            inputSchema: { type: 'object', properties: { repository: { type: 'object', additionalProperties: true } }, required: ['repository'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select', inputType }] },
+            inputTypes: [{ id: 'repository', title: 'Repository', semantic: 'repository',
+                valueSchema: { type: 'object', properties: { repositoryId: { type: 'string', minLength: 1 } },
+                    required: ['repositoryId'], additionalProperties: false } }],
+        });
+        let invoked = 0;
+        const target = buildRegistry({ contributes: registry({ pluginManifest }),
+            targetRegistrations: [{ pluginId: 'acme.alpha', occurrenceId: '7',
+                registration: { family: 'actions', localId: 'run', value: async () => { invoked++; return { accepted: true }; } } }],
+            targetActivationFacts: [fact()],
+        });
+        const input = { repository: { repositoryId: 'one', machineId: 'not-authority' } };
+        expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run', input, surface: 'cli' }))
+            .toMatchObject({ status: 'invalid', code: 'input_type_value_invalid' });
+        expect(invoked).toBe(0);
+        expect(input.repository).toEqual({ repositoryId: 'one', machineId: 'not-authority' });
+        expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run',
+            input: { repository: { repositoryId: 'one' } }, surface: 'cli' }))
+            .toMatchObject({ status: 'executed', value: { accepted: true } });
+        expect(invoked).toBe(1);
     });
 
     it('revalidates a selected Action-form Account through the canonical purpose-binding owner', async () => {

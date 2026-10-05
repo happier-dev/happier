@@ -63,6 +63,7 @@ const recovery: WorkflowInvocationRecoveryPresentation = {
     canContinuePrepared: false,
     canRestoreWorkspace: false,
     canStartReviewedNewRun: false,
+    canRunWithAnotherAgent: false,
     preparedRecovery: null,
     requiresUncertaintyAcknowledgement: false,
     waitingForStop: false,
@@ -116,7 +117,9 @@ async function renderDetail(overrides: Partial<WorkflowInvocationDetailProps>) {
         testIDPrefix: 'workflow-run',
         ...overrides,
     };
-    const screen = await renderScreen(<WorkflowInvocationDetail {...props} />, { wrapper: AppPaneProvider });
+    const screen = await renderScreen(<WorkflowInvocationDetail {...props} />, {
+        wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
+    });
     /** A control the case requires; its absence fails the case rather than typing as nullable. */
     const get = (testID: string) => {
         const node = screen.findByTestId(testID);

@@ -7,6 +7,13 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { SourceControlBranchIntegrationSection } from './SourceControlBranchIntegrationSection';
 
+// Unrelated key-envelope HTTP API must never be called by repository tools.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unexpected = () => { throw new Error('Unexpected session key-envelope HTTP request in Git'); };
+    return { createSessionDataKeyEnvelopeClient: unexpected, readSessionDataKeyEnvelopeCollectionPage: unexpected,
+        prepareSessionDataKeyEnvelopesForScope: unexpected, prepareSessionDataKeyEnvelopesDetached: unexpected };
+});
+
 const modalState = vi.hoisted(() => ({
     confirm: vi.fn(),
     alert: vi.fn(),
@@ -82,7 +89,6 @@ describe('SourceControlBranchIntegrationSection', () => {
         const confirmDeferred = createDeferred<boolean>();
         modalState.confirm.mockReturnValue(confirmDeferred.promise);
         const onAbort = vi.fn(async () => ({ success: true }));
-        const onRefresh = vi.fn(async () => {});
 
         const screen = await renderScreen(
             <SourceControlBranchIntegrationSection
@@ -94,7 +100,6 @@ describe('SourceControlBranchIntegrationSection', () => {
                 onRebase={vi.fn(async () => ({ success: true }))}
                 onContinue={vi.fn(async () => ({ success: true }))}
                 onAbort={onAbort}
-                onRefresh={onRefresh}
             />,
         );
 
@@ -126,7 +131,6 @@ describe('SourceControlBranchIntegrationSection', () => {
                 onRebase={vi.fn(async () => ({ success: true }))}
                 onContinue={vi.fn(async () => ({ success: true }))}
                 onAbort={onAbort}
-                onRefresh={onRefresh}
             />,
         );
 
@@ -136,14 +140,12 @@ describe('SourceControlBranchIntegrationSection', () => {
         });
 
         expect(onAbort).not.toHaveBeenCalled();
-        expect(onRefresh).not.toHaveBeenCalled();
         expect(modalState.alert).toHaveBeenCalledWith('Error', 'This operation cannot be aborted.');
     });
 
-    it('waits for destructive confirmation before aborting and refreshing', async () => {
+    it('waits for destructive confirmation before invoking the mutation owner', async () => {
         modalState.confirm.mockResolvedValue(true);
         const onAbort = vi.fn(async () => ({ success: true }));
-        const onRefresh = vi.fn(async () => {});
 
         const screen = await renderScreen(
             <SourceControlBranchIntegrationSection
@@ -155,13 +157,26 @@ describe('SourceControlBranchIntegrationSection', () => {
                 onRebase={vi.fn(async () => ({ success: true }))}
                 onContinue={vi.fn(async () => ({ success: true }))}
                 onAbort={onAbort}
-                onRefresh={onRefresh}
             />,
         );
 
         await screen.pressByTestIdAsync('scm-update-branch-operation-abort');
 
         expect(onAbort).toHaveBeenCalledWith('merge');
-        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a rich conflict result to the canonical outcome presenter', async () => {
+        const onMerge = vi.fn(async () => ({ success: false, outcome: {
+            v: 1 as const, kind: 'conflicted' as const, errorCode: 'CONFLICTING_WORKTREE' as const,
+            repositoryState: { hasConflicts: true, operation: null }, nextActions: [{ kind: 'resolve_conflicts' as const }],
+        } }));
+        const screen = await renderScreen(<SourceControlBranchIntegrationSection
+            theme={theme} snapshot={createSnapshot({ operationState: null })} rootPath="/repo" writeEnabled
+            onMerge={onMerge} onRebase={async () => ({ success: true })}
+            onContinue={async () => ({ success: true })} onAbort={async () => ({ success: true })} />);
+        await act(async () => { screen.changeTextByTestId('scm-update-branch-source-picker', 'feature'); });
+        await screen.pressByTestIdAsync('scm-update-branch-merge');
+        expect(onMerge).toHaveBeenCalledOnce();
+        expect(modalState.alert).not.toHaveBeenCalled();
     });
 });

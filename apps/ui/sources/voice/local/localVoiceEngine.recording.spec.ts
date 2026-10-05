@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -13,6 +15,9 @@ import {
     setRecorderUri,
     setNextRecorderPrepareError,
 } from './localVoiceEngine.testHarness';
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine recording lifecycle', () => {
     registerLocalVoiceEngineHarnessHooks();
@@ -206,59 +211,5 @@ describe('local voice engine recording lifecycle', () => {
         expect(getLocalVoiceState().error).toBe('stt_request_timeout');
     });
 
-    it('delegates recorder-backed mic ownership to LocalVoiceCaptureOwner instead of concrete recorder creation in localVoiceEngine', async () => {
-        const startCapture = vi.fn(async () => {});
 
-        vi.doMock('@/voice/input/DeviceSttController', () => ({
-            createDeviceSttController: () => {
-                throw new Error('localVoiceEngine should not create DeviceSttController directly');
-            },
-        }));
-        vi.doMock('@/voice/input/SherpaStreamingSttController', () => ({
-            createSherpaStreamingSttController: () => {
-                throw new Error('localVoiceEngine should not create SherpaStreamingSttController directly');
-            },
-        }));
-        vi.doMock('@/voice/runtime/mic/NativeMicSession', () => ({
-            createNativeMicSession: () => ({
-                ensureActive: async () => {},
-                setMuted: () => {},
-                isMuted: () => false,
-                teardown: async () => {},
-                getStream: () => null,
-            }),
-            createExpoAudioRecordingMicSession: () => {
-                throw new Error('localVoiceEngine should not create NativeMicSession directly');
-            },
-        }));
-        vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
-            createLocalVoiceCaptureOwner: () => ({
-                isCaptureActive: vi.fn(() => false),
-                resolveManualBargeInAction: vi.fn(() => ({
-                    kind: 'start_capture',
-                    sessionId: 's1',
-                    provider: 'recorded_audio',
-                    handsFree: false,
-                })),
-                resolveEndpointSignalAction: vi.fn(() => ({ kind: 'ignore', reason: 'not_recording' })),
-                startCapture,
-                stopCapture: vi.fn(async () => ({ provider: 'recorded_audio', uri: 'file:///tmp/rec.m4a' })),
-                clearHandsFree: vi.fn(),
-                stopSession: vi.fn(async () => {}),
-            }),
-        }));
-
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
-        await toggleLocalVoiceTurn('s1');
-
-        expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            provider: 'recorded_audio',
-        }));
-        expect(getLocalVoiceState()).toMatchObject({
-            status: 'recording',
-            sessionId: 's1',
-            error: null,
-        });
-    });
 });

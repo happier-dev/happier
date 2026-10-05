@@ -22,18 +22,17 @@ export type VoiceStartAdmission = Readonly<{
 /**
  * The single owner of Voice **start admission**.
  *
- * Every surface that can begin a conversation — the sidebar Horizon vessel through
- * `useVoiceSurfaceModel`, the floating orb through `useVoiceAttemptControl` — asks this function
+ * Every surface that can begin a conversation — the glance through
+ * `useVoiceSurfaceModel`, the shell and composer through `useVoiceAttemptControl` — asks this function
  * and nothing else. Before this existed the orb re-derived its own weaker rule
  * (`providerReady && allowsGlobalStart`) and offered a Start on providers the surface had already
  * refused: a transport that cannot do anything, which §2.2 forbids.
  *
- * It decides admission only. **Targeting stays explicit at the call site** (§2.5): the caller says
- * which binding scope it is starting in, and never infers it from another surface's placement
- * policy.
+ * It decides admission only. The target owner resolves retained start preference or explicit
+ * composer/Home intent before admission; container placement never chooses the target.
  */
 export function resolveVoiceStartAdmission(input: Readonly<{
-    /** The scope the caller is starting in. The orb states `global`; Horizon passes its own. */
+    /** The scope resolved by the canonical idle-target policy or an explicit caller intent. */
     bindingScope: 'global' | 'session';
     /** The daemon-backed conversation needs the server's `voice.agent` feature and lacks it. */
     daemonLocalVoiceUnavailable: boolean;

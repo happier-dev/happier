@@ -1,10 +1,102 @@
 import { describe, expect, it } from 'vitest';
 
 import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
+import { isFeatureId, PluginSettingsContributionV2Schema } from '@happier-dev/protocol';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { createStablePluginSettingsHost } from '@/plugins/runtime/invocation/services/settings';
+import { createStablePluginEventsBroker } from '@/plugins/runtime/invocation/services/events';
+import { createClaudeAgentRuntime } from '../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
+import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
+import { resolveDisconnectedTerminalHostResumeGate } from '../sessions/disconnectedTerminalHostSupervision';
+import { resolveDaemonSessionTerminalPresentation } from '../sessions/resolveTrackedSessionTerminalPresentation';
 
 import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTerminalHostResumeLifecycle';
 
 describe('disconnected terminal-host resume lifecycle', () => {
+  it.each(['herdr', 'tmux', 'zellij'] as const)(
+    'keeps an admitted retained %s host out of replacement controller placement without changing fresh placement',
+    async (hostKind) => {
+      const runtime = await createClaudeAgentRuntime({
+        plugin: { id: 'happier.agent.claude', version: '0.0.0' },
+        agent: { id: 'claude' },
+        signal: new AbortController().signal,
+      });
+      const resolvePresentation = runtime.sessions?.resolveTerminalPresentation;
+      if (!resolvePresentation) throw new Error('The real Claude factory has no placement owner');
+      const pluginId = 'happier.agent.claude';
+      const signal = new AbortController().signal;
+      const settings = createStablePluginSettingsHost({
+        declarations: (PLUGIN_MANIFEST.contributes.settings ?? []).map(contribution => ({
+          pluginId, contribution: PluginSettingsContributionV2Schema.parse(contribution),
+        })),
+        broker: createStablePluginEventsBroker(),
+        recordStore: {
+          supports: () => true,
+          async read() { throw new Error('Captured runtime selection read Account settings'); },
+          async update() { throw new Error('Placement selection wrote Account settings'); },
+        },
+      }).bind({
+        plugin: { id: pluginId, version: '0.0.0' },
+        contribution: { id: 'claude', qualifiedId: `${pluginId}/agents/claude` },
+        occurrenceId: 'retained-placement', correlationId: 'retained-placement',
+        surface: 'agent', signal, isOccurrenceCurrent: () => !signal.aborted,
+      });
+      if (!settings) throw new Error('The actual Claude settings declaration did not bind');
+      const selection = {
+        cwd: '/tmp/retained-continuation', requestedHost: hostKind,
+        runtimeDescriptorV1: {
+          v: 1 as const, agentId: 'claude',
+          agent: { backendMode: 'unifiedTerminal', terminalHostKind: hostKind },
+        },
+        launchEnvironment: { values: {}, unset: [] },
+      };
+      const surfaces = {
+        resolveTerminalPresentation: async (input: Parameters<typeof resolveDaemonSessionTerminalPresentation>[1]) => await resolvePresentation(input, {
+          // Keep feature policy and factory selection real; the admitted descriptor
+          // must not read today's Account setting during this continuation.
+          features: { isEnabled: id => isFeatureId(id) && resolveCliFeatureDecision({
+            featureId: id, env: { HAPPIER_FEATURE_AGENTS_CLAUDE_UNIFIED_TERMINAL__ENABLED: '1' },
+          }).state === 'enabled' },
+          settings,
+        }),
+      };
+      const selected = await resolveDaemonSessionTerminalPresentation(surfaces, selection, 'retained-session');
+      expect(selected.retainedTerminalRecovery).toBe('adopt');
+      const attachmentId = createTerminalAttachmentId();
+      const lifecycle = createDisconnectedTerminalHostResumeLifecycle({
+        unresolvedTerminalHostSessionIds: new Set(),
+        clearUnresolvedTerminalHostSession: () => {},
+        findDisconnectedCandidate: sessionId => ({
+          sessionId, pid: 7_010, happyHomeDir: '/tmp/happy', attachmentId,
+          handle: { kind: hostKind, attachmentId, sessionName: 'retained', paneId: 'pane-1',
+            ...(hostKind === 'herdr' ? { socketPath: '/tmp/retained.sock', terminalId: 'terminal-1' } : {}),
+            attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', liveProbe: 'required' } },
+          controlDescriptorAvailable: true,
+        }),
+        resolveResumeGateForCandidate: async candidate => resolveDisconnectedTerminalHostResumeGate({
+          state: 'recoverable_unservable', reason: 'runner_absent',
+        }, { controlDescriptorAvailable: candidate.controlDescriptorAvailable,
+          retainedTerminalRecovery: selected.retainedTerminalRecovery }),
+        retireCandidate: () => {},
+      });
+      const continuation = await lifecycle.resolveResumePreGate('retained-session');
+      expect(continuation).toEqual({ type: 'resume', retainedTerminalRecovery: 'adopt' });
+      const placement = await resolveDaemonSessionTerminalPresentation(surfaces, selection, 'retained-session',
+        continuation?.type === 'resume' ? continuation.retainedTerminalRecovery : undefined);
+      expect(placement).toMatchObject({ kind: 'managed_terminal', startingMode: 'remote' });
+      expect(placement.runtimeDescriptorV1).toEqual(selected.runtimeDescriptorV1);
+      const fresh = await resolveDaemonSessionTerminalPresentation(surfaces, selection);
+      const committedFresh = await resolveDaemonSessionTerminalPresentation(surfaces, selection, 'committed-fresh-session');
+      expect(fresh).toMatchObject({ kind: hostKind === 'herdr' ? 'runner' : 'managed_terminal', startingMode: 'terminal' });
+      expect(committedFresh).toEqual(fresh);
+      const sdkSelection = { ...selection, runtimeDescriptorV1: {
+        ...selection.runtimeDescriptorV1, agent: { backendMode: 'agentSdk', terminalHostKind: hostKind },
+      } };
+      expect(await resolveDaemonSessionTerminalPresentation(surfaces, sdkSelection, 'sdk-session', 'adopt'))
+        .toMatchObject({ kind: 'runner', startingMode: 'remote' });
+    },
+  );
+
   it('repairs unresolved legacy topology through the supplied canonical stop owner before Resume', async () => {
     const unresolved = new Set(['sess-unresolved']);
     const repairUnresolvedTopology = async () => ({ status: 'not_found' as const });

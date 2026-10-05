@@ -27,7 +27,9 @@ import {
     VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX,
 } from './voiceTranscriptBounds';
 import type { VoiceTranscriptTurn } from './voiceTranscriptEvents';
-import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
+import { buildVoiceTranscriptNoteMeta, readVoiceContinuationProvenance, type VoiceContinuationProvenance } from './voiceTranscriptNoteMeta';
+import { randomUUID } from '@/platform/randomUUID';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     createCanonicalVoiceTranscriptProjector,
     deriveCanonicalVoiceTranscriptEntryId,
@@ -431,9 +433,13 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             'attemptIdentity' | 'itemId' | 'revision'
         > | null;
         source?: RealtimeConversationTurnSource | null;
+        continuation?: VoiceContinuationProvenance;
     }>): NormalizedMessage | null => {
         const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
-        const text = normalizeText(params.text);
+        // The ordinary transcript format requires a text body. Its non-relative
+        // fallback is not UI copy: current viewers render the stored provenance.
+        const text = params.continuation ? 'Voice continued.' : normalizeText(params.text);
+        if (params.continuation && (params.role !== 'note' || params.continuation.conversation.sessionId !== conversationSessionId)) return null;
         if (!conversationSessionId || !text) {
             // An authoritative final with no text is the last silent way a turn
             // can vanish: no row is written and no other owner observes it.
@@ -452,7 +458,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         if (!turn) lastLocalProjectionCreatedAt = createdAt;
         const localSequence = turn ? null : ++localProjectionSequence;
         const canonicalItem = params.canonicalItem ?? null;
-        const id = canonicalItem && params.role !== 'note'
+        const id = params.continuation ? `voice-note:${randomUUID()}` : canonicalItem && params.role !== 'note'
             ? deriveCanonicalVoiceTranscriptEntryId({
                 attemptIdentity: canonicalItem.attemptIdentity,
                 itemId: canonicalItem.itemId,
@@ -492,12 +498,23 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                     canonicalItem
                         ? { meta: buildRealtimeConversationTurnMeta(params.source ?? undefined) }
                         : params.role === 'note'
-                        ? { meta: buildVoiceTranscriptNoteMeta() }
+                        ? { meta: buildVoiceTranscriptNoteMeta(params.continuation ? { continuation: params.continuation } : undefined) }
                         : buildVoiceTurnMeta(turn)
                             ? { meta: buildVoiceTurnMeta(turn) }
                             : {}
                 ),
         };
+        if (params.continuation) {
+            if (!deps.persistFinal) return null;
+            const input: PersistSessionTranscriptMessageInput = { sessionId: conversationSessionId, localId: id, createdAt,
+                messageRole: 'agent', rawRecord: { ...buildRealtimeConversationRawRecord({ id, role: 'assistant', text }), meta: message.meta } };
+            // No optimistic control note: the other device reacts only to its ordinary
+            // acknowledged, Account-encrypted transcript row from the sync owner.
+            fireAndForget((async () => { await deps.persistFinal!(input); })(), { tag: 'VoiceTranscriptProjector.persistContinuation', logError: false,
+                onError: (error) => recordVoiceRuntimeFailure('voice.transcript', 'transcript_dropped', 'continuation_persist_failed',
+                    readSafeVoiceRuntimeFailureCode(error) ?? 'voice_continuation_persist_failed') });
+            return message;
+        }
         if (canonicalItem && params.role !== 'note' && deps.persistFinal) {
             persistCanonicalFinal({
                 sessionId: conversationSessionId,
@@ -672,7 +689,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             projectTextMessage({ ...params, role: 'user' }),
         projectAssistantText: (params: Readonly<{ conversationSessionId: string; text: string; turn?: VoiceTranscriptTurn | null }>) =>
             projectTextMessage({ ...params, role: 'assistant' }),
-        projectNoteText: (params: Readonly<{ conversationSessionId: string; text: string }>) =>
+        projectNoteText: (params: Readonly<{ conversationSessionId: string; text: string; continuation?: VoiceContinuationProvenance }>) =>
             projectTextMessage({ ...params, role: 'note' }),
         projectCanonicalEvent: (params: Readonly<{
             conversationSessionId: string;
@@ -852,7 +869,19 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
 
 export const voiceTranscriptProjector = createVoiceTranscriptProjector({
     getState: () => storage.getState(),
-    persistFinal: (input) => import('@/sync/sync')
-        .then(({ sync }) => sync.persistSessionTranscriptMessage(input))
-        .then(() => undefined),
+    persistFinal: (input) => {
+        const continuation = readVoiceContinuationProvenance(input.rawRecord.meta);
+        const lifetime = continuation ? captureActiveServerAccountScopeLifetime() : null;
+        const assertContinuationHome = () => {
+            if (continuation && (!lifetime?.isCurrent() || lifetime.scope.serverId !== continuation.conversation.serverId
+                || storage.getState().sessions[input.sessionId]?.serverId !== continuation.conversation.serverId)) {
+                throw new Error('Voice continuation transcript Home or Account changed');
+            }
+        };
+        assertContinuationHome();
+        return import('@/sync/sync').then(({ sync }) => {
+            assertContinuationHome();
+            return sync.persistSessionTranscriptMessage(input);
+        }).then(() => undefined);
+    },
 });

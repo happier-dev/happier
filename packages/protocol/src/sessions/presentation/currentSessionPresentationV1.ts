@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
-import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
+import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
+import { WidgetInstanceV1Schema as InstanceSchema, WidgetInputBindingsV1Schema as BindingsSchema } from '../../widgets/widgetInstanceV1.js';
+const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
+const WidgetInputBindingsV1Schema = z.lazy(() => BindingsSchema);
+import { WidgetExpectedPresentationV1Schema } from '../../widgets/widgetPresentationV1.js';
+import { SESSION_COMPANION_BUILTIN_ITEM_IDS } from '../../widgets/builtinWidgetDescriptorV1.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { SessionSurfaceItemIdSchema } from '../board/ids.js';
 import {
@@ -13,14 +18,14 @@ const IdentifierSchema = z.string().trim().min(1).max(256);
 const PresentationTextSchema = z.string().max(16_384);
 const PresentationIndexSchema = z.number().int().nonnegative().safe();
 
-export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services'] as const;
+export { SESSION_COMPANION_BUILTIN_ITEM_IDS };
 const CompanionFrameStyleSchema = z.enum(['card', 'plain']);
 
 export const SessionCompanionPresentationItemRefV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('builtin'), id: z.enum(SESSION_COMPANION_BUILTIN_ITEM_IDS), frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
   z.object({ kind: z.literal('widget'), widgetId: SessionSurfaceItemIdSchema, frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
   z.object({ kind: z.literal('pane'), paneId: IdentifierSchema, frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
-  z.object({ kind: z.literal('plugin'), surface: asProtocolZod(PluginContributionIdentityV1Schema), frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
+  z.object({ kind: z.literal('instance'), instance: WidgetInstanceV1Schema, frameStyle: CompanionFrameStyleSchema.optional() }).strict(),
 ]);
 export type SessionCompanionPresentationItemRefV1 = z.infer<
   typeof SessionCompanionPresentationItemRefV1Schema
@@ -50,6 +55,8 @@ export const CurrentSessionPresentationIntentV1Schema = z.discriminatedUnion('ki
   z.object({
     kind: z.literal('companion.item.remove'),
     item: SessionCompanionPresentationItemRefV1Schema,
+    expectedInstance: WidgetInstanceV1Schema.optional(),
+    expectedPresentation: WidgetExpectedPresentationV1Schema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('companion.item.move'),
@@ -62,6 +69,9 @@ export const CurrentSessionPresentationIntentV1Schema = z.discriminatedUnion('ki
     frameStyle: CompanionFrameStyleSchema.nullable(),
   }).strict(),
   z.object({ kind: z.literal('companion.edge.set'), edge: z.enum(['leading', 'trailing']) }).strict(),
+  z.object({ kind: z.literal('companion.instance.inputs.set'), instanceId: z.string().trim().min(1), bindings: WidgetInputBindingsV1Schema }).strict(),
+  z.object({ kind: z.literal('companion.instance.inputs.reset'), instanceId: z.string().trim().min(1) }).strict(),
+  z.object({ kind: z.literal('companion.instance.rename'), instanceId: z.string().trim().min(1), displayName: z.string().trim().min(1).nullable() }).strict(),
   z.object({ kind: z.literal('companion.collapse.set'), collapsed: z.boolean() }).strict(),
   z.object({
     kind: z.literal('companion.density.set'),
@@ -72,6 +82,34 @@ export const CurrentSessionPresentationIntentV1Schema = z.discriminatedUnion('ki
 export type CurrentSessionPresentationIntentV1 = z.infer<
   typeof CurrentSessionPresentationIntentV1Schema
 >;
+
+/** Authors arrange readable Session facts; instance mutations use qualified widgets.* Actions. */
+export const SessionCompanionPresentationAuthorItemRefV1Schema = z.discriminatedUnion('kind', [
+  SessionCompanionPresentationItemRefV1Schema.options[0],
+  SessionCompanionPresentationItemRefV1Schema.options[1],
+  SessionCompanionPresentationItemRefV1Schema.options[2],
+]);
+export type SessionCompanionPresentationAuthorItemRefV1 = z.infer<typeof SessionCompanionPresentationAuthorItemRefV1Schema>;
+
+/** The public author subset shares the host's canonical validators, not its instance transport capability. */
+export const CurrentSessionPresentationAuthorIntentV1Schema = z.discriminatedUnion('kind', [
+  CurrentSessionPresentationIntentV1Schema.options[0],
+  CurrentSessionPresentationIntentV1Schema.options[1],
+  CurrentSessionPresentationIntentV1Schema.options[2],
+  CurrentSessionPresentationIntentV1Schema.options[3],
+  CurrentSessionPresentationIntentV1Schema.options[4],
+  CurrentSessionPresentationIntentV1Schema.options[5],
+  CurrentSessionPresentationIntentV1Schema.options[6].extend({ item: SessionCompanionPresentationAuthorItemRefV1Schema }),
+  CurrentSessionPresentationIntentV1Schema.options[7].omit({ expectedInstance: true, expectedPresentation: true })
+    .extend({ item: SessionCompanionPresentationAuthorItemRefV1Schema }),
+  CurrentSessionPresentationIntentV1Schema.options[8].extend({ item: SessionCompanionPresentationAuthorItemRefV1Schema }),
+  CurrentSessionPresentationIntentV1Schema.options[9].extend({ item: SessionCompanionPresentationAuthorItemRefV1Schema }),
+  CurrentSessionPresentationIntentV1Schema.options[10],
+  CurrentSessionPresentationIntentV1Schema.options[14],
+  CurrentSessionPresentationIntentV1Schema.options[15],
+  CurrentSessionPresentationIntentV1Schema.options[16],
+]);
+export type CurrentSessionPresentationAuthorIntentV1 = z.infer<typeof CurrentSessionPresentationAuthorIntentV1Schema>;
 
 export const CurrentSessionPresentationIntentResultV1Schema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('applied') }).strict(),
@@ -91,7 +129,7 @@ export type CurrentSessionPresentationIntentResultV1 = z.infer<
  * different Session or manufacture an idempotency key.
  */
 export const CurrentSessionPresentationActionInputV1Schema = z.object({
-  intent: CurrentSessionPresentationIntentV1Schema,
+  intent: CurrentSessionPresentationAuthorIntentV1Schema,
 }).strict();
 export type CurrentSessionPresentationActionInputV1 = z.infer<
   typeof CurrentSessionPresentationActionInputV1Schema

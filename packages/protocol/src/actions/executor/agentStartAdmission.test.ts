@@ -7,6 +7,26 @@ const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.age
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('passes deferred workflow selection to the owner and returns a typed frozen-depth child refusal', () => {
+    const request = { kind: 'workflow_run_leaf', selection: 'deferred', leaf: {
+      blockId: 'panel', kind: 'action', actionId: 'subagents.plan.start',
+      runsAs: { kind: 'background_run', intent: 'plan' }, workspaceWrites: 'deny',
+      facts: { agentTarget: { kind: 'unresolved' } },
+    } } as const;
+    const context = { caller: { kind: 'session', sessionId: 'lead', starterDepth: 3, turnDepth: 0 },
+      baseline: { machineId: 'run-machine', directory: '/repo' }, roles: {},
+      ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+    } as const;
+    const result = admitActionAgentStartV1({}, request, context);
+    expect(result).toEqual({ ok: true, stamped: { workDepth: 4 } });
+    if (!result.ok) throw new Error(result.refusal.code);
+    expect(admitActionAgentStartV1({}, { kind: 'workflow_run_leaf', leaf: {
+      ...request.leaf, facts: { agentTarget: nativeTarget },
+    } }, { ...context, caller: { kind: 'originless', runId: 'frozen-run', runDepth: result.stamped.workDepth } }))
+      .toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' },
+        error: { errorCode: 'work_depth_exceeded', details: { code: 'work_depth_exceeded' } } });
+  });
+
   it.each([{ FEATURE_FLAG: 'enabled' }, {}])('keeps explicit spawn environments subject to the single admission owner: %j', (environmentVariables) => {
     const result = resolveActionAgentStartRequestsV1({ actionId: 'session.spawn_new', input: {
       executionTarget: { serverId: 'server', machineId: 'run-machine' }, directory: { kind: 'path', path: '/repo' },

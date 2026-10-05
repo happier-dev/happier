@@ -55,6 +55,7 @@ import type {
 import type { PluginUiIconTokenV1 } from './ui.js';
 import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { PluginCaptureSourceRuntime } from './captureSources.js';
+import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from './entityDragDrop.js';
 
 /** SDK author projection of one exact attachment callback instance. */
 export type ComposerAttachmentPrepareRequestV1<
@@ -409,6 +410,8 @@ export interface PluginApi {
  * @realm client
  */
 export interface PluginClientApi {
+    readonly dragSources: { register(id: string, runtime: PluginDragSourceRuntime): void };
+    readonly dropTargets: { register(id: string, runtime: PluginDropTargetRuntime): void };
     readonly actions: {
         register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
             id: string,

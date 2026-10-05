@@ -78,10 +78,12 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     },
     /** The block name as the control that selects the block. */
     headingButton: {
+        flexDirection: 'row',
+        gap: theme.margins.sm,
         flexGrow: 1,
         flexShrink: 1,
         minWidth: 0,
-        alignItems: 'flex-start',
+        alignItems: 'center',
         paddingHorizontal: theme.margins.xs,
         borderRadius: theme.borderRadius.md,
     },
@@ -129,6 +131,11 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     groupSummary: {
         ...Typography.default('regular'),
         color: theme.colors.text.tertiary,
+    },
+    /** A quiet action on a block's footer line ("Add input", "Add named results"). */
+    footAction: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
     },
     branchLabel: {
         ...Typography.default('semiBold'),
@@ -198,8 +205,49 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     containerSummaryAnchor: {
         alignSelf: 'flex-start',
     },
+    /**
+     * An Action step's card (lab `editor-S8`): its field rows and its foot, inside one bordered
+     * surface the width of the composer above or below it.
+     */
+    actionCard: {
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        borderRadius: theme.borderRadius.lg,
+        backgroundColor: theme.colors.surface.base,
+        paddingHorizontal: theme.margins.md,
+        paddingVertical: theme.margins.sm,
+        gap: theme.margins.sm,
+        minWidth: 0,
+    },
+    /** A label column beside its binding; the binding moves beneath the label when the card is narrow. */
     actionFieldRow: {
-        gap: theme.margins.xs,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'flex-start',
+        columnGap: theme.margins.md,
+        rowGap: theme.margins.xs,
+        minWidth: 0,
+    },
+    actionFieldLabelColumn: {
+        width: 120,
+        minHeight: MINIMUM_TARGET_SIZE,
+        justifyContent: 'center',
+    },
+    actionFieldValue: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 220,
+        minWidth: 0,
+    },
+    actionCardFoot: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: theme.margins.sm,
+        justifyContent: 'space-between',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.default,
+        paddingTop: theme.margins.xs,
     },
     actionFieldLabel: {
         ...Typography.default('semiBold'),
@@ -209,11 +257,23 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         color: theme.colors.text.destructive,
     },
+    /**
+     * One binding's controls. They wrap at the pane edge rather than running past it
+     * (the width contract, 07 §3): the source select, then its value.
+     */
     inlineControl: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: theme.margins.sm,
         paddingVertical: theme.margins.xs,
+        minWidth: 0,
+        maxWidth: '100%',
+    },
+    referenceSelect: {
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
     },
     /**
      * Contact feedback for a text-labelled authoring control, applied through
@@ -238,6 +298,9 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.margins.sm,
         paddingVertical: theme.margins.xs,
         minWidth: 72,
+        flexGrow: 1,
+        flexBasis: 160,
+        maxWidth: '100%',
     },
 }));
 

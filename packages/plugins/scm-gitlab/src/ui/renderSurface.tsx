@@ -106,7 +106,7 @@ import {
   type GitlabPagedControllerV1,
 } from './detail/panelReaders.js';
 import type { GitlabPagedStateV1, GitlabReadStateV1 } from './detail/panelState.js';
-import { TriageDetailPanel } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPanel, TriageDetailStory, TriageDetailChanges, TriageDetailChecks, TriageDetailActivity } from '@happier-dev/triage-sources/ui';
 import { GitlabDiscussionResolutionControl, GitlabMutationControls } from './detail/mutationControls.js';
 import {
   GitlabIssueCommentPublicationControl,
@@ -293,6 +293,32 @@ function GitlabActionsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInpu
   return <GitlabMutationControls input={gitlabEffectiveInput(input, controller.value)} />;
 }
 
+function GitlabStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const controller = useGitlabChanges(input);
+  const { state } = controller;
+  return <TriageDetailChanges>
+    {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.gitlab.ui.readingFiles" />
+      : state.kind === 'unavailable' ? <ErrorState title="The changed files are unavailable" titleKey="plugins.gitlab.ui.filesUnavailable"
+        description={failureDescription(state.failure, text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'))} />
+      : <><PageFailureBanner state={state} />
+        <Metadata title="Changed files" titleKey="plugins.gitlab.ui.tabs.changes" entries={state.rows.map((row) => ({ label: row.path, value: changedFileSubtitle(text, row) }))} />
+        {controller.diffLimitStatus === 'reported' ? null : <Banner tone="warning" title="Diff-limit status unknown" titleKey="plugins.gitlab.ui.diffLimitUnknown"
+          description="This deployment did not say whether it left any file out, so this list is not a claim that the diff is whole." descriptionKey="plugins.gitlab.ui.diffLimitUnknown.description" />}
+        <PagedFooter state={state} onLoadMore={controller.loadMore} onRefresh={controller.refresh}
+          loadMoreTitle={text('plugins.gitlab.ui.showMoreFiles', 'Show more files')} refreshLabel={text('plugins.gitlab.ui.rereadFiles', 'Re-read the changed files from GitLab')}
+          summary={`${state.rows.length} file(s) read.`} summaryKey="plugins.gitlab.ui.filesRead" summaryValues={{ count: state.rows.length }} />
+      </>}
+  </TriageDetailChanges>;
+}
+
+function GitlabStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
+  const { state, rollup } = useGitlabPipelines(input);
+  return <TriageDetailChecks title="Pipelines" titleKey="plugins.gitlab.ui.tabs.pipelines" rollup={state.kind === 'ready' ? rollup : null}>
+    <PageFailureBanner state={state} />
+  </TriageDetailChecks>;
+}
+
 function OverviewPanel({
   input,
   locale,
@@ -315,6 +341,7 @@ function OverviewPanel({
   const controller = useGitlabOverview(input);
   const effectiveInput = gitlabEffectiveInput(input, controller.value);
   const body = projectGitlabDetailBody(effectiveInput);
+  const description = controller.value?.description ?? effectiveInput.observation.snapshot.summary;
   const statusFields = body.fields.filter(
     (field): field is Extract<GitlabDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
@@ -329,8 +356,9 @@ function OverviewPanel({
   });
 
   return (
-    <ScrollArea>
-      <Stack gap="large">
+      <TriageDetailStory kind={withWrites ? undefined : input.observation.entryRef.kindId === 'issue' ? 'report' : 'ask'}
+        changes={withWrites || input.observation.entryRef.kindId === 'issue' ? null : <GitlabStoryChanges input={input} />}
+        checks={withWrites || input.observation.entryRef.kindId === 'issue' ? null : <GitlabStoryChecks input={input} />}>
         {controller.failure === null ? null : (
           <Banner
             tone="warning"
@@ -369,8 +397,7 @@ function OverviewPanel({
             </Row>
           </Stack>
         )}
-        {controller.value?.description === undefined
-          || controller.value.description === '' ? null : (
+        {description === undefined || description === '' ? null : (
             <Stack gap="small">
               <Text
                 variant="caption"
@@ -378,8 +405,8 @@ function OverviewPanel({
                 valueKey="plugins.gitlab.ui.overview.description"
                 fallback="Description"
               />
-              <Text value={controller.value.description} />
-              {!controller.value.descriptionTruncated ? null : (
+              <Text value={description} />
+              {!controller.value?.descriptionTruncated ? null : (
                 <Text
                   variant="caption"
                   tone="neutral"
@@ -396,8 +423,7 @@ function OverviewPanel({
           accessibilityLabel="Re-read this overview from GitLab"
           accessibilityLabelKey="plugins.gitlab.ui.overview.reread"
         />
-      </Stack>
-    </ScrollArea>
+      </TriageDetailStory>
   );
 }
 
@@ -1238,16 +1264,19 @@ function GitlabDetailBody({
         <TriageDetailPanel
           panel={input.panel}
           ariaLabel={text('plugins.gitlab.ui.detailLabel', 'GitLab entry detail')}
+          retention={Object.fromEntries(visible
+            .filter((declaration) => ['overview', 'activity', 'changes', 'pipelines'].includes(declaration.id))
+            .map((declaration) => [declaration.id === 'changes' ? 'files' : declaration.id === 'pipelines' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
             overview: <OverviewPanel input={input} locale={locale} nowMs={nowMs} withWrites={false} />,
             activity: (
-              <Stack gap="large" style={{ flex: 1, minHeight: 0 }}>
+              <TriageDetailActivity>
                 {kindId === 'merge-request' ? (
                   <Stack style={{ flex: 1, minHeight: 0 }}>{panels.reviews}</Stack>
                 ) : null}
-                <Stack style={{ flex: 1, minHeight: 0 }}>{panels.comments}</Stack>
+                {kindId === 'issue' ? <Stack style={{ flex: 1, minHeight: 0 }}>{panels.comments}</Stack> : null}
                 <Stack style={{ flex: 1, minHeight: 0 }}>{panels.activity}</Stack>
-              </Stack>
+              </TriageDetailActivity>
             ),
             ...(kindId === 'merge-request' ? { files: panels.changes, checks: panels.pipelines } : {}),
             actions: <GitlabActionsPanel input={input} />,

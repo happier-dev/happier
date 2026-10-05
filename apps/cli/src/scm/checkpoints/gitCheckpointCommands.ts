@@ -1,6 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createGitTemporaryIndex, type GitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
 
 import { runScmCommand, type ScmExecResult } from '../runtime';
 import type { RepositoryCheckpointAvailabilityReason } from './types';
@@ -14,11 +12,7 @@ export type GitCheckpointCommandOptions = Readonly<{
     env?: Record<string, string | undefined>;
 }>;
 
-export type GitCheckpointTemporaryIndex = Readonly<{
-    indexPath: string;
-    env: Record<string, string>;
-    cleanup: () => void;
-}>;
+export type GitCheckpointTemporaryIndex = GitTemporaryIndex;
 
 export type GitCheckpointCommandFailure = Readonly<{
     reason: Extract<RepositoryCheckpointAvailabilityReason, 'command_failed' | 'missing_git' | 'permission_denied'>;
@@ -57,47 +51,15 @@ export async function createGitCheckpointTemporaryIndex(input: {
     | { success: true; tempIndex: GitCheckpointTemporaryIndex }
     | { success: false; reason: GitCheckpointCommandFailure['reason']; error: string }
 > {
-    const tempDir = mkdtempSync(join(tmpdir(), 'happier-scm-checkpoint-index-'));
-    const indexPath = join(tempDir, 'index');
-    const env = { GIT_INDEX_FILE: indexPath };
-    const cleanup = () => {
-        rmSync(tempDir, { recursive: true, force: true });
-    };
-
-    writeFileSync(indexPath, '');
-    const readHead = await runGitCheckpointCommand({
+    const head = await runGitCheckpointCommand({ cwd: input.cwd, args: ['rev-parse', '--verify', 'HEAD'], timeoutMs: 5000 });
+    const result = await createGitTemporaryIndex({
         cwd: input.cwd,
-        args: ['read-tree', 'HEAD'],
-        timeoutMs: 5000,
-        env,
+        seed: head.success ? { kind: 'tree', treeOid: head.stdout.trim() } : { kind: 'empty' },
+        runGit: (command) => runGitCheckpointCommand({ ...command, timeoutMs: 5000 }),
     });
-    if (!readHead.success) {
-        const readEmpty = await runGitCheckpointCommand({
-            cwd: input.cwd,
-            args: ['read-tree', '--empty'],
-            timeoutMs: 5000,
-            env,
-        });
-        if (!readEmpty.success) {
-            const failure = classifyGitCheckpointCommandFailure(
-                readEmpty,
-                readHead.stderr || 'Failed to initialize temporary checkpoint index',
-            );
-            cleanup();
-            return {
-                success: false,
-                reason: failure.reason,
-                error: failure.error,
-            };
-        }
-    }
-
-    return {
-        success: true,
-        tempIndex: {
-            indexPath,
-            env,
-            cleanup,
-        },
-    };
+    if (result.success) return result;
+    const failure = result.commandResult
+        ? classifyGitCheckpointCommandFailure(result.commandResult, result.error)
+        : { reason: 'command_failed' as const, error: result.error };
+    return { success: false, ...failure };
 }

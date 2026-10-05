@@ -21,6 +21,7 @@ import {
   PLUGIN_SURFACE_EXCLUSION_REASONS,
   getActionSpec,
   listActionSpecs,
+  listVoiceToolActionSpecs,
   resolveActionSdkMethodName,
 } from './actionSpecs.js';
 import {
@@ -36,6 +37,27 @@ import {
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
+  it('exposes relayed Find and Next as direct MCP tools while retaining the default Agent discovery budget', () => {
+    for (const id of ['ui.find', 'session.pending.next'] as const) {
+      const spec = getActionSpec(id);
+      expect(isActionDirectToolExposedOn(spec, 'mcp'), id).toBe(true);
+      expect(isActionDiscoverableOnToolSurface(spec, 'agent'), id).toBe(true);
+      expect(resolveActionToolExposureMode(spec, 'agent'), id).toBe('discoverable_only');
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }).available, id).toBe(false);
+    }
+  });
+  it('makes landed explanation Actions reachable through the existing UI and Voice catalogs', () => {
+    const voiceIds = new Set(listVoiceToolActionSpecs().map((spec) => spec.id));
+    for (const actionId of ['scm.diffSummary.capture', 'scm.diffSummary.generate', 'scm.diffSummary.result.read',
+      'scm.diffSummary.result.edit', 'scm.diffSummary.result.undo', 'scm.diffSummary.result.delete',
+      'scm.diffSummary.refine', 'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss',
+      'scm.diffSummary.reviewed.mark', 'scm.diffSummary.reviewed.unmark'] as const) {
+      expect(resolveActionSurfaceAvailability({ actionId, surface: 'ui' }).available, actionId).toBe(true);
+      expect(voiceIds.has(actionId), actionId).toBe(true);
+      const parsed = ActionSpecSchema.safeParse(getActionSpec(actionId));
+      expect(parsed.success, parsed.success ? actionId : `${actionId}: ${JSON.stringify(parsed.error.issues)}`).toBe(true);
+    }
+  });
   it('defaults first-party agent action-backed tools to discoverable-only unless allow-listed', () => {
     for (const id of ['review.start', 'subagents.delegate.start', 'execution.run.start', 'session.status.get'] as const) {
       const spec = getActionSpec(id);

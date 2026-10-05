@@ -9,6 +9,11 @@ export {
 } from './historicalImportIdentity.js';
 
 export {
+  createExternalSessionContentMatchSnippet,
+  findExternalSessionContentMatchRange,
+} from './contentSearchMatch.js';
+
+export {
   ExternalSessionTakeoverPersistRequestSchema,
   ExternalSessionTakeoverPersistResponseSchema,
   ExternalSessionTakeoverRequestSchema,

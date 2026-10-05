@@ -45,6 +45,16 @@ function runFetchKey(run: SessionWorkflowRunHeadlineV1): string {
     return `${run.runId}::${run.recordRevision}::${run.recordUpdatedAt}`;
 }
 
+export function resolveWorkflowRunHeadlineForToolUseId(metadata: unknown, toolUseId: string | null | undefined): SessionWorkflowRunHeadlineV1 | null {
+    const id = toolUseId?.trim();
+    const headline = readSessionWorkflowActivityHeadlineFromMetadata(metadata);
+    if (!id || !headline) return null;
+    const allRuns = [...headline.activeRuns, ...(headline.recentRuns ?? [])];
+    return allRuns.find((run) => run.workflowToolUseId === id)
+        ?? allRuns.find((run) => run.runId === id)
+        ?? null;
+}
+
 export function useSessionWorkflowActivity(params: Readonly<{
     sessionId: string;
     serverId?: string;
@@ -172,20 +182,10 @@ export function useWorkflowRunForToolUseId(params: Readonly<{
     const accountScope = storage((state) => state.profileScope);
     const serverId = params.serverId;
     const ownerKey = JSON.stringify([accountScope?.serverId, accountScope?.accountId, serverId, params.sessionId]);
-    const headline = React.useMemo(
-        () => readSessionWorkflowActivityHeadlineFromMetadata(params.metadata),
-        [params.metadata],
+    const runHeadline = React.useMemo(
+        () => resolveWorkflowRunHeadlineForToolUseId(params.metadata, params.toolUseId),
+        [params.metadata, params.toolUseId],
     );
-    const runHeadline = React.useMemo(() => {
-        const toolUseId = params.toolUseId?.trim();
-        if (!toolUseId || !headline) return null;
-        const allRuns = [...headline.activeRuns, ...(headline.recentRuns ?? [])];
-        return (
-            allRuns.find((run) => run.workflowToolUseId === toolUseId)
-            ?? allRuns.find((run) => run.runId === toolUseId)
-            ?? null
-        );
-    }, [headline, params.toolUseId]);
 
     // Narrow fetch key: run id + record revision/updatedAt. Refetches only when the matched run's
     // durable record advances, not on unrelated headline churn.

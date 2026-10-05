@@ -56,6 +56,8 @@ function presentDocumentShareFailure(code: string): ShareUiError {
             return { code, message: t('shareSheet.documents.errors.ownerOnly'), retryable: false };
         case 'artifact_not_found':
             return { code, message: t('shareSheet.documents.errors.notFound'), retryable: false };
+        case 'artifact_access_revoked':
+            return { code, message: t('shareSheet.documents.errors.noAccess'), retryable: false };
         case 'artifact_subject_not_found':
         case 'artifact_subject_ineligible':
         case 'artifact_owner_grant_invalid':
@@ -132,9 +134,14 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
             const confirming = new Set(previous.confirming);
             confirming.delete(key);
             if (parsed?.success) {
+                const { changed: _changed, access, ...response } = parsed.data;
+                if (access === null) {
+                    lastMutation.current.clear();
+                    return { phase: 'ready', response: null, operations: {}, confirming: new Set(),
+                        issue: presentDocumentShareFailure('artifact_access_revoked') };
+                }
                 lastMutation.current.delete(key);
-                const { changed: _changed, ...response } = parsed.data;
-                return { ...previous, response, operations, confirming };
+                return { ...previous, phase: 'ready', response: { ...response, access }, operations, confirming, issue: undefined };
             }
             return { ...previous, confirming,
                 operations: { ...operations, [key]: { kind: 'error', error: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed') } } };
@@ -143,7 +150,8 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     }, [artifactId, execute, scope.serverId, scope.accountId]);
 
     const response = state.response;
-    const editable = response?.access === 'owner';
+    const isOwner = response?.access === 'owner';
+    const editable = isOwner || response?.access === 'admin';
     const grants = response?.grants ?? NO_GRANTS;
     const rows = React.useMemo<readonly ShareGrantRowModel[]>(() => grants.map((row) => {
         const principal = presentGrantPrincipal(row);
@@ -151,11 +159,11 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         return {
             grant: row.principal,
             principal,
-            level: { kind: 'editable', value: row.accessLevel, options: ['view', 'edit', 'admin'] },
+            level: { kind: 'editable', value: row.accessLevel, options: isOwner ? ['view', 'edit', 'admin'] : ['view', 'edit'] },
             removal: state.confirming.has(principal.key) ? { kind: 'confirming', consequences: [] } : { kind: 'allowed' },
             operation,
         };
-    }), [grants, state.operations, state.confirming]);
+    }), [grants, isOwner, state.operations, state.confirming]);
     const owner = response && response.ownerAccountId === scope.accountId ? { principal: {
         ref: { kind: 'account' as const, accountId: response.ownerAccountId },
         key: sessionAccessSubjectKey({ kind: 'account', accountId: response.ownerAccountId }),

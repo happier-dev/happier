@@ -148,6 +148,11 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
             key: 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt',
             fallback: 'Audio for transcription is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.',
           },
+          privacyFacts: {
+            audioDestination: { key: 'settingsVoice.pages.privacy.yourEndpoint', fallback: 'Your configured endpoint' },
+            processor: { key: 'settingsVoice.pages.privacy.endpointOperator', fallback: 'Your endpoint operator' },
+            retention: { key: 'settingsVoice.pages.privacy.endpointPolicy', fallback: 'Follows your endpoint operator’s policy.' },
+          },
           fields: [
             {
               id: 'baseUrl',
@@ -222,6 +227,11 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           privacyDisclosure: {
             key: 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts',
             fallback: 'Reply text for speech synthesis is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.',
+          },
+          privacyFacts: {
+            audioDestination: { key: 'settingsVoice.pages.privacy.noMicrophoneAudio', fallback: 'No microphone audio; reply text only.' },
+            processor: { key: 'settingsVoice.pages.privacy.endpointOperator', fallback: 'Your endpoint operator' },
+            retention: { key: 'settingsVoice.pages.privacy.endpointPolicy', fallback: 'Follows your endpoint operator’s policy.' },
           },
           fields: [
             {

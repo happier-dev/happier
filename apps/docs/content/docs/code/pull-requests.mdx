@@ -117,6 +117,38 @@ Use this when:
 - you want to test someone else's branch in isolation
 - you want to keep your current worktree clean while opening an external PR/MR
 
+## Comparison evidence in development
+
+In unreleased 0.3 development source, GitHub comparison retrieval records the
+PR's merge-base-to-head diff endpoints separately from its base-tip freshness
+witness and pages through changed files independently of the small detail
+preview. Missing or truncated patches stay explicitly incomplete; absent patch
+text does not prove an empty diff or a binary file. A failed page retains usable
+earlier evidence, and a changed base/head requires refresh rather than combining
+different versions into one exact comparison.
+
+Reading this evidence does not checkout the PR into your worktree. A PR
+comparison can explain or inform a review, but cannot authorize local commit
+proposals. When a Session comparison is bound to that PR source, Files and
+Walkthrough use the captured PR evidence, not the local pending diff. Missing
+patches and stale evidence remain visible. Reopening a pinned comparison reads
+the saved evidence rather than silently capturing a newer PR version.
+
+Development source adds **Walk through** to PR details in PRs & Issues. It uses a
+linked Session when its workspace is reachable; otherwise it asks for placement
+through New Session. Reading uses a reference-only Session, without checking out
+the PR or sending a prompt. **Start review** still uses its isolated review
+workspace and selects walkthrough output by default. If comparison evidence is
+unavailable, resolve that first or turn walkthrough off to request findings only.
+Before review starts, the host's existing launch controls select Secret or Team
+credentials and check the exact Home and machine, resuming a stopped Session
+when supported. Cancelling those controls does not start a review.
+These entrances still await end-to-end runtime certification; this is not a
+released-availability claim. **Request review** remains the existing human
+reviewer flow.
+See [Diffs and review](/code/diffs#walk-through-changes) for the implemented reading
+workflow and its current limits.
+
 ## Related
 
 - [Git](/code/git) — branches, commits and remotes.

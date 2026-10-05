@@ -1,13 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import {
-    parseWorkflowDefinitionRefV1,
-    resolveBuiltinWorkflowDefinitionV1,
-} from '@happier-dev/protocol/workflows';
 import type { WorkflowNestedLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
-import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
+import { projectWorkflowRunInputFields } from '@/sync/domains/workflows/workflowAuthoring';
+import { useWorkflowReferenceDefinition } from '@/components/workflows/presentation/useWorkflowReferenceDefinition';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 import { Text } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -15,23 +13,17 @@ import { t } from '@/text';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { Icon } from '@/components/ui/icons/Icon';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import {
     listBuiltinWorkflowReferenceOptions,
-    useWorkflowLibraryReferenceOptions,
+    useWorkflowReferenceLibrary,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 
 import { workflowEditorStyles } from './workflowEditorStyles';
-import { WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
-
-/** The child's declared inputs where this client can read them (built-ins); `null` when it cannot. */
-function readChildInputs(workflowRef: string): readonly WorkflowInputDefinition[] | null {
-    const parsed = parseWorkflowDefinitionRefV1(workflowRef);
-    if (parsed?.kind !== 'builtin') return null;
-    return resolveBuiltinWorkflowDefinitionV1(parsed.id)?.definition.inputs ?? null;
-}
+import { formatWorkflowValueReference, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 /**
  * A Run a workflow step (U4, 04 §4.3): the child named with its origin, "Runs
@@ -55,11 +47,14 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
 }>): React.ReactElement {
     const { block, testIDPrefix } = props;
     const editable = props.editable !== false;
-    const libraryOptions = useWorkflowLibraryReferenceOptions();
+    const library = useWorkflowReferenceLibrary();
+    const libraryOptions = library.options;
     const known = [...listBuiltinWorkflowReferenceOptions(), ...libraryOptions]
         .find((option) => option.ref === block.workflowRef) ?? null;
     const displayName = known?.title ?? block.workflowRef;
-    const declared = React.useMemo(() => readChildInputs(block.workflowRef), [block.workflowRef]);
+    const child = useWorkflowReferenceDefinition(block.workflowRef, libraryOptions);
+    const declared = React.useMemo(() => child.definition === null ? null
+        : projectWorkflowRunInputFields({ inputs: child.definition.inputs, values: {} }).map((field) => field.definition), [child.definition]);
     const inputNames = React.useMemo(() => {
         const names = (declared ?? []).map((input) => input.name);
         for (const name of Object.keys(block.input)) if (!names.includes(name)) names.push(name);
@@ -75,6 +70,7 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
     return (
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
             <WorkflowBlockHeading
+                kindMark={<Icon name="tree-structure" size={16} />}
                 ordinal={props.ordinal}
                 displayName={known?.origin === 'builtin' ? `${displayName} · ${t('workflows.page.blocks.builtin')}` : displayName}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
@@ -84,6 +80,7 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                 testID={`${rowPrefix}-label`}
                 actionsTestID={`${rowPrefix}-actions`}
             />
+            {props.slots?.occurrenceSelector ?? null}
             {props.onOpenOptions === undefined || props.editable === false ? null : (
                 <WorkflowContainerSummary
                     sentence={props.block.onlyWhen === undefined
@@ -97,6 +94,12 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                 />
             )}
             <Text style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.workflowSub')}</Text>
+            {child.status === 'loading' ? <Text>{t('common.loading')}</Text> : null}
+            {child.status === 'failed' ? <View>
+                <Text accessibilityRole="alert">{t('workflows.page.blocks.childInputs', { workflow: displayName })}</Text>
+                <RoundButton size="small" title={t('common.retry')} testID={`${rowPrefix}-retry`}
+                    onPress={() => { child.retry(); library.retry(); }} />
+            </View> : null}
             {inputNames.length === 0 && declared === null ? (
                 <Text style={workflowEditorStyles.groupSummary}>
                     {t('workflows.page.blocks.childInputs', { workflow: displayName })}
@@ -114,7 +117,9 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.required')}</Text>
                             ) : null}
                         </View>
-                        <WorkflowValueReferenceEditor
+                        {!editable ? <Text style={workflowEditorStyles.metaText}>
+                            {binding === undefined ? t('workflows.page.blocks.notSet') : formatWorkflowValueReference(props.draft, binding)}
+                        </Text> : <WorkflowValueReferenceEditor
                             reference={binding ?? { kind: 'literal', value: '' }}
                             index={0}
                             draft={props.draft}
@@ -124,10 +129,12 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                                 ? {}
                                 : { onRemove: () => setBinding(name, undefined) })}
                             testIDPrefix={fieldId}
-                        />
+                        />}
                     </View>
                 );
             })}
+            {props.slots?.reviewedCard ?? null}
+            {props.slots?.footer ?? null}
         </View>
     );
 }

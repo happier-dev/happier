@@ -63,11 +63,12 @@ export function HappierStateLine(props: Readonly<{
       minHeight: metrics.minHeightPx,
       paddingVertical: metrics.paddingVerticalPx,
       flexDirection: 'row',
+      flexWrap: 'wrap',
       alignItems: 'center',
       gap: metrics.gapPx,
     }}>
       {props.icon ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
-      <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
+      <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
       {props.action ?? null}
     </View>
   );

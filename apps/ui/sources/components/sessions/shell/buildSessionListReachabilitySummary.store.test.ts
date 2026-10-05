@@ -34,7 +34,10 @@ describe('session reachability summary with real storage', () => {
         const workspaceRefs: WorkspaceRefV1[] = [];
         const renderable: SessionListReachabilityRenderable = { id: session.id, metadata: session.metadata };
         const build = (machines: readonly Machine[]) => {
-            storage.setState({ machines: Object.fromEntries(machines.map((value) => [value.id, value])) });
+            storage.setState({
+                machines: Object.fromEntries(machines.map((value) => [value.id, value])),
+                machineListByServerId: { 'server-a': [...machines] },
+            });
             return buildSessionListReachabilitySummary({
                 cache, listItems: [...listItems], workspaceRefs,
                 machinesById: machineDisplayMap(machines),

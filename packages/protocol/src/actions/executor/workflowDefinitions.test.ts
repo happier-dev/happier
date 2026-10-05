@@ -5,7 +5,7 @@ import { ArtifactBlobReferenceV1Schema } from '../../artifacts/artifactBinaryV1.
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
-import { WorkflowDefinitionListResultV1Schema } from '../../workflows/actionsV1.js';
+import { WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListResultV1Schema } from '../../workflows/actionsV1.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
 
 const definitionId = '11111111-1111-4111-8111-111111111111';
@@ -15,6 +15,26 @@ const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
 });
 
 describe('shared workflow definition create', () => {
+  it.each(['owner', 'edit', 'admin', 'view'] as const)('returns the Artifact-effective %s access through the definition Action', async (access) => {
+    const definitions = createWorkflowDefinitionActions({ artifactStore: {
+      read: async () => ({ artifactId: definitionId, ownerAccountId: 'owner', access,
+        revision: { headerVersion: 1, bodyVersion: 1 },
+        header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared' } },
+        body: JSON.stringify({ kind: 'workflow-definition.v1', definition }) }),
+      list: async () => ({ items: [] }), create: async () => {},
+      update: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }), delete: async () => ({ ok: true }),
+    }, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
+    const execute = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions,
+      runs: createWorkflowAccountRunActionOwner({ definitions, storage: { execute: async () => { throw new Error('no_run_read'); } },
+        resolveAccountId: async () => 'recipient', resolveEncryption: async () => ({ kind: 'available',
+          witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        normalizeAbsolutePath: () => null, randomBytes: () => { throw new Error('no_keys'); } }),
+    });
+    const result = await execute({ actionId: 'workflow.definition.get', input: { definitionId },
+      context: { surface: 'agent', runtimeAccountId: 'recipient' } });
+    expect(result).toMatchObject({ definitionId, definition, access });
+    expect(WorkflowDefinitionGetResultV1Schema.parse(result)).toEqual(result);
+  });
   it('pages plugin definitions within the existing Action response boundary without hiding saved workflows', async () => {
     const plugins = [0, 1].map((index) => ({ workflow: `plugin:com.acme.workflows/review-${index}`,
       pluginId: 'com.acme.workflows', version: '1.2.3', title: `Review ${index}`,
@@ -22,12 +42,14 @@ describe('shared workflow definition create', () => {
         document: { text: 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2), references: [], attachments: [] } }] },
     }));
     const saved = { artifactId: definitionId, headerVersion: 1, updatedAt: 1, ownerAccountId: 'account', access: 'owner' as const,
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), bodyVersion: 1,
       header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved' } } };
     const owner = createWorkflowDefinitionActions({ artifactStore: {
       list: async ({ cursor }) => { expect(cursor).toBeUndefined(); return { items: [saved] }; },
-      read: async () => { throw new Error('list_needs_no_artifact_body'); }, create: async () => {},
+      read: async () => { throw new Error('list_must_not_read_per_row'); }, create: async () => {},
       update: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }), delete: async () => ({ ok: true }),
-    }, encodeListCursor: () => 'artifact-cursor', assertDefinitionWriteAllowed: () => {}, readPluginWorkflows: () => plugins });
+    }, encodeListCursor: () => 'artifact-cursor', assertDefinitionWriteAllowed: () => {}, readPluginWorkflows: () => plugins,
+    readWorkflowTriggerSummaries: async () => new Map() });
     const first = WorkflowDefinitionListResultV1Schema.parse(await owner.list({}));
     expect(first.definitions.map((entry) => entry.definitionId)).toEqual([definitionId]);
     expect(first.pluginWorkflows?.map((entry) => entry.workflow)).toEqual([plugins[0]!.workflow]);
@@ -109,13 +131,15 @@ describe('shared workflow definition create', () => {
 
   it('lists grant-reachable workflows with their owner/access and filters other opened kinds', async () => {
     const row = { artifactId: definitionId, headerVersion: 1, updatedAt: 1, ownerAccountId: 'other-owner', access: 'edit' as const,
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), bodyVersion: 1,
       header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared' } } };
     const store: WorkflowDefinitionArtifactOperations = {
-      read: async () => null, list: async () => ({ items: [row, { ...row, artifactId: 'role', header: { kind: 'role.v1' } }] }),
+      read: async () => { throw new Error('list_must_not_read_per_row'); }, list: async () => ({ items: [row, { ...row, artifactId: 'role', header: { kind: 'role.v1' } }] }),
       create: async () => undefined, update: async () => ({ ok: false, errorCode: 'not_found', error: 'not_found' }), delete: async () => ({ ok: true }),
     };
-    const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
-    await expect(actions.list({})).resolves.toEqual({ definitions: [{ ...row.header, ownerAccountId: 'other-owner', access: 'edit' }] });
+    const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {},
+      readWorkflowTriggerSummaries: async () => new Map() });
+    await expect(actions.list({})).resolves.toEqual({ definitions: [{ ...row.header, ownerAccountId: 'other-owner', access: 'edit', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null }] });
   });
   it.each(['existing', 'conflict', 'response_loss'] as const)('rejoins same semantic content after %s', async (scenario) => {
     let saved = scenario === 'existing';

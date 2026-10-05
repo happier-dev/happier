@@ -1,11 +1,18 @@
 import { EventEmitter } from 'node:events';
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol';
+import {
+  ACCOUNT_SECURITY_PATH_V1,
+  AccountSecurityGetResponseV1Schema,
+  MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
+  MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
+  MachineUpdateOperationProtocolCapabilitiesResponseV1Schema,
+  SessionMetadataTuplePatchV1Schema,
+} from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
@@ -41,7 +48,7 @@ import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/termi
 import { createHerdrClient } from '@/integrations/herdr/client';
 import { HERDR_ACTION_TIMEOUT_MS, HERDR_STARTUP_TIMEOUT_MS } from '@/integrations/herdr/runtimeBinary';
 import { createHerdrTerminalHostAdapter } from '@/integrations/herdr/adapter';
-import { createTerminalAttachmentId, readTerminalHostAttachmentInfo, removeTerminalHostAttachmentInfo, writeTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { createTerminalAttachmentId, readTerminalHostAttachmentInfo, readTerminalHostAttachmentState, removeTerminalHostAttachmentInfo, writeTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { probeSessionRunnerServiceability } from '../sessions/isSessionRunnerActive';
 import { resolveDisconnectedTerminalHostResumeGate, resolveTrackedSessionTerminalHostExitCandidate, shouldRetainTrackedTerminalHostExitMarker, superviseDisconnectedTerminalHostCandidate, superviseTrackedOptionalTerminalPresentation } from '../sessions/disconnectedTerminalHostSupervision';
 import { startDaemonHeartbeatLoop } from '../lifecycle/heartbeat';
@@ -146,6 +153,8 @@ function createParams() {
 
 describe('spawnRegularProcessAndWaitForWebhook', () => {
   let routeRegistryGeneration = 0;
+  let pendingCapturedCase: Promise<void> | undefined;
+  let currentTestSignal: AbortSignal | undefined;
   const originalOomScoreAdjustment = process.env.HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ;
   const originalSessionWebhookTimeoutMs = process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS;
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -153,7 +162,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
   const originalPlatform = process.platform;
   const originalDebug = process.env.DEBUG;
 
-  beforeEach(() => {
+  beforeEach((context) => {
+    currentTestSignal = context.signal;
     mocks.spawnHappyCLI.mockReset().mockReturnValue(createFakeChildProcess(4242));
     mocks.writeFile.mockReset().mockResolvedValue(undefined);
     process.env.HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ = '321';
@@ -171,11 +181,31 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
   it.skipIf(originalPlatform === 'win32').each([
     ['codex', 'acp', 'none', 'herdr'],
     ['codex', 'appServer', 'provider_attach', 'herdr'],
+    ['codex', 'appServer', 'provider_attach', 'plain'],
     ['opencode', 'server', 'provider_attach', 'herdr'],
+    ['opencode', 'server', 'provider_attach', 'plain'],
     ['claude', 'agentSdk', 'runner', 'plain'],
     ['claude', 'unifiedTerminal', 'managed_terminal', 'zellij'],
-  ] as const)('carries captured %s/%s placement through the real route without hosting its controller', async (agentId, backendMode, presentationKind, requestedHost) => {
-    await withTempHappyCliEntrypoint(async (entrypoint) => {
+  ] as const)('carries captured %s/%s %s placement for %s through the real route without hosting its controller', async (agentId, backendMode, presentationKind, requestedHost) => {
+    const signal = currentTestSignal;
+    if (!signal) throw new Error('The canonical test context did not provide its cancellation signal');
+    let currentPhase = 'entrypoint';
+    let childToCancel: ChildProcess | undefined;
+    let normalChildToCancel: ChildProcess | undefined;
+    let releaseHeldRead: (() => void) | undefined;
+    const enterPhase = (phase: string) => {
+      signal.throwIfAborted();
+      currentPhase = phase;
+    };
+    const cancelOwnedWork = () => {
+      console.error('[captured-route-fixture] Test aborted', { agentId, backendMode, phase: currentPhase });
+      releaseHeldRead?.();
+      for (const child of [childToCancel, normalChildToCancel]) {
+        if (child?.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      }
+    };
+    signal.addEventListener('abort', cancelOwnedWork, { once: true });
+    const work = withTempHappyCliEntrypoint(async (entrypoint) => {
       const envScope = createSpawnHappyCliEnvScope();
       const features = createEnvKeyScope(['HAPPIER_FEATURE_AGENTS_CLAUDE_UNIFIED_TERMINAL__ENABLED', 'HAPPIER_FEATURE_SESSIONS_DIRECT__ENABLED']);
       features.patch({ HAPPIER_FEATURE_AGENTS_CLAUDE_UNIFIED_TERMINAL__ENABLED: '1', HAPPIER_FEATURE_SESSIONS_DIRECT__ENABLED: '1' });
@@ -199,6 +229,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
           });
           const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(homeDir, 'device-local-key.json') });
           const child = spawn(process.execPath, ['-e', '/* herdr-route-captured-boundary */ setInterval(() => {}, 1000)'], { cwd: homeDir, detached: true, stdio: 'ignore' });
+          childToCancel = child;
           await once(child, 'spawn');
           const exited = once(child, 'exit');
           const pid = child.pid!;
@@ -231,13 +262,17 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
           const developmentRoots = createDaemonPluginDevelopmentRootsOwner({ happyHomeDir: homeDir,
             submitObservation: async () => { throw new Error('This fixture does not observe development sources'); } });
           let bootstrap: Awaited<ReturnType<typeof prepareRunnerAgentSessionBootstrapForLease>> = null;
+          let relayToClose: Server | undefined;
+          const previousServer = process.env.HAPPIER_SERVER_URL;
           try {
+            enterPhase('registry admission');
             const generation = ++routeRegistryGeneration;
             const registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: homeDir, generation,
               resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority });
             const adoption = await pluginReloadController.adoptPreparedRuntimeRegistry({ registry, changedPluginIds: [],
               durableRevision: generation, runningSessionDisposition: 'retainRunningSessions' });
             if (!adoption.ok) throw new Error('Failed to prepare actual daemon runtime');
+            enterPhase('selected runtime');
             const surfaces = await resolveBackendExecutionSurfaces(params.trackedSpawnOptions.backendTarget, { runtimeRegistry: registry });
             if (!surfaces.resolveTerminalPresentation) throw new Error('Actual runtime has no placement owner');
             const selection = {
@@ -254,7 +289,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
             expect(recoveryPresentation).toEqual(presentationKind === 'provider_attach'
               ? { ...selected, startingMode: 'remote' }
               : selected);
-            if (presentationKind === 'provider_attach') expect(selected.startingMode).toBe('terminal');
+            if (presentationKind === 'provider_attach') {
+              expect(selected.startingMode).toBe(requestedHost === 'plain' ? 'remote' : 'terminal');
+            }
             const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
             try {
               bootstrap = await prepareRunnerAgentSessionBootstrapForLease({
@@ -263,6 +300,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
               });
             } finally { await lease.release(); }
             if (!bootstrap) throw new Error('The actual admitted Agent did not issue its runner bootstrap');
+            enterPhase('controller route');
             const terminalRequest = resolveTerminalRequestFromSpawnOptions({ happyHomeDir: homeDir, terminal: params.trackedSpawnOptions.terminal });
             if (terminalRequest.requested === 'herdr') {
               const client = createHerdrClient({ binary: process.env.HERDR_BIN_PATH!, sessionName: terminalRequest.herdr.sessionName,
@@ -287,6 +325,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
             // Network webhook boundary: the pre-session PID placeholder is sufficient for this spawn-custody assertion.
             params.pidToAwaiter.get(pid)?.({ ...tracked });
             await pending;
+            enterPhase('bootstrap metadata');
             expect(api.requests.filter(request => request.method === 'layout.apply')).toEqual([]);
             // The native-client placement must cross the actual CLI ingress,
             // not just remain in the daemon's selection result.
@@ -297,7 +336,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
             }
             const terminal = parseAndStripTerminalRuntimeFlags([...launchArgs].slice(1));
             const parsed = partitionProviderSessionArgs({ args: terminal.argv, providerSubcommand: agentId });
-            const expectedStartingMode = presentationKind === 'none' || backendMode === 'agentSdk' ? 'remote' : 'terminal';
+            const expectedStartingMode = requestedHost === 'plain' || presentationKind === 'none' ? 'remote' : 'terminal';
             expect(parsed.startingMode).toBe(expectedStartingMode);
             const providerOptions = await resolveProviderSessionRuntimePreferences(agentId, buildAgentCliSessionCommandBuildInput({
               settings: {}, processEnv: {}, startedBy: 'daemon', isExplicitCliSubcommand: true, parsed,
@@ -308,7 +347,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
               startedBy: parsed.startedBy, terminalRuntime: terminal.terminal,
             });
             expect(binding.runtimePreferences.startingMode).toBe(expectedStartingMode === 'terminal' && agentId === 'codex' ? 'local' : expectedStartingMode);
-            if (presentationKind === 'provider_attach' || presentationKind === 'managed_terminal') {
+            if (requestedHost !== 'plain' && (presentationKind === 'provider_attach' || presentationKind === 'managed_terminal')) {
               expect(binding.runtimePreferences.terminal).toMatchObject({ mode: 'plain', requested: requestedHost });
               if (requestedHost === 'herdr') expect(binding.runtimePreferences.terminal).toMatchObject({ herdrSessionName: 'fixture', herdrSocketPath: api.socketPath });
             }
@@ -366,7 +405,11 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                 const retirementRequests: unknown[] = [];
                 const relay = createServer(async (request, response) => {
                   response.setHeader('Content-Type', 'application/json');
-                  if (request.method === 'GET' && request.url === '/v2/sessions/session-1') {
+                  if (request.method === 'GET' && request.url === ACCOUNT_SECURITY_PATH_V1) {
+                    response.end(JSON.stringify(AccountSecurityGetResponseV1Schema.parse({ v: 1,
+                      encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+                      password: { status: 'not_enrolled', revision: null } })));
+                  } else if (request.method === 'GET' && request.url === '/v2/sessions/session-1') {
                     response.end(JSON.stringify({ session: rawSession }));
                   } else if (request.method === 'GET' && request.url === '/v1/account/encryption/currentness') {
                     response.end(JSON.stringify({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
@@ -382,9 +425,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                       sharedMetadata: { version: 5 }, agentState: { version: 0 } }));
                   } else { response.statusCode = 404; response.end('{}'); }
                 });
+                relayToClose = relay;
                 await new Promise<void>((resolve) => relay.listen(0, '127.0.0.1', resolve));
-                const previousServer = process.env.HAPPIER_SERVER_URL;
-                try {
+                {
                 const address = relay.address();
                 if (!address || typeof address === 'string') throw new Error('The owned relay did not bind a TCP endpoint');
                 process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
@@ -393,7 +436,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                 if (!lock) throw new Error('The owned heartbeat fixture did not acquire its daemon lock');
                 let interval: NodeJS.Timeout | undefined;
                 const originalSetInterval = global.setInterval;
-                let tick = async () => { throw new Error('The heartbeat clock was not scheduled'); };
+                let tick: () => Promise<void> = async () => { throw new Error('The heartbeat clock was not scheduled'); };
                 const clock = vi.spyOn(global, 'setInterval').mockImplementation((handler, delay, ...args) => {
                   tick = async () => { await handler(...args); };
                   return originalSetInterval(() => {}, delay);
@@ -425,7 +468,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   };
                   interval = startDaemonHeartbeatLoop(heartbeatParams);
                   clock.mockRestore();
+                  enterPhase('heartbeat retirement');
                   await tick();
+                  enterPhase('Stop safety guards');
                   expect(await readDaemonState()).toMatchObject({ pid: process.pid, httpPort: address.port, lastHeartbeatAt: expect.any(Number) });
                   expect(await readTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1' })).toBeNull();
                   const retirement = SessionMetadataTuplePatchV1Schema.parse(retirementRequests.at(-1));
@@ -440,6 +485,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   const markerBeforeStop = (await listSessionMarkers()).find(current => current.pid === pid);
                   expect(observed.processStartTimeMs).toBeTypeOf('number');
                   expect(markerBeforeStop?.processStartTimeMs).toBe(observed.processStartTimeMs);
+                  if (typeof observed.processStartTimeMs !== 'number') throw new Error('The accepted marker lacks its real OS generation');
                   const stop = createStopSession({ pidToTrackedSession,
                     areTrackedRunnersExited: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
                       runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 }),
@@ -447,6 +493,45 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                       runners: trackedPids.map(pid => ({ pid })), timeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
                       pollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs, onExitObserved: onChildExited }),
                   });
+                  pidToTrackedSession.set(pid, { ...observed, processStartTimeMs: observed.processStartTimeMs + 1 });
+                  expect(await stop('session-1')).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
+                  expect(process.kill(pid, 0)).toBe(true);
+                  pidToTrackedSession.set(pid, { ...observed, startedBy: 'terminal' });
+                  expect(await stop('session-1')).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
+                  expect(process.kill(pid, 0)).toBe(true);
+                  pidToTrackedSession.set(pid, observed);
+                  // Hold only the genuine procfs read; a replacement tracked
+                  // object cannot inherit the earlier absent-presenter proof.
+                  const fsBoundary = await import('node:fs/promises');
+                  const readFile = fs.readFile;
+                  let readStarted = false;
+                  let releaseRead = () => {};
+                  const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
+                  releaseHeldRead = releaseRead;
+                  const readSpy = vi.spyOn(fsBoundary, 'readFile').mockImplementation(async (...args) => {
+                    if (args[0] === `/proc/${pid}/stat` && !readStarted) {
+                      readStarted = true;
+                      await readGate;
+                    }
+                    return await readFile(...args);
+                  });
+                  const replacedStop = stop('session-1');
+                  try {
+                    await vi.waitFor(() => expect(readStarted).toBe(true));
+                    pidToTrackedSession.set(pid, { ...observed });
+                    releaseRead();
+                    expect(await replacedStop).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
+                    expect(process.kill(pid, 0)).toBe(true);
+                  } finally {
+                    releaseRead();
+                    try { await replacedStop; }
+                    finally {
+                      readSpy.mockRestore();
+                      releaseHeldRead = undefined;
+                      pidToTrackedSession.set(pid, observed);
+                    }
+                  }
+                  enterPhase('positive Stop');
                   expect(await stop('session-1')).toEqual({ status: 'stopped' });
                   await exited;
                   expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
@@ -455,12 +540,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   clock.mockRestore();
                   await releaseDaemonLock(lock);
                 }
-                } finally {
-                  await new Promise<void>((resolve, reject) => relay.close(error => error ? reject(error) : resolve()));
-                  if (previousServer === undefined) delete process.env.HAPPIER_SERVER_URL;
-                  else process.env.HAPPIER_SERVER_URL = previousServer;
-                  reloadConfiguration();
                 }
+                enterPhase('orphan presenter recovery');
                 api.panes.add('managed');
                 await writeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1', handle: attachment.handle });
               }
@@ -482,7 +563,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                 expect(supervision).toEqual({ state: 'recoverable_unservable', reason: 'runner_absent' });
                 expect(resolveDisconnectedTerminalHostResumeGate(supervision)).toEqual({ action: 'fence', reason: 'runner_absent' });
                 expect(api.panes.has('managed')).toBe(true);
-                expect((await readTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1' }))?.attachmentId).toBe(attachment.attachmentId);
+                const retainedAttachment = await readTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1' });
+                if (retainedAttachment?.version !== 2) throw new Error('The owned host descriptor was not retained');
+                expect(retainedAttachment.attachmentId).toBe(attachment.attachmentId);
                 // This separate custody observation models the SDK runner's
                 // actual owned host, not its earlier plain placement request.
                 const hostedTerminal = buildTerminalMetadataFromHostHandle(attachment.handle);
@@ -504,6 +587,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
               }
               if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
               await exited;
+              enterPhase('final-exit custody');
               const finalExitTracked: TrackedSession = { ...tracked, happySessionId: 'session-1',
                 spawnOptions: candidate.spawnOptions, happySessionMetadataFromLocalWebhook: captured.metadata,
                 publishedTerminalControlServiceabilityAttachmentId: attachment.attachmentId };
@@ -518,16 +602,47 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                 await expect(Promise.resolve().then(() => resolveTrackedSessionTerminalHostExitCandidate({
                   tracked: finalExitTracked, pid, happyHomeDir: homeDir, attachmentInfo: null,
                 }))).resolves.toBeNull();
+                enterPhase('marker custody neighbors');
+                const owned = await writeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1',
+                  handle: { ...attachment.handle, attachmentId: createTerminalAttachmentId() } });
+                expect(await shouldRetainTrackedTerminalHostExitMarker({ tracked: finalExitTracked, happyHomeDir: homeDir })).toBe(true);
+                expect(await shouldRetainTrackedTerminalHostExitMarker({
+                  tracked: { ...finalExitTracked, publishedTerminalControlServiceabilityAttachmentLifecycle: 'borrowed' },
+                  happyHomeDir: homeDir,
+                })).toBe(true);
+                await removeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1',
+                  expectedAttachmentId: owned.attachmentId });
+                const hostPath = join(homeDir, 'terminal', 'sessions', 'session-1.host.json');
+                await fs.writeFile(hostPath, JSON.stringify({ version: 1, sessionId: 'session-1',
+                  handle: attachment.handle, updatedAt: 1 }), 'utf8');
+                expect(await readTerminalHostAttachmentState({ happyHomeDir: homeDir, sessionId: 'session-1' }))
+                  .toMatchObject({ status: 'present', info: { version: 1 } });
+                expect(await shouldRetainTrackedTerminalHostExitMarker({ tracked: finalExitTracked, happyHomeDir: homeDir })).toBe(true);
+                await fs.unlink(hostPath);
+                const borrowed = await writeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1',
+                  handle: attachment.handle, lifecycle: 'borrowed' });
+                expect(await shouldRetainTrackedTerminalHostExitMarker({ tracked: finalExitTracked, happyHomeDir: homeDir })).toBe(false);
+                await removeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1',
+                  expectedAttachmentId: borrowed.attachmentId });
+                await fs.writeFile(hostPath, '{', 'utf8');
+                expect(await readTerminalHostAttachmentState({ happyHomeDir: homeDir, sessionId: 'session-1' }))
+                  .toEqual({ status: 'unreadable', reason: 'invalid' });
+                expect(await shouldRetainTrackedTerminalHostExitMarker({ tracked: finalExitTracked, happyHomeDir: homeDir })).toBe(true);
+                await fs.unlink(hostPath);
+                expect(await shouldRetainTrackedTerminalHostExitMarker({ tracked: finalExitTracked, happyHomeDir: homeDir })).toBe(false);
                 // A separate accepted process is required: the preceding Stop
                 // already retired the first process's marker. Its genuine zero
                 // exit must clear history-only optional presentation custody.
+                enterPhase('normal-exit Machine transport');
                 const normalChild = spawn(process.execPath, ['-e',
                   'setInterval(() => {}, 1000); process.on("SIGTERM", () => process.exit(0)); process.send({ready:true});'],
                 { cwd: homeDir, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+                normalChildToCancel = normalChild;
                 const normalExit = once(normalChild, 'exit');
                 let machine: ApiMachineClient | undefined;
                 try {
-                  await once(normalChild, 'message');
+                  await once(normalChild, 'message', { signal });
+                  enterPhase('normal-exit Machine transport');
                   const normalPid = normalChild.pid;
                   if (!normalPid) throw new Error('The owned normal-exit child did not spawn');
                   const normalTracked: TrackedSession = {
@@ -540,7 +655,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   pidToTrackedSession.set(normalPid, normalTracked);
                   await persistAcceptedSpawnMarker({ trackedSession: normalTracked, deviceLocalSecretStorage });
                   expect((await listSessionMarkers()).some(marker => marker.pid === normalPid)).toBe(true);
-                  const machineSocket = createApiSessionSocketStub({ emitWithAck: async (event) => {
+                  const machineSocket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event) => {
+                    if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) {
+                      return MachineUpdateOperationProtocolCapabilitiesResponseV1Schema.parse({ v: 1, result: 'success', revision: 1 });
+                    }
                     if (event === MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1) {
                       return { v: 1, status: 'already_inactive', sessionId: 'session-1' };
                     }
@@ -554,6 +672,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                     metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
                   machine.connect();
                   await vi.waitFor(() => expect(mocks.io).toHaveBeenCalled());
+                  enterPhase('normal-exit durable staging');
                   const normalOnChildExited = createOnChildExited({
                     pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid,
                     getApiMachineForSessions: () => machine ?? null,
@@ -564,13 +683,14 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   normalChild.kill('SIGTERM');
                   expect(await normalExit).toEqual([0, null]);
                   await normalOnChildExited(normalPid, { reason: 'process-exited', code: 0, signal: null });
-                  expect((await listSessionMarkers()).some(marker => marker.pid === normalPid)).toBe(false);
                   expect(pidToTrackedSession.has(normalPid)).toBe(false);
+                  expect((await listSessionMarkers()).some(marker => marker.pid === normalPid)).toBe(false);
                 } finally {
                   try { await machine?.shutdown(); }
                   finally {
                     if (normalChild.exitCode === null && normalChild.signalCode === null) normalChild.kill('SIGTERM');
                     await normalExit;
+                    normalChildToCancel = undefined;
                   }
                 }
               } else {
@@ -589,6 +709,13 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
               if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
               await exited;
               await onChildExited(pid, { reason: 'test-cleanup', code: null, signal: 'SIGTERM' });
+              childToCancel = undefined;
+              if (relayToClose) {
+                const relay = relayToClose;
+                await new Promise<void>((resolve, reject) => relay.close(error => error ? reject(error) : resolve()));
+              }
+              if (previousServer === undefined) delete process.env.HAPPIER_SERVER_URL;
+              else process.env.HAPPIER_SERVER_URL = previousServer;
               if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
               else process.env.HAPPIER_HOME_DIR = previousHomeDir;
               if (previousHerdrBinary === undefined) delete process.env.HERDR_BIN_PATH;
@@ -601,7 +728,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
         envScope.restore();
         features.restore();
       }
-    });
+    }).finally(() => signal.removeEventListener('abort', cancelOwnedWork));
+    pendingCapturedCase = work;
+    await work;
   });
 
   it('tracks the stable V2 authority path and exact bootstrap identity for a runner bootstrap', async () => {
@@ -1448,35 +1577,43 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     clearTimeout(replacementTimeout);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    if (originalDebug === undefined) delete process.env.DEBUG;
-    else process.env.DEBUG = originalDebug;
-    if (originalOomScoreAdjustment === undefined) {
-      delete process.env.HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ;
-    } else {
-      process.env.HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ = originalOomScoreAdjustment;
+  afterEach(async () => {
+    // Vitest rejects the action clock on timeout; it does not join the action.
+    // Join its cancellation/OS cleanup before another row can reuse globals.
+    try {
+      await pendingCapturedCase;
+    } finally {
+      pendingCapturedCase = undefined;
+      currentTestSignal = undefined;
+      vi.useRealTimers();
+      if (originalDebug === undefined) delete process.env.DEBUG;
+      else process.env.DEBUG = originalDebug;
+      if (originalOomScoreAdjustment === undefined) {
+        delete process.env.HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ;
+      } else {
+        process.env.HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ = originalOomScoreAdjustment;
+      }
+      if (originalSessionWebhookTimeoutMs === undefined) {
+        delete process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS;
+      } else {
+        process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS = originalSessionWebhookTimeoutMs;
+      }
+      if (originalHappyHomeDir === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+      }
+      if (originalServerUrl === undefined) {
+        delete process.env.HAPPIER_SERVER_URL;
+      } else {
+        process.env.HAPPIER_SERVER_URL = originalServerUrl;
+      }
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform,
+      });
+      vi.restoreAllMocks();
     }
-    if (originalSessionWebhookTimeoutMs === undefined) {
-      delete process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS;
-    } else {
-      process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS = originalSessionWebhookTimeoutMs;
-    }
-    if (originalHappyHomeDir === undefined) {
-      delete process.env.HAPPIER_HOME_DIR;
-    } else {
-      process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
-    }
-    if (originalServerUrl === undefined) {
-      delete process.env.HAPPIER_SERVER_URL;
-    } else {
-      process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    }
-    Object.defineProperty(process, 'platform', {
-      configurable: true,
-      value: originalPlatform,
-    });
-    vi.restoreAllMocks();
   });
 
   it('sanitizes provider credentials from stdout, stderr, exit diagnostics, and callbacks', async () => {

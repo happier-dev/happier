@@ -17,6 +17,7 @@ import type { PluginUiResourceClient } from '@happier-dev/plugin-ui/advanced';
 
 import {
     readPluginSurfaceResourceReference,
+    readPluginResourceStoreSnapshot,
     type PluginContextualResourceBinding,
     type PluginResourceHostRequest,
 } from './pluginSurfaceResourceRead';
@@ -101,6 +102,7 @@ type ActiveWatch = {
     readonly controller: AbortController;
     lastDigest: PluginSurfaceResourceDigest;
     closed: boolean;
+    releaseStore?: () => void;
 };
 
 type WatchOpenResult =
@@ -299,6 +301,7 @@ function createContextualResourceWatchOwner(input: Readonly<{
         // this watch-owned controller does so synchronously on every retire.
         watch.controller.abort();
         watches.delete(subscriptionId);
+        if (watch.releaseStore) { watch.releaseStore(); return; }
         void close(daemon.machineId, {
             serverId: daemon.serverId,
             callerPluginId: input.pluginId,
@@ -315,6 +318,37 @@ function createContextualResourceWatchOwner(input: Readonly<{
             // Re-establishing an id retires the predecessor first, so one
             // client never runs two pumps for one Resource subscription.
             retire(params.subscriptionId);
+            if (input.resource.store) {
+                const entry = input.resource.store.getEntry({ pluginId: input.pluginId, localId: params.resourceId });
+                const watch: ActiveWatch = { subscriptionId: params.subscriptionId, resourceId: params.resourceId,
+                    deliver: params.deliver, controller: new AbortController(), lastDigest: null, closed: false };
+                const changed = (): void => {
+                    if (watch.closed || !isCurrent()) return;
+                    const snapshot = entry.getSnapshot();
+                    if (snapshot.pending !== 'idle') return;
+                    if (snapshot.error) {
+                        watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', snapshot.error.code ?? 'plugin_resource_unavailable'));
+                        retire(watch.subscriptionId);
+                    } else if (snapshot.digest !== undefined && watch.lastDigest !== snapshot.digest) {
+                        watch.lastDigest = snapshot.digest;
+                        watch.deliver(invalidatedEvent(watch.subscriptionId, snapshot.digest));
+                    }
+                };
+                watch.releaseStore = entry.subscribe(changed, true);
+                watches.set(params.subscriptionId, watch);
+                try {
+                    const snapshot = await readPluginResourceStoreSnapshot(entry, params.signal);
+                    if (!isCurrent() || params.signal?.aborted || snapshot.error || !snapshot.value) {
+                        retire(params.subscriptionId);
+                        return { ok: false, terminal: true, reason: snapshot.error?.code ?? 'plugin_resource_unavailable' };
+                    }
+                    watch.lastDigest = snapshot.digest ?? null;
+                    return { ok: true, digest: watch.lastDigest };
+                } catch {
+                    retire(params.subscriptionId);
+                    return { ok: false, terminal: true, reason: 'plugin_resource_aborted' };
+                }
+            }
             let opened: WatchOpenResult;
             try {
                 opened = await openAtDaemon(params.subscriptionId, params.resourceId, params.signal);

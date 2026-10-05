@@ -105,6 +105,7 @@ type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedService
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     options: SpawnSessionOptions;
+    retainedTerminalRecovery?: 'adopt';
     persistedTakeoverAdmissionWaiter?: Pick<PersistedTakeoverAdmissionWaiter, 'getRegistration'>;
     credentials: SpawnCredentials;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
@@ -541,7 +542,7 @@ export async function executeSpawnSessionRequest(
                 launchEnvironment: { values: selectedLaunchEnvironment, unset: [] },
                 configuration: { options: Object.fromEntries(Object.entries(options.sessionConfigOptionOverrides?.overrides ?? {})
                     .map(([id, option]) => [id, { value: option.value, updatedAtMs: option.updatedAt }])) },
-            }, normalizedExistingSessionId);
+            }, normalizedExistingSessionId, params.retainedTerminalRecovery);
             if (selectedTerminalRequest.requested === 'herdr' && terminalPresentation.kind !== 'none') {
                 const context = await prepareHerdrTerminalContext({ happyHomeDir: configuration.happyHomeDir,
                     sessionName: selectedTerminalRequest.herdr.sessionName,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { type PluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
 import { ActionIdSchema, type ActionId } from '../../../actions/actionIds.js';
 import { asProtocolZod } from "../../actions/internalProtocolZodAdapter.js";
 
@@ -6,6 +7,7 @@ import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
   PluginContributionLocalIdSchema,
+  PluginContributionIdentityV1Schema,
   type PluginContributionIdentityV1,
 } from '../../contributionIdentity.js';
 import { PluginIdSchema } from '../../pluginId.js';
@@ -40,6 +42,7 @@ import type {
 } from '../publicTypes.js';
 import { PluginJsonSchemaV2Schema, PluginJsonValueV2Schema } from '../publicTypes.js';
 import { containsEquivalentPluginJsonValue } from '../jsonSchemaValues.js';
+import { validatePluginDragSourceReferenceV1 } from '../entityDragDrop.js';
 import {
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
   PluginDeclarativeDocumentV1Schema,
@@ -89,6 +92,11 @@ export const MAX_PLUGIN_DECLARATIVE_DOCUMENT_OCCURRENCE_LENGTH_V1 = 256;
 
 export type PluginDeclarativeDocumentNormalizationErrorCodeV1 =
   | 'plugin_declarative_identity_invalid'
+  | 'plugin_declarative_drag_inventory_invalid'
+  | 'plugin_declarative_drag_missing'
+  | 'plugin_declarative_drag_scope_invalid'
+  | 'plugin_declarative_drag_reference_invalid'
+  | 'plugin_declarative_widget_area_scope_invalid'
   | 'plugin_declarative_generation_invalid'
   | 'plugin_declarative_invalid_plain_data'
   | 'plugin_declarative_document_invalid'
@@ -219,6 +227,18 @@ export type PluginDeclarativeNormalizedTargetedSurfaceNodeV1 =
   }>;
 
 export type PluginDeclarativeNormalizedNodeV1 =
+  | (PluginDeclarativeNormalizedNodeBaseV1 & PluginDeclarativeDataNodeV1)
+  | (PluginDeclarativeNormalizedNodeBaseV1 & Readonly<{
+    kind: 'dragSource'; source: PluginDeclarativeQualifiedReferenceV1; reference: PluginJsonValueV2;
+    organizing?: boolean; children: readonly PluginDeclarativeNormalizedNodeV1[];
+  }>)
+  | (PluginDeclarativeNormalizedNodeBaseV1 & Readonly<{
+    kind: 'dropTarget'; target: PluginDeclarativeQualifiedReferenceV1; input?: PluginJsonValueV2;
+    children: readonly PluginDeclarativeNormalizedNodeV1[];
+  }>)
+  | (PluginDeclarativeNormalizedNodeBaseV1 & Readonly<{
+    kind: 'widgetArea'; area: string; context?: Readonly<Record<string, PluginJsonValueV2>>;
+  }>)
   | (PluginDeclarativeNormalizedNodeBaseV1 & Readonly<{
     kind: 'text';
     text: PluginLocalizedStringV2;
@@ -332,6 +352,9 @@ export type NormalizePluginDeclarativeDocumentV1Input = Readonly<{
   document: unknown;
   /** The immutable admitted Action inventory for this candidate's plugin. */
   actions: readonly PluginContributionIdentityV1[];
+  /** Current manifest-admitted families; references never grant mounted authority. */
+  dragSources?: readonly Readonly<{ identity: PluginContributionIdentityV1; referenceSchema: PluginJsonSchemaV2 }>[];
+  dropTargets?: readonly PluginContributionIdentityV1[];
   /**
    * Immutable catalog-admitted surface-destination identities for row commands.
    * A qualified cross-plugin destination can appear only after the manifest
@@ -441,11 +464,12 @@ function normalizeOccurrenceId(occurrenceId: string): string {
 
 function buildContributionIdentityInventory(input: Readonly<{
   identities: readonly PluginContributionIdentityV1[];
-  kind: 'action' | 'destination';
+  kind: 'action' | 'destination' | 'drag';
 }>): ReadonlySet<string> {
   const inventoryError = input.kind === 'action'
     ? 'plugin_declarative_action_inventory_invalid' as const
-    : 'plugin_declarative_destination_inventory_invalid' as const;
+    : input.kind === 'destination' ? 'plugin_declarative_destination_inventory_invalid' as const
+      : 'plugin_declarative_drag_inventory_invalid' as const;
   const label = input.kind === 'action' ? 'Action' : 'Destination';
   let plain: unknown;
   try {
@@ -887,8 +911,8 @@ function normalizeContributionReference(input: Readonly<{
   inventory: ReadonlySet<string>;
   reference: PluginContributionReferenceV2;
   label: string;
-  missingCode: 'plugin_declarative_action_missing' | 'plugin_declarative_collection_command_missing';
-  scopeCode: 'plugin_declarative_action_scope_invalid' | 'plugin_declarative_collection_command_scope_invalid';
+  missingCode: 'plugin_declarative_action_missing' | 'plugin_declarative_collection_command_missing' | 'plugin_declarative_drag_missing';
+  scopeCode: 'plugin_declarative_action_scope_invalid' | 'plugin_declarative_collection_command_scope_invalid' | 'plugin_declarative_drag_scope_invalid';
   allowQualifiedCrossPlugin?: boolean;
 }>): PluginDeclarativeQualifiedReferenceV1 {
   const {
@@ -1011,6 +1035,19 @@ export function normalizeDeclarativeDocumentV1Core(
     kind: 'destination',
   });
   const settings = buildSettingsInventory(pluginId ?? '', pluginInput?.settings);
+  const parsedDragSources = z.array(z.object({
+    identity: asProtocolZod(PluginContributionIdentityV1Schema), referenceSchema: PluginJsonSchemaV2Schema,
+  }).strict()).safeParse(cloneStrictPlainData(pluginInput?.dragSources ?? []));
+  if (!parsedDragSources.success) return fail('plugin_declarative_drag_inventory_invalid', 'Drag source inventory is invalid');
+  const dragSources = parsedDragSources.data;
+  const sourceIds = buildContributionIdentityInventory({ identities: dragSources.map((entry) => entry.identity), kind: 'drag' });
+  const targetIds = buildContributionIdentityInventory({ identities: pluginInput?.dropTargets ?? [], kind: 'drag' });
+  const sourceSchemas = new Map(dragSources.map((entry) => {
+    if (entry.identity.pluginId !== pluginId) {
+      return fail('plugin_declarative_drag_inventory_invalid', 'Drag source inventory is invalid');
+    }
+    return [buildQualifiedPluginContributionKey(entry.identity), entry.referenceSchema] as const;
+  }));
   const uiQueries = buildCollectionUiQueryInventory(pluginId ?? '', pluginInput?.uiQueries);
   const targetedSurfaces = pluginInput?.preparedTargetedSurfaces === undefined
     ? undefined
@@ -1039,6 +1076,49 @@ export function normalizeDeclarativeDocumentV1Core(
     );
     let normalized: PluginDeclarativeNormalizedNodeV1;
     switch (source.kind) {
+      case 'metric':
+      case 'table':
+      case 'rows':
+      case 'chart':
+        if (source.data.kind === 'resource' && (pluginId === null || source.data.resource.pluginId !== pluginId)) {
+          return fail('plugin_declarative_document_invalid', 'A live data Resource must belong to its mounted plugin');
+        }
+        normalized = Object.freeze({ ...source, path, order });
+        break;
+      case 'dragSource':
+      case 'dropTarget': {
+        if (!pluginId || !occurrenceId) return fail('plugin_declarative_drag_scope_invalid', 'Drag nodes require a mounted plugin declaration');
+        const reference = normalizeContributionReference({
+          pluginId, occurrenceId, inventory: source.kind === 'dragSource' ? sourceIds : targetIds,
+          reference: source.kind === 'dragSource' ? source.sourceId : source.targetId,
+          label: source.kind === 'dragSource' ? 'Drag source' : 'Drop target',
+          missingCode: 'plugin_declarative_drag_missing', scopeCode: 'plugin_declarative_drag_scope_invalid',
+        });
+        if (source.kind === 'dragSource') {
+          const referenceSchema = sourceSchemas.get(reference.qualifiedId);
+          let validReference = false;
+          try {
+            validReference = referenceSchema !== undefined && validatePluginDragSourceReferenceV1({ referenceSchema }, source.reference);
+          } catch {
+            return fail('plugin_declarative_drag_inventory_invalid', 'Drag source schema is invalid');
+          }
+          if (!validReference) {
+            return fail('plugin_declarative_drag_reference_invalid', 'Drag reference does not satisfy its declared schema');
+          }
+          normalized = Object.freeze({ kind: source.kind, path, order, source: reference, reference: source.reference,
+            ...(source.organizing === undefined ? {} : { organizing: source.organizing }), children: normalizeChildren(source.children) });
+        } else {
+          normalized = Object.freeze({ kind: source.kind, path, order, target: reference,
+            ...(source.input === undefined ? {} : { input: source.input }), children: normalizeChildren(source.children) });
+        }
+        break;
+      }
+      case 'widgetArea':
+        // The host admits the area and its context against the mounted page's declaration on every operation.
+        if (!pluginId) return fail('plugin_declarative_widget_area_scope_invalid', 'A widget area requires a mounted plugin page');
+        normalized = Object.freeze({ kind: source.kind, path, order, area: source.area,
+          ...(source.context === undefined ? {} : { context: source.context }) });
+        break;
       case 'stack':
         normalized = Object.freeze({
           kind: source.kind,

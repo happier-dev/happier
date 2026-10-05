@@ -226,7 +226,7 @@ describe('multi-Home Session creation composition', () => {
             spawnServerId: 'srv_home_b',
         };
 
-        ({ sync } = await import('@/sync/sync'));
+        ({ sync } = await import('@/sync/syncEngine'));
         syncSingletonHarness.current = sync;
         profiles = await import('@/sync/domains/server/serverProfiles');
         ({ TokenStorage } = await import('@/auth/storage/tokenStorage'));

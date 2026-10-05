@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
+import type { AuthContextType } from '@/auth/context/AuthContext';
+import { buildSystemSessionMetadataV1, SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, FeaturesResponseSchema, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import type {
@@ -15,6 +16,12 @@ import {
     createStableStorageReader,
     createStorageModuleStub,
 } from '@/dev/testkit/mocks/storage';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
+
+installDisconnectedServerSocketBoundary();
 
 const platformOsState = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
 
@@ -22,7 +29,7 @@ const platformOsState = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
 // without loading an unrelated application modal/composer tree.
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock();
+    return createModalModuleMock().module;
 });
 
 type MachineContributionRegistryProjectionDescribeFn = typeof machineContributionRegistryProjectionDescribeFn;
@@ -316,9 +323,50 @@ export function setRecorderUri(next: string | null) {
     recorderUri = next;
 }
 
+// The named Account's HTTP settings fixture follows its intended local writes,
+// so a later real Sync refresh cannot replace the case with an empty document.
+let localVoiceAccountSettings: object | null = null;
+
 export async function getStorage() {
     const { storage } = await import('@/sync/domains/state/storage');
-    return storage as any;
+    if ('__setState' in storage) return storage as any;
+    // Legacy engine fixtures are completed by the package testkit, then written
+    // to the real store. The facade does not replace any production reader.
+    return Object.assign({}, storage, {
+        __setState: (patch: Record<string, unknown>) => {
+            const normalized = { ...patch };
+            const settings = patch.settings;
+            if (settings && typeof settings === 'object' && !Array.isArray(settings) && 'voice' in settings) {
+                const current = storage.getState().settings;
+                // These legacy fixture calls represent a current local settings
+                // write, not a predecessor whole-object Account write. Keep both
+                // roots aligned through the production writer, including explicit
+                // canonical-root replacements and retained credential bindings.
+                const voiceDelta = 'voiceSettingsV1' in settings && settings.voiceSettingsV1 !== current.voiceSettingsV1
+                    ? { voice: settings.voice, voiceSettingsV1: settings.voiceSettingsV1 }
+                    : { voice: settings.voice };
+                const normalizedSettings = { ...settings, ...normalizeVoiceSettingsLocalDelta(voiceDelta, current) };
+                normalized.settings = normalizedSettings;
+                if (localVoiceAccountSettings !== null) localVoiceAccountSettings = normalizedSettings;
+            }
+            if (patch.sessions && typeof patch.sessions === 'object') {
+                normalized.sessions = Object.fromEntries(Object.entries(patch.sessions).map(([id, raw]) => {
+                    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [id, raw];
+                    const session = createSessionFixture(raw);
+                    const metadata = { host: 'test', machineId: 'machine-1', path: `/Users/test/.happier/worktree/${id}`,
+                        agentRuntimeCapabilitiesV1: { localControl: { supported: true } },
+                        ...(session.metadataLayoutVersion === 1 ? session.ownerMetadataView : session.metadata),
+                    };
+                    return [id, createSessionFixture({ ...session, id, serverId: session.serverId ?? localVoiceHomeId,
+                        ...(session.metadataLayoutVersion === 1 ? { ownerMetadataView: metadata } : { metadata }),
+                    })];
+                }));
+            }
+            const completed = createLiveStorageStoreMock(() => ({ ...storage.getState(), ...normalized })).getState();
+            storage.setState(completed);
+        },
+        __notify: () => storage.setState({}),
+    });
 }
 
 async function createVoiceConversationSessionFixture(args: any) {
@@ -408,6 +456,117 @@ export async function loadLocalVoiceEngineWithCompatState(): Promise<
                 error: snapshot.error?.reason ?? null,
             };
         },
+    };
+}
+
+/** Prime the real graph outside individual assertion budgets. */
+export async function warmLocalVoiceEngineHarnessGraph() {
+    const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const restore = await installRealActionExecutorModuleLoader();
+    await loadLocalVoiceEngineWithCompatState();
+    return restore;
+}
+
+export let localVoiceHomeId = '';
+export const localVoicePendingEnqueue = vi.fn<(request: Readonly<{ sessionId: string; body: Record<string, unknown> }>) => Promise<Response>>();
+
+/** Load real Account/store owners before any native Agent consumes them. */
+export async function installLocalVoiceAccountHarness() {
+    vi.doUnmock('@/sync/sync');
+    vi.doUnmock('@/sync/runtime/getSyncSingleton');
+    vi.doUnmock('@/sync/domains/state/storage');
+    vi.doUnmock('@/sync/domains/server/serverRuntime');
+    vi.resetModules();
+    const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+    await loadSyncSingletonForTests();
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    localVoiceHomeId = (await upsertAndActivateServer({ serverUrl: 'https://local-voice-actions.example.test' })).id;
+    let connection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness')['restoreServerAccountForTest']>> | null = null;
+    const records = new Map<string, ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse>>();
+    const wireRecord = (session: ReturnType<typeof createSessionFixture>) => SessionCurrentProjectionRecordV1Schema.parse({
+        id: session.id, seq: session.seq ?? 1, createdAt: session.createdAt ?? 1,
+        updatedAt: session.updatedAt, active: session.active, activeAt: Date.now(), archivedAt: null,
+        encryptionMode: 'plain', metadataLayoutVersion: 0,
+        metadata: JSON.stringify(session.metadata), metadataVersion: session.metadataVersion ?? 1,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionFixture().access!.capabilities },
+        responsibleAccountId: null, responsibleAccount: null, share: null,
+        agentState: session.agentState ? JSON.stringify(session.agentState) : null,
+        agentStateVersion: session.agentStateVersion ?? 0, pendingCount: 0, pendingVersion: 0, dataEncryptionKey: null,
+    });
+    return {
+        async setup() {
+            await connection?.dispose();
+            records.clear();
+            localVoiceAccountSettings = normalizeVoiceSettingsLocalDelta(BASE_SETTINGS);
+            const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+            const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+            connection = await restoreServerAccountForTest({
+                serverUrl: 'https://local-voice-actions.example.test',
+                request: async (input, init) => {
+                    const path = new URL(String(input)).pathname;
+                    if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                    if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                    if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: { session: { pendingInput: { protocolVersion: 1 } } } }));
+                    if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: localVoiceAccountSettings }, version: 1 });
+                    const storage = await getStorage();
+                    const state = storage.getState();
+                    if (path === '/v1/machines') return Response.json((Object.values(state.machines) as Array<Parameters<typeof createMachineFixture>[0]>).map((value) => {
+                        const machine = createMachineFixture(value);
+                        return { ...machine, metadata: machine.metadata ? encodePlainMachineStoredContent(machine.metadata) : null, daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
+                    }));
+                    for (const session of Object.values(state.sessions) as Array<ReturnType<typeof createSessionFixture>>) {
+                        if (!records.has(session.id)) records.set(session.id, wireRecord(session));
+                    }
+                    if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v1/sessions') return Response.json({ sessions: [...records.values()], hasNext: false, nextCursor: null });
+                    const detail = /^\/v2\/sessions\/([^/]+)$/.exec(path);
+                    if (detail) {
+                        const current = records.get(decodeURIComponent(detail[1]));
+                        if (!current) return Response.json({}, { status: 404 });
+                        if (init?.method === 'PATCH') {
+                            const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+                            if (patch.mode !== 'owner_migration' && patch.mode !== 'owner') throw new Error('Expected owner metadata mutation');
+                            const target = patch.mode === 'owner_migration' ? patch.target : patch;
+                            const committed = SessionCurrentProjectionRecordV1Schema.parse({ ...current, metadataLayoutVersion: 1,
+                                metadata: target.sharedMetadata.ciphertext, metadataVersion: current.metadataVersion + 1,
+                                ownerMetadata: target.ownerMetadata, agentState: target.agentState.ciphertext,
+                                agentStateVersion: (current.agentStateVersion ?? 0) + 1 });
+                            records.set(current.id, committed);
+                            return Response.json({ success: true, metadataLayoutVersion: 1, sharedMetadata: { version: committed.metadataVersion }, agentState: { version: committed.agentStateVersion } });
+                        }
+                        return Response.json({ session: current });
+                    }
+                    const pending = /^\/v2\/sessions\/([^/]+)\/pending$/.exec(path);
+                    if (pending && init?.method === 'POST') return localVoicePendingEnqueue({ sessionId: decodeURIComponent(pending[1]), body: JSON.parse(String(init.body)) });
+                    if (pending) return Response.json({ pending: [], discarded: [], pendingVersion: 0 });
+                    // Durable streamed turns settle their claimed input before
+                    // reading daemon output; acknowledge that actual HTTP write.
+                    if (/^\/v2\/sessions\/[^/]+\/pending\/[^/]+\/delivery\/handled$/.test(path) && init?.method === 'POST') return Response.json({});
+                    if (/^\/v1\/sessions\/[^/]+\/messages$/.test(path)) return Response.json({ messages: [], hasMore: false });
+                    return new Response('{}', { status: 404 });
+                },
+            });
+            localVoiceHomeId = connection.home.id;
+            const storage = await getStorage();
+            const state = storage.getState();
+            storage.__setState({
+                settings: { ...state.settings, ...BASE_SETTINGS },
+                machineListByServerId: { [localVoiceHomeId]: Object.values(state.machines) },
+            });
+        },
+        async dispose() { await connection?.dispose(); connection = null; localVoiceAccountSettings = null; },
+    };
+}
+
+/** Real named Home/Account and Action owners; only credentials and HTTP are replaced. */
+export async function installLocalVoiceActionHomeForTests() {
+    vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage');
+    const account = await installLocalVoiceAccountHarness();
+    const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const restoreLoader = await installRealActionExecutorModuleLoader();
+    return {
+        homes: { voice: { id: localVoiceHomeId } },
+        restore: () => account.setup(),
+        dispose: async () => { await account.dispose(); restoreLoader(); },
     };
 }
 
@@ -517,9 +676,15 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machinePluginSecretDelete: async () => ({ supported: false as const, reason: 'not-supported' as const }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    getCurrentAuth: () => ({ refreshFromActiveServer }),
-}));
+const authFixture = {
+    isAuthenticated: true,
+    credentials: { token: 'account-token' },
+    credentialAuthorityKind: 'account',
+    login: async () => ({ kind: 'completed' as const }),
+    loginWithCredentials: async () => ({ kind: 'completed' as const }),
+    logout: async () => ({ kind: 'completed' as const }),
+    refreshFromActiveServer,
+} satisfies AuthContextType;
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
     isRuntimeFeatureEnabled: (args: any) => isRuntimeFeatureEnabled(args),
@@ -563,7 +728,8 @@ vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/microphonePermissions', () => ({
+vi.mock('@/utils/platform/microphonePermissions', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/microphonePermissions')>(),
     requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
     showMicrophonePermissionDeniedAlert: vi.fn(),
 }));
@@ -680,7 +846,13 @@ vi.mock(
 
         return {
             createVoiceFileRecording: () => ({
-                start: async () => {},
+                start: async () => {
+                    if (nextRecorderPrepareError) {
+                        const error = nextRecorderPrepareError;
+                        nextRecorderPrepareError = null;
+                        throw error;
+                    }
+                },
                 setMuted: async () => {},
                 stop: async () => recorderUri,
             }),
@@ -749,6 +921,12 @@ vi.mock('@/sync/domains/state/storage', () => {
     const liveStorage = createLiveStorageStoreMock(() => state);
     const readLiveStorageState = liveStorage.getState;
     const storage = Object.assign(liveStorage, {
+        // Canonical testkits write through setState. Keep it on the same live
+        // fixture carrier as the compatibility writers used by these suites.
+        setState: (patch: Parameters<typeof liveStorage.setState>[0]) => {
+            Object.assign(state, typeof patch === 'function' ? patch(readLiveStorageState()) : patch);
+            subscribers.forEach((fn) => fn());
+        },
         getState: () => {
             if (throwNextGetState) {
                 const error = throwNextGetState;
@@ -820,11 +998,17 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
     const originalCreateObjectURL = (globalThis as any)?.URL?.createObjectURL;
     const originalRevokeObjectURL = (globalThis as any)?.URL?.revokeObjectURL;
     const originalAudioCtor = (globalThis as any)?.Audio;
+    let authBridge: typeof import('@/auth/context/currentAuth');
+    let previousAuth: AuthContextType | null;
 
     beforeEach(async () => {
-        if (options?.resetModulesBetweenTests !== false) {
+        if (options?.resetModulesBetweenTests === true) {
             vi.resetModules();
         }
+        // Load after reset so the fixture and consumer use the same real bridge.
+        authBridge = await import('@/auth/context/currentAuth');
+        previousAuth = authBridge.getCurrentAuth();
+        authBridge.setCurrentAuth(authFixture);
         vi.doUnmock('@/voice/runtime/input/LocalVoiceCaptureOwner');
         vi.doUnmock('@/voice/input/DeviceSttController');
         vi.doUnmock('@/voice/input/SherpaStreamingSttController');
@@ -850,6 +1034,13 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         sessionExecutionRunGet.mockReset();
         sessionExecutionRunGet.mockResolvedValue({ error: 'not-found' });
         sendSessionMessageWithServerScope.mockReset();
+        localVoicePendingEnqueue.mockReset();
+        localVoicePendingEnqueue.mockImplementation(async ({ body }) => Response.json({
+            requestedAction: body.requestedAction,
+            pending: { localId: body.localId, deliveryStatus: {
+                status: body.deliveryMode === 'external_handoff' ? 'external_handoff' : 'queued',
+            } },
+        }));
         sessionRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockReset();
         platformOsState.value = 'ios';
@@ -915,6 +1106,9 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
                         serverId: request?.serverId,
                         machineId: request?.machineId,
                     });
+                case RPC_METHODS.SPAWN_HAPPY_SESSION:
+                case RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE:
+                    return { type: 'success', sessionId: request.payload.sessionId };
                 case RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_INIT: {
                     const recipient = createTransferRecipientKeyPair();
                     return {
@@ -1034,7 +1228,32 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
 
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        authBridge.setCurrentAuth(previousAuth);
+        const [engine, { voiceConversationRuntimeMachine }, { voiceSessionBindingStore },
+            { resetVoiceSessionRuntimeStateForTests }, { registerVoiceAdapters }, { useVoiceTargetStore },
+            { __resetVoiceTurnInterruptions }] = await Promise.all([
+            import('./localVoiceEngine'),
+            import('@/voice/runtime/machine/VoiceConversationRuntimeMachine'),
+            import('@/voice/binding/voiceConversationBindingStore'),
+            import('@/voice/session/voiceSessionStore'),
+            import('@/voice/session/voiceAdapterRegistry'),
+            import('@/voice/runtime/voiceTargetStore'),
+            import('@/voice/transcript/voiceTurnInterruption'),
+        ]);
+        await engine.stopLocalVoiceSession();
+        await resetVoiceSessionRuntimeStateForTests();
+        voiceConversationRuntimeMachine.reset();
+        for (const binding of voiceSessionBindingStore.getState().list()) {
+            voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+        }
+        voiceSessionBindingStore.getState().replacePersistedBindings([]);
+        registerVoiceAdapters([]);
+        useVoiceTargetStore.getState().setScope('global');
+        useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
+        useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
+        useVoiceTargetStore.getState().setLastFocusedSessionAddress(null);
+        __resetVoiceTurnInterruptions();
         globalThis.fetch = originalFetch;
         console.error = originalConsoleError;
         const urlAny = (globalThis as any).URL as any;

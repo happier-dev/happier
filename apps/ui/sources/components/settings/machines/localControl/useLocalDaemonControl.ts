@@ -15,6 +15,7 @@ import {
     type LocalDaemonServiceScope,
 } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import {
+    adoptLocalComputerSetup,
     publishLocalDaemonStatus,
     readLocalDaemonSharedState,
     startLocalCliUpdate,
@@ -22,6 +23,8 @@ import {
     subscribeLocalDaemonSharedState,
     type LocalDaemonSharedState,
 } from './localDaemonSharedState';
+import { useThisComputerSetupTask } from '@/components/systemTasks/useThisComputerSetupTask';
+import { matchesThisComputerSetupScope } from '@/components/systemTasks/thisComputerSetup/thisComputerSetupScope';
 import { buildRelayDriftRepairSystemTaskSpec } from '@/sync/domains/server/relayDrift/relayDriftSystemTask';
 import { useAppAccountIdentity } from './useThisComputerConnection';
 import { readThisComputerServiceRows, type ThisComputerServiceRow } from '@/sync/domains/server/relayDrift/thisComputerConnection';
@@ -197,6 +200,11 @@ export function useLocalDaemonControl(options: Readonly<{
     const activeServerSnapshot = useActiveServerSnapshot();
     // A11-06: repair and setup of the app's Home pair this computer for the app's own account.
     const { accountId: appAccountId } = useAppAccountIdentity();
+    const setupApproval = React.useMemo(() => ({ expectedRelayUrl: activeServerSnapshot.serverUrl,
+        ...(activeServerSnapshot.serverId ? { serverId: activeServerSnapshot.serverId } : {}),
+        ...(appAccountId ? { expectedAccountId: appAccountId } : {}),
+    }), [activeServerSnapshot.serverId, activeServerSnapshot.serverUrl, appAccountId]);
+    const setupTask = useThisComputerSetupTask({ runner, authRequestApproval: setupApproval });
     const [bridgeUnavailable, setBridgeUnavailable] = React.useState(false);
     const isUnavailable = runner.mode === 'unavailable' || bridgeUnavailable;
     const [statusTaskId, setStatusTaskId] = React.useState<string | null>(null);
@@ -216,12 +224,19 @@ export function useLocalDaemonControl(options: Readonly<{
     const setupIsScoped = shared.setup.scope?.serverUrl === activeServerSnapshot.serverUrl
         && shared.setup.scope?.serverId === (activeServerSnapshot.serverId ?? null)
         && shared.setup.scope?.accountId === (appAccountId ?? null);
-    const setupTaskId = shared.setup.taskId;
-    const retainedSetupSnapshot = useSystemTaskSnapshot(runner, setupTaskId);
-    const setupSnapshot = setupIsScoped ? retainedSetupSnapshot : null;
+    const setupTaskId = setupTask.activeTaskId ?? shared.setup.taskId;
+    const retainedSetupSnapshot = useSystemTaskSnapshot(runner, setupTask.activeTaskId ? null : shared.setup.taskId);
+    const setupSnapshot = matchesThisComputerSetupScope(runner.getTaskSpec?.(setupTaskId ?? '') ?? null, setupApproval)
+        ? setupTask.activeTaskSnapshot ?? retainedSetupSnapshot : null;
     const commandLineSnapshot = runner.getTaskSpec?.(setupTaskId ?? '')?.kind === 'setup.thisComputer.v1' ? setupSnapshot : null;
     const repairSnapshot = commandLineSnapshot ? null : setupSnapshot;
     const cliUpdateSnapshot = useSystemTaskSnapshot(runner, shared.cliUpdate.taskId);
+
+    React.useEffect(() => {
+        const taskId = setupTask.activeTaskId;
+        const spec = taskId ? runner.getTaskSpec?.(taskId) : null;
+        if (taskId && spec) adoptLocalComputerSetup(runner, taskId, spec, setupApproval, readLocalDaemonStatusData);
+    }, [runner, setupTask.activeTaskId, setupApproval]);
 
     const refreshStatus = React.useCallback(async () => {
         if (isUnavailable) {
@@ -457,7 +472,7 @@ export function useLocalDaemonControl(options: Readonly<{
         return null;
     }, [cliUpdateSnapshot, commandLineSnapshot, repairSnapshot, startSnapshot]);
 
-    const isBusy = shared.setup.starting || shared.setup.rereading || retainedSetupSnapshot?.result === null
+    const isBusy = runner.getActiveSetupTask() !== null || shared.setup.rereading
         || (activeTaskSnapshot != null && activeTaskSnapshot.result == null) || cliUpdateRunning;
     const canStart = !isUnavailable && !isBusy && lastStatus?.serviceInstalled === true && lastStatus.daemonRunning !== true && lastStatus.needsAuth !== true;
     const canRepair = !isUnavailable && !isBusy && Boolean(activeServerSnapshot.serverUrl);

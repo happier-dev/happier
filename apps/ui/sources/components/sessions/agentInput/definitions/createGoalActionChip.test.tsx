@@ -16,7 +16,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('react-native-svg', () => ({
+vi.mock('react-native-svg', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-svg')>(),
     default: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('Svg', props, props.children),
     Svg: (props: Record<string, unknown> & { children?: React.ReactNode }) =>

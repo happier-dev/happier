@@ -12,6 +12,7 @@
 // or any other runtime singleton stays behind its own deep path.
 export * from './cleanup/standardCleanup';
 export * from './fixtures/featureFixtures';
+export * from './fixtures/actionExecutorBoundary';
 export * from './fixtures/accountEncryptionCurrentness';
 export * from './fixtures/releasedServerV021Compatibility';
 export * from './fixtures/localServices';

@@ -22,6 +22,9 @@ import { resolveHappierPageTextStyle } from '../layout/pageText.js';
 export type HappierMetadataEntry = Readonly<{
   label: string;
   value: string;
+  /** Decorated glyphs; strings continue to own the metadata's semantic identity. */
+  labelContent?: ReactNode;
+  valueContent?: ReactNode;
   tone?: HappierTone;
   accessibilityLabel?: string;
   testID?: string;
@@ -127,13 +130,14 @@ export function HappierBadge(props: Readonly<{
 
 export function HappierMetadata(props: Readonly<{
   title?: string;
+  titleContent?: ReactNode;
   entries: readonly HappierMetadataEntry[];
   theme: HappierUiTheme;
   testID?: string;
 }>) {
   return (
     <View role="group" accessibilityLabel={props.title} testID={props.testID} style={{ gap: props.theme.spacing.small }}>
-      {props.title ? <HappierLabel theme={props.theme}>{props.title}</HappierLabel> : null}
+      {props.title ? <HappierLabel theme={props.theme}>{props.titleContent ?? props.title}</HappierLabel> : null}
       {props.entries.map((entry, index) => (
         <View
           key={`${entry.label}\u0000${index}`}
@@ -141,8 +145,8 @@ export function HappierMetadata(props: Readonly<{
           accessibilityLabel={entry.accessibilityLabel}
           style={{ flexDirection: 'row', flexWrap: 'wrap', gap: props.theme.spacing.small }}
         >
-          <HappierText style={{ color: props.theme.colors.secondaryText }}>{entry.label}</HappierText>
-          <HappierText selectable style={{ color: props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[entry.tone ?? 'neutral']] }}>{entry.value}</HappierText>
+          <HappierText style={{ color: props.theme.colors.secondaryText }}>{entry.labelContent ?? entry.label}</HappierText>
+          <HappierText selectable style={{ color: props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[entry.tone ?? 'neutral']] }}>{entry.valueContent ?? entry.value}</HappierText>
         </View>
       ))}
     </View>
@@ -262,6 +266,8 @@ export function HappierBanner(props: Readonly<{
   description?: string;
   tone: HappierTone;
   action?: ReactNode;
+  /** Compact call-to-action below the whole banner identity, not only its text column. */
+  compactActionPlacement?: 'full-width';
   theme: HappierUiTheme;
   testID?: string;
   style?: HappierStyleProp;
@@ -281,6 +287,7 @@ export function HappierBanner(props: Readonly<{
   const color = props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.tone]];
   const typography = useOptionalHappierUiTypography();
   const [narrow, setNarrow] = useState(false);
+  const fullWidthAction = narrow && props.compactActionPlacement === 'full-width';
   const role = props.announce === 'none' ? undefined : props.announce ?? (isUrgent ? 'alert' : 'status');
   const decorationPointerEvents = Platform.OS === 'web' ? undefined : 'none';
   const decorationStyle: ViewStyle = {
@@ -288,7 +295,7 @@ export function HappierBanner(props: Readonly<{
     borderRadius: HAPPIER_PAGE_METRICS.sheetRadiusPx,
     ...(Platform.OS === 'web' ? { pointerEvents: 'none' } : {}),
   };
-  return (
+  const banner = (
     <View
       role={role}
       accessibilityRole={role === 'alert' ? 'alert' : undefined}
@@ -319,10 +326,11 @@ export function HappierBanner(props: Readonly<{
         {props.titleContent ?? <HappierText style={{ ...resolveHappierPageTextStyle('rowTitle', typography), color: props.theme.colors.text }}>{props.title}</HappierText>}
         {props.descriptionContent ?? (props.description ? <HappierText style={{ ...resolveHappierPageTextStyle('rowDescription', typography), color: props.theme.colors.secondaryText, marginTop: 2 }}>{props.description}</HappierText> : null)}
         {props.details}
-        {props.action && narrow ? <View style={{ alignItems: 'flex-start', marginTop: 10 }}>{props.action}</View> : null}
+        {props.action && narrow && !fullWidthAction ? <View style={{ alignItems: 'flex-start', marginTop: 10 }}>{props.action}</View> : null}
       </View>
       {props.action && !narrow ? <View style={{ flexShrink: 0 }}>{props.action}</View> : null}
       {props.dismiss ? <View style={{ alignSelf: 'flex-start', marginTop: -4, marginRight: -4 }}>{props.dismiss}</View> : null}
     </View>
   );
+  return fullWidthAction ? <View>{banner}<View style={{ width: '100%', marginTop: HAPPIER_PAGE_METRICS.rowLeadingGapPx }}>{props.action}</View></View> : banner;
 }

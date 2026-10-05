@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -13,8 +13,8 @@ const vectorIconsState = vi.hoisted(() => ({
 const expoImageState = vi.hoisted(() => ({
     image: 'ExpoImage' as unknown,
 }));
-const desktopWindowBridgeState = vi.hoisted(() => ({
-    startDesktopWindowDragging: vi.fn(),
+const nativeWindowState = vi.hoisted(() => ({
+    invoke: vi.fn(),
 }));
 const responsiveState = vi.hoisted(() => ({
     isTablet: false,
@@ -73,19 +73,20 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => responsiveState.isTablet,
 }));
 
-vi.mock('@/utils/platform/desktopWindowBridge', () => ({
-    startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
-}));
-
 describe('createHeader', () => {
     beforeEach(() => {
         vectorIconsState.ionicons = 'Ionicons';
         vectorIconsState.ioniconsFallback = 'Ionicons';
         expoImageState.image = 'ExpoImage';
-        desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
+        // Fake the native IPC boundary while the titlebar and desktop bridge stay real.
+        nativeWindowState.invoke.mockReset().mockImplementation(async (command: string) =>
+            command === 'desktop_get_window_chrome_policy' ? { strategy: 'custom-controls' } : true,
+        );
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: nativeWindowState.invoke });
         responsiveState.isTablet = false;
         vi.resetModules();
     });
+    afterEach(() => vi.unstubAllGlobals());
 
     it('renders a web back button and string title without crashing', async () => {
         const { createHeader } = await import('./Header');
@@ -201,22 +202,17 @@ describe('createHeader', () => {
         expect(screen.findByTestId('desktop-route-header-center')?.props.pointerEvents).toBe('box-none');
         const dragRegion = screen.findByTestId('desktop-route-header-drag-region');
         expect(mergeStyle(dragRegion?.props.style).minHeight).toBeGreaterThanOrEqual(44);
-        expect(typeof dragRegion?.props.onPointerDown).toBe('function');
         const preventDefault = vi.fn();
-        dragRegion?.props.onPointerDown?.({
-            buttons: 1,
-            preventDefault,
-            target: { closest: vi.fn(() => null) },
+        await React.act(async () => {
+            dragRegion?.props.onMouseDown?.({
+                buttons: 1,
+                detail: 1,
+                preventDefault,
+                target: { closest: vi.fn(() => null) },
+            });
         });
-        dragRegion?.props.onMouseDown?.({
-            buttons: 1,
-            preventDefault,
-            target: { closest: vi.fn(() => null) },
-        });
-
-        expect(dragRegion?.props['data-tauri-drag-region']).toBe(true);
         expect(preventDefault).toHaveBeenCalledTimes(1);
-        expect(desktopWindowBridgeState.startDesktopWindowDragging).toHaveBeenCalledTimes(1);
+        expect(nativeWindowState.invoke.mock.calls.filter(([command]) => command === 'desktop_start_window_dragging')).toHaveLength(1);
     });
 
     it('shows the default back button at tablet stack index one', async () => {

@@ -19,14 +19,20 @@ import {
 } from './operationError.js';
 import { ScmRequestBaseSchema } from './requestBase.js';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
+import { ScmCommitOidSchema, ScmCommitExpectedRefSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema } from './commitPublication.js';
 import { ScmRepositoryOperationKindSchema } from './operationState.js';
 import { ScmRemotePolicyFields, validateScmRemoteLeaseAuthority } from './remotePolicy.js';
 export { admitScmRemotePolicy, type ScmRemotePolicy } from './remotePolicy.js';
 export * from './operationOutcome.js';
+export * from './commitPublication.js';
 export * from './branches.js';
 export * from './stash.js';
 export * from './pullRequests.js';
+export * from './diffSummary.js';
+export * from './diffSummaryResult.js';
+export * from './diffSummaryCommitPlan.js';
 export * from './repositoryProvisioning.js';
+export * from './repositoryClone.js';
 export * from './worktrees.js';
 import {
   ScmBranchSourceRefSchema,
@@ -225,12 +231,28 @@ export type ScmDiffFileResponse = z.infer<typeof ScmDiffFileResponseSchema>;
 
 export const ScmDiffCommitRequestSchema = ScmRequestBaseSchema.extend({
   commit: z.string(),
+  /** Explicit immutable tree comparison; commit is the recorded after tree in this mode. */
+  beforeTreeOid: ScmCommitOidSchema.optional(),
+}).strict().superRefine((request, context) => {
+  if (request.beforeTreeOid !== undefined && !ScmCommitOidSchema.safeParse(request.commit).success) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['commit'], message: 'Tree comparison requires an immutable after tree OID' });
+  }
 });
 export type ScmDiffCommitRequest = z.infer<typeof ScmDiffCommitRequestSchema>;
 
 export const ScmDiffCommitResponseSchema = z.object({
   success: z.boolean(),
   diff: z.string().optional(),
+  /** The read owner verified these tree objects; missing witnesses never attest an exact hook delta. */
+  beforeTreeOid: ScmCommitOidSchema.optional(),
+  afterTreeOid: ScmCommitOidSchema.optional(),
+  /** Literal Git inventory identities paired with the corresponding immutable patch sections. */
+  files: z.array(z.object({
+    path: z.string().min(1),
+    previousPath: z.string().min(1).optional(),
+    changeKind: z.string().min(1),
+    unifiedDiff: z.string(),
+  }).strict()).optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
 });
@@ -276,7 +298,7 @@ export type ScmChangeDiscardResponse = z.infer<typeof ScmChangeDiscardResponseSc
 export const ScmCommitPatchSchema = z.object({
   path: ScmSelectedMutationPathSchema,
   patch: z.string().min(1).max(SCM_COMMIT_PATCH_MAX_LENGTH),
-});
+}).strict();
 export type ScmCommitPatch = z.infer<typeof ScmCommitPatchSchema>;
 
 export const ScmCommitCreateRequestSchema = ScmRequestBaseSchema.extend({
@@ -284,20 +306,38 @@ export const ScmCommitCreateRequestSchema = ScmRequestBaseSchema.extend({
   mode: z.enum(['commit', 'amend']).optional(),
   signOff: z.boolean().optional(),
   allowPublishedAmend: z.boolean().optional(),
+  expectedHeadOid: ScmCommitOidSchema.nullable().optional(),
+  expectedRef: ScmCommitExpectedRefSchema.optional(),
+  expectedCandidateTreeOid: ScmCommitOidSchema.optional(),
+  preparedTreeOid: ScmCommitOidSchema.optional(),
+  expectedIndexTreeOid: ScmCommitOidSchema.optional(),
+  acceptedHookTreeOid: ScmCommitOidSchema.optional(),
   scope: z
     .union([
       z.object({
         kind: z.literal('all-pending'),
-      }),
+      }).strict(),
       z.object({
         kind: z.literal('paths'),
         include: z.array(ScmSelectedMutationPathSchema).min(1),
         exclude: z.array(ScmSelectedMutationPathSchema).optional(),
-      }),
+      }).strict(),
     ])
     .optional(),
   patches: z.array(ScmCommitPatchSchema).min(1).max(SCM_COMMIT_PATCH_MAX_COUNT).optional(),
-}).superRefine((request, context) => {
+}).strict().superRefine((request, context) => {
+  if (request.expectedIndexTreeOid !== undefined && request.preparedTreeOid === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedIndexTreeOid'], message: 'Expected index authority requires a host-prepared safe-plan tree' });
+  }
+  if (request.preparedTreeOid !== undefined && (request.preparedTreeOid !== request.expectedCandidateTreeOid || request.scope !== undefined || request.patches !== undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['preparedTreeOid'], message: 'A host-prepared tree requires the exact expected tree and cannot be combined with scope or patches' });
+  }
+  if (request.expectedCandidateTreeOid !== undefined && (request.expectedHeadOid === undefined || request.expectedRef === undefined || request.mode === 'amend')) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedCandidateTreeOid'], message: 'Safe-plan commits require an explicit parent and ref and cannot amend' });
+  }
+  if (request.acceptedHookTreeOid !== undefined && request.expectedCandidateTreeOid === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['acceptedHookTreeOid'], message: 'Hook inclusion requires the exact original candidate tree' });
+  }
   if (request.allowPublishedAmend === true && request.mode !== 'amend') {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['allowPublishedAmend'], message: 'Published-head acknowledgment requires explicit amend mode' });
   }
@@ -307,11 +347,32 @@ export type ScmCommitCreateRequest = z.infer<typeof ScmCommitCreateRequestSchema
 export const ScmCommitCreateResponseSchema = z.object({
   success: z.boolean(),
   outcome: ScmOperationOutcomeSchema.optional(),
+  publication: ScmCommitPublicationSchema.optional(),
+  hookContentChanges: ScmCommitHookContentChangesSchema.optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
   commitSha: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
 });
 export type ScmCommitCreateResponse = z.infer<typeof ScmCommitCreateResponseSchema>;
+
+export const ScmCommitResolveOutcomeRequestSchema = ScmRequestBaseSchema.extend({
+  candidateOid: ScmCommitOidSchema,
+  expectedHeadOid: ScmCommitOidSchema.nullable(),
+  expectedRef: ScmCommitExpectedRefSchema,
+}).strict();
+export type ScmCommitResolveOutcomeRequest = z.infer<typeof ScmCommitResolveOutcomeRequestSchema>;
+
+/** Read-only object/ref evidence; pending index state does not authorize retry or the next step. */
+export const ScmCommitResolveOutcomeResponseSchema = z.object({
+  success: z.boolean(),
+  publication: ScmCommitPublicationSchema,
+  candidateTreeOid: ScmCommitOidSchema.optional(),
+  error: z.string().optional(),
+  errorCode: ScmOperationErrorCodeSchema.optional(),
+}).strict();
+export type ScmCommitResolveOutcomeResponse = z.infer<typeof ScmCommitResolveOutcomeResponseSchema>;
 
 export const ScmCommitUndoLastRequestSchema = ScmRequestBaseSchema.extend({
   expectedHeadOid: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/),
@@ -686,6 +747,9 @@ export function classifyScmOperationErrorCode(
       return 'change';
     case SCM_OPERATION_ERROR_CODES.COMMIT_REQUIRED:
     case SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_FAILED:
+    case SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_CONTENT_CHANGED:
+    case SCM_OPERATION_ERROR_CODES.COMMIT_HEAD_CHANGED:
+    case SCM_OPERATION_ERROR_CODES.COMMIT_STAGING_CONFLICT:
     case SCM_OPERATION_ERROR_CODES.COMMIT_SIGNING_FAILED:
     case SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED:
     case SCM_OPERATION_ERROR_CODES.COMMIT_EMPTY:

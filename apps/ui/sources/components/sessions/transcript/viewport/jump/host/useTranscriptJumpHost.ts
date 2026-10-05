@@ -344,7 +344,7 @@ export type TranscriptJumpHost = Readonly<{
     jumpToBottomAffordance: ReturnType<typeof resolveJumpToBottomAffordanceState>;
     jumpToTranscriptTarget(
         target: TranscriptJumpTarget,
-        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean }>,
+        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; signal?: AbortSignal }>,
     ): Promise<TranscriptJumpResult>;
     preemptExplicitJumpForUserTakeover(): void;
     /**
@@ -1006,8 +1006,9 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
 
     const jumpToTranscriptTarget = React.useCallback(async (
         target: TranscriptJumpTarget,
-        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean }>,
+        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; signal?: AbortSignal }>,
     ): Promise<TranscriptJumpResult> => {
+        if (options?.signal?.aborted) return { status: 'aborted' };
         const targetRequest = resolveTranscriptJumpTargetRequest(target);
         if (!targetRequest) return { status: 'not-found', reason: 'invalid-target' };
         const { normalizedTargetSeq, routeMessageId, transcriptBlockIndex, role } = targetRequest;
@@ -1029,8 +1030,17 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         currentExplicitJumpOperationRef.current = operation;
         const isCurrentOperation = (): boolean => (
             currentExplicitJumpOperationRef.current === operation &&
-            currentSessionIdRef.current === sessionId
+            currentSessionIdRef.current === sessionId && options?.signal?.aborted !== true
         );
+        const abort = () => {
+            settlePendingTargetRenderForOperation(pendingTargetRenderRef, operation);
+            releaseTakeover();
+            if (currentExplicitJumpOperationRef.current === operation) {
+                currentExplicitJumpOperationRef.current = null;
+                pendingJumpSeqViewportPromotionRef.current = null;
+            }
+        };
+        options?.signal?.addEventListener('abort', abort, { once: true });
         const takeoverPlan = lifecycleHost.planExplicitJumpTakeover({
             reason: 'jump-to-seq',
             sessionId,
@@ -1210,6 +1220,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
             }
             return result;
         } finally {
+            options?.signal?.removeEventListener('abort', abort);
             settlePendingTargetRenderForOperation(pendingTargetRenderRef, operation);
             releaseTakeover();
             if (currentExplicitJumpOperationRef.current === operation) {

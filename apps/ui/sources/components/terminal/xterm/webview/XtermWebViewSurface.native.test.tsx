@@ -116,6 +116,31 @@ const nativeWebViewBootFailureCases = [
 }>[];
 
 describe('XtermWebViewSurface (native)', () => {
+    it('publishes engine Find results, rejects a stale query reply and retires results on renderer recovery', async () => {
+        postMessageSpy.mockClear();
+        const ref = React.createRef<XtermWebViewSurfaceHandle>();
+        const screen = await renderScreen(<XtermWebViewSurface ref={ref} fontSize={14} lineHeightPx={18}
+            onInput={() => {}} onResize={() => {}} onReady={() => {}} />);
+        await act(async () => { emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } }); });
+        const find = requireWebViewSurfaceHandle(ref).find;
+        expect(find).toBeDefined();
+        if (!find) throw new Error('mounted xterm Find missing');
+        await act(async () => { find.open(); find.setQuery('first'); });
+        const first = findPostedEnvelopePayloadByType('find.set');
+        postMessageSpy.mockClear();
+        await act(async () => { find.setQuery('second'); });
+        const second = findPostedEnvelopePayloadByType('find.set');
+        await act(async () => { emitEnvelope({ v: 1, type: 'find.results', payload: { revision: second.revision,
+            status: { kind: 'results', current: 1, total: 2, coverage: 'complete' }, retainedLines: 24 } }); });
+        expect(find.status).toMatchObject({ kind: 'results', total: 2 });
+        await act(async () => { emitEnvelope({ v: 1, type: 'find.results', payload: { revision: first.revision,
+            status: { kind: 'results', current: 1, total: 9, coverage: 'complete' }, retainedLines: 24 } }); });
+        expect(find.status).toMatchObject({ kind: 'results', total: 2 });
+        await act(async () => { emitNativeWebViewBootFailure('onContentProcessDidTerminate'); });
+        expect(find.getSnapshot().open).toBe(false);
+        expect(find.status).toEqual({ kind: 'idle' });
+        await screen.unmount();
+    });
     it('buffers writes until ready and forwards input/resize', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;

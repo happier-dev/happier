@@ -5,6 +5,7 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -31,6 +32,8 @@ export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly
     alternative?: SetupBlockAction;
     disabled?: boolean;
     dismiss?: SetupBlockDismiss;
+    /** A step already under way: how much of it is done (0–1), drawn as a meter under the title. */
+    progress?: Readonly<{ fraction: number; accessibilityLabel: string }>;
 }>) {
     const { theme } = useUnistyles();
     const card = props.layout === 'card';
@@ -63,6 +66,14 @@ export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly
             </View>
             <View style={card ? styles.textCard : styles.textRow}>
                 <Text style={[styles.title, card ? styles.titleCard : null]}>{props.title}</Text>
+                {props.progress ? (
+                    <MeterBar
+                        style={styles.progress}
+                        tone="neutral"
+                        fillFraction={props.progress.fraction}
+                        progressAccessibilityLabel={props.progress.accessibilityLabel}
+                    />
+                ) : null}
                 <Text style={[styles.subtitle, card ? styles.subtitleCard : null]}>{props.subtitle}</Text>
             </View>
             {card ? <View style={styles.footer}>{buttons}</View> : buttons}
@@ -105,6 +116,10 @@ const styles = StyleSheet.create((theme) => ({
     subtitleCard: {
         // Two lines reserved, so blocks with a one-line sentence keep their buttons level.
         minHeight: 36,
+    },
+    progress: {
+        marginTop: 6,
+        marginBottom: 4,
     },
     footer: {
         marginTop: 'auto',

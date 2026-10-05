@@ -5,11 +5,13 @@ import {
   normalizeRecipientContractV1,
   VoiceProviderContributionSchema,
 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { IModal } from '@/modal/types';
 import type { Settings } from '@/sync/domains/settings/settings';
+
+type AccountSettingsMutationInput = Parameters<typeof import('@/sync/sync')['sync']['mutateAccountSettingsOnce']>[0];
 
 const boundary = vi.hoisted(() => ({
   confirm: vi.fn<IModal['confirm']>(async () => false),
@@ -20,7 +22,6 @@ const boundary = vi.hoisted(() => ({
   log: vi.fn<(message: string) => void>(),
   settings: null as Settings | null,
   settingsVersion: 4 as number | null,
-  currentDeclaration: null as ReturnType<typeof VoiceProviderContributionSchema.parse> | null,
 }));
 
 // The console sink is the one report that survives a dismissed overlay; the
@@ -66,21 +67,20 @@ vi.mock('@/components/ui/forms/valueRefs/SavedSecretPickerModal', () => ({
   SavedSecretPickerModal: (props: object) => React.createElement('SavedSecretPickerModal', props),
 }));
 
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
   fetchAccountEncryptionMode: vi.fn(async () => ({ mode: 'e2ee' })),
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
   const { settingsParse } = await import('@/sync/domains/settings/settings');
-  const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+  const { createLiveStorageStoreMock, createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
   const readSettings = () => boundary.settings ?? settingsParse({});
-  return {
-    ...createStorageModuleStub({ useSettings: readSettings }),
-    // The gesture verifies the account snapshot the write left behind, so the
-    // canonical store has to answer here as it does in the app.
-    storage: { getState: () => ({ settings: readSettings() }) },
-    getStorage: () => ({ getState: () => ({ settings: readSettings() }) }),
-  };
+  return createStorageModuleStub({
+    storage: createLiveStorageStoreMock(() => ({ settings: readSettings() })),
+    useSettings: readSettings,
+    useSetting: createUseSettingMock({ fallback: (key) => readSettings()[key] }),
+  });
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -91,17 +91,13 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-  useSettingsVersion: () => boundary.settingsVersion,
-}));
-
-vi.mock('@/voice/registry/defaultRegistry', () => ({
-  createDefaultVoiceProviderRegistry: () => ({
-    get: () => boundary.currentDeclaration
-      ? { kind: 'voice.conversation-provider.v1', declaration: boundary.currentDeclaration }
-      : null,
-  }),
-}));
+vi.mock('@/sync/store/hooks', async () => {
+  const storageModule = await import('@/sync/domains/state/storage');
+  return {
+    ...storageModule,
+    useSettingsVersion: () => boundary.settingsVersion,
+  };
+});
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -215,7 +211,51 @@ const credentialSourceDeclaration = VoiceProviderContributionSchema.parse({
   },
 });
 
+const { createVoiceProviderRegistry } = await import('@/voice/registry/providerRegistry');
+const {
+  commitExternalVoiceProviderRegistration,
+  removeExternalVoiceProviderRegistration,
+  replaceExternalVoiceProviderProjectionAuthority,
+} = await import('@/voice/registry/externalVoiceProviderRegistrations');
+const registrationToken = Object.freeze({});
+
+function setCurrentDeclaration(declaration: ReturnType<typeof VoiceProviderContributionSchema.parse> | null): void {
+  removeExternalVoiceProviderRegistration(registrationToken);
+  if (!declaration) {
+    // A current projection without this provider prevents generated fallback
+    // metadata from supplying a declaration the daemon did not admit.
+    replaceExternalVoiceProviderProjectionAuthority(null, registrationToken, new Map());
+    return;
+  }
+  const providerId = 'com.acme.voice/conversation';
+  const descriptor = createVoiceProviderRegistry({
+    bundledContributions: [{ pluginId: 'com.acme.voice', providerId, declaration }],
+    bundledPresentations: [{ providerId, settingsSectionId: 'voice.acme.conversation' }],
+  }).get(providerId);
+  if (!descriptor) throw new Error('credential fixture declaration was not admitted');
+  commitExternalVoiceProviderRegistration({
+    token: registrationToken,
+    pluginId: 'com.acme.voice',
+    localId: 'conversation',
+    providerId,
+    descriptor,
+    adapter: null,
+  });
+}
+
+// Resolve the real owner graph after boundary registration, outside a timed gesture.
+await import('./CredentialItem');
+
 describe('VoiceCredentialItem', () => {
+  beforeEach(() => {
+    boundary.settingsVersion = 4;
+    setCurrentDeclaration(credentialSourceDeclaration);
+  });
+
+  afterEach(() => {
+    removeExternalVoiceProviderRegistration(registrationToken);
+  });
+
   it('mounts raw review only for the selected source in the current realm and phase', async () => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const {
@@ -314,10 +354,14 @@ describe('VoiceCredentialItem', () => {
     boundary.confirm.mockReset();
     boundary.prompt.mockReset();
     boundary.prompt.mockResolvedValue('sk-replaced');
-    boundary.mutateAccountSettings.mockReset();
+    boundary.mutateAccountSettingsOnce.mockReset();
     let changed: any = null;
-    boundary.mutateAccountSettings.mockImplementationOnce(async (update) => {
-      changed = update(boundary.settings);
+    boundary.mutateAccountSettingsOnce.mockImplementationOnce(async (input: AccountSettingsMutationInput) => {
+      if (!boundary.settings) throw new Error('expected Account settings fixture');
+      const applied = input.mutate(boundary.settings);
+      changed = applied.settings;
+      boundary.settings = settingsParse(applied.settings);
+      return { status: 'applied', settingsVersion: 5, value: applied.value };
     });
 
     const { VoiceCredentialItem } = await import('./CredentialItem');
@@ -332,7 +376,7 @@ describe('VoiceCredentialItem', () => {
     />);
 
     act(() => screen.tree.findByTestId('credential')?.props.onSelect('enterNew'));
-    await vi.waitFor(() => expect(boundary.mutateAccountSettings).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(boundary.mutateAccountSettingsOnce).toHaveBeenCalledOnce());
     expect(changed.voiceSettingsV1.credentialBindings[0].credentialSource)
       .toEqual({ kind: 'connectedAccount' });
     expect(changed.connectedAccountPurposeBindingsV1).toEqual({
@@ -384,10 +428,14 @@ describe('VoiceCredentialItem', () => {
       picker.props.onSelectId('elevenlabs-secret');
       return 'modal-id';
     });
-    boundary.mutateAccountSettings.mockReset();
+    boundary.mutateAccountSettingsOnce.mockReset();
     let changed: any = null;
-    boundary.mutateAccountSettings.mockImplementationOnce(async (update: any) => {
-      changed = update(boundary.settings);
+    boundary.mutateAccountSettingsOnce.mockImplementationOnce(async (input: AccountSettingsMutationInput) => {
+      if (!boundary.settings) throw new Error('expected Account settings fixture');
+      const applied = input.mutate(boundary.settings);
+      changed = applied.settings;
+      boundary.settings = settingsParse(applied.settings);
+      return { status: 'applied', settingsVersion: 5, value: applied.value };
     });
 
     const { VoiceCredentialItem } = await import('./CredentialItem');
@@ -406,7 +454,7 @@ describe('VoiceCredentialItem', () => {
       .toEqual(['useSavedSecret', 'enterNew']);
 
     act(() => row?.props.onSelect('useSavedSecret'));
-    await vi.waitFor(() => expect(boundary.mutateAccountSettings).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(boundary.mutateAccountSettingsOnce).toHaveBeenCalledOnce());
 
     const { SavedSecretPickerModal } = await import('@/components/ui/forms/valueRefs/SavedSecretPickerModal');
     const shown = boundary.show.mock.calls[0]?.[0] as unknown as Readonly<{
@@ -451,9 +499,9 @@ describe('VoiceCredentialItem', () => {
       },
     });
     boundary.settingsVersion = 4;
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.log.mockReset();
     boundary.confirm.mockReset();
     boundary.confirm.mockResolvedValue(true);
@@ -539,9 +587,9 @@ describe('VoiceCredentialItem', () => {
       },
     });
     boundary.settingsVersion = 4;
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.log.mockReset();
     boundary.confirm.mockReset();
     boundary.confirm.mockResolvedValue(true);
@@ -603,9 +651,9 @@ describe('VoiceCredentialItem', () => {
       voiceSettingsV1: { credentialBindings: [] },
     });
     boundary.settingsVersion = 4;
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.log.mockReset();
     boundary.confirm.mockReset();
     // The approval never returns true — declined by the user, or dismissed
@@ -667,9 +715,9 @@ describe('VoiceCredentialItem', () => {
     // No readable settings version: the source mutation has no CAS basis, so
     // the gesture cannot write and must say so.
     boundary.settingsVersion = null;
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.log.mockReset();
     boundary.confirm.mockReset();
     boundary.confirm.mockResolvedValue(true);
@@ -721,9 +769,9 @@ describe('VoiceCredentialItem', () => {
     boundary.mutateAccountSettings.mockReset();
     boundary.mutateAccountSettingsOnce.mockReset();
     boundary.settingsVersion = 4;
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     let changed: unknown = null;
     boundary.mutateAccountSettingsOnce.mockImplementationOnce(async (input) => {
       const applied = input.mutate(boundary.settings);
@@ -761,7 +809,7 @@ describe('VoiceCredentialItem', () => {
   it('fails closed instead of falling back when a qualified declaration is unavailable', async () => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     boundary.settings = settingsParse({});
-    boundary.currentDeclaration = null;
+    setCurrentDeclaration(null);
     boundary.settingsVersion = 4;
     boundary.prompt.mockReset();
     boundary.prompt.mockResolvedValue('sk-legacy');
@@ -795,9 +843,9 @@ describe('VoiceCredentialItem', () => {
     const { Modal } = await import('@/modal');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     boundary.settings = settingsParse({});
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.settingsVersion = 4;
     boundary.prompt.mockReset();
     boundary.prompt.mockResolvedValue('sk-loser');
@@ -849,9 +897,9 @@ describe('VoiceCredentialItem', () => {
       }],
       voiceSettingsV1: { credentialBindings: [] },
     });
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.settingsVersion = 4;
     boundary.show.mockReset();
     boundary.show.mockImplementation((config) => {
@@ -909,9 +957,9 @@ describe('VoiceCredentialItem', () => {
     const { Modal } = await import('@/modal');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     boundary.settings = settingsParse({});
-    boundary.currentDeclaration = VoiceProviderContributionSchema.parse(
+    setCurrentDeclaration(VoiceProviderContributionSchema.parse(
       structuredClone(credentialSourceDeclaration),
-    );
+    ));
     boundary.settingsVersion = 4;
     boundary.prompt.mockReset();
     boundary.prompt.mockResolvedValue('sk-possibly-applied');
@@ -1057,7 +1105,7 @@ describe('VoiceCredentialItem', () => {
       onStatusChanged,
     }));
 
-    expect(screen.tree.findByTestId('credential')?.props.detail)
+    expect(screen.tree.findByTestId('credential')?.props.subtitle)
       .toBe('settingsVoice.externalCredentials.reviewRequired');
     await vi.waitFor(() => expect(onStatusChanged).toHaveBeenCalledWith({
       status: 'review_required',
@@ -1069,10 +1117,13 @@ describe('VoiceCredentialItem', () => {
 
     boundary.confirm.mockResolvedValueOnce(true);
     boundary.prompt.mockClear();
-    boundary.mutateAccountSettings.mockClear();
+    boundary.mutateAccountSettingsOnce.mockReset();
     let approvedAccountSettings: unknown = null;
-    boundary.mutateAccountSettings.mockImplementationOnce(async (update) => {
-      approvedAccountSettings = update(obsoleteSettings);
+    boundary.mutateAccountSettingsOnce.mockImplementationOnce(async (input: AccountSettingsMutationInput) => {
+      const applied = input.mutate(obsoleteSettings);
+      approvedAccountSettings = applied.settings;
+      boundary.settings = settingsParse(applied.settings);
+      return { status: 'applied', settingsVersion: 5, value: applied.value };
     });
     act(() => {
       screen.tree.findByTestId('credential')?.props.onPress();
@@ -1081,7 +1132,7 @@ describe('VoiceCredentialItem', () => {
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
-    await vi.waitFor(() => expect(boundary.mutateAccountSettings).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(boundary.mutateAccountSettingsOnce).toHaveBeenCalledTimes(1));
     expect(boundary.prompt).not.toHaveBeenCalled();
     expect(JSON.stringify(boundary.confirm.mock.calls)).not.toContain('retained-secret');
     expect((approvedAccountSettings as {
@@ -1160,7 +1211,7 @@ describe('VoiceCredentialItem', () => {
       onStatusChanged,
     }));
 
-    expect(screen.tree.findByTestId('credential')?.props.detail)
+    expect(screen.tree.findByTestId('credential')?.props.subtitle)
       .toBe('voice.readiness.credential_unknown');
     await vi.waitFor(() => expect(onStatusChanged).toHaveBeenCalledWith({
       status: 'unknown',

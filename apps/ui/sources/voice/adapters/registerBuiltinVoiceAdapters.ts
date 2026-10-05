@@ -48,8 +48,11 @@ export function createBuiltinVoiceAdapterAssembly(input: Readonly<{
     dispose() {
       disposePromise ??= (async () => {
         hostLease.revoke();
-        await Promise.allSettled(bundled.map(async (runtime) => await runtime.dispose()));
-      })();
+        await Promise.all(bundled.map(async (runtime) => await runtime.dispose()));
+      })().catch((error: unknown) => {
+        disposePromise = null;
+        throw error;
+      });
       return disposePromise;
     },
   });

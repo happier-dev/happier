@@ -4,20 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
 
-const localSettingState = vi.hoisted(() => ({
-    uiBackdropBlurEnabled: true,
-}));
-
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (name: string) => {
-        if (name === 'uiBackdropBlurEnabled') {
-            return localSettingState.uiBackdropBlurEnabled;
-        }
-        return null;
-    },
-}));
-
 installRepositoryTreeCommonModuleMocks({
+    typography: () => vi.importActual('@/constants/Typography'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -29,53 +17,17 @@ installRepositoryTreeCommonModuleMocks({
     },
 });
 
-function flattenStyle(style: unknown): Record<string, unknown> {
-    if (style == null) return {};
-    if (Array.isArray(style)) {
-        return style.reduce<Record<string, unknown>>((acc, value) => {
-            return {
-                ...acc,
-                ...flattenStyle(value),
-            };
-        }, {});
-    }
-    if (typeof style === 'object') {
-        return style as Record<string, unknown>;
-    }
-    return {};
-}
-
 describe('RepositoryTreeDropOverlay', () => {
-    it('applies web blur styling when backdrop blur is enabled', async () => {
-        localSettingState.uiBackdropBlurEnabled = true;
+    it('shows the exact upload destination while a file target is active', async () => {
         const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
         const screen = await renderScreen(<RepositoryTreeDropOverlay visible destinationLabel="src" />);
 
-        const viewNodes = screen.findAllByType('View' as any);
-        const contentNode = viewNodes.find((node) => {
-            const style = flattenStyle(node.props.style);
-            return style.backdropFilter === 'blur(6px)';
-        });
-        expect(contentNode).toBeTruthy();
-        expect(flattenStyle(contentNode?.props.style).backgroundColor).toBe('#F8F8F8');
+        expect(screen.findAll(node => node.children.includes('src')).length).toBeGreaterThan(0);
     });
 
-    it('removes web blur styling when backdrop blur is disabled', async () => {
-        localSettingState.uiBackdropBlurEnabled = false;
+    it('retires the outcome when no file target is active', async () => {
         const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
-        const screen = await renderScreen(<RepositoryTreeDropOverlay visible destinationLabel="src" />);
-
-        const viewNodes = screen.findAllByType('View' as any);
-        const contentNode = viewNodes.find((node) => {
-            const style = flattenStyle(node.props.style);
-            return style.backdropFilter === 'blur(6px)';
-        });
-        expect(contentNode).toBeUndefined();
-        const contentWithoutBlur = viewNodes.find((node) => {
-            const style = flattenStyle(node.props.style);
-            return style.paddingHorizontal === 14 && style.paddingVertical === 10;
-        });
-        expect(flattenStyle(contentWithoutBlur?.props.style).backgroundColor).toBe('#f0f0f0');
-        localSettingState.uiBackdropBlurEnabled = true;
+        const screen = await renderScreen(<RepositoryTreeDropOverlay visible={false} destinationLabel="src" />);
+        expect(screen.findAllByTestId('repository-tree-drop-overlay')).toHaveLength(0);
     });
 });

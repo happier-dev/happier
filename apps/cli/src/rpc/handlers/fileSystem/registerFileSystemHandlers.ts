@@ -9,7 +9,7 @@ import { registerPathMutationHandlers } from './pathMutationHandlers';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
 import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
 import { registerComposerMediaStageLifecycleRpcHandlers } from '@/transfers/rpc/registerComposerMediaStageLifecycleRpcHandlers';

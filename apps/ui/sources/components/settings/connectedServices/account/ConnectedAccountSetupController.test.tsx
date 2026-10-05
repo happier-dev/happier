@@ -20,6 +20,7 @@ import { installConnectedAccountDescriptorProjection } from '@/sync/domains/conn
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { resolveQualifiedConnectedAccountLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -270,6 +271,25 @@ describe('ConnectedAccountSetupController real ownership', () => {
         ]);
     });
 
+    it('names a guided key through the existing Account label preference only after connection succeeds', async () => {
+        const keyService = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+        installDescription({ ...described, service: keyService }, 'anthropic');
+        handleAuthentication = (command) => command.operation === 'submitManual'
+            ? { status: 'connected', attemptId: 'attempt-1', account: { service: keyService, accountId: 'new-key' } }
+            : { status: 'awaitingManual', attemptId: 'attempt-1' };
+        const screen = await renderScreen(element(selection, keyService));
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:name')).not.toBeNull());
+        await act(async () => {
+            screen.changeTextByTestId('connected-account-manual:token', 'sk-ant-secret');
+            screen.changeTextByTestId('connected-account-manual:name', 'Build server');
+        });
+        expect(storage.getState().settings.connectedServicesProfileLabelByKey).toEqual({});
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(resolveQualifiedConnectedAccountLabel({ service: keyService, legacyServiceId: 'anthropic',
+            accountId: 'new-key', labelsByKey: storage.getState().settings.connectedServicesProfileLabelByKey })).toBe('Build server'));
+        expect(authenticationCommands).toContainEqual({ operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'sk-ant-secret' } });
+    });
+
     it('fails closed before daemon effects for a machine belonging to another Home', async () => {
         storage.getState().applySettings({ ...storage.getState().settings,
             machineAdministrationTargetsLocalV1: { [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts]: { serverIdentityId: 'srv_foreign_home', machineId: selection.selectedTarget!.machineId } },
@@ -301,6 +321,35 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await screen.pressByTestIdAsync('connected-account:error:retry');
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
         expect(screen.findHostByTestId('connected-account:error')).toBeNull();
+    });
+
+    it('returns to an editable manual form after a rejected credential and submits only the corrected value', async () => {
+        handleAuthentication = (command) => {
+            if (command.operation === 'submitManual') {
+                return command.fields.token === ' '
+                    ? { status: 'rejected', attemptId: 'attempt-1', code: 'anthropic_api_key_invalid' }
+                    : { status: 'connected', attemptId: 'attempt-2', account: { service, accountId: 'corrected-account' } };
+            }
+            if (command.operation === 'read') {
+                return { status: 'rejected', attemptId: 'attempt-1', code: 'anthropic_api_key_invalid' };
+            }
+            return { status: 'awaitingManual', attemptId: authenticationCommands.some((entry) => entry.operation === 'submitManual') ? 'attempt-2' : 'attempt-1' };
+        };
+        const screen = await manualScreen();
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', ' '));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry')).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-account:error:retry');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
+        expect(screen.findHostByTestId('connected-account-manual:token')!.props.editable).toBe(true);
+        expect(screen.findHostByTestId('connected-account:error')).toBeNull();
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'corrected-token'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service, accountId: 'corrected-account' }));
+        expect(authenticationCommands.filter((command) => command.operation === 'submitManual')).toEqual([
+            { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: ' ' } },
+            { operation: 'submitManual', attemptId: 'attempt-2', fields: { token: 'corrected-token' } },
+        ]);
     });
 
     it('keeps an unsupported legacy service closed before authentication, pool, or quota effects', async () => {
@@ -429,6 +478,34 @@ describe('ConnectedAccountSetupController real ownership', () => {
         });
         await act(async () => pending.resolve({ status: 'connected', attemptId: 'attempt-1', account: { service, accountId: 'must-not-publish' } }));
         expect(onConnected).not.toHaveBeenCalled();
+    });
+
+    it('polls a visible device code at the provider interval and retains it while approval is pending', async () => {
+        installDescription({ ...described, descriptor: { ...described.descriptor,
+            authentication: { defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'providerCheck' }] } } });
+        handleAuthentication = (command) => command.operation === 'beginConnect'
+            ? { status: 'awaitingDeviceAuthorization', attemptId: 'attempt-1', verificationUri: 'https://provider.example/device',
+                userCode: 'SAFE-CODE', expiresAtMs: Date.now() + 60_000, pollIntervalMs: 5_000 }
+            : { status: 'pending', attemptId: 'attempt-1', retryAfterMs: 5_000 };
+        vi.useFakeTimers();
+        try {
+            const screen = await renderScreen(element());
+            await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+            expect(screen.findByTestId('connected-account-device:code')).toBeTruthy();
+            await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+            expect(authenticationCommands).toContainEqual({ operation: 'pollDevice', attemptId: 'attempt-1' });
+            expect(screen.findByTestId('connected-account-device:code')).toBeTruthy();
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('keeps a manual approval check when an external device service publishes no polling cadence', async () => {
+        installDescription({ ...described, descriptor: { ...described.descriptor,
+            authentication: { defaultModeId: 'device', modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'providerCheck' }] } } });
+        handleAuthentication = () => ({ status: 'awaitingDeviceAuthorization', attemptId: 'attempt-1', verificationUri: 'https://provider.example/device', userCode: 'SAFE-CODE' });
+        const screen = await renderScreen(element());
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:poll')).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-account-device:poll');
+        expect(authenticationCommands).toContainEqual({ operation: 'pollDevice', attemptId: 'attempt-1' });
     });
 
     it.each(['oauth', 'device'] as const)('continues an uncertain pending %s attempt through its mode-owned operation', async (kind) => {

@@ -146,11 +146,12 @@ function createRecordedDictationHarness(
 ) {
     const recorderStop = vi.fn(async () => {});
     const createRecorder = vi.fn(() => ({
-        uri: 'file:///native-dictation.m4a',
-        prepareToRecordAsync: vi.fn(async () => {}),
-        pause: vi.fn(),
-        record: vi.fn(),
-        stop: recorderStop,
+        start: vi.fn(async () => {}),
+        setMuted: vi.fn(async () => {}),
+        stop: async () => {
+            await recorderStop();
+            return 'file:///native-dictation.m4a';
+        },
     }));
     const captureOwner = createLocalVoiceCaptureOwner({
         getSettings: () => ({}),
@@ -158,7 +159,7 @@ function createRecordedDictationHarness(
         onCaptureStarted: vi.fn(),
     }, {
         createRecordingMicSession: () => createExpoAudioRecordingMicSession({
-            createRecorder,
+            createNativeFileRecording: createRecorder,
             requestPermission: async () => ({
                 granted: true,
                 canAskAgain: true,

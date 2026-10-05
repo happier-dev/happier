@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions, View } from 'react-native';
+import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +10,7 @@ import { HomePairingPanel } from '@/components/auth/pairing/HomePairingPanel';
 import { useHomesJourneySetupItems } from '@/components/homes/journeys/useHomesJourneySetupItems';
 import { useConnectServicesSetupItem } from '@/components/settings/connectedServices/home/useConnectServicesSetupItem';
 import { useFirstAgentSetupItem } from '@/components/machines/agents/useFirstAgentSetupItem';
+import { useVoiceSetupBlock } from '@/voice/settings/setup/VoiceSetupItem';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { usePluginAdministrationSummary } from '@/components/settings/plugins/model/pluginAdministrationSummary';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -23,13 +24,13 @@ import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { Modal } from '@/modal';
 import { useAllMachines, useIsActiveMachineListSettled } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { isRunningOnMac } from '@/utils/platform/platform';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 
 import type { HubSectionProps } from './hubSectionProps';
 import { useHomeSetupDismissals } from './layout/useHomeSetupDismissals';
 import { homeHasMachine } from '@/components/machines/add/machineAddPaths';
 import { AddMachinePanel } from './setup/AddMachinePanel';
+import { useSetupDevice } from './setup/useSetupDevice';
+import { usePersonalizeSetupItem } from '@/components/onboarding/personalize/usePersonalizeSetupItem';
 import { ConnectComputerPanel } from './setup/ConnectComputerPanel';
 import { SetupBlockGrid, type SetupBlockItem } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
@@ -91,15 +92,6 @@ export const HubSetupSection = React.memo(function HubSetupSection(props: HubSec
         ? <HubSetupChecklist menu={props.menu} />
         : <HubSetupTiles menu={props.menu} />;
 });
-
-function useSetupDevice(): Readonly<{ isComputer: boolean; isPhone: boolean }> {
-    const { width, height } = useWindowDimensions();
-    const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
-    return {
-        isComputer: isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb),
-        isPhone: !isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb),
-    };
-}
 
 /** The entries this device shows, from the canonical owners of each step's truth. */
 function useSetupEntries(presentation: SetupPresentation) {
@@ -252,6 +244,11 @@ function HubSetupTiles(props: HubSectionProps) {
     const servicesItem = useConnectServicesSetupItem({ layout: isPhone ? 'row' : 'card' });
     // A composer machine with no agent yet (lab agent-setup H1): the agents owner decides; it leads the row.
     const firstAgentItem = useFirstAgentSetupItem({ phone: isPhone });
+    // "Set up voice" (lab voice-moments SA): the Voice setup owner decides; null once Voice is set up.
+    const voiceItem = useVoiceSetupBlock({ layout: isPhone ? 'row' : 'card' });
+    // "Personalize Happier" (lab personalize H1): after the steps that connect real work on a
+    // computer, first on a phone where there are fewer of them. Its owner decides; null once done.
+    const personalizeItem = usePersonalizeSetupItem({ hidden, onDismiss: dismiss });
     const visible = entries.filter((entry) => !hidden.has(entry.id));
 
     const items: SetupBlockItem[] = visible.map((entry) => ({
@@ -280,9 +277,12 @@ function HubSetupTiles(props: HubSectionProps) {
     }));
 
     const allItems = [
+        ...(personalizeItem && isPhone ? [personalizeItem] : []),
         ...(firstAgentItem ? [firstAgentItem] : []),
         ...journeyItems.filter((item) => !hidden.has(item.id)),
+        ...(voiceItem ? [voiceItem] : []),
         ...items,
+        ...(personalizeItem && !isPhone ? [personalizeItem] : []),
         ...(servicesItem ? [servicesItem] : []),
     ];
     if (allItems.length === 0) return null;
@@ -290,10 +290,16 @@ function HubSetupTiles(props: HubSectionProps) {
 }
 
 /** "Get set up" as drawn: the title, ⋯, and the set-up blocks (the `/dev/home` fixture draws it too). */
-export function HubSetupGridView(props: Readonly<{ items: readonly SetupBlockItem[]; phone: boolean; menu?: React.ReactNode }>) {
+export function HubSetupGridView(props: Readonly<{
+    items: readonly SetupBlockItem[];
+    phone: boolean;
+    menu?: React.ReactNode;
+    /** Dev fixtures only: a block drawn already open (the live Home lets the grid own opening). */
+    openId?: string | null;
+}>) {
     return (
         <ItemGroup title={t('settingsOverview.setupTitle')} surface="none" action={props.menu}>
-            <SetupBlockGrid testID="hub-setup.grid" items={props.items} columns={props.phone ? 1 : 3} />
+            <SetupBlockGrid testID="hub-setup.grid" items={props.items} columns={props.phone ? 1 : 3} openId={props.openId} />
         </ItemGroup>
     );
 }

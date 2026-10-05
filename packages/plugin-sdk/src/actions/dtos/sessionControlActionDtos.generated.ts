@@ -131,6 +131,7 @@ export type SessionControlActionInputById = {
         sessionId: string;
         timeoutSeconds?: number | undefined;
     };
+    readonly "session.pending.next": Record<string, never>;
 };
 export type SessionControlActionResultById = {
     readonly "session.stop": string | number | boolean | readonly JsonValue[] | {
@@ -328,5 +329,8 @@ export type SessionControlActionResultById = {
         ok: false;
         code: 'unsupported' | 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'encryption_material_unavailable' | 'timeout';
         candidates?: readonly string[] | undefined;
+    };
+    readonly "session.pending.next": {
+        status: 'opened' | 'none' | 'unavailable';
     };
 };

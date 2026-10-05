@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
+import { useToggleThemeMode } from '@/components/settings/appearance/useApplyThemeSelection';
 import { Platform } from 'react-native';
 import { useGlobalSearchParams, useSegments } from 'expo-router';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -51,6 +52,9 @@ import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWr
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { buildCommandPaletteCommands, type PetCommandControls } from './buildCommandPaletteCommands';
+import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
+import { useWorkflowAgentAuthoring } from '@/components/workflows/authoring/useWorkflowAgentAuthoring';
+import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
 import { KeyboardShortcutProvider, buildKeyboardShortcutLabels, resolveKeyboardPlatform, type KeyboardShortcutHandlers } from '@/keyboard';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -61,6 +65,7 @@ import { useResolveNewSessionOrdinaryEntryRoute } from '@/components/sessions/ne
 import { UNIVERSAL_SEARCH_ROUTE } from '@/components/appShell/search/universalSearchRoutePresentation';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { TERMINAL_JUMP_ROUTE_PARAM } from '@/components/sessions/terminal/jump/terminalJumpTarget';
+import { NextPendingNavigationHost } from '@/components/sessions/pendingNavigation/NextPendingNavigationHost';
 
 export function readActiveSessionIdFromRoute(
     segments: readonly string[],
@@ -244,6 +249,12 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const voiceEnabled = useFeatureEnabled('voice');
     const petsCompanionEnabled = useFeatureEnabled('pets.companion');
+    const { available: workflowsEnabled } = useWorkflowsAvailability();
+    const openWorkflowAgentDraft = useWorkflowAgentAuthoring();
+    const openNewWorkflow = useCallback(() => { router.push('/workflows/new' as never); }, [router]);
+    const openWorkflowAgentAuthoring = useCallback(() => {
+        openWorkflowAgentDraft(buildWorkflowAgentAuthoringSeed({ kind: 'create' }));
+    }, [openWorkflowAgentDraft]);
     const compactAppDestinations = useCompactAppDestinations();
     // Search is this palette's own runtime, so it is not listed as a command inside it.
     const paletteDestinations = useMemo(
@@ -257,10 +268,12 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const labelHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
             'session.new': () => undefined,
+            ...(workflowsEnabled ? { 'workflow.new': () => undefined, 'workflow.createWithAgent': () => undefined } : {}),
             'settings.open': () => undefined,
+            'search.textInFiles': () => undefined,
             ...(commandPaletteEnabled ? { 'commandPalette.open': () => undefined } : {}),
         }),
-        [commandPaletteEnabled],
+        [commandPaletteEnabled, workflowsEnabled],
     );
     const shortcutLabels = useMemo(
         () => buildKeyboardShortcutLabels(keyboardPlatform, Platform.OS === 'web' ? 'web' : 'native', {
@@ -342,6 +355,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         router.push({ pathname: '/new', params: { draftId, draftOrigin } });
     }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
+    const textSearchOpener = React.useRef<(scope?: UniversalSearchScopeSeed) => void>(() => undefined);
     const buildCommands = useCallback((requestedActiveSessionId: string | null = commandContextSessionId, requestedScope?: UniversalSearchScopeSeed) => {
         // The contributed Action presentation is captured for the rendered
         // route's exact Session. An imperative opener may target another Home
@@ -365,7 +379,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             activeSessionId: requestedActiveSessionId,
             activeSessionServerId: requestedScope?.serverId
                 ?? (requestedActiveSessionId === commandContextSessionId ? commandContextServerId : null),
-            features: { executionRunsEnabled, voiceEnabled, petsCompanionEnabled },
+            features: { executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled },
             shortcutLabels,
             petControls,
             ...(scopedPluginActionPresentation ? { pluginActionPresentation: scopedPluginActionPresentation } : {}),
@@ -374,6 +388,9 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             nav: {
                 push: (path) => router.push(path as any),
                 openNewSession,
+                openNewWorkflow,
+                openWorkflowAgentAuthoring,
+                openTextInFiles: () => textSearchOpener.current(requestedScope),
                 openHomePairingModal: async () => {
                     const { showHomePairingModal } = await import('@/components/auth/pairing/HomePairingModal');
                     showHomePairingModal('phone');
@@ -387,7 +404,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [commandContextSessionId, commandContextServerId, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, navigateToSession, actionExecutor]);
+    }, [commandContextSessionId, commandContextServerId, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor]);
 
     const actionCommandBuilder = React.useRef(buildCommands);
     actionCommandBuilder.current = buildCommands;
@@ -446,7 +463,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             router.push({
                 pathname: UNIVERSAL_SEARCH_ROUTE,
                 params: {
-                    ...(initialQuery?.trim() ? { q: initialQuery.trim() } : {}),
+                    ...(initialQuery ? { q: initialQuery } : {}),
+                    ...(options?.source ? { source: options.source } : {}),
                     ...(invocationScope.sessionId ? { sessionId: invocationScope.sessionId } : {}),
                     ...(invocationScope.accountId ? { accountId: invocationScope.accountId } : {}),
                     ...(invocationScope.serverId ? { serverId: invocationScope.serverId } : {}),
@@ -470,7 +488,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             },
             props: {
                 commands: buildCommands(invocationScope.sessionId, invocationScope),
-                ...(initialQuery?.trim() ? { initialQuery: initialQuery.trim() } : {}),
+                ...(initialQuery ? { initialQuery } : {}),
+                ...(options?.source ? { initialSource: options.source } : {}),
                 ...(invocationScope.sessionId ? { activeSessionId: invocationScope.sessionId } : {}),
                 initialScope: invocationScope,
                 ...(options?.terminals ? { terminalJump: options.terminals } : {}),
@@ -488,16 +507,21 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         open: showCommandPalette,
         buildCommands,
     }), [buildCommands, showCommandPalette]);
+    textSearchOpener.current = (requestedScope) => showCommandPalette(undefined, requestedScope, { source: 'fileContent' });
 
+    const toggleTheme = useToggleThemeMode();
     const keyboardHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
             ...(commandPaletteEnabled ? { 'commandPalette.open': showCommandPalette } : {}),
+            'appearance.theme.toggle': toggleTheme,
             'session.new': openNewSession,
+            ...(workflowsEnabled ? { 'workflow.new': openNewWorkflow, 'workflow.createWithAgent': openWorkflowAgentAuthoring } : {}),
+            'search.textInFiles': () => showCommandPalette(undefined, undefined, { source: 'fileContent' }),
             'settings.open': () => {
                 router.push('/settings' as any);
             },
         }),
-        [commandPaletteEnabled, openNewSession, router, showCommandPalette],
+        [commandPaletteEnabled, workflowsEnabled, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, router, showCommandPalette, toggleTheme],
     );
     const keyboardEnabledWhenDisabledCommandIds = useMemo(
         () => commandPaletteEnabled ? ['commandPalette.open'] as const : [],
@@ -509,6 +533,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 handlers={keyboardHandlers}
                 enabledWhenDisabledCommandIds={keyboardEnabledWhenDisabledCommandIds}
             >
+                <NextPendingNavigationHost />
                 {children}
             </KeyboardShortcutProvider>
         </UniversalSearchRuntimeProvider>

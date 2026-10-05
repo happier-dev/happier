@@ -6,7 +6,7 @@ import { reportSessionScmOperation } from '@/scm/operations/reporting';
 import { selectScmCreatePrResult } from '@/scm/pullRequests/selectScmCreatePrResult';
 import { sessionScmPullRequestOpenOrReuse } from '@/sync/ops/sessionScm';
 
-import type { GitPullRequestCreateOutcome } from './gitPullRequestForm';
+import type { GitPullRequestCreateOutcome } from './gitPullRequestFormState';
 
 type GitPullRequestOperationState = Readonly<{
     beginSessionProjectScmOperation: (sessionId: string, operation: ScmProjectOperationKind, serverId?: string) => BeginScmProjectOperationResult;

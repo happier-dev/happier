@@ -91,7 +91,7 @@ describe('Sync local hydration (cache before transport)', () => {
             token: buildTokenWithSub('account-a'),
             secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
         };
-        const { syncHydrateLocalState } = await import('./sync');
+        const { syncHydrateLocalState } = await import('./syncEngine');
 
         // No await between the call and the assertion: an unreachable carrier or a
         // pending socket must not stand between the cache and the rendered list.

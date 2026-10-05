@@ -299,7 +299,7 @@ type GitlabMutationActionDeclaration = Readonly<{
   title: string;
   description: string;
   scopes: readonly ['global'];
-  surfaces: readonly ['ui'] | readonly ['ui', 'agent', 'mcp', 'cli'];
+  surfaces: readonly ['ui', 'agent', 'mcp', 'cli'];
   placementBindings: readonly ['detailsPanel'];
   execution: Readonly<{ target: 'daemon' }>;
   dangerLevel: 'destructive' | 'externalSideEffect' | 'writesRemote';
@@ -487,10 +487,8 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
  * Four properties of these declarations are load-bearing rather than
  * decorative:
  *
- * - Merge-request writes reach UI, agent, MCP and CLI through the central
- *   present-user gate. Their non-safe danger levels require live approval.
- *   Issue writes retain their UI-only reachability contract. Neither subset
- *   admits direct plugin or voice writes.
+ * - Merge-request and issue writes reach UI, agent, MCP and CLI through the
+ *   shared approval gate. Their non-safe danger levels require approval by default.
  * - **The declared danger level is the contract's, row for row.** `merge` is
  *   `destructive` because it is irreversible on the forge; `mark-ready` is
  *   `externalSideEffect` because its reviewer notification fan-out *is* the
@@ -751,9 +749,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
-    surfaces: declaration.id.startsWith('gitlab/merge-request/')
-      ? ['ui', 'agent', 'mcp', 'cli'] as const
-      : ['ui'] as const,
+    surfaces: ['ui', 'agent', 'mcp', 'cli'] as const,
     placementBindings: ['detailsPanel'] as const,
     execution: { target: 'daemon' as const },
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],

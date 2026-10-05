@@ -4,6 +4,7 @@ import {
     PluginOpenableContentViewerContributionV1Schema,
     PluginProjectionV2Schema,
     PluginUiViewV2Schema,
+    createPluginContributionIdentity,
 } from '@happier-dev/protocol';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { describe, expect, it } from 'vitest';
@@ -146,6 +147,8 @@ const display = {
 };
 
 const emptyDeclarativeInventory = Object.freeze({
+    dragSources: Object.freeze([]),
+    dropTargets: Object.freeze([]),
     actions: Object.freeze([]),
     destinations: Object.freeze([]),
     settings: Object.freeze([]),
@@ -153,6 +156,82 @@ const emptyDeclarativeInventory = Object.freeze({
 }) satisfies StablePluginDeclarativeModel['declarativeInventory'];
 
 describe('plugin UI projection family', () => {
+    it('isolates one malformed projected entry while preserving healthy sibling and app-page contributions', () => {
+        const channelsPluginId = 'happier.channels';
+        const triagePluginId = 'happier.triage';
+        const channelsOccurrenceId = createPluginRuntimeOccurrenceId(channelsPluginId);
+        const triageOccurrenceId = createPluginRuntimeOccurrenceId(triagePluginId);
+        const view = (pluginId: string, id: string, container: 'widget' | 'appPage') => ({
+            provenance: 'first_party' as const,
+            source: { kind: 'bundled' as const },
+            pluginId,
+            pluginVersion: '1.2.3',
+            identity: createPluginContributionIdentity({ pluginId, localId: id }),
+            manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+            definition: {
+                id,
+                container,
+                target: { kind: container === 'widget' ? 'session' as const : 'app' as const },
+                renderer: 'renderer',
+                title: id,
+            },
+        });
+        // The loaded predecessor widget lacks the exact typed Session inputs required by the current wire contract.
+        const uiViewsV2 = [
+            view(channelsPluginId, 'session-conversations-widget', 'widget'),
+            view(channelsPluginId, 'channels', 'appPage'),
+            view(triagePluginId, 'triage', 'appPage'),
+        ] as ResolvedContributionRegistry['uiViewsV2'];
+        const registry: ResolvedContributionRegistry = {
+            ...createEmptyResolvedContributionRegistry(),
+            occurrenceIdsByPluginId: {
+                [channelsPluginId]: channelsOccurrenceId,
+                [triagePluginId]: triageOccurrenceId,
+            },
+            uiViewsV2,
+            uiRenderersV2: [channelsPluginId, triagePluginId].map((pluginId) => ({
+                provenance: 'first_party', source: { kind: 'bundled' }, pluginId, pluginVersion: '1.2.3',
+                identity: createPluginContributionIdentity({ pluginId, localId: 'renderer' }),
+                manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+                definition: { id: 'renderer', kind: 'declarative', root: { kind: 'text', text: 'Healthy' } },
+            })),
+            introspectionContributions: [channelsPluginId, triagePluginId].map((pluginId) => ({
+                pluginId, pluginVersion: '1.2.3', source: 'bundled', family: 'ui.views',
+                identity: { kind: 'localId', localId: pluginId === triagePluginId ? 'triage' : 'session-conversations-widget' },
+                registration: 'notRequired', consumer: 'ui-view-host', platforms: ['web'],
+            })),
+        };
+
+        const projection = buildPluginProjectionV2({ registry, generation: 7 });
+
+        expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
+        expect(entries['surfacePlacement:happier.channels:session-conversations-widget']).toBeUndefined();
+        expect(entries['surfacePlacement:happier.channels:channels']).toMatchObject({ descriptorId: 'channels' });
+        expect(entries['surfacePlacement:happier.triage:triage']).toMatchObject({ descriptorId: 'triage' });
+        const healthyProjection = buildPluginProjectionV2({
+            registry: { ...registry, uiViewsV2: uiViewsV2.slice(1) }, generation: 7,
+        });
+        for (const entryId of ['surfacePlacement:happier.channels:channels', 'surfacePlacement:happier.triage:triage']) {
+            expect(entries[entryId]).toEqual(healthyProjection.familiesById.pluginUi?.entriesById[entryId]);
+        }
+        expect(projection.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
+            data: expect.objectContaining({
+                code: 'plugin_compatibility_projection_invalid',
+                severity: 'error',
+                details: expect.objectContaining({
+                    family: 'pluginUi',
+                    entryId: 'surfacePlacement:happier.channels:session-conversations-widget',
+                    issues: expect.arrayContaining([expect.objectContaining({ path: ['sessionInputPath'] })]),
+                }),
+            }),
+            plugin: { id: channelsPluginId, version: '1.2.3', source: 'bundled' },
+            contribution: { pluginId: channelsPluginId, localId: 'session-conversations-widget' },
+            occurrenceId: channelsOccurrenceId,
+            stage: 'normalization', host: 'daemon',
+        })]));
+    });
+
     it('stamps every UI entry with the exact current materialization rather than a coarse machine identity', () => {
         const registry = {
             ...createEmptyResolvedContributionRegistry('acme.materialized'),
@@ -1966,8 +2045,11 @@ describe('embedded widget projection', () => {
         container: string,
         targetKind: 'session' | 'app' = 'session',
         homeDefault?: 'shown' | 'available',
-        placements?: readonly ('board' | 'companion' | 'home')[],
+        inputs?: { fields: { path: string; title: string; widget: 'json'; required: true }[] },
     ) => {
+        const sessionInputs = container === 'widget' && targetKind === 'session'
+            ? inputs ?? { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true as const }] }
+            : undefined;
         const renderer = {
             provenance: 'external',
             source: { kind: 'path' },
@@ -1991,7 +2073,7 @@ describe('embedded widget projection', () => {
                 renderer: 'review-native',
                 title: 'Review status',
                 ...(homeDefault ? { home: { default: homeDefault } } : {}),
-                ...(placements ? { placements } : {}),
+                ...(sessionInputs ? { inputs: sessionInputs, inputSchema: { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false }, sessionInputPath: 'session' } : {}),
             }),
         };
         return {
@@ -2023,11 +2105,12 @@ describe('embedded widget projection', () => {
         expect(entry).not.toHaveProperty('headerActions');
     });
 
-    it('carries explicit widget placements from the admitted view to its host projection', () => {
-        const projection = buildPluginProjectionV2({ registry: makeRegistry('widget', 'session', undefined, ['board', 'companion']), generation: 9 });
+    it('carries neutral widget inputs and exact Session field routing into its closed host projection', () => {
+        const inputs = { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true as const }] };
+        const projection = buildPluginProjectionV2({ registry: makeRegistry('widget', 'session', undefined, inputs), generation: 9 });
         const entries = projection.familiesById.pluginUi?.entriesById ?? {};
         expect(entries['surfacePlacement:acme.review:review-status-widget']).toMatchObject({
-            placements: ['board', 'companion'],
+            inputs, sessionInputPath: 'session',
         });
         expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
         const entry = entries['surfacePlacement:acme.review:review-status-widget']!;

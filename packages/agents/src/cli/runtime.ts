@@ -81,6 +81,7 @@ export type AgentCliRuntimeSpec = Readonly<{
   alternativeBinaryNames?: ReadonlyArray<string>;
   alternativeBinaryFallbackEnabledEnvVar?: string | null;
   knownUserBinDirSuffixes?: ReadonlyArray<string> | null;
+  knownEnvironmentBinDirs?: ReadonlyArray<Readonly<{ envVar: string; relativeDir: string }>>;
   systemCommandResolutionStrategy?: 'path-first' | 'known-user-first-runnable';
   sourcePreferenceDefault: AgentCliSourcePreference;
   managedInstall: AgentCliManagedInstallSpec | null;
@@ -110,6 +111,9 @@ export function projectAgentCliRuntimeSpec(
       : {}),
     ...(executable.knownUserBinDirSuffixes !== undefined
       ? { knownUserBinDirSuffixes: executable.knownUserBinDirSuffixes }
+      : {}),
+    ...(executable.knownEnvironmentBinDirs
+      ? { knownEnvironmentBinDirs: executable.knownEnvironmentBinDirs }
       : {}),
     ...(executable.systemCommandResolutionStrategy
       ? { systemCommandResolutionStrategy: executable.systemCommandResolutionStrategy }

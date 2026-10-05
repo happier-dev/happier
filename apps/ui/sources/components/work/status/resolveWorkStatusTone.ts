@@ -2,6 +2,7 @@ import {
     isInProgressAgentActivityStatus,
     isTerminalAgentActivityStatus,
     isTerminalAutomationRunStateV3,
+    readSessionAwarenessWorkStatusV1,
     type AgentActivityStatusV1,
     type SessionAwarenessProjectionV1,
     type SessionOperationalReasonV1,
@@ -10,10 +11,11 @@ import {
     type WorkerUpdateV1,
 } from '@happier-dev/protocol';
 
-import type {
-    HappierWorkStatusBucket,
-    HappierWorkStatusPresentation,
-    HappierWorkStatusTone,
+import {
+    HAPPIER_WORK_STATUS_SEMANTIC_TONE,
+    type HappierWorkStatusBucket,
+    type HappierWorkStatusPresentation,
+    type HappierWorkStatusTone,
 } from '@happier-dev/plugin-ui/presentation';
 
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
@@ -28,11 +30,7 @@ export type WorkStatusTone = HappierWorkStatusTone;
 export type WorkStatusPresentation = HappierWorkStatusPresentation;
 
 /** The `StatusPill` variant for a tone, where a surface states its word as a badge (ring and tint: `workStatusTreatment`). */
-export const WORK_STATUS_PILL_VARIANT = {
-    neutral: 'neutral',
-    attention: 'warning',
-    danger: 'danger',
-} as const satisfies Record<WorkStatusTone, StatusPillVariant>;
+export const WORK_STATUS_PILL_VARIANT = HAPPIER_WORK_STATUS_SEMANTIC_TONE satisfies Record<WorkStatusTone, StatusPillVariant>;
 
 // The approved FIN hold/stop words are presentation inputs until its protocol seam lands.
 export type WorkStatusRunState = WorkflowRunStateV1 | 'waiting_for_review' | 'cancel_requested';
@@ -125,7 +123,7 @@ function presentWorkflow(shape: StatusShape, facts: WorkflowFacts): WorkStatusPr
     if (facts.inAttentionWindow === true) return { bucket: 'needs_you', tone: 'attention', word: facts.word };
     const outcome = facts.outcome;
     const terminal = shape.bucket === 'finished' || outcome === 'source_unavailable';
-    if (!terminal && facts.machineReachable === false) return { bucket: 'offline', tone: 'attention', word: facts.word };
+    if (!terminal && facts.machineReachable === false) return { bucket: 'offline', tone: 'neutral', word: facts.word };
     return {
         bucket: terminal ? 'finished' : shape.bucket,
         tone: outcome === 'completed_with_failures' ? 'danger'
@@ -142,27 +140,21 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
             const { update, word } = input.facts;
             const failed = update.ownerState === 'failed' || update.ownerState === 'dispatch_failed';
             if (update.wake === 'needs_you') return { bucket: 'needs_you', tone: failed ? 'danger' : 'attention', word };
-            if (update.wake === 'stalled') return { bucket: 'offline', tone: 'attention', word };
+            if (update.wake === 'stalled') return { bucket: 'offline', tone: 'neutral', word };
             if (update.workerKind === 'workflow_run') return presentWorkflow(RUN_STATUS[update.ownerState], { word });
             if (update.ownerState === 'needs_input') return { bucket: 'needs_you', tone: 'attention', word };
-            if (update.ownerState === 'stalled') return { bucket: 'offline', tone: 'attention', word };
+            if (update.ownerState === 'stalled') return { bucket: 'offline', tone: 'neutral', word };
             return { bucket: 'finished', tone: failed ? 'danger' : update.ownerState === 'timeout' ? 'attention' : 'neutral', word };
         }
         case 'workflow_run': return presentWorkflow(RUN_STATUS[input.facts.state], input.facts);
         case 'workflow_step': return presentWorkflow(STEP_STATUS[input.facts.lifecycle], input.facts);
         case 'session': {
             const { awareness, settled, word } = input.facts;
-            const primary = awareness.operational.primary;
-            if (primary === 'failed') return { bucket: 'needs_you', tone: 'danger', word };
-            if (primary === 'permission_required' || primary === 'action_required') return { bucket: 'needs_you', tone: 'attention', word };
-            // Presence first: a settlement the runtime can no longer stand behind reads offline.
-            if (awareness.runtime === 'offline') return { bucket: 'offline', tone: 'attention', word };
-            if (settled === true) return { bucket: 'finished', tone: 'neutral', word };
-            return { bucket: primary === 'working' ? 'working' : 'idle', tone: 'neutral', word };
+            return { ...readSessionAwarenessWorkStatusV1({ awareness, settled }), word };
         }
         case 'machine': {
             const { online, needsYouCount, runningSessionCount, word } = input.facts;
-            if (!online) return { bucket: 'offline', tone: 'attention', word };
+            if (!online) return { bucket: 'offline', tone: 'neutral', word };
             if (needsYouCount > 0) return { bucket: 'needs_you', tone: 'attention', word };
             return { bucket: runningSessionCount > 0 ? 'working' : 'idle', tone: 'neutral', word };
         }

@@ -35,7 +35,7 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
     const machine = useMachine(props.machineId);
     const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const didStartRef = React.useRef(false);
-    const didNotifyExitRef = React.useRef(false);
+    const notifiedExitTerminalRef = React.useRef<string | null>(null);
     const terminalKey = signIn.terminalKey ?? agentSignInTerminalKey(props.machineId, props.agentId);
     const launch = React.useMemo(() => ({ kind: 'agent_login' as const, agentId: props.agentId }), [props.agentId]);
     const controller = useMachineTerminalSession({
@@ -59,11 +59,11 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
         signIn.reportTerminalUrl(controller.detectedUrl);
     }, [controller.detectedUrl, signIn.reportTerminalUrl]);
     React.useEffect(() => {
-        if (controller.status !== 'exited' || didNotifyExitRef.current) return;
-        didNotifyExitRef.current = true;
-        fireAndForget(signIn.reportTerminalExit(), { tag: 'AgentSignInTerminal.exit' });
+        if (controller.status !== 'exited' || !controller.terminalId || controller.terminalId !== signIn.terminalId || notifiedExitTerminalRef.current === controller.terminalId) return;
+        notifiedExitTerminalRef.current = controller.terminalId;
+        fireAndForget(signIn.reportTerminalExit(controller.terminalId), { tag: 'AgentSignInTerminal.exit' });
         props.onTerminalExit?.();
-    }, [controller.status, props.onTerminalExit, signIn.reportTerminalExit]);
+    }, [controller.status, controller.terminalId, props.onTerminalExit, signIn.reportTerminalExit, signIn.terminalId]);
     React.useEffect(() => {
         if (controller.status === 'error' && controller.error) signIn.reportTerminalFailure(controller.error);
     }, [controller.error, controller.status, signIn.reportTerminalFailure]);

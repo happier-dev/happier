@@ -1,0 +1,118 @@
+type ExampleCopy = Readonly<{ title: string; description: string }>;
+type Copy = Readonly<{
+    title: string; fromExample: string; description: string; use: string; chooseSession: string; builtInDescription: string;
+    /** An example card's footer fact (07 S2 "{n} steps"). */
+    stepCount: (params: { count: number }) => string;
+    askOnce: ExampleCopy; reviewPullRequest: ExampleCopy; workThroughEachFile: ExampleCopy;
+    repairUntilItPasses: ExampleCopy; triageAnIssue: ExampleCopy; morningDigest: ExampleCopy;
+}>;
+export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy> = {
+    en: {
+        title: 'Start from an example', fromExample: 'From an example', description: 'Each one opens as a draft. Nothing runs until you choose Run now.', use: 'Use this', chooseSession: 'Choose a session…', builtInDescription: 'Part of Happier. Duplicate one to change it.', stepCount: ({ count }) => `${count} ${count === 1 ? 'step' : 'steps'}`,
+        askOnce: { title: 'Ask once', description: 'One step: ask an agent for something and get its answer.' },
+        reviewPullRequest: { title: 'Review a pull request', description: 'Two reviewers side by side, then one summary with every finding.' },
+        workThroughEachFile: { title: 'Work through each file', description: 'For each file in a list, one at a time: analyze it, then review the change.' },
+        repairUntilItPasses: { title: 'Repair until it passes', description: 'Fix and check, repeating until the check passes or the attempts you allow run out. Then you review the last fix.' },
+        triageAnIssue: { title: 'Triage an issue', description: "Classify an issue. If it's a bug, fix it; otherwise draft a reply." },
+        morningDigest: { title: 'Morning digest', description: 'Sum up what changed in your project and send it to you. Add a trigger to get it every morning.' },
+    },
+    de: {
+        title: 'Mit einem Beispiel beginnen', fromExample: 'Aus einem Beispiel', description: 'Jedes öffnet sich als Entwurf. Erst mit „Jetzt ausführen“ startet etwas.', use: 'Dieses verwenden', chooseSession: 'Sitzung auswählen…', builtInDescription: 'Teil von Happier. Zum Ändern duplizieren.', stepCount: ({ count }) => `${count} ${count === 1 ? 'Schritt' : 'Schritte'}`,
+        askOnce: { title: 'Einmal fragen', description: 'Ein Schritt: einen Agenten fragen und seine Antwort erhalten.' },
+        reviewPullRequest: { title: 'Pull-Request prüfen', description: 'Zwei Prüfer nebeneinander, dann eine Zusammenfassung aller Befunde.' },
+        workThroughEachFile: { title: 'Jede Datei bearbeiten', description: 'Jede Datei der Liste einzeln analysieren und danach die Änderung prüfen.' },
+        repairUntilItPasses: { title: 'Bis zum Erfolg reparieren', description: 'Reparieren und prüfen, bis die Prüfung besteht oder deine Versuche aufgebraucht sind. Dann prüfst du die letzte Reparatur.' },
+        triageAnIssue: { title: 'Ein Issue einordnen', description: 'Ein Issue einordnen. Fehler beheben, sonst eine Antwort entwerfen.' },
+        morningDigest: { title: 'Morgenüberblick', description: 'Projektänderungen zusammenfassen und dir senden. Für jeden Morgen einen Auslöser hinzufügen.' },
+    },
+    es: {
+        title: 'Empezar con un ejemplo', fromExample: 'Desde un ejemplo', description: 'Cada uno se abre como borrador. Nada se ejecuta hasta que elijas Ejecutar ahora.', use: 'Usar este', chooseSession: 'Elegir una sesión…', builtInDescription: 'Parte de Happier. Duplica uno para cambiarlo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'paso' : 'pasos'}`,
+        askOnce: { title: 'Preguntar una vez', description: 'Un paso: pregunta algo a un agente y recibe su respuesta.' },
+        reviewPullRequest: { title: 'Revisar un pull request', description: 'Dos revisores en paralelo y después un resumen con todos los hallazgos.' },
+        workThroughEachFile: { title: 'Trabajar en cada archivo', description: 'Para cada archivo de una lista, de uno en uno: analizarlo y revisar el cambio.' },
+        repairUntilItPasses: { title: 'Reparar hasta que pase', description: 'Reparar y comprobar hasta que pase o se agoten tus intentos. Después revisas la última reparación.' },
+        triageAnIssue: { title: 'Clasificar una incidencia', description: 'Clasifica una incidencia. Si es un error, corrígelo; si no, redacta una respuesta.' },
+        morningDigest: { title: 'Resumen de la mañana', description: 'Resume los cambios de tu proyecto y envíatelos. Añade un disparador para recibirlo cada mañana.' },
+    },
+    fr: {
+        title: 'Partir d’un exemple', fromExample: 'À partir d’un exemple', description: 'Chaque exemple s’ouvre comme brouillon. Rien ne démarre avant votre choix Exécuter maintenant.', use: 'Utiliser celui-ci', chooseSession: 'Choisir une session…', builtInDescription: 'Inclus dans Happier. Dupliquez-le pour le modifier.', stepCount: ({ count }) => `${count} ${count === 1 ? 'étape' : 'étapes'}`,
+        askOnce: { title: 'Poser une question', description: 'Une étape : demander quelque chose à un agent et recevoir sa réponse.' },
+        reviewPullRequest: { title: 'Examiner une pull request', description: 'Deux réviseurs en parallèle, puis un résumé de tous les constats.' },
+        workThroughEachFile: { title: 'Traiter chaque fichier', description: 'Pour chaque fichier d’une liste, un à un : l’analyser, puis examiner la modification.' },
+        repairUntilItPasses: { title: 'Réparer jusqu’à réussite', description: 'Réparer et vérifier jusqu’à réussite ou épuisement des essais autorisés. Puis examiner la dernière réparation.' },
+        triageAnIssue: { title: 'Trier une issue', description: 'Classer une issue. Corriger les bugs, sinon rédiger une réponse.' },
+        morningDigest: { title: 'Résumé du matin', description: 'Résumer les changements du projet et vous les envoyer. Ajouter un déclencheur pour chaque matin.' },
+    },
+    it: {
+        title: 'Inizia da un esempio', fromExample: 'Da un esempio', description: 'Ognuno si apre come bozza. Nulla parte finché non scegli Esegui ora.', use: 'Usa questo', chooseSession: 'Scegli una sessione…', builtInDescription: 'Parte di Happier. Duplica per modificarlo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'passo' : 'passi'}`,
+        askOnce: { title: 'Chiedi una volta', description: 'Un passo: chiedi qualcosa a un agente e ricevi la risposta.' },
+        reviewPullRequest: { title: 'Rivedi una pull request', description: 'Due revisori in parallelo, poi un riepilogo di tutti i risultati.' },
+        workThroughEachFile: { title: 'Lavora su ogni file', description: 'Per ogni file di una lista, uno alla volta: analizzalo, poi rivedi la modifica.' },
+        repairUntilItPasses: { title: 'Ripara fino al successo', description: 'Ripara e verifica fino al successo o all’esaurimento dei tentativi consentiti. Poi rivedi l’ultima correzione.' },
+        triageAnIssue: { title: 'Classifica una issue', description: 'Classifica una issue. Se è un bug, correggilo; altrimenti prepara una risposta.' },
+        morningDigest: { title: 'Riepilogo mattutino', description: 'Riassumi le modifiche del progetto e inviatele. Aggiungi un trigger per ogni mattina.' },
+    },
+    pt: {
+        title: 'Começar com um exemplo', fromExample: 'De um exemplo', description: 'Cada um abre como rascunho. Nada executa até você escolher Executar agora.', use: 'Usar este', chooseSession: 'Escolher uma sessão…', builtInDescription: 'Parte do Happier. Duplique para alterar.', stepCount: ({ count }) => `${count} ${count === 1 ? 'etapa' : 'etapas'}`,
+        askOnce: { title: 'Perguntar uma vez', description: 'Um passo: pergunte algo a um agente e receba a resposta.' },
+        reviewPullRequest: { title: 'Revisar um pull request', description: 'Dois revisores em paralelo, depois um resumo com todos os achados.' },
+        workThroughEachFile: { title: 'Trabalhar em cada arquivo', description: 'Para cada arquivo de uma lista, um por vez: analisar e revisar a mudança.' },
+        repairUntilItPasses: { title: 'Reparar até passar', description: 'Reparar e verificar até passar ou esgotar suas tentativas. Depois você revisa a última correção.' },
+        triageAnIssue: { title: 'Classificar uma issue', description: 'Classifique uma issue. Corrija bugs; caso contrário, prepare uma resposta.' },
+        morningDigest: { title: 'Resumo da manhã', description: 'Resuma as mudanças do projeto e envie para você. Adicione um gatilho para cada manhã.' },
+    },
+    ca: {
+        title: 'Comença amb un exemple', fromExample: 'D’un exemple', description: 'Cadascun s’obre com a esborrany. Res no s’executa fins que triïs Executa ara.', use: 'Fes servir aquest', chooseSession: 'Tria una sessió…', builtInDescription: 'Part de Happier. Duplica’l per canviar-lo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'pas' : 'passos'}`,
+        askOnce: { title: 'Pregunta una vegada', description: 'Un pas: pregunta alguna cosa a un agent i rep-ne la resposta.' },
+        reviewPullRequest: { title: 'Revisa un pull request', description: 'Dos revisors en paral·lel i després un resum amb totes les troballes.' },
+        workThroughEachFile: { title: 'Treballa en cada fitxer', description: 'Per a cada fitxer d’una llista, un a un: analitza’l i revisa el canvi.' },
+        repairUntilItPasses: { title: 'Repara fins que passi', description: 'Repara i comprova fins que passi o s’esgotin els intents permesos. Després revises l’última reparació.' },
+        triageAnIssue: { title: 'Classifica una incidència', description: 'Classifica una incidència. Si és un error, corregeix-lo; si no, redacta una resposta.' },
+        morningDigest: { title: 'Resum del matí', description: 'Resumeix els canvis del projecte i envia-te’ls. Afegeix un activador per rebre’l cada matí.' },
+    },
+    pl: {
+        title: 'Zacznij od przykładu', fromExample: 'Z przykładu', description: 'Każdy otwiera się jako szkic. Nic nie ruszy, dopóki nie wybierzesz Uruchom teraz.', use: 'Użyj tego', chooseSession: 'Wybierz sesję…', builtInDescription: 'Część Happier. Powiel, aby zmienić.', stepCount: ({ count }) => `Kroki: ${count}`,
+        askOnce: { title: 'Zapytaj raz', description: 'Jeden krok: zapytaj agenta i otrzymaj odpowiedź.' },
+        reviewPullRequest: { title: 'Sprawdź pull request', description: 'Dwóch recenzentów równolegle, potem podsumowanie wszystkich ustaleń.' },
+        workThroughEachFile: { title: 'Pracuj nad każdym plikiem', description: 'Każdy plik z listy po kolei: przeanalizuj go, potem sprawdź zmianę.' },
+        repairUntilItPasses: { title: 'Naprawiaj do powodzenia', description: 'Naprawiaj i sprawdzaj do powodzenia lub wyczerpania dozwolonych prób. Potem sprawdź ostatnią naprawę.' },
+        triageAnIssue: { title: 'Sklasyfikuj zgłoszenie', description: 'Sklasyfikuj zgłoszenie. Napraw błąd lub przygotuj odpowiedź.' },
+        morningDigest: { title: 'Poranne podsumowanie', description: 'Podsumuj zmiany projektu i wyślij je sobie. Dodaj wyzwalacz na każdy poranek.' },
+    },
+    ru: {
+        title: 'Начать с примера', fromExample: 'Из примера', description: 'Каждый открывается как черновик. Ничего не запускается до выбора «Запустить сейчас».', use: 'Использовать', chooseSession: 'Выбрать сессию…', builtInDescription: 'Часть Happier. Создайте копию для изменений.', stepCount: ({ count }) => `Шагов: ${count}`,
+        askOnce: { title: 'Спросить один раз', description: 'Один шаг: задать агенту вопрос и получить ответ.' },
+        reviewPullRequest: { title: 'Проверить pull request', description: 'Два рецензента параллельно, затем сводка всех замечаний.' },
+        workThroughEachFile: { title: 'Обработать каждый файл', description: 'Каждый файл списка по очереди: анализ, затем проверка изменения.' },
+        repairUntilItPasses: { title: 'Исправлять до успеха', description: 'Исправлять и проверять до успеха или исчерпания разрешённых попыток. Затем вы проверяете последнее исправление.' },
+        triageAnIssue: { title: 'Разобрать обращение', description: 'Классифицировать обращение. Исправить ошибку или подготовить ответ.' },
+        morningDigest: { title: 'Утренняя сводка', description: 'Собрать изменения проекта и отправить вам. Добавьте триггер на каждое утро.' },
+    },
+    ja: {
+        title: '例から始める', fromExample: '例から', description: 'どれも下書きとして開きます。「今すぐ実行」を選ぶまで実行されません。', use: 'これを使う', chooseSession: 'セッションを選択…', builtInDescription: 'Happierに組み込まれています。変更するには複製してください。', stepCount: ({ count }) => `${count} ステップ`,
+        askOnce: { title: '一度だけ質問', description: '1ステップ：エージェントに質問して回答を受け取ります。' },
+        reviewPullRequest: { title: 'プルリクエストをレビュー', description: '2人が並行でレビューし、すべての指摘をまとめます。' },
+        workThroughEachFile: { title: '各ファイルを処理', description: 'リストの各ファイルを1つずつ分析し、変更をレビューします。' },
+        repairUntilItPasses: { title: '合格するまで修正', description: 'チェックに合格するか指定回数に達するまで修正と確認を繰り返し、最後の修正をレビューします。' },
+        triageAnIssue: { title: '課題を分類', description: '課題を分類します。バグなら修正し、それ以外は返信を作成します。' },
+        morningDigest: { title: '朝のダイジェスト', description: 'プロジェクトの変更をまとめて送ります。毎朝受け取るにはトリガーを追加してください。' },
+    },
+    zhHans: {
+        title: '从示例开始', fromExample: '使用示例', description: '每个示例都以草稿打开。选择“立即运行”之前不会运行。', use: '使用此示例', chooseSession: '选择会话…', builtInDescription: 'Happier 内置。复制后即可修改。', stepCount: ({ count }) => `${count} 个步骤`,
+        askOnce: { title: '问一次', description: '一个步骤：向代理提问并获取回答。' },
+        reviewPullRequest: { title: '审查拉取请求', description: '两位审查者并行工作，然后汇总所有发现。' },
+        workThroughEachFile: { title: '逐个处理文件', description: '逐个分析列表中的文件，然后审查修改。' },
+        repairUntilItPasses: { title: '修复直到通过', description: '反复修复和检查，直到通过或用完允许的次数。然后由你审查最后的修复。' },
+        triageAnIssue: { title: '分类问题', description: '对问题分类。如果是错误则修复，否则起草回复。' },
+        morningDigest: { title: '晨间摘要', description: '汇总项目变更并发送给你。添加触发器即可每天早上收到。' },
+    },
+    zhHant: {
+        title: '從範例開始', fromExample: '使用範例', description: '每個範例都以草稿開啟。選擇「立即執行」之前不會執行。', use: '使用此範例', chooseSession: '選擇工作階段…', builtInDescription: 'Happier 內建。複製後即可修改。', stepCount: ({ count }) => `${count} 個步驟`,
+        askOnce: { title: '問一次', description: '一個步驟：向代理提問並取得回答。' },
+        reviewPullRequest: { title: '審查提取請求', description: '兩位審查者並行工作，然後彙總所有發現。' },
+        workThroughEachFile: { title: '逐個處理檔案', description: '逐個分析清單中的檔案，然後審查修改。' },
+        repairUntilItPasses: { title: '修復直到通過', description: '反覆修復和檢查，直到通過或用完允許的次數。然後由你審查最後的修復。' },
+        triageAnIssue: { title: '分類問題', description: '對問題分類。如果是錯誤則修復，否則起草回覆。' },
+        morningDigest: { title: '晨間摘要', description: '彙總專案變更並傳送給你。新增觸發器即可每天早上收到。' },
+    },
+};

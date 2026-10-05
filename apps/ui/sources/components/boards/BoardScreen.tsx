@@ -1,17 +1,27 @@
 import * as React from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import { buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { HappierSurfaceStateFrame } from '@happier-dev/plugin-ui/presentation';
 
 import { useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { createInboxItemRoute } from '@/components/inbox/inboxItemFocus';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
+import { useEntityDropDomBinding, type WindowBounds } from '@/components/ui/treeDragDrop';
+import { entityDragKindV1 } from '@happier-dev/protocol/plugins/ui';
+import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
 import { Typography } from '@/constants/Typography';
 import { InboxModelBoundary } from '@/hooks/inbox/useInboxModel';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -21,13 +31,17 @@ import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import { BoardByStatus } from './byStatus/BoardByStatus';
-import { BoardCanvas } from './canvas/BoardCanvas';
+import { BoardCanvas, type BoardCanvasWidget, type BoardCanvasWidgetRender } from './canvas/BoardCanvas';
+import { BoardWidgetCard, describeBoardWidgetTitle } from './cards/BoardWidgetCard';
 import { AddToBoardButton } from './header/AddToBoardPopover';
 import { BoardSettingsButton } from './header/BoardSettingsPopover';
-import { countBoardCardsNeedingYou, type BoardCard } from './model/boardCards';
+import { countBoardCardsNeedingYou, hasWorkBoardContent, type BoardCard } from './model/boardCards';
 import { resolveBoardPruneMembership } from './model/boardMembership';
-import type { BoardCanvasPoint } from './model/boardCanvasGeometry';
+import { resolveWorkBoardAdd, resolveWorkBoardEntityDrop, workBoardWidgetSurface } from './model/workBoardEntityDrop';
+import { useWorkBoardEntityBinding } from './model/workBoardEntityBinding';
+import { widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
 import { useBoardLiveCards } from './model/useBoardContent';
+import { useBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
 import { resolveBoardCardOpenTarget } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
 import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState } from './model/useWorkBoards';
@@ -129,12 +143,15 @@ function useLoadPickedRuns(cards: readonly BoardCard[]): void {
 const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoardV1 }>) {
     const { board } = props;
     const router = useRouter();
-    const { homes, membership, cards } = useBoardLiveCards(board);
+    const { theme } = useUnistyles();
+    const { homes, membership, cards, widgets } = useBoardLiveCards(board);
     const dispatchIntent = useDispatchWorkBoardIntent();
     const dispatch = React.useCallback((intent: WorkBoardIntentV1) => { void dispatchIntent(intent); }, [dispatchIntent]);
     const saveState = useWorkBoardSaveState();
     const phone = useDeviceType() === 'phone';
     const mode = phone ? 'by_status' : board.mode;
+    const routeFocused = useIsFocused();
+    const binding = useWorkBoardEntityBinding({ board, membership, isHomeMounted: homes.isHomeMounted }, routeFocused);
     const [addOpen, setAddOpen] = React.useState(false);
     const [settingsOpen, setSettingsOpen] = React.useState(false);
     /** The card just added with ⌘↵ "Add and place": focused on Canvas so arrows or a drag place it. */
@@ -147,17 +164,74 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const needYou = countBoardCardsNeedingYou(cards);
 
     const onAdd = React.useCallback((ref: BoardItemRefV1, options: Readonly<{ place: boolean }>) => {
-        dispatch({ kind: 'add_items', boardId: board.id, refs: [ref] });
-        if (options.place && mode === 'canvas') setPlacingKey(buildWorkBoardItemKeyV1(ref));
-    }, [board.id, dispatch, mode]);
-    const onCommitPositions = React.useCallback((positions: Readonly<Record<string, BoardCanvasPoint>>) => {
-        dispatch({
-            kind: 'set_positions',
-            boardId: board.id,
-            positionsByItemRef: positions,
-            membership: resolveBoardPruneMembership(board, membership, homes.isHomeMounted),
+        if (!binding?.isCurrent()) return;
+        const admission = resolveWorkBoardAdd(ref, binding.getContext());
+        if (admission.status !== 'allowed') return;
+        void binding.execute(admission.effect).then(outcome => {
+            if (outcome.status === 'applied' && binding.isCurrent() && options.place && mode === 'canvas') setPlacingKey(buildWorkBoardItemKeyV1(ref));
         });
-    }, [board, dispatch, homes.isHomeMounted, membership]);
+    }, [binding, mode]);
+
+    const root = React.useRef<View | null>(null);
+    const nativeBounds = React.useRef<WindowBounds | null>(null);
+    const targetId = `work-board-add:${React.useId()}`;
+    const getBounds = React.useCallback(() => readWindowBounds(toTreeDropMeasurableRef(root.current)) ?? nativeBounds.current, []);
+    const dropDom = useEntityDropDomBinding(binding?.runtime);
+    const rootRef = React.useCallback((node: View | null) => { root.current = node; dropDom(node); }, [dropDom]);
+    React.useEffect(() => {
+        if (!binding) return;
+        return binding.runtime.registerTarget({ id: targetId, scope: binding.scope, isCurrent: binding.isCurrent, getBounds,
+            get acceptedKinds() {
+                const item = binding.runtime.getSnapshot().item;
+                return item ? [entityDragKindV1(item)] : ['session', 'work-board-item'] as const;
+            },
+            listDestinations: item => (item.kind === 'work-board-item' || item.kind === 'work-board-widget') && item.boardId === binding.getContext().board.id ? []
+                : [{ destination: { kind: 'add' }, label: binding.getContext().board.name, group: binding.getContext().board.name }],
+            resolve: ({ item }) => {
+                const admission = resolveWorkBoardEntityDrop({ item, context: binding.getContext(), destination: null, canvasAvailable: false });
+                return admission.status === 'allowed' && admission.effect.actionId === 'widgets.instance.move'
+                    ? binding.admitWidgetMovement?.(admission.effect) ?? widgetMovementRefused('widget_admission_unavailable', admission.effect.preview)
+                    : admission;
+            },
+            execute: binding.execute,
+        });
+    }, [binding, targetId, getBounds]);
+
+    // ---- configured widgets (lab `dashboards` L1, G1): one writer, the Board's widget intents ----
+    const widgetSurface = React.useMemo(() => binding ? workBoardWidgetSurface(binding.scope, board.id) : null, [binding, board.id]);
+    const widgetInstances = React.useMemo(() => widgets.map(placement => placement.instance), [widgets]);
+    /** Copies this device added: their arrival is no news, and only someone else's arrival offers Undo. */
+    const ownAdds = React.useRef(new Set<string>());
+    const addWidgetInstance = React.useCallback(async (instance: WidgetInstanceV1, options: Readonly<{ place: boolean }>) => {
+        if (!widgetSurface) throw new Error('board_scope_unavailable');
+        const ref = { surface: widgetSurface, instanceId: instance.id };
+        ownAdds.current.add(instance.id);
+        const outcome = await dispatchIntent({ kind: 'widget_add', boardId: board.id, ref, instance });
+        if (outcome.status !== 'applied') throw new Error(outcome.code);
+        if (options.place && mode === 'canvas') setPlacingKey(buildWorkBoardWidgetKeyV1(ref));
+    }, [board.id, dispatchIntent, mode, widgetSurface]);
+    const addWidgets = React.useMemo(() => ({ scope: widgetSurface, instances: widgetInstances, addInstance: addWidgetInstance }),
+        [addWidgetInstance, widgetInstances, widgetSurface]);
+    const pluginUi = useAppShellPluginUiProjection().pluginUiProjection;
+    const canvasWidgets = React.useMemo((): readonly BoardCanvasWidget[] => widgets.map(placement => ({
+        key: buildWorkBoardWidgetKeyV1(placement.ref),
+        title: describeBoardWidgetTitle(placement, readWidgetDescriptor(pluginUi, placement.instance.definition)),
+        placement,
+    })), [pluginUi, widgets]);
+    const arrivals = useBoardWidgetArrivals(board.id, ownAdds.current, dispatchIntent);
+    const renderWidget = React.useCallback<BoardCanvasWidgetRender>((widget, state) => (
+        <BoardWidgetCard
+            boardId={board.id}
+            placement={widget.placement}
+            index={widgets.indexOf(widget.placement)}
+            count={widgets.length}
+            dispatch={dispatchIntent}
+            grip={state.grip}
+            active={routeFocused && state.active}
+            fresh={arrivals.arrived.has(widget.placement.instance.id)}
+            testID={`board-widget:${widget.placement.instance.id}`}
+        />
+    ), [arrivals.arrived, board.id, dispatchIntent, routeFocused, widgets]);
 
     const onRemoveItem = React.useCallback((ref: BoardItemRefV1) => {
         dispatch({
@@ -168,12 +242,14 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
         });
     }, [board, dispatch, homes.isHomeMounted, membership]);
 
-    const hasSource = (board.source.sections?.length ?? 0) > 0 || board.source.filter !== undefined || board.source.picked.length > 0;
+    const hasSource = hasWorkBoardContent(board);
     // Only this board's refused save shows here; another board's failure belongs on that board.
     const failure = resolveBoardSaveFailure(saveState, board.id);
 
     return (
-        <View testID={`board:${board.id}`} style={styles.root}>
+        <View ref={rootRef} collapsable={false} testID={`board:${board.id}`} style={styles.root} onLayout={() => {
+            void measureWindowBounds(toTreeDropMeasurableRef(root.current)).then(bounds => { nativeBounds.current = bounds; binding?.runtime.refresh(); });
+        }}>
             <PageHeader
                 testID="board-header"
                 title={board.name}
@@ -182,7 +258,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                 details={(
                     <BoardSourceLine
                         board={board}
-                        itemCount={cards.length}
+                        itemCount={cards.length + widgets.length}
                         needYou={needYou}
                         onPress={() => setSettingsOpen(true)}
                     />
@@ -193,7 +269,6 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                             <SegmentedTabBar
                                 testIDPrefix="board-header.layout"
                                 accessibilityLabel={t('boards.header.layoutA11y')}
-                                compact
                                 segmentSizing="content"
                                 tabs={[
                                     { id: 'canvas' as const, label: t('boards.header.canvas') },
@@ -208,6 +283,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                             homes={homes}
                             onBoardKeys={onBoardKeys}
                             onAdd={onAdd}
+                            widgets={addWidgets}
                             open={addOpen}
                             onOpenChange={setAddOpen}
                         />
@@ -232,28 +308,50 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                     <BoardSaveFailureLine testID="board-save-failed" failure={failure} />
                 </View>
             ) : null}
+            {arrivals.pending.length > 0 ? (
+                <View style={styles.line}>
+                    <SurfaceStateCard
+                        testID="board-widgets-arrived"
+                        kind="success"
+                        size="line"
+                        title={t('boards.widgets.arrived', { count: arrivals.pending.length })}
+                        action={{ label: t('boards.widgets.undo'), testID: 'board-widgets-arrived.undo', onPress: arrivals.undo }}
+                        secondaryAction={{ label: t('boards.widgets.dismiss'), onPress: arrivals.dismiss }}
+                    />
+                </View>
+            ) : null}
             {!hasSource ? (
-                <EmptyState
-                    testID="board-empty"
-                    layout="page"
-                    iconName="squares-four"
-                    title={t('boards.empty.title')}
-                    subtitle={t('boards.empty.body')}
-                    primaryAction={{ label: t('boards.empty.action'), onPress: () => setAddOpen(true) }}
-                />
-            ) : mode === 'canvas' ? (
+                <HappierSurfaceStateFrame size={phone ? 'phone' : 'page'}>
+                    <EmptyState
+                        testID="board-empty"
+                        layout="centered"
+                        size={phone ? 'phone' : 'page'}
+                        iconName="squares-four"
+                        title={t('boards.empty.title')}
+                        subtitle={t('boards.empty.body')}
+                        action={<RoundButton size="normal" title={t('boards.empty.action')}
+                            leading={<Icon name="plus" color={theme.colors.button.primary.tint} />}
+                            onPress={() => setAddOpen(true)} />}
+                    />
+                </HappierSurfaceStateFrame>
+            ) : <>
+            {mode === 'canvas' && binding ? (
                 <BoardCanvas
                     cards={cards}
+                    widgets={canvasWidgets}
+                    renderWidget={renderWidget}
+                    order={board.itemOrder}
                     positionsByItemRef={board.positionsByItemRef}
                     snap={board.snap}
                     placingKey={placingKey}
                     onPlaced={() => setPlacingKey(null)}
                     onOpen={onOpen}
-                    onCommitPositions={onCommitPositions}
+                    binding={binding}
                 />
-            ) : (
-                <BoardByStatus cards={cards} onOpen={onOpen} stacked={phone} />
-            )}
+            ) : null}
+                <BoardByStatus cards={cards} widgets={canvasWidgets} renderWidget={renderWidget} onOpen={onOpen} stacked={phone}
+                    visible={mode === 'by_status'} active={routeFocused && mode === 'by_status'} />
+            </>}
         </View>
     );
 });
@@ -286,7 +384,7 @@ const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
                 <Text numberOfLines={1} style={styles.meta}>{source}</Text>
                 <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
             </Pressable>
-            <Text style={styles.meta}>· {t('boards.meta.items', { count: props.itemCount })}</Text>
+            <Text style={styles.meta}>· {props.itemCount === 0 ? t('boards.settings.addedByHandNone') : t('boards.meta.items', { count: props.itemCount })}</Text>
             {props.needYou > 0 ? (
                 <Text testID="board-header.need-you" style={[styles.meta, workStatusWordStyle('attention')]}>
                     · {t('boards.meta.needYou', { count: props.needYou })}
@@ -307,6 +405,10 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     failure: {
+        paddingHorizontal: 24,
+        paddingBottom: 8,
+    },
+    line: {
         paddingHorizontal: 24,
         paddingBottom: 8,
     },

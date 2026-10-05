@@ -77,23 +77,6 @@ vi.mock('@/modal', async () => {
   return createModalModuleMock({ confirmResult: true }).module;
 });
 
-vi.mock('@/sync/domains/state/storage', async () => {
-  const {
-    createLiveStorageStoreMock,
-    createStorageModuleStub,
-  } = await import('@/dev/testkit/mocks/storage');
-  const storage = createLiveStorageStoreMock(() => ({
-    settings: fixtureState.settings,
-    settingsVersion: fixtureState.settingsVersion,
-    artifacts: {},
-    updateArtifact: () => {},
-  }));
-  return createStorageModuleStub({
-    storage,
-    useSettings: () => fixtureState.settings,
-  });
-});
-
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
   getSyncSingleton: () => ({
     prepareAccountSettingsForDaemonSpawn: vi.fn(async () => ({
@@ -112,6 +95,7 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
       const result = input.mutate({ voiceSettingsV1: fixtureState.settings.voice });
       fixtureState.settings = { ...fixtureState.settings, voice: result.settings.voiceSettingsV1 } as Settings;
       fixtureState.settingsVersion += 1;
+      storage.setState({ settings: fixtureState.settings, settingsVersion: fixtureState.settingsVersion });
       return { status: 'applied', settingsVersion: fixtureState.settingsVersion, value: result.value };
     }),
   }),
@@ -122,6 +106,12 @@ vi.mock('@elevenlabs/client', () => ({
     startSession: vi.fn(),
   },
 }));
+
+const { storage } = await import('@/sync/domains/state/storage');
+const { createAccountSettingsScope } = await import('@/sync/domains/settings/scope/accountSettingsScope');
+const initialStorageState = storage.getState();
+const settingsScope = createAccountSettingsScope('server-1', 'account-1');
+if (!settingsScope) throw new Error('expected Account settings fixture scope');
 
 describe('ElevenLabs settings provisioning composed path', () => {
   const disposals: Array<() => void | Promise<void>> = [];
@@ -135,6 +125,7 @@ describe('ElevenLabs settings provisioning composed path', () => {
     while (disposals.length > 0) {
       await disposals.pop()?.();
     }
+    storage.setState(initialStorageState, true);
   });
 
   it('keeps Create available and blocks direct Update until an Agent ID exists', async () => {
@@ -191,6 +182,8 @@ describe('ElevenLabs settings provisioning composed path', () => {
       approvedRecipientContractDigest:
         createRecipientContractDigestV1(recipientContract),
     }).settings;
+    // Mounted scope readers and async action currentness read one real store.
+    storage.setState({ settings: fixtureState.settings, settingsVersion: fixtureState.settingsVersion, settingsScope });
     const registeredRuntimes: Parameters<PluginApi['voiceProviders']['register']>[1][] = [];
     entry.activate({
       voiceProviders: {

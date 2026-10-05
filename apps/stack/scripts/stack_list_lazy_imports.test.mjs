@@ -40,3 +40,36 @@ export async function resolve(specifier, context, nextResolve) {
     await rm(fixtureDir, { recursive: true, force: true });
   }
 });
+
+test('Stack dispatch and runtime helpers do not construct the unrelated Protocol root schemas', async () => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'hstack-dispatch-imports-'));
+  try {
+    const loaderPath = join(fixtureDir, 'reject-protocol-root.mjs');
+    await writeFile(loaderPath, `
+export async function resolve(specifier, context, nextResolve) {
+  if (specifier === '@happier-dev/protocol') {
+    throw new Error('Stack loaded the whole Protocol schema graph: ' + context.parentURL);
+  }
+  return nextResolve(specifier, context);
+}
+`);
+    for (const args of [
+      ['stack.mjs', 'info', '--help'],
+      ['stack.mjs', 'build', '--help'],
+      ['run.mjs', '--help'],
+      ['dev.mjs', '--help'],
+      ['tui.mjs', '--help'],
+    ]) {
+      const { stdout } = await execFileAsync(process.execPath, [
+        '--no-warnings', '--experimental-loader', loaderPath,
+        join(import.meta.dirname, args[0]), ...args.slice(1),
+      ], {
+        cwd: join(import.meta.dirname, '..'),
+        env: { ...process.env, NODE_OPTIONS: '', HAPPIER_STACK_STORAGE_DIR: fixtureDir },
+      });
+      assert.match(stdout, /usage:/);
+    }
+  } finally {
+    await rm(fixtureDir, { recursive: true, force: true });
+  }
+});

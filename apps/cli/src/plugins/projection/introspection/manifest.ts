@@ -24,7 +24,7 @@ export function collectManifestContributionIntrospectionCandidates(params: Reado
   const candidates: PluginContributionIntrospectionCandidate[] = [];
   for (const catalogEntry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
     for (const rawDefinition of catalogEntry.readEntries(params.manifest.contributes)) {
-      const definition = catalogEntry.canonicalize(rawDefinition);
+      const definition = catalogEntry.canonicalize(rawDefinition, { pluginId: params.manifest.id });
       if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
       const record = definition as Readonly<Record<string, unknown>>;
       const introspection = catalogEntry.projectIntrospection(record);

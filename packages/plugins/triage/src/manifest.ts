@@ -17,6 +17,11 @@ import {
 
 import { createTriageAdministerSourceInstanceActionHandler } from './actions/administerSourceInstanceAction.js';
 import {
+  TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1,
+  TriageRunConfiguredActionInputV1Schema,
+  TriageRunConfiguredActionResultV1Schema,
+} from './actions/configuredActionRunProtocol.js';
+import {
   TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
   TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1,
   TriageReadEntryDetailInputV1Schema,
@@ -24,6 +29,7 @@ import {
 } from './actions/entryDetailProtocol.js';
 
 import { createTriageListEntriesActionHandler } from './actions/listEntries.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from './actions/mountedUiProtocol.js';
 import {
   TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
   TriageListEntriesInputV1Schema,
@@ -132,6 +138,12 @@ import {
 import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 import { mintTriageOpaqueIdV1 } from './opaqueId.js';
 import { TRIAGE_ENTRIES_CONTROL_ICON_V1 } from './ui/contributions.js';
+import {
+  TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1,
+  TRIAGE_ENTRY_DRAG_SOURCE_ID_V1,
+  TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1,
+  TriageEntryDragReferenceV1Schema,
+} from './ui/list/entryDragDrop.js';
 import { TRIAGE_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS } from './targetedContributions.js';
 
@@ -175,7 +187,33 @@ function createTriagePlugin() {
       [CORPUS_SESSION_LINKS_COLLECTION_ID]: CORPUS_SESSION_LINKS_COLLECTION,
       [CORPUS_USER_MARKS_COLLECTION_ID]: CORPUS_USER_MARKS_COLLECTION,
     },
+    dragSources: {
+      [TRIAGE_ENTRY_DRAG_SOURCE_ID_V1]: {
+        title: { key: 'plugins.triage.surface.column.entry', fallback: 'Entry' },
+        referenceSchema: TriageEntryDragReferenceV1Schema.jsonSchema,
+        client: { artifactId: TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1, exportName: 'activate' },
+        platforms: ['web', 'ios', 'android'],
+      },
+    },
+    dropTargets: {
+      [TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1]: {
+        title: { key: 'plugins.triage.surface.drop.linkSession', fallback: 'Link Session' },
+        acceptedKinds: ['session'],
+        actions: [{ kind: 'plugin', action: TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 }],
+        client: { artifactId: TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1, exportName: 'activate' },
+        platforms: ['web', 'ios', 'android'],
+      },
+    },
     actions: {
+      [TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1]: {
+        title: 'Control the mounted PRs & Issues view',
+        description: 'Open or close detail, select a tab, switch List/Board or lens, choose a saved view, set bulk selection, refresh or load more on the addressed mounted page. Read current UI context for its mountId.',
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
+        placementBindings: [],
+        execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'createTriageMountedUiActionHandler' }, platforms: ['web', 'ios', 'android'] },
+        inputSchema: TriageMountedUiInputV1Schema,
+        resultSchema: TriageMountedUiResultV1Schema,
+      },
       [TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1]: {
         title: {
           key: 'plugins.triage.action.listEntries.title',
@@ -185,11 +223,8 @@ function createTriagePlugin() {
           key: 'plugins.triage.action.listEntries.description',
           fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
         },
-        // The aggregate's own mounted list window invokes this bounded read,
-        // and Voice discovers the same declaration through `voice`. It remains
-        // neither a placed affordance nor an agent/MCP tool. Direct plugin
-        // code is refused: the mounted UI press is present-user authority.
-        surfaces: ['ui', 'voice'],
+        // UI, Voice and automated callers share the same bounded read owner.
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageListEntriesInputV1Schema,
         resultSchema: TriageListEntriesResultV1Schema,
@@ -203,12 +238,8 @@ function createTriagePlugin() {
         // copy — the same reason `ui.views` declares it directly.
         title: TRIAGE_DISPLAY_NAME,
         description: 'Finds pull requests, issues and error groups matching what the reader typed.',
-        // The universal Search surface is the caller, and it is a present-user
-        // host surface. Voice is absent because a spoken query is answered by
-        // the surface's own sections, not by a second entry point into this
-        // read; `plugin`, `agent` and `mcp` are absent for the same
-        // reachability reason the list Action states.
-        surfaces: ['ui'],
+        // Search and automated callers acquire the same host-scoped projection.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         // The provider section IS the affordance. A query Action is not also a
         // command-palette entry, and the manifest owner refuses one that is.
         placementBindings: [],
@@ -228,10 +259,8 @@ function createTriagePlugin() {
       [TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1]: {
         title: 'Pin or unpin an entry',
         description: 'Keeps one pull request, issue or error group at the top of the list, or removes that mark again.',
-        // Same mounted UI surface as the list read, and for the same reason: the
-        // caller is this plugin's own mounted row affordance, not a placed
-        // command, an agent tool or an MCP tool.
-        surfaces: ['ui'],
+        // Every caller reaches the same reversible user-mark writer.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // It keeps the default `safe` danger level: a pin is durable user state,
         // but the exact inverse is one press away and nothing outside Happier is
@@ -245,7 +274,7 @@ function createTriagePlugin() {
         title: 'Link or unlink a fix pull request',
         description: 'Records, or removes, the pull request that fixes one issue or error group.',
         // The caller is this plugin's own mounted detail affordance, like Pin.
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // Default `safe`: durable user state whose exact inverse is one press
         // away, touching nothing outside Happier. It writes only `user-marks`.
@@ -257,7 +286,7 @@ function createTriagePlugin() {
       [TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1]: {
         title: 'Read the fix pull requests',
         description: 'Reads the pull requests linked as fixes for one issue or error group.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReadFixPullRequestsInputV1Schema,
         resultSchema: TriageReadFixPullRequestsResultV1Schema,
@@ -268,7 +297,7 @@ function createTriagePlugin() {
       [TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1]: {
         title: 'Read the pinned entries',
         description: 'Reads one bounded page of the entries the user pinned, newest first.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageListPinnedEntriesInputV1Schema,
         resultSchema: TriageListPinnedEntriesResultV1Schema,
@@ -279,12 +308,8 @@ function createTriagePlugin() {
       [TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Link an entry to a session',
         description: 'Records that a pull request, issue or error group is being worked on in one session.',
-        // The same mounted UI surface as the list read and the pin: the caller
-        // is this plugin's own mounted affordance, not a placed command, an
-        // agent tool or an MCP tool. A link is routing state a person
-        // established, and an agent must not be able to claim an entry for a
-        // Session on its own.
-        surfaces: ['ui'],
+        // Routing changes share the host-owned approval policy on every surface.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // It writes durable Account state — the connection between a Session and
         // the entry it was started from — and nothing outside Happier.
@@ -304,13 +329,8 @@ function createTriagePlugin() {
       [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Start a session on an entry',
         description: 'Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.',
-        // The same mounted UI surface as the link write beneath it, and for the
-        // same reason: the caller is this plugin's own always-mounted header.
-        // `plugin` is absent because direct plugin code is not the authority
-        // here — starting a session on a person's machine and claiming an entry
-        // for it is a decision a person makes. `agent` and `mcp` are absent for
-        // the same reachability reason.
-        surfaces: ['ui'],
+        // Session creation remains confirmed through the shared policy owner.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // It writes durable Account state and reaches the generic Session
         // creator. Nothing outside Happier is touched: the one materialization
@@ -331,7 +351,7 @@ function createTriagePlugin() {
       [TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: {
         title: 'Start a pull request review',
         description: 'Rereads the selected pull request and starts the chosen review engine.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'writesLocal',
         confirmation: {
@@ -343,13 +363,30 @@ function createTriagePlugin() {
         resultSchema: TriageStartPullRequestReviewResultV1Schema,
         run: createTriageStartPullRequestReviewActionHandler(),
       },
+      [TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1]: {
+        title: 'Run a configured entry action',
+        description: 'Runs the selected Ask, Fix, Review or custom action for one or many entries at the chosen destination.',
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        placementBindings: [],
+        dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Run this configured action?',
+          body: 'This starts the configured work for the selected entries at the chosen session destination.',
+          confirmLabel: 'Run action',
+        },
+        inputSchema: TriageRunConfiguredActionInputV1Schema,
+        resultSchema: TriageRunConfiguredActionResultV1Schema,
+        execution: {
+          target: 'client',
+          client: { artifactId: 'triage-configured-action-native', exportName: 'createTriageRunConfiguredActionHandler' },
+          platforms: ['web', 'ios', 'android'],
+        },
+      },
       [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Unlink an entry from a session',
         description: 'Removes the record that a pull request, issue or error group is being worked on in one session.',
-        // The reader who linked the wrong entry is the only caller. An agent
-        // that could drop the relationship would undo a person's routing
-        // decision without them.
-        surfaces: ['ui'],
+        // Every admitted caller uses the same link owner and confirmation.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'writesLocal',
         confirmation: {
@@ -365,11 +402,8 @@ function createTriagePlugin() {
       [TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1]: {
         title: 'Configure a source',
         description: 'Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.',
-        // A source Settings surface reaches this through the mounted Plugin UI
-        // dispatcher, which admits the caller as present-user UI authority. It
-        // is deliberately not an agent, MCP or CLI capability: only a person
-        // choosing a source in Settings may change what is configured.
-        surfaces: ['ui'],
+        // Settings and automated invocations share the configured-instance writer.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // It writes durable Account state — the record of which sources the user
         // configured — and nothing outside Happier.
@@ -392,13 +426,9 @@ function createTriagePlugin() {
       [TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1]: {
         title: 'Read the sources you configured',
         description: 'Reads the pull-request, issue and error-group sources the calling source has configured, so it can change or remove one.',
-        // Reached two ways: a source Settings mounted surface (present-user UI
-        // authority) and another plugin's daemon code through its own
-        // ActionsService — the sentry Composer reference resolver reads exactly
-        // its own configured rows this way. Which rows a caller may see is not
-        // decided here — the handler resolves the caller's own admitted
-        // contribution and returns nothing else's.
-        surfaces: ['ui', 'plugin'],
+        // Host automated callers may discover admitted sources. Plugin callers
+        // remain scoped to their own source by the canonical caller owner.
+        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReadConfiguredSourceInstancesInputV1Schema,
         resultSchema: TriageReadConfiguredSourceInstancesResultV1Schema,
@@ -409,10 +439,9 @@ function createTriagePlugin() {
       [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1]: {
         title: 'Read the durable facts of one entry',
         description: 'Reads the configured connection one entry was observed through, and the sessions it is linked to.',
-        // The aggregate's own mounted detail region is the only caller, and the
-        // handler refuses every other plugin: the value carries the owning
-        // source's account binding and its private configuration.
-        surfaces: ['ui'],
+        // Mounted self and host automated callers resolve the exact connection;
+        // unrelated plugins cannot borrow private source configuration.
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReadEntryDetailInputV1Schema,
         resultSchema: TriageReadEntryDetailResultV1Schema,
@@ -423,7 +452,7 @@ function createTriagePlugin() {
       [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: {
         title: 'Re-read an entry after a provider change',
         description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReobserveEntryInputV1Schema,
         resultSchema: TriageReobserveEntryResultV1Schema,
@@ -433,7 +462,7 @@ function createTriagePlugin() {
       [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: {
         title: 'Read pull request status',
         description: 'Reads checks, reviews, mergeability and branches for the exact selected pull request.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'safe',
         inputSchema: TriageReobserveEntryInputV1Schema,
@@ -444,7 +473,7 @@ function createTriagePlugin() {
       [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: {
         title: 'Read the saved views',
         description: 'Reads the saved filter and order views, and which one is selected.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReadSavedViewsInputV1Schema,
         resultSchema: TriageReadSavedViewsResultV1Schema,
@@ -456,7 +485,7 @@ function createTriagePlugin() {
         description: 'Creates, renames, removes or selects one saved filter and order view.',
         // The same mounted UI surface as the list read: the caller is this plugin's
         // own mounted lens control, which holds no Settings member of its own.
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.
@@ -476,7 +505,7 @@ function createTriagePlugin() {
         description: 'Reads the configured set of things a reader can start from a pull request, issue or error group.',
         // The caller is this plugin's own mounted action editor, which holds a
         // Host API with actions and no Settings member of its own.
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReadActionsInputV1Schema,
         resultSchema: TriageReadActionsResultV1Schema,
@@ -486,7 +515,7 @@ function createTriagePlugin() {
       [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: {
         title: 'Add, change, remove or reorder an action',
         description: 'Creates, renames, disables, reconfigures, removes or reorders one configured action.',
-        surfaces: ['ui'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.

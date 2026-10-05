@@ -7,6 +7,35 @@ import {
 } from './nativeServices.js';
 
 describe('createClaudeNativeAgentSdkContext', () => {
+  it('preserves committed identities and host refusals through the scoped transcript service', async () => {
+    const request = {
+      providerSessionId: 'claude-session-1',
+      facts: [{ sourceMessageId: 'source-1', role: 'user' as const, localId: 'local-1' }],
+    };
+    const result = {
+      committedSourceMessageIds: ['source-1'],
+      hostAuthoredUserMessageIds: ['source-1'],
+      coverage: { complete: true, unmappedUsers: 0, unmappedAgents: 0 },
+    };
+    // The plugin receives a bound host SDK service; host authority stays outside this adapter.
+    const reconcileSourceIdentities = vi.fn(async () => result);
+    const context = {
+      services: {
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        exec: {},
+      },
+      session: { services: { transcripts: { reconcileSourceIdentities } } },
+    } as unknown as AgentSessionRuntimeContext;
+    const native = createClaudeNativeAgentSdkContext(context);
+
+    await expect(native.agentRuntime.transcripts.reconcileSourceIdentities(request)).resolves.toEqual(result);
+    expect(reconcileSourceIdentities).toHaveBeenCalledWith(request);
+
+    const refusal = new Error('Transcript identity reconciliation is unavailable');
+    reconcileSourceIdentities.mockRejectedValueOnce(refusal);
+    await expect(native.agentRuntime.transcripts.reconcileSourceIdentities(request)).rejects.toBe(refusal);
+  });
+
   it('delegates tool proposals to the host Session interception service', async () => {
     const before = vi.fn(async (request) => ({
       status: 'continue' as const,

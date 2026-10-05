@@ -1,5 +1,6 @@
 import * as TranscriptTestReact from 'react';
 import { createTestSessionTranscriptSource as createHostTestSource, wrapWithSessionTranscriptSource as wrapHostTestSource } from '@/dev/testkit';
+import '@/sync/syncEngine';
 import { sync as transcriptHistorySync } from '@/sync/sync';
 
 const transcriptHostTestSource = createHostTestSource({ sessionId: 'session-1', history: {

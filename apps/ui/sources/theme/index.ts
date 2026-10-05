@@ -69,6 +69,12 @@ export const lightTheme = {
                 background: '#FFF8F0',
                 border: '#FF9500',
             },
+            // "Needs you" (Next): the ink of the count pill, the phone capsule and the Next capsule's dot and
+            // Go fill. A deep amber, not the system warning orange, so its label stays AA on its own 12% tint
+            // (the warning orange measured ~2:1 there). Contrast is asserted in `themeContrast.test.ts`.
+            attention: {
+                foreground: '#945200',
+            },
             danger: {
                 foreground: '#FF3B30',
                 background: '#FFF0F0',
@@ -328,6 +334,16 @@ export const lightTheme = {
             },
         },
 
+        // Find (⌘F): every match tinted, the current one solid with dark ink. One pair for chat,
+        // terminal, diff, file and Search snippets (Find lab, `.happier/design-lab/find/`).
+        find: {
+            matchAll: 'rgba(255, 204, 0, 0.30)',
+            matchCurrent: '#FFCC00',
+            matchCurrentForeground: '#1D1A12',
+            // The overview ruler's marks on the scroll track: a deeper yellow that reads on white.
+            overviewMark: '#D9A400',
+        },
+
         // Message View colors
         message: {
             user: {
@@ -410,6 +426,10 @@ export const darkTheme = {
                 foreground: '#E0B65A',
                 background: 'rgba(224, 182, 90, 0.15)',
                 border: '#E0B65A',
+            },
+            // "Needs you" (Next): dark mode's warning amber already clears AA on its own tint.
+            attention: {
+                foreground: '#E0B65A',
             },
             danger: {
                 foreground: '#EE6E6C',
@@ -651,6 +671,14 @@ export const darkTheme = {
                 background: 'rgba(238, 110, 108, 0.16)',
                 foreground: '#F4DEDE',
             },
+        },
+
+        // Find (⌘F): a warmer amber for dark, the same dark ink on the solid current match.
+        find: {
+            matchAll: 'rgba(241, 201, 106, 0.22)',
+            matchCurrent: '#F1C96A',
+            matchCurrentForeground: '#1D1A12',
+            overviewMark: '#F1C96A',
         },
 
         // Message View colors

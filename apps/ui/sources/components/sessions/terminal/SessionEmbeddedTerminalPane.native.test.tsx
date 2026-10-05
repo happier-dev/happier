@@ -145,8 +145,11 @@ describe('SessionEmbeddedTerminalPane (native)', () => {
             onInput: (data: string) => void;
             onWriteComplete?: (event: unknown) => void;
         }>;
-        expect(xtermProps.onInput).toBe(onInputSpy);
-        expect(xtermProps.onWriteComplete).toBe(onWriteCompleteSpy);
+        await act(async () => xtermProps.onInput('typed text'));
+        expect(onInputSpy).toHaveBeenCalledWith('typed text');
+        const writeComplete = { seq: 1 };
+        await act(async () => xtermProps.onWriteComplete?.(writeComplete));
+        expect(onWriteCompleteSpy).toHaveBeenCalledWith(writeComplete);
         expect(sessionEmbeddedTerminalPtySpy.mock.calls.at(-1)?.[0]).toEqual(
             expect.objectContaining({
                 sessionId: 's1',

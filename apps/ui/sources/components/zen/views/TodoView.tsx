@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { Platform, View, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
-import { SharedValue, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { TaskStatusPill } from './TaskSessionStatusPill';
@@ -15,30 +14,13 @@ export type TodoViewProps = {
     done: boolean;
     value: string;
     onToggle?: () => void;
-    // hasDragged?: SharedValue<boolean>;
+    reorderHandle?: React.ReactNode;
 }
 
 export const TodoView = React.memo<TodoViewProps>((props) => {
     const { theme } = useUnistyles();
     const router = useRouter();
-    // const [blockPress, setBlockPress] = React.useState(false);
-
-    // // Monitor hasDragged to block press events after drag
-    // useAnimatedReaction(
-    //     () => props.hasDragged?.value ?? false,
-    //     (hasDragged) => {
-    //         runOnJS(setBlockPress)(hasDragged);
-    //     },
-    //     [props.hasDragged]
-    // );
-
     const handlePress = () => {
-        // // Don't open modal if we just finished dragging
-        // if (blockPress) {
-        //     setBlockPress(false);
-        //     return;
-        // }
-
         router.push({
             pathname: '/zen/view',
             params: {
@@ -48,7 +30,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
     };
 
     return (
-        <Pressable onPress={handlePress} style={{
+        <Pressable {...{ dataSet: { entityDragBody: 'true' } }} onPress={handlePress} style={{
             height: TODO_HEIGHT,
             width: '100%',
             borderRadius: 8,
@@ -100,20 +82,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
                 </Text>
                 <TaskStatusPill taskId={props.id} />
             </View>
-            {Platform.OS === 'web' && (
-                <View
-                    style={{
-                        width: 48,
-                        alignSelf: 'stretch',
-                        borderRadius: 4,
-                        opacity: 0.5,
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                    }}
-                >
-                    <Icon name="dots-six-vertical" size={24} color={theme.colors.text.primary} />
-                </View>
-            )}
+            {props.reorderHandle}
         </Pressable>
     );
 });

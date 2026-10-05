@@ -49,6 +49,8 @@ export function resolveParticipantRoutingDescriptor(params: Readonly<{
 
 export function resolveParticipantRoutedSend(params: Readonly<{
     text: string;
+    displayText?: string;
+    metaOverrides?: Record<string, unknown>;
     recipient: ParticipantRecipientV1;
     requestedAction?: PendingRequestedActionV1;
 }>): ParticipantRoutedSend {
@@ -56,8 +58,9 @@ export function resolveParticipantRoutedSend(params: Readonly<{
     return {
         type: 'session_message',
         text: params.text,
+        ...(params.displayText !== undefined ? { displayText: params.displayText } : {}),
         recipient,
         ...(params.requestedAction ? { requestedAction: params.requestedAction } : {}),
-        metaOverrides: withParticipantRecipientV1({}, recipient),
+        metaOverrides: withParticipantRecipientV1(params.metaOverrides ?? {}, recipient),
     };
 }

@@ -1,6 +1,8 @@
 import * as React from 'react';
 import {
     Easing,
+    runOnJS,
+    useDerivedValue,
     useFrameCallback,
     useSharedValue,
     withTiming,
@@ -11,9 +13,8 @@ import {
 import { useVoiceLevelSharedValue } from '@/components/voice/surface/useVoiceLevelSharedValue';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
-import type { VoiceRuntimeLevelSourceActivity } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
+import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
-import { arrivalGesture } from './arrivalGesture';
 import { resolveVoiceEnergyActive } from './resolveVoiceEnergyActive';
 
 /**
@@ -59,7 +60,7 @@ export type VoiceEnergyState = Readonly<{
  * composer planet together still cost one frame callback and zero re-renders per
  * audio frame — the discipline `VoiceSurfaceLevelRenderCount.test.tsx` pins.
  *
- * Three rules this implementation exists to hold:
+ * Two rules this implementation exists to hold:
  *
  *  1. **Frame-rate independence.** Smoothing uses `1 - exp(-dt/τ)` with τ in
  *     seconds, not a fixed per-frame coefficient. A per-frame coefficient
@@ -68,35 +69,23 @@ export type VoiceEnergyState = Readonly<{
  *  2. **The clock runs only while something is happening.** Activation is the
  *     predicate in `resolveVoiceEnergyActive`; a frozen preview and reduced
  *     motion deactivate it entirely.
- *  3. **Respiration is gated by the microphone, not by the attempt.** Breathing
- *     is this presence's way of saying "I am listening to you"; §2.4a makes the
- *     capture fact its only source, so it can never claim an open microphone the
- *     runtime is still acquiring.
+ * Silent open microphones and connecting attempts do not animate. Production
+ * amplitude is real audio; bounded event transforms belong to the shared mark.
  */
 export type VoiceEnergy = Readonly<{
-    /** Monotonic seconds since the clock started. Drives idle breath and drift. */
+    /** Frame time in seconds; frozen when audio/history settles or motion is disallowed. */
     clock: SharedValue<number>;
     /** 0..1 smoothed amplitude envelope. Fast attack, slow release. */
     level: SharedValue<number>;
-    /** 1 while a source is producing amplitude. */
+    /** 1 while an actual input/output source is open, independent of amplitude. */
     sourceActive: SharedValue<number>;
     /** 0..1 resting luminosity for the current state, cross-faded between states. */
     luminosity: SharedValue<number>;
     /** Direction of travel: -1 inward (you are heard), +1 outward (it speaks), 0 otherwise. */
     flow: SharedValue<number>;
-    /**
-     * 0..1 respiration amplitude — §2.4a's liveness gate.
-     *
-     * 1 only while the microphone is genuinely capturing, eased in and out so
-     * the breath never starts or stops on a cut. Everything that breathes
-     * multiplies its amplitude by this; nothing else decides whether the
-     * presence respires.
-     */
+    /** Explicit old-artwork preview term only; always zero in production. */
     respiration: SharedValue<number>;
-    /**
-     * 0..1 arrival gesture — one bounded swell while a starting attempt has not
-     * opened the microphone yet. Never a cycle: see `arrivalGesture`.
-     */
+    /** Kept zero until old artwork consumers migrate; no automatic arrival clock. */
     arrival: SharedValue<number>;
     /**
      * Rolling amplitude history, oldest first, newest last.
@@ -128,7 +117,6 @@ export type VoiceEnergyRuntimeActivation = Readonly<{
      * planet came to breathe while the runtime was still acquiring the mic.
      */
     micCaptureActive: boolean;
-    settleTransitionPending?: boolean;
 }>;
 
 /** Registration for a surface that is on screen and wants the clock to run. */
@@ -152,16 +140,6 @@ const TAU_STATE = 0.28;
 const EPSILON = 0.004;
 
 /**
- * How fast respiration fades in and out — slower than any amplitude term.
- *
- * §2.4a: "Do not hard-cut the breath on or off — that reads as a glitch." A
- * breath that appears the instant the microphone opens reads as a switch; ~1.2s
- * to settle is roughly a quarter of a resting breath cycle, so respiration
- * *joins* the motion already on screen instead of interrupting it.
- */
-const TAU_BREATH = 0.4;
-
-/**
  * The settle back to still, when the clock stops.
  *
  * Derived from `TAU_RELEASE` rather than chosen: the worklet's release is
@@ -170,7 +148,7 @@ const TAU_BREATH = 0.4;
  * release constant is what makes the hand-off invisible — the amplitude keeps
  * falling at the rate it was already falling instead of switching to a second,
  * unrelated curve. Decelerating, because a settle that ends abruptly reads as a
- * cut, which is exactly what §2.4a says not to do.
+ * cut. This remains an audio-envelope release, not timer-driven breath.
  */
 const SETTLE = {
     duration: Math.round(TAU_RELEASE * 3 * 1000),
@@ -182,10 +160,6 @@ export const HISTORY_SLOTS = 28;
 const HISTORY_HZ = 30;
 const HISTORY_INTERVAL = 1 / HISTORY_HZ;
 const EMPTY_HISTORY: readonly number[] = new Array(HISTORY_SLOTS).fill(0);
-const NO_SOURCE_ACTIVITY: VoiceRuntimeLevelSourceActivity = Object.freeze({
-    inputSourceActive: false,
-    outputSourceActive: false,
-});
 
 /**
  * The microphone takes the shape over above ENTER and keeps it until its
@@ -195,6 +169,20 @@ const NO_SOURCE_ACTIVITY: VoiceRuntimeLevelSourceActivity = Object.freeze({
  */
 const INPUT_TAKEOVER_ENTER = 0.08;
 const INPUT_TAKEOVER_EXIT = 0.035;
+
+// React observes only silence↔audio crossings. Per-sample amplitudes continue
+// through the existing SharedValue bridge and never update the app tree.
+function hasAudioAmplitude(): boolean {
+    const sample = voiceRuntimeLevelStore.getSnapshot();
+    return (sample.inputSourceActive && sample.inputLevel > 0)
+        || (sample.outputSourceActive && sample.outputLevel > 0);
+}
+
+function subscribeAmplitudePresence(listener: () => void): () => void {
+    const input = voiceRuntimeLevelStore.subscribe('input', listener);
+    const output = voiceRuntimeLevelStore.subscribe('output', listener);
+    return () => { input(); output(); };
+}
 
 /**
  * A speech-shaped amplitude source, used only to give a **frozen preview** an
@@ -220,8 +208,6 @@ function synthesizeAmplitude(t: number, outward: boolean): number {
 export function VoiceEnergyProvider(props: Readonly<{
     state: VoiceEnergyState;
     activation?: VoiceEnergyRuntimeActivation | null;
-    /** Low-frequency app-level source ownership; absent in static lab scenes. */
-    sourceActivity?: VoiceRuntimeLevelSourceActivity;
     /**
      * Freeze the clock at an exact millisecond and render one deterministic
      * frame. Screenshot QA and visual regression are impossible against a live
@@ -232,6 +218,7 @@ export function VoiceEnergyProvider(props: Readonly<{
 }>) {
     const reduced = useReducedMotionPreference();
     const runtimeMotionActive = useHostActivelyFocused();
+    const audioAmplitudePresent = React.useSyncExternalStore(subscribeAmplitudePresence, hasAudioAmplitude, () => false);
     // Two calls, two literal channels. `useVoiceLevelSharedValue` samples the
     // store only at mount and re-binds just the subscription, so a dynamic
     // channel argument leaves the shared value holding the other channel's last
@@ -242,7 +229,11 @@ export function VoiceEnergyProvider(props: Readonly<{
 
     const clock = useSharedValue(0);
     const level = useSharedValue(0);
-    const sourceActive = useSharedValue(0);
+    const previewSourceActive = props.previewTimeMs != null ? (props.state.energized ? 1 : 0) : null;
+    const sourceActive = useDerivedValue<number>(() => {
+        'worklet';
+        return previewSourceActive ?? (inputSourceActive.get() > 0 || outputSourceActive.get() > 0 ? 1 : 0);
+    });
     const luminosity = useSharedValue(props.state.luminosity);
     const flow = useSharedValue(0);
     const respiration = useSharedValue(0);
@@ -253,33 +244,15 @@ export function VoiceEnergyProvider(props: Readonly<{
     const historyAt = useSharedValue(0);
 
     // State the worklet reads must itself live in shared values.
-    const energized = useSharedValue(props.state.energized ? 1 : 0);
     const targetLuminosity = useSharedValue(props.state.luminosity);
-    const targetFlow = useSharedValue(0);
     /** Which channel the shape is currently reading: -1 input, +1 output, 0 idle. */
     const channel = useSharedValue(0);
-    /** 1 while the microphone is capturing, so the worklet can ease toward it. */
-    const respirationTarget = useSharedValue(0);
-    /** 1 while a starting attempt still owes the user an arrival gesture. */
-    const arrivalPending = useSharedValue(0);
-    /** Clock reading the current gesture started at; -1 when none is playing. */
-    const arrivalAt = useSharedValue(-1);
 
     const { direction, energized: isEnergized, luminosity: stateLuminosity } = props.state;
 
     React.useEffect(() => {
-        energized.set(isEnergized ? 1 : 0);
-        sourceActive.set(isEnergized ? 1 : 0);
         targetLuminosity.set(stateLuminosity);
-        targetFlow.set(direction === 'inward' ? -1 : direction === 'outward' ? 1 : 0);
-    }, [
-        direction, energized, isEnergized, sourceActive,
-        stateLuminosity, targetFlow, targetLuminosity,
-    ]);
-
-    // The app provider owns one low-frequency source-lifecycle projection. The
-    // two shared-value subscriptions above remain the sole frame-rate readers.
-    const sourceActivity = props.sourceActivity ?? NO_SOURCE_ACTIVITY;
+    }, [stateLuminosity, targetLuminosity]);
 
     /*
      * Consumer presence lives in a ref, and only the 0↔1 crossing is published.
@@ -307,48 +280,21 @@ export function VoiceEnergyProvider(props: Readonly<{
     const preview = props.previewTimeMs ?? null;
     const motionAllowed = preview === null && !reduced;
 
-    /*
-     * With no Voice runtime attached — the design lab, and any frozen preview —
-     * there is no provider to resolve, no attempt to track and no surface that
-     * registers presence, so those three inputs are neutral and visibility and
-     * motion still decide. Production always passes `activation`.
-     */
+    // Runtime absence never selects a synthetic live source. A frozen preview
+    // must opt in explicitly with previewTimeMs.
     const runtime = props.activation ?? null;
     const attemptActive = runtime?.attemptActive ?? true;
-    /*
-     * With no runtime attached there is no microphone to be honest about: the
-     * lab and the golden frame are drawing the reference material, not claiming
-     * a live capture, so the neutral value is the one that renders the design.
-     */
-    const micCaptureActive = runtime?.micCaptureActive ?? true;
+    const micCaptureActive = runtime?.micCaptureActive ?? (preview !== null);
+    const gatesOpen = runtimeMotionActive && (runtime?.providerReady ?? true)
+        && motionAllowed && hasVisibleConsumer;
     const active = resolveVoiceEnergyActive({
         runtimeMotionActive,
         providerReady: runtime?.providerReady ?? true,
         motionAllowed,
-        hasVisibleConsumer: runtime === null || hasVisibleConsumer,
-        attemptActive,
-        inputSourceActive: sourceActivity.inputSourceActive,
-        outputSourceActive: sourceActivity.outputSourceActive,
-        settleTransitionPending: runtime?.settleTransitionPending ?? false,
+        hasVisibleConsumer,
+        audioAmplitudePresent,
+        settleTransitionPending: attemptActive && (level.get() > 0 || history.get().some((slot) => slot > 0)),
     });
-
-    /*
-     * §2.4a — the two motion gates, published for the worklet to ease toward.
-     *
-     * `respirationTarget` is the capture fact and nothing else. `arrivalPending`
-     * is the connecting phase *before* this attempt has ever captured: once the
-     * microphone has opened, a later drop (a mute) stops the breath but does not
-     * re-play an arrival, because nothing arrived.
-     */
-    const captureSeen = React.useRef(false);
-    React.useEffect(() => {
-        if (!attemptActive) captureSeen.current = false;
-        else if (micCaptureActive) captureSeen.current = true;
-        respirationTarget.set(motionAllowed && micCaptureActive ? 1 : 0);
-        arrivalPending.set(
-            motionAllowed && attemptActive && !micCaptureActive && !captureSeen.current ? 1 : 0,
-        );
-    }, [arrivalPending, attemptActive, micCaptureActive, motionAllowed, respirationTarget]);
 
     /*
      * A frozen or reduced-motion preview resolves **during render**, not in an
@@ -383,10 +329,19 @@ export function VoiceEnergyProvider(props: Readonly<{
         history.set(EMPTY_HISTORY);
         level.set(
             isEnergized
-                ? (preview === null ? 0.5 : synthesizeAmplitude(t, direction === 'outward'))
+                ? (preview === null ? 0 : synthesizeAmplitude(t, direction === 'outward'))
                 : 0,
         );
     }
+
+    const frameHandle = React.useRef<ReturnType<typeof useFrameCallback> | null>(null);
+    const stopSilentFrame = React.useCallback(() => {
+        // A newer real sample can wake the owner before this UI→JS callback
+        // arrives. Never let an old silence observation stop that new audio.
+        if (!hasAudioAmplitude() && level.get() === 0 && history.get().every((slot) => slot === 0)) {
+            frameHandle.current?.setActive(false);
+        }
+    }, [history, level]);
 
     // Hoisted: `useFrameCallback` re-registers the worklet whenever the callback
     // identity changes, so an inline arrow costs three UI-thread round-trips per
@@ -420,54 +375,21 @@ export function VoiceEnergyProvider(props: Readonly<{
         const inputAmplitude = inputLevel.get();
         const outputOpen = outputSourceActive.get() > 0;
         const takeover = channel.get() < 0 ? INPUT_TAKEOVER_EXIT : INPUT_TAKEOVER_ENTER;
-        const selected = inputOpen && inputAmplitude >= takeover ? -1 : (outputOpen ? 1 : 0);
+        const selected = inputOpen && (inputAmplitude >= takeover || !outputOpen) ? -1 : (outputOpen ? 1 : 0);
         channel.set(selected);
 
         // With no audio evidence the direction is whatever the conversation state
         // says it is.
-        const flowTarget = selected !== 0 ? selected : targetFlow.get();
+        const flowTarget = selected;
         const fl = flow.get();
         flow.set(fl + (flowTarget - fl) * kState);
 
-        sourceActive.set(energized.get() > 0 || inputOpen || outputOpen ? 1 : 0);
-
-        const target = selected > 0 ? outputLevel.get() : inputAmplitude;
+        const target = selected > 0 ? outputLevel.get() : selected < 0 ? inputAmplitude : 0;
         const current = level.get();
         const k = 1 - Math.exp(-dt / (target > current ? TAU_ATTACK : TAU_RELEASE));
         const next = current + (target - current) * k;
         const settled = next < EPSILON && target < EPSILON ? 0 : next;
         level.set(settled);
-
-        /*
-         * §2.4a — respiration tracks the microphone, eased on the same
-         * frame-rate-independent form as every other term here so it behaves
-         * identically at 60 and 120 Hz.
-         */
-        const kBreath = 1 - Math.exp(-dt / TAU_BREATH);
-        const breathTarget = respirationTarget.get();
-        const breathing = respiration.get();
-        const nextBreath = breathing + (breathTarget - breathing) * kBreath;
-        respiration.set(nextBreath < EPSILON && breathTarget === 0 ? 0 : nextBreath);
-
-        /*
-         * The arrival gesture runs on *this* clock rather than on an animation
-         * of its own. Two things follow, and both are the reason: it starts on
-         * the first frame the surface is actually being drawn, so a connect that
-         * begins while the app is backgrounded is not announced to an empty
-         * screen; and it is bounded by the envelope itself rather than by a
-         * timer somebody has to remember to stop.
-         */
-        if (arrivalPending.get() > 0) {
-            if (arrivalAt.get() < 0) arrivalAt.set(now);
-            arrival.set(arrivalGesture(now - arrivalAt.get()));
-        } else {
-            arrivalAt.set(-1);
-            // Yield rather than cut: the microphone opening mid-gesture hands
-            // the body to respiration, it does not snatch it.
-            const arriving = arrival.get();
-            const nextArrival = arriving + (0 - arriving) * (1 - Math.exp(-dt / TAU_RELEASE));
-            arrival.set(nextArrival < EPSILON ? 0 : nextArrival);
-        }
 
         // Scroll the meter on a wall-clock schedule, carrying the peak seen
         // since the last shift so a fast transient still leaves a bar.
@@ -482,21 +404,30 @@ export function VoiceEnergyProvider(props: Readonly<{
             next[HISTORY_SLOTS - 1] = peak;
             history.set(next);
         }
+        if (target === 0 && settled === 0 && history.get().every((slot) => slot === 0)) {
+            runOnJS(stopSilentFrame)();
+        }
     }, [
-        arrival, arrivalAt, arrivalPending, channel, clock, energized, flow, history,
+        channel, clock, flow, history,
         historyAt, historyPeak, inputLevel, inputSourceActive, level, luminosity,
-        outputLevel, outputSourceActive, respiration, respirationTarget,
-        sourceActive, targetFlow, targetLuminosity,
+        outputLevel, outputSourceActive, stopSilentFrame, targetLuminosity,
     ]);
 
     // Never `autostart`: it is captured in the hook's `useRef` initializer, so the
     // effect that follows would read a stale value and the loop would never stop.
     const frame = useFrameCallback(onFrame, false);
+    React.useEffect(() => {
+        frameHandle.current = frame;
+        return () => { frameHandle.current = null; };
+    }, [frame]);
 
     // No cleanup: `useFrameCallback` unregisters the worklet on unmount itself,
     // and a `setActive(false)` here would only add a redundant transition.
     React.useEffect(() => {
         frame.setActive(active);
+    }, [active, audioAmplitudePresent, frame]);
+
+    React.useEffect(() => {
         if (active || !motionAllowed) return;
 
         /*
@@ -513,29 +444,24 @@ export function VoiceEnergyProvider(props: Readonly<{
          * reduced motion resolve the entire pose during render, and a settle
          * would immediately overwrite it with zeros.
          */
-        level.set(withTiming(0, SETTLE));
-        flow.set(withTiming(0, SETTLE));
+        level.set(gatesOpen && level.get() > 0 ? withTiming(0, SETTLE) : 0);
+        flow.set(gatesOpen && flow.get() !== 0 ? withTiming(0, SETTLE) : 0);
         // Resting brightness is state, not amplitude. The frame callback is the
         // normal cross-fade owner while an attempt is live; once it stops, it
         // cannot finish a transition to a visible idle/error state on its own.
-        // Keep the same bounded settle rather than freezing the last live
-        // state's luminosity indefinitely.
-        luminosity.set(withTiming(stateLuminosity, SETTLE));
-        // Respiration and the arrival gesture are worklet terms too, so they
-        // would freeze mid-inhale exactly the same way. Easing them here is what
-        // "settles back to still" means for the breath.
-        respiration.set(withTiming(0, SETTLE));
-        arrival.set(withTiming(0, SETTLE));
+        // Apply the semantic pose even if no audio clock is running.
+        luminosity.set(stateLuminosity);
+        // Old artwork consumers stay bootable while migrating to the dot mark;
+        // neither term drives production motion anymore.
+        respiration.set(0);
+        arrival.set(0);
         // Not an amplitude: the meter's own bars retarget on a `withTiming` of
         // their own when the slots change, so emptying it here is already an
         // ease rather than a cut.
         history.set(EMPTY_HISTORY);
-        // Binary facts do not ease. With the clock off, the only remaining
-        // claim is the state's.
-        sourceActive.set(isEnergized ? 1 : 0);
     }, [
-        active, arrival, flow, frame, history, isEnergized,
-        level, luminosity, motionAllowed, respiration, sourceActive, stateLuminosity,
+        active, arrival, flow, gatesOpen, history,
+        level, luminosity, motionAllowed, respiration, stateLuminosity,
     ]);
 
     const value = React.useMemo<VoiceEnergy>(

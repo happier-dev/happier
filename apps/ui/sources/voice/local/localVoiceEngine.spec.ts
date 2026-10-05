@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +8,9 @@ import {
     registerLocalVoiceEngineHarnessHooks,
     submitMessage,
 } from './localVoiceEngine.testHarness';
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine (turn-based) smoke', () => {
     registerLocalVoiceEngineHarnessHooks();

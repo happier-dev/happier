@@ -20,7 +20,16 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction } from './resolveExecutablePluginRuntimeRegistry';
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
 import { createPluginReloadController } from './reload/controller';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from './reload/runtimeLease';
+import { createCommittedInputTypeDeps } from './invocation/actions/createCommittedContributedActionDeps';
 import type { ResolveSessionResourceAccess } from './invocation/services/resources';
+
+// Only replace the packaged-publication filesystem read; all catalog and runtime owners remain real.
+vi.mock('node:fs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
+    return createBundledPluginPublicationFsFixture(actual);
+});
 
 /**
  * The composed daemon half of the EU-4b live-resource vertical.
@@ -69,6 +78,7 @@ function requirePluginOccurrenceId(
 
 type DynamicResourceFixtureControl = {
     value: string;
+    inputTypeActionInvocations?: number;
     observedAccountStorage?: boolean;
     publish(next: string): void;
 };
@@ -82,6 +92,7 @@ async function seedFixture(options: Readonly<{
     accountStorage?: boolean;
     registerDynamicProducer?: boolean;
     sessionScoped?: boolean;
+    inputType?: boolean;
 }> = {}): Promise<Readonly<{ happyHomeDir: string; pluginRoot: string }>> {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-live-resources-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-live-resources-plugin-'));
@@ -109,6 +120,15 @@ async function seedFixture(options: Readonly<{
             }
             : { required: [], optional: [] },
         contributes: {
+            ...(options.inputType ? { actions: [{ id: 'choose-repository', title: 'Choose repository', scopes: ['global'], surfaces: ['cli'],
+                execution: { target: 'daemon' }, placementBindings: ['commandPalette'], dangerLevel: 'safe',
+                inputSchema: { type: 'object', properties: { repository: { type: 'object', additionalProperties: true } },
+                    required: ['repository'], additionalProperties: false },
+                inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select',
+                    inputType: { pluginId: PLUGIN_ID, localId: 'repository' } }] } }],
+                inputTypes: [{ id: 'repository', title: 'Repository', semantic: 'repository',
+                valueSchema: { type: 'object', properties: { repositoryId: { type: 'string' } },
+                    required: ['repositoryId'], additionalProperties: false }, options: { resource: 'live-status' } }] } : {}),
             resources: [
                 {
                     id: 'style-guide',
@@ -142,6 +162,10 @@ async function seedFixture(options: Readonly<{
             },
         };
         globalThis.__HAPPIER_LIVE_RESOURCE_FIXTURE__ = control;
+        ${options.inputType ? `api.actions.register('choose-repository', async () => {
+            control.inputTypeActionInvocations = (control.inputTypeActionInvocations ?? 0) + 1;
+            return { accepted: true };
+        });` : ''}
         if (registersDynamicResource) {
             api.resources.registerDynamicResource('live-status', {
                 read: async (options) => sessionScoped
@@ -222,8 +246,12 @@ async function seedScopedDynamicResourcePeerFixture(
 }
 
 async function resolveScopedDynamicResourceFixtureContributes(happyHomeDir: string) {
+    const loadResult = await loadInstalledPlugins({ happyHomeDir });
+    if (!loadResult.loadedPlugins.some(plugin => plugin.pluginId === PLUGIN_ID)) {
+        throw new Error(JSON.stringify(loadResult.diagnosticsByPluginId[PLUGIN_ID]));
+    }
     return createResolvedContributionRegistry(projectLoadedPluginContributes({
-        loadResult: await loadInstalledPlugins({ happyHomeDir }),
+        loadResult,
         provenance: 'external',
         existingAgentIds: new Set(),
     }));
@@ -240,6 +268,46 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 describe('executable plugin dynamic resource observation (EU-4b)', () => {
+    it('reads an input type through its declared real Resource and refuses malformed or substituted reads', async () => {
+        const { happyHomeDir, pluginRoot } = await seedFixture({ inputType: true });
+        const controller = createPluginReloadController({ resolveRuntimeRegistry: async () =>
+            resolveExecutablePluginRuntimeRegistry({ happyHomeDir,
+                contributes: await resolveScopedDynamicResourceFixtureContributes(happyHomeDir) }) });
+        try {
+            const initial = await controller.acquireRuntimeRegistry();
+            await initial.release();
+            const deps = createCommittedInputTypeDeps({ acquireRuntimeRegistryLease: () =>
+                acquireAuthoritativePluginRuntimeRegistryLease({ controller }) });
+            const context = { surface: 'agent' as const, authority: 'account_automation' as const };
+            const type = await deps.resolveInputType!({ pluginId: PLUGIN_ID, localId: 'repository' }, context);
+            expect(type?.definition.semantic).toBe('repository');
+            if (!type) throw new Error('Expected serving input type');
+            const resource = { pluginId: PLUGIN_ID, localId: 'live-status' };
+            const choices = [{ value: { repositoryId: 'repository-one' }, label: 'One' }];
+            control().publish(JSON.stringify(choices));
+            const runtime = await controller.acquireRuntimeRegistry();
+            try {
+                const invoke = (repositoryId: string) => runtime.registry.targetActionInvocations!.invoke({
+                    pluginId: PLUGIN_ID, localId: 'choose-repository', surface: 'cli', input: { repository: { repositoryId } },
+                });
+                expect(await invoke('not-admitted')).toMatchObject({ status: 'invalid', code: 'input_type_option_invalid' });
+                expect(control().inputTypeActionInvocations).toBeUndefined();
+                expect(await invoke('repository-one')).toMatchObject({ status: 'executed', value: { accepted: true } });
+                expect(control().inputTypeActionInvocations).toBe(1);
+            } finally { await runtime.release(); }
+            await expect(deps.readInputTypeResource!({ type, resource, context })).resolves.toEqual(choices);
+            await expect(deps.readInputTypeResource!({ type, resource: { pluginId: PLUGIN_ID, localId: 'style-guide' },
+                context })).resolves.toMatchObject({ ok: false, errorCode: 'input_type_options_unavailable' });
+            control().publish('not JSON');
+            await expect(deps.readInputTypeResource!({ type, resource, context }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'input_type_options_invalid' });
+        } finally {
+            await controller.shutdown();
+            delete globalThis.__HAPPIER_LIVE_RESOURCE_FIXTURE__;
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    }, 60_000);
     it('keeps the bundled Channels dynamic Resource declaration cold when external install activation is scoped', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;

@@ -183,6 +183,16 @@
       "import": "./dist/path/index.js",
       "default": "./dist/path/index.js"
     },
+    "./scm/gitTemporaryIndex": {
+      "types": "./dist/scm/gitTemporaryIndex.d.ts",
+      "import": "./dist/scm/gitTemporaryIndex.js",
+      "default": "./dist/scm/gitTemporaryIndex.js"
+    },
+    "./scm/gitComparisonOutput": {
+      "types": "./dist/scm/gitComparisonOutput.d.ts",
+      "import": "./dist/scm/gitComparisonOutput.js",
+      "default": "./dist/scm/gitComparisonOutput.js"
+    },
     "./agents/managedJavaScriptRuntime": {
       "types": "./dist/agents/managedJavaScriptRuntime.d.ts",
       "import": "./dist/agents/managedJavaScriptRuntime.js",
@@ -212,6 +222,16 @@
       "types": "./dist/componentArtifacts/index.d.ts",
       "import": "./dist/componentArtifacts/index.js",
       "default": "./dist/componentArtifacts/index.js"
+    },
+    "./firstPartyRuntime/componentCatalog": {
+      "types": "./dist/firstPartyRuntime/componentCatalog.d.ts",
+      "import": "./dist/firstPartyRuntime/componentCatalog.js",
+      "default": "./dist/firstPartyRuntime/componentCatalog.js"
+    },
+    "./firstPartyRuntime/selfHostServerEnv": {
+      "types": "./dist/firstPartyRuntime/selfHostServerEnv.d.ts",
+      "import": "./dist/firstPartyRuntime/selfHostServerEnv.js",
+      "default": "./dist/firstPartyRuntime/selfHostServerEnv.js"
     },
     "./firstPartyRuntime": {
       "types": "./dist/firstPartyRuntime/index.d.ts",

@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, renderHookWithSessionTranscriptSource as renderHook } from '@/dev/testkit/sessionTranscriptSource';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 const awarenessTimes = vi.hoisted(() => [] as number[]);
@@ -111,6 +113,25 @@ afterEach(() => {
 });
 
 describe('useSessionSummaryModel', () => {
+    it('reads waiting questions from its exact Home-bound transcript source', async () => {
+        const session = { id: 'session-1', serverId: 'home-a', active: true } as Session;
+        const agentState = { requests: {
+            question: { tool: 'AskUserQuestion', kind: 'user_action' as const, arguments: { questions: [] }, createdAt: 100 },
+            permission: { tool: 'Bash', kind: 'permission' as const, arguments: { command: 'pwd' }, createdAt: 200 },
+        } };
+        const source = createTestSessionTranscriptSource({
+            sessionId: session.id, serverId: 'home-a',
+            agentState,
+        });
+        const hook = await renderHook(() => useSessionSummaryModel({ session }), { source });
+        expect(hook.getCurrent().needsYou).toMatchObject({ request: { id: 'question' }, moreCount: 1 });
+        await hook.rerender(undefined, createTestSessionTranscriptSource({
+            sessionId: session.id, serverId: 'home-other', agentState,
+        }));
+        expect(hook.getCurrent().needsYou).toBeNull();
+        await hook.unmount();
+    });
+
     it('advances awareness freshness on the canonical shared clock while the Session object stays stable', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);

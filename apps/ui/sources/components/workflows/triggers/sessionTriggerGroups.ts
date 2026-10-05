@@ -69,7 +69,10 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
     const nextRuns = set.triggers.flatMap((trigger) => trigger.kind === 'schedule' && trigger.nextRunAt !== null ? [trigger.nextRunAt] : []);
     const next = nextRuns.length === 0 ? null : Math.min(...nextRuns);
     return {
-        title: prompt === null ? t('workflows.triggers.row.legacyUnavailable') : prompt || t('workflows.triggers.then.sendPrompt'),
+        title: set.legacy.lockedReason === 'session_key_required' ? t('workflows.triggers.row.sessionKeyRequired')
+            : set.legacy.lockedReason === 'migration_required' ? t('workflows.triggers.row.templateRecoveryRequired')
+                : set.legacy.lockedReason === 'decryption_failed' ? t('workflows.triggers.row.templateDecryptionFailed')
+                    : prompt === null ? t('workflows.triggers.row.legacyUnavailable') : prompt || t('workflows.triggers.then.sendPrompt'),
         qualifier: [
             [formatTriggerSetSummary(set.triggers), ...timezones].join(' · '),
             next === null ? t(set.enabled && set.triggers.some((trigger) => trigger.enabled && trigger.kind === 'schedule')

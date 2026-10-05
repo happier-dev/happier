@@ -28,6 +28,18 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
+// These glance contracts never access the Session-envelope HTTP API.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Session-envelope HTTP API is outside this glance test'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
+
+// No Markdown is rendered here; preserve the external SDK boundary if reached.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Markdown SDK is outside this glance test'); },
+}));
+
 afterEach(() => {
     standardCleanup();
 });
@@ -103,6 +115,19 @@ function inventoryRow(id: string, port: number): LocalServiceInventoryRow {
 }
 
 describe('Changes glance', () => {
+    it('offers walkthrough beside review without replacing the review footer', async () => {
+        const review = vi.fn();
+        const walk = vi.fn();
+        const screen = await renderScreen(
+            <ChangesGlanceView testID="changes" frameStyle="plain" state={{ kind: 'ready', summary: buildSessionScmSummary(snapshot())! }}
+                onReviewChanges={review} onWalkThrough={walk} />,
+        );
+        await screen.pressByTestIdAsync('changes.secondary-open');
+        await screen.pressByTestIdAsync('changes.open');
+        expect(walk).toHaveBeenCalledTimes(1);
+        expect(review).toHaveBeenCalledTimes(1);
+    });
+
     it('shows the branch, the real changed count and the first files, and says how many more there are', async () => {
         const review = vi.fn();
         const summary = buildSessionScmSummary(snapshot())!;

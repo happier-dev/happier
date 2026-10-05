@@ -17,7 +17,7 @@ import {
 import type { ScmBackendContext } from '../types.js';
 import { getScmCommandIndeterminateErrorCode, normalizeCommitRef, runScmCommand, type ScmExecResult } from '../runtime.js';
 import { mapGitErrorCode } from '../remote.js';
-import { toLiteralPathspec, toRepoRootLiteralPathspec } from '../literalPathspec.js';
+import { toLiteralPathspec } from '../literalPathspec.js';
 import {
     applyPatchToIndex,
     createGitTemporaryIndex,
@@ -25,9 +25,12 @@ import {
     runGitCommand,
 } from './commitExecutionRuntime.js';
 
+import { captureGitCommitTarget, publishGitCommit } from './commitPublication.js';
+
 import { normalizePaths } from './normalizePaths.js';
 import { hasAnyIncludedOrPendingChanges, readGitSnapshotForChecks } from './snapshotChecks.js';
 import { readGitOperationRepositoryState } from './branchOperationState.js';
+import type { GitExecutionFeatures } from '../repository.js';
 
 /** Soft-reset semantics with Git's compare-and-swap ref guard; the index and worktree are untouched. */
 export async function gitCommitUndoLast(input: {
@@ -78,48 +81,6 @@ export async function gitCommitUndoLast(input: {
         outcome: { v: 1, kind: 'succeeded', effect: { kind: 'branch', name: 'HEAD', headOid: parent }, repositoryState: { ...repositoryState, headOid: parent }, nextActions: [{ kind: 'refresh' }] } };
 }
 
-function parseZTerminatedTokens(input: string): string[] {
-    // Git uses `\0` as a separator for `-z` outputs; a trailing separator is common.
-    if (!input) {
-        return [];
-    }
-    return input.split('\0').filter(Boolean);
-}
-
-function parseGitNameStatusZPaths(input: string): Set<string> {
-    const tokens = parseZTerminatedTokens(input);
-    const paths = new Set<string>();
-
-    for (let i = 0; i < tokens.length; i += 1) {
-        const statusToken = tokens[i];
-        if (!statusToken) {
-            continue;
-        }
-
-        const statusCode = statusToken[0];
-        if (statusCode === 'R' || statusCode === 'C') {
-            const oldPath = tokens[i + 1];
-            const newPath = tokens[i + 2];
-            if (oldPath) {
-                paths.add(oldPath);
-            }
-            if (newPath) {
-                paths.add(newPath);
-            }
-            i += 2;
-            continue;
-        }
-
-        const path = tokens[i + 1];
-        if (path) {
-            paths.add(path);
-        }
-        i += 1;
-    }
-
-    return paths;
-}
-
 function amendAdmissionFailure(result: ScmExecResult, fallback: string): ScmCommitCreateResponse {
     const errorCode = getScmCommandIndeterminateErrorCode(result) ?? mapGitErrorCode(result.stderr);
     return { success: false, errorCode, error: result.stderr || fallback, outcome: { v: 1, kind: 'failed', errorCode, nextActions: [] } };
@@ -151,8 +112,19 @@ async function evaluateAmendAdmission(context: ScmBackendContext, acknowledged: 
 export async function gitCommitCreate(input: {
     context: ScmBackendContext;
     request: ScmCommitCreateRequest;
+    gitFeatures?: () => Promise<GitExecutionFeatures>;
 }): Promise<ScmCommitCreateResponse> {
     const { context, request } = input;
+    if (request.preparedTreeOid !== undefined && (request.preparedTreeOid !== request.expectedCandidateTreeOid || request.scope !== undefined || request.patches !== undefined || !normalizeCommitRef(request.preparedTreeOid).ok)) {
+        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'A host-prepared tree requires the exact expected tree and cannot be combined with scope or patches' };
+    }
+    if (request.expectedIndexTreeOid !== undefined && (request.preparedTreeOid === undefined || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(request.expectedIndexTreeOid))) {
+        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Expected index authority requires a host-prepared tree and exact index tree object ID' };
+    }
+    if ((request.expectedCandidateTreeOid !== undefined && (request.expectedHeadOid === undefined || request.expectedRef === undefined || request.mode === 'amend')) ||
+        (request.acceptedHookTreeOid !== undefined && request.expectedCandidateTreeOid === undefined)) {
+        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Safe-plan commits require an exact original tree, parent and ref and cannot amend' };
+    }
     const message = (request.message ?? '').trim();
     if (!message) {
         return {
@@ -232,41 +204,27 @@ export async function gitCommitCreate(input: {
         }
     }
 
-    const usesIsolatedIndex = isAmend || Boolean(request.scope) || hasPatchSelection;
-    let temporaryIndex: GitTemporaryIndex | null = null;
-    if (usesIsolatedIndex) {
-        const tempIndex = await createGitTemporaryIndex({
-            cwd: context.cwd,
-            seed: request.scope?.kind === 'all-pending' ? 'current-index' : 'head-or-empty',
-        });
-        if (!tempIndex.success) {
-            return tempIndex;
-        }
-        temporaryIndex = tempIndex.tempIndex;
+    const captured = await captureGitCommitTarget(context, request);
+    if (!captured.success) return captured.response;
+    const target = captured.target;
+    const withPublication = (response: ScmCommitCreateResponse): ScmCommitCreateResponse => ({
+        ...response,
+        publication: response.publication ?? { state: 'not_published', expectedHeadOid: target.headOid, expectedRef: target.ref, indexReconciliation: 'not_required' },
+    });
+    if (request.expectedCandidateTreeOid !== undefined && (target.mergeHeads.length || target.cherryPickOid || target.stateFiles.some((file) => file.name === 'REVERT_HEAD' && file.content !== null))) {
+        return withPublication({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BRANCH_OPERATION_IN_PROGRESS, error: 'Complete the current Git operation before applying a commit plan' });
     }
-    const gitEnv = temporaryIndex?.env;
-
-    // Snapshot the current live index selection so atomic commits can synchronize safely without
-    // clobbering other actors' staged changes.
-    const preStagedPathsResult = usesIsolatedIndex
-        ? await runGitCommand({
-            cwd: context.cwd,
-            args: ['diff', '--cached', '--name-status', '-z'],
-            timeoutMs: 5000,
-        })
-        : null;
-    const preStagedPathSet = preStagedPathsResult?.success
-        ? parseGitNameStatusZPaths(preStagedPathsResult.stdout)
-        : new Set<string>();
-
-    try {
-        if (preStagedPathsResult && !preStagedPathsResult.success) {
-            return {
-                success: false,
-                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-                error: preStagedPathsResult.stderr || 'Failed to inspect staged paths before commit',
-            };
-        }
+    const tempIndex = await createGitTemporaryIndex({
+        cwd: context.cwd,
+        seed: request.preparedTreeOid !== undefined ? { kind: 'tree', treeOid: request.preparedTreeOid } : request.scope?.kind === 'all-pending' || (!isAmend && !request.scope && !hasPatchSelection)
+            ? 'current-index'
+            : { kind: 'tree', treeOid: target.baseTreeOid },
+    });
+    if (!tempIndex.success) return withPublication(tempIndex);
+    const temporaryIndex: GitTemporaryIndex = tempIndex.tempIndex;
+    const gitEnv = temporaryIndex.env;
+    let commitResponse: ScmCommitCreateResponse | undefined;
+    const prepareAndPublish = async (): Promise<ScmCommitCreateResponse> => {
         if (request.scope?.kind === 'all-pending') {
             const stageAll = await runGitCommand({
                 cwd: context.cwd,
@@ -333,23 +291,6 @@ export async function gitCommitCreate(input: {
                         error: includeResult.stderr || 'Failed to stage scoped commit paths',
                     };
                 }
-
-                const effectiveExclude = normalizedExclude.normalizedPaths.filter((path) => !normalizedPatchPathSet.has(path));
-                if (effectiveExclude.length > 0) {
-                    const excludeResult = await runGitCommand({
-                        cwd: context.cwd,
-                        args: ['reset', '--', ...effectiveExclude.map(toLiteralPathspec)],
-                        timeoutMs: 10_000,
-                        env: gitEnv,
-                    });
-                    if (!excludeResult.success) {
-                        return {
-                            success: false,
-                            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-                            error: excludeResult.stderr || 'Failed to exclude scoped commit paths',
-                        };
-                    }
-                }
             }
         }
 
@@ -368,7 +309,7 @@ export async function gitCommitCreate(input: {
 
         const hasIncludedChanges = await runGitCommand({
             cwd: context.cwd,
-            args: ['diff', '--cached', '--quiet'],
+            args: ['diff', '--cached', '--quiet', target.baseTreeOid],
             timeoutMs: 5000,
             env: gitEnv,
         });
@@ -381,7 +322,7 @@ export async function gitCommitCreate(input: {
                     : 'Failed to inspect included changes',
             };
         }
-        if (hasIncludedChanges.exitCode === 0 && !isAmend) {
+        if (hasIncludedChanges.exitCode === 0 && !isAmend && !target.mergeHeads.length) {
             return {
                 success: false,
                 errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_REQUIRED,
@@ -389,98 +330,22 @@ export async function gitCommitCreate(input: {
             };
         }
 
-        const commit = await runGitCommand({
-            cwd: context.cwd,
-            args: ['commit', ...(isAmend ? ['--amend'] : []), ...(request.signOff ? ['--signoff'] : []), '-m', message],
-            timeoutMs: 20_000,
-            env: gitEnv,
-        });
-        const indeterminateErrorCode = getScmCommandIndeterminateErrorCode(commit);
-        if (indeterminateErrorCode) {
-            return {
-                success: false,
-                errorCode: indeterminateErrorCode,
-                error: commit.stderr || 'Commit completion could not be determined',
-                outcome: { v: 1, kind: 'outcome_unknown', errorCode: indeterminateErrorCode, reconciliation: { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] },
-            };
-        }
-        if (!commit.success) {
-            const errorCode = mapGitErrorCode(commit.stderr);
-            return {
-                success: false,
-                errorCode,
-                error: commit.stderr || 'Commit failed',
-                outcome: { v: 1, kind: 'failed', errorCode, nextActions: [] },
-            };
-        }
-
-        const sha = await runGitCommand({
-            cwd: context.cwd,
-            args: ['rev-parse', 'HEAD'],
-            timeoutMs: 5000,
-        });
-        const commitSha = sha.success ? sha.stdout.trim() : undefined;
-
-        let liveIndexSyncError: string | null = null;
-        if (usesIsolatedIndex) {
-            if (!commitSha) {
-                liveIndexSyncError = 'Failed to resolve commit SHA for post-commit index synchronization';
-            } else {
-                // Synchronize live index entries for files touched by the commit so the live index doesn't appear
-                // "staged against HEAD" due to HEAD advancing in an isolated index.
-                // Important: do not reset paths that were already staged in the live index.
-                const touched = await runGitCommand({
-                    cwd: context.cwd,
-                    args: ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', '-z', commitSha],
-                    timeoutMs: 5000,
-                });
-                if (!touched.success) {
-                    if (preStagedPathSet.size === 0) {
-                        // Safe fallback: no live staging to preserve, so we can fully resync.
-                        const resetAll = await runGitCommand({
-                            cwd: context.cwd,
-                            args: ['reset', '--mixed', 'HEAD'],
-                            timeoutMs: 10_000,
-                        });
-                        if (!resetAll.success) {
-                            liveIndexSyncError = resetAll.stderr || 'Failed to synchronize live index after commit';
-                        }
-                    } else {
-                        liveIndexSyncError =
-                            touched.stderr || 'Failed to compute commit paths for safe live index synchronization';
-                    }
-                } else {
-                    const touchedPaths = parseGitNameStatusZPaths(touched.stdout);
-                    const pathsToReset = Array.from(touchedPaths).filter((p) => !preStagedPathSet.has(p));
-                    if (pathsToReset.length > 0) {
-                        const resetResult = await runGitCommand({
-                            cwd: context.cwd,
-                            args: ['reset', '--mixed', 'HEAD', '--', ...pathsToReset.map(toRepoRootLiteralPathspec)],
-                            timeoutMs: 10_000,
-                        });
-                        if (!resetResult.success) {
-                            liveIndexSyncError = resetResult.stderr || 'Failed to synchronize live index after commit';
-                        }
-                    }
-                }
-            }
-        }
-
-        if (liveIndexSyncError) {
-            return {
-                success: false,
-                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-                error: `Commit was created, but live index synchronization failed: ${liveIndexSyncError}`,
-                commitSha,
-                outcome: commitSha ? { v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, effect: { kind: 'commit', commitSha }, nextActions: [{ kind: 'reconcile_index' }] } : { v: 1, kind: 'outcome_unknown', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, reconciliation: { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] },
-            };
-        }
-        return {
-            success: true,
-            commitSha,
-        };
+        return publishGitCommit({ context, request, target, index: temporaryIndex, message, gitFeatures: input.gitFeatures });
+    };
+    try {
+        commitResponse = withPublication(await prepareAndPublish());
+        return commitResponse;
     } finally {
-        temporaryIndex?.cleanup();
+        try { temporaryIndex.cleanup(); } catch (error) {
+            const cleanupError = error instanceof Error ? error.message : String(error);
+            if (commitResponse) {
+                commitResponse.success = false;
+                commitResponse.errorCode = SCM_OPERATION_ERROR_CODES.COMMAND_FAILED;
+                commitResponse.error = [commitResponse.error, `Temporary commit index cleanup failed: ${cleanupError}`].filter(Boolean).join('\n');
+                if (commitResponse.commitSha) commitResponse.outcome = { v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, effect: { kind: 'commit', commitSha: commitResponse.commitSha }, nextActions: [{ kind: 'refresh' }] };
+            } else return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: cleanupError,
+                publication: { state: 'not_published', expectedHeadOid: target.headOid, expectedRef: target.ref, indexReconciliation: 'not_required' } };
+        }
     }
 }
 

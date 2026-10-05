@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { useSyncExternalStore } from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { renderScreen } from '@/dev/testkit';
 import { createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
@@ -69,7 +71,7 @@ vi.mock('@/modal', async () => {
 });
 
 import { useSegments } from 'expo-router';
-import { RootLayoutRedirectGate } from './RootLayoutRedirectGate';
+import { RootLayoutRedirectGate, WebServerOverrideGate } from './RootLayoutRedirectGate';
 
 type Counter = { n: number };
 
@@ -85,15 +87,19 @@ function NavProbe({ counter }: { counter: Counter }): null {
 }
 
 describe('RootLayoutRedirectGate', () => {
+    let locks: ReturnType<typeof installWebLockManagerMock>;
     beforeEach(() => {
         authState.isAuthenticated = true;
         replaceSpy.mockClear();
         runtimeFetchSpy.mockClear();
         vi.unstubAllGlobals();
+        locks = installWebLockManagerMock();
         navState.listeners.clear();
         navState.pathname = '/';
         navState.segments = [];
     });
+
+    afterEach(() => { locks.restore(); });
 
     it('does not re-render its children (Stack subtree) on a pathname/segments-only change', async () => {
         authState.isAuthenticated = true;
@@ -195,12 +201,11 @@ describe('RootLayoutRedirectGate', () => {
             location: { href: 'https://app.example.test/session/new?server=https%3A%2F%2Funreachable.example.test' },
             history: { replaceState: vi.fn() },
         });
-        vi.stubGlobal('document', {});
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
         const activeBefore = getActiveServerSnapshot().serverId;
         const screen = await renderScreen(
-            React.createElement(RootLayoutRedirectGate, null, React.createElement(React.Fragment)),
+            <WebServerOverrideGate><RootLayoutRedirectGate><React.Fragment /></RootLayoutRedirectGate></WebServerOverrideGate>,
         );
         try {
             await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
@@ -226,11 +231,10 @@ describe('RootLayoutRedirectGate', () => {
             location: { href: `https://app.example.test/?server=${encodeURIComponent(address)}` },
             history: { replaceState: vi.fn() },
         });
-        vi.stubGlobal('document', {});
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
         const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
-        const screen = await renderScreen(<RootLayoutRedirectGate><React.Fragment /></RootLayoutRedirectGate>);
+        const screen = await renderScreen(<WebServerOverrideGate><React.Fragment /></WebServerOverrideGate>);
         try {
             await vi.waitFor(() => expect(profiles.getActiveServerSnapshot().serverUrl).toBe(address));
             expect(profiles.resolveSelectedAccountServiceEndpoint()).toEqual(beforeService);

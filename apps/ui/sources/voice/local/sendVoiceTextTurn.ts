@@ -1,7 +1,6 @@
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { createTtsChunker, resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
 import { createTtsPlaybackController, type TtsSpeakHandle } from '@/voice/output/TtsController';
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
@@ -201,7 +200,6 @@ export async function sendVoiceTextTurn(params: {
       autoSpeak &&
       config?.streaming?.enabled === true &&
       config?.streaming?.ttsEnabled === true;
-    const streamingChunkChars = resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars);
 
     voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
     const canonicalOutputTurnIds = new Set<string>();
@@ -210,7 +208,6 @@ export async function sendVoiceTextTurn(params: {
       throwIfAborted();
       const playbackEpoch = params.playbackController.captureEpoch();
       let currentOutputTurnId: string | null = null;
-      let chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
       let canonicalTurnFinalized = false;
       let canonicalTurnCancelled = false;
       let speakHandle: TtsSpeakHandle | null = null;
@@ -223,7 +220,6 @@ export async function sendVoiceTextTurn(params: {
         if (currentOutputTurnId === turnId) return;
         currentOutputTurnId = turnId;
         canonicalOutputTurnIds.add(turnId);
-        chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
         canonicalTurnFinalized = false;
         canonicalTurnCancelled = false;
         speakHandle = null;
@@ -362,11 +358,10 @@ export async function sendVoiceTextTurn(params: {
             if (!streamingSpeechEnabled) {
               continue;
             }
-            if (chunker) {
-              chunker.push(effect.text).forEach((chunk) => queueSpokenChunk(chunk));
-            } else {
-              queueSpokenChunk(effect.text);
-            }
+            // The output producer has already admitted this semantic segment.
+            // Provider-owned synthesis applies its actual request-size limits;
+            // repeating sentence admission here delays first audio until final.
+            queueSpokenChunk(effect.text);
           } else if (effect.kind === 'display_status') {
             voiceOutputStatusStore.show({
               sessionId,
@@ -384,7 +379,6 @@ export async function sendVoiceTextTurn(params: {
         }
         if (finalAccepted && !canonicalTurnFinalized) {
           canonicalTurnFinalized = true;
-          chunker?.flush().forEach((chunk) => queueSpokenChunk(chunk));
           await finalizeStreamedTurn();
         }
       };
@@ -396,9 +390,8 @@ export async function sendVoiceTextTurn(params: {
       ) => {
         if (!autoSpeak || !assistantText.trim()) return;
         noteAssistantFinal(assistantEntryId);
-        if (streamingSpeechEnabled && currentOutputTurnId && chunker) {
+        if (streamingSpeechEnabled && currentOutputTurnId) {
           if (canonicalTurnFinalized) return;
-          chunker.flush().forEach((chunk) => queueSpokenChunk(chunk));
           if (queuedChunkCount === 0) {
             queueSpokenChunk(assistantText);
           }

@@ -5,6 +5,7 @@ import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { selectWidgetPlacementsBySurface } from '@/sync/domains/plugins/ui/widgetContract';
 import { t } from '@/text';
+import { resolveSessionScmReviewComparisonLabel } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 /**
  * Who a Session widget says it comes from.
@@ -46,11 +47,12 @@ export function resolveBoardWidgetProvenance(
     projection: PluginUiProjectionModel | null | undefined,
 ): BoardWidgetProvenance {
     if (source.kind === 'declarative') return provenance(t('sessionBoard.item.provenance.note'));
-    if (source.kind !== 'installedSurface') {
+    if (source.kind === 'walkthrough') return provenance(resolveSessionScmReviewComparisonLabel({ kind: source.comparison }));
+    if (source.kind !== 'widget' || source.instance.definition.kind !== 'installed') {
         return provenance(t('sessionBoard.item.provenance.interactiveView'));
     }
 
-    const surface = source.surface;
+    const surface = source.instance.definition.surface;
     const installed = projection?.installedPackagesById[surface.pluginId] ?? null;
     const pluginName = installed?.displayName.trim();
     if (!pluginName) {
@@ -63,7 +65,7 @@ export function resolveBoardWidgetProvenance(
     }
 
     const placements = projection
-        ? selectWidgetPlacementsBySurface(projection, surface, 'session')
+        ? selectWidgetPlacementsBySurface(projection, surface)
         : [];
     const localize = createPluginLocalizedTextResolver({ projection });
     // Exactly one admitted placement is the same rule the mount resolver uses;

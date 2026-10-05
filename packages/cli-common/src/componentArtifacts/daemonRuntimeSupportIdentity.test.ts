@@ -341,7 +341,7 @@ describe('daemon runtime support identity', () => {
     );
   });
 
-  it('stages only daemon support entries and verifies the same owner-local identity', async () => {
+  it.each([undefined, 'a'.repeat(64)])('stages only daemon support entries and verifies the same owner-local identity (source %s)', async (workspaceSourceFingerprint) => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
     await writeFixtureFile(
@@ -356,6 +356,7 @@ describe('daemon runtime support identity', () => {
       repoRoot: root,
       target: targetForHost(),
       goVersion: 'go version go1.fixture',
+      ...(workspaceSourceFingerprint === undefined ? {} : { workspaceSourceFingerprint }),
       cliProxyApiManagedRuntimeExecutablePath: prebuiltRuntimePath,
       processCustodyRuntimeExecutablePath: prebuiltCustodyPath,
     };
@@ -437,6 +438,70 @@ describe('daemon runtime support identity', () => {
     expect(startedBeforeRelease).toBe(true);
     expect(commandObservedWhileCliDistLocked).toBe(true);
     expect(commandObservedWhileSharedDepsLocked).toBe(true);
+  });
+
+  it.each(['binary', 'cli-bundle'] as const)('binds daemon code to prepared immutable support and rejects mixed frames (%s)', async (changePhase) => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root);
+    // Repository JavaScript owner boundary: exercise the real Stack composition,
+    // replacing only command discovery, Go/compiler processes, and Bun execution.
+    const owner: unknown = await import(new URL('../../../../apps/stack/scripts/build/build_daemon_artifact.mjs', import.meta.url).href);
+    if (!owner || typeof owner !== 'object' || !('buildDaemonArtifact' in owner)
+      || typeof owner.buildDaemonArtifact !== 'function') throw new Error('Missing daemon artifact owner');
+    const target = targetForHost();
+    const workspaceSourceFingerprint = 'a'.repeat(64);
+    const identityInput = { repoRoot: root, target, goVersion: 'go version go1.fixture', workspaceSourceFingerprint };
+    const support = readCliBinaryArtifactSupportIdentity(identityInput);
+    const runtime = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
+    const stackBaseDir = join(root, 'stack');
+    const artifactDir = join(stackBaseDir, 'artifacts', 'daemon', 'code');
+    const supportPayload = join(stackBaseDir, 'artifacts', 'daemon-support', support.fingerprint, 'payload');
+    const latePublicationPath = join(root, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
+    const build = owner.buildDaemonArtifact({
+      rootDir: root, stackBaseDir, artifactDir, artifactFingerprint: 'code',
+      supportArtifactFingerprint: support.fingerprint, workspaceSourceFingerprint,
+      sourceMetadata: { repoDir: root, sourceFingerprint: 'source', builtAt: '2026-10-03T18:00:00.000Z' },
+      preparedWorkspacePublication: { workspaceRuntimeIdentity: runtime.fingerprint, workspaceRuntimePackages: runtime.packageNames },
+      runCaptureImpl: async () => 'go version go1.fixture',
+      buildDaemonSupportArtifactPayloadImpl: async (input: Parameters<typeof buildCliBinaryArtifactSupportPayload>[0]) =>
+        await buildCliBinaryArtifactSupportPayload({ ...input,
+          commandProbe: (command) => command === 'yarn',
+          runCommand: async (command, args) => {
+            const index = args.indexOf(command === 'go' ? '-o' : '--output');
+            if (index < 0 || !args[index + 1]) throw new Error('Missing native process output');
+            await writeFixtureFile(args[index + 1], 'native support runtime\n');
+          },
+        }),
+      buildCliBinaryArtifactPayloadImpl: async (input: Parameters<typeof buildCliBinaryArtifactCodePayload>[0]) =>
+        await buildCliBinaryArtifactCodePayload({ ...input,
+          commandProbe: (command) => command === 'bun' || command === 'yarn',
+          runCommand: async () => {
+            const entrypoint = join(root, 'apps', 'cli', 'dist', 'index.mjs');
+            await writeFixtureFile(entrypoint, 'export const daemonCode = true;\n');
+            if (changePhase === 'cli-bundle') await writeFixtureFile(latePublicationPath, 'export const newerPublication = true;\n');
+            const compiledRuntime = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
+            cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+              workspaceRuntimeIdentity: compiledRuntime.fingerprint, workspaceRuntimePackages: compiledRuntime.packageNames,
+            });
+          },
+          compileBinary: async ({ outfile }) => {
+            expect(existsSync(join(supportPayload, '.happier-daemon-support.json'))).toBe(true);
+            await writeFixtureFile(latePublicationPath, 'export const newerPublication = true;\n');
+            await writeFixtureFile(join(root, 'packages', 'cli-common', 'src', 'late.ts'), 'export const laterSource = true;\n');
+            await writeFixtureFile(outfile, 'compiled against prepared publication\n');
+          },
+      }),
+    });
+    if (changePhase === 'cli-bundle') {
+      await expect(build).rejects.toThrow(/daemon code does not match its prepared workspace runtime frame/u);
+      expect(existsSync(join(artifactDir, 'manifest.json'))).toBe(false);
+      return;
+    }
+    await build;
+    await expect(readFile(join(artifactDir, 'payload', 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js'), 'utf8'))
+      .resolves.toBe('export {};\n');
+    await expect(readFile(latePublicationPath, 'utf8')).resolves.toContain('newerPublication');
+    await expect(readFile(join(artifactDir, 'manifest.json'), 'utf8')).resolves.toContain(support.fingerprint);
   });
 
   it('builds daemon code without recopying its stable runtime support closure', async () => {

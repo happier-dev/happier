@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen } from '@/dev/testkit';
+import { EmptyState } from './EmptyState';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -22,8 +23,6 @@ const Stub = (props: { testID?: string }) => React.createElement('Stub', props);
 
 describe('EmptyState', () => {
     it('renders the icon, title and subtitle', async () => {
-        const { EmptyState } = await import('./EmptyState');
-
         const screen = await renderScreen(
             <EmptyState
                 testID="empty"
@@ -46,8 +45,6 @@ describe('EmptyState', () => {
     });
 
     it('renders the action when provided', async () => {
-        const { EmptyState } = await import('./EmptyState');
-
         const screen = await renderScreen(
             <EmptyState
                 icon={<Stub />}
@@ -63,8 +60,6 @@ describe('EmptyState', () => {
     });
 
     it('keeps every slot in reading order in the inline add layout', async () => {
-        const { EmptyState } = await import('./EmptyState');
-
         const screen = await renderScreen(
             <EmptyState
                 testID="connect"
@@ -88,8 +83,6 @@ describe('EmptyState', () => {
     });
 
     it('keeps the centered slots when the add variant frames them', async () => {
-        const { EmptyState } = await import('./EmptyState');
-
         const screen = await renderScreen(
             <EmptyState
                 testID="pool-empty"
@@ -108,7 +101,6 @@ describe('EmptyState', () => {
     });
 
     it('offers a quiet second way forward under the primary action, and only with one', async () => {
-        const { EmptyState } = await import('./EmptyState');
         const openPolicy = vi.fn();
 
         const screen = await renderScreen(
@@ -138,7 +130,6 @@ describe('EmptyState', () => {
     });
 
     it('says a list line\'s ways forward as quiet inline links, in order', async () => {
-        const { EmptyState } = await import('./EmptyState');
         const showAll = vi.fn();
         const archived = vi.fn();
 
@@ -164,7 +155,6 @@ describe('EmptyState', () => {
     });
 
     it('keeps a list line\'s explanation whole instead of cutting it to one line', async () => {
-        const { EmptyState } = await import('./EmptyState');
         const explanation = 'None of your machines is online. Services appear when one is, from the agents it runs.';
 
         const screen = await renderScreen(
@@ -179,7 +169,6 @@ describe('EmptyState', () => {
     });
 
     it('frames a page state with the dashed "add something here" outline only when it invites adding', async () => {
-        const { EmptyState } = await import('./EmptyState');
         const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
             ? Object.assign({}, ...style.map(flatten))
             : (style && typeof style === 'object' ? style as Record<string, unknown> : {});
@@ -197,8 +186,6 @@ describe('EmptyState', () => {
     });
 
     it('omits the action slot when no action is provided', async () => {
-        const { EmptyState } = await import('./EmptyState');
-
         const screen = await renderScreen(
             <EmptyState icon={<Stub />} title="Nothing here" actionTestID="empty-action" />,
         );

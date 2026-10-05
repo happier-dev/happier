@@ -19,12 +19,15 @@ import type { StoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveWorkflowAuthorizedSession } from '@/daemon/workflows/invocationRecoveryObserver';
 
 type Materialization = Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>;
 type RoleSelection = Omit<ResolveRoleSelectionV1Input, 'roleId' | 'workflowRoles' | 'runOverrides'>;
 type MachineTarget = Readonly<{ machineId: string; directory: string; signal?: AbortSignal; roleSelection?: RoleSelection }>;
 
 export type WorkflowMaterializationHostDeps = Readonly<{
+  credentials: StoredCredentials;
+  serverHttpBaseUrl?: string;
   callMachineAction: (input: Readonly<{ machineId: string; method: string; request: unknown; signal?: AbortSignal }>) => Promise<unknown>;
   readRoleSelection: (signal?: AbortSignal) => Promise<RoleSelection>;
   readLaunchProfile: (profileId: string, signal?: AbortSignal) => Promise<AiLaunchProfile | null>;
@@ -67,6 +70,21 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
     };
     let observation: ReturnType<typeof observeMachine> | undefined;
     const readMachine = () => observation ??= observeMachine();
+    const sessions = new Map<string, Promise<boolean>>();
+    const readSessionAvailability = (sessionId: string) => {
+      let availability = sessions.get(sessionId);
+      if (!availability) {
+        const read = () => resolveWorkflowAuthorizedSession({ credentials: deps.credentials, sessionId,
+          machineId: target.machineId, ...(target.signal ? { signal: target.signal } : {}) });
+        availability = (deps.serverHttpBaseUrl ? runWithServerHttpBaseUrl(deps.serverHttpBaseUrl, read) : read())
+          .then((authorized) => authorized !== null).catch(() => {
+            target.signal?.throwIfAborted();
+            return false;
+          });
+        sessions.set(sessionId, availability);
+      }
+      return availability;
+    };
     const roleSelection = { ...await deps.readRoleSelection(target.signal), ...target.roleSelection };
     if (roleSelection.defaultEngine) {
       // Contextual second-opinion selection can choose another Agent family.
@@ -109,11 +127,18 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
         readWorkflowDefinition: (ref) => deps.readWorkflowDefinition(ref, target.signal),
         readLaunchProfile: (profileId) => deps.readLaunchProfile(profileId, target.signal),
         readActionContract,
-        resolveTargetAvailability: async (leaf) => {
+        resolveTargetAvailability: async (leaf, { sessionIds }) => {
+          for (const sessionId of sessionIds) {
+            if (!await readSessionAvailability(sessionId)) return false;
+          }
+          if (leaf.kind === 'wait' || leaf.kind === 'workflow') return true;
           if (leaf.actionId) return (await readActionContract(leaf.actionId)) !== null;
           const selection = leaf.selection;
-          if (!selection.agentTarget) return leaf.executionTarget.kind === 'session'
-            && (selection.conversation?.kind === 'origin_session' || selection.conversation?.kind === 'existing_session');
+          // Bound Session steps continue that Session's own Agent. Synthetic
+          // Action Agent-start checks still require creation inventory.
+          if (leaf.kind === 'step' && leaf.executionTarget.kind === 'session'
+            && (selection.conversation?.kind === 'origin_session' || selection.conversation?.kind === 'existing_session')) return true;
+          if (!selection.agentTarget) return false;
           const key = buildBackendTargetKeyV2(selection.agentTarget);
           const machine = await readMachine();
           if (!machine) return false;

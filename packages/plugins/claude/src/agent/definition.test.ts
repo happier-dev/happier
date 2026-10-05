@@ -4,6 +4,10 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('AGENT_DEFINITION', () => {
+    it('declares prompted JSON output through the canonical capability projection', () => {
+        expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities).toHaveProperty('structuredOutput', { formats: ['json'] });
+    });
+
     it('keeps strict CLI/auth authority in the native manifest', () => {
         expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
             executable: { binaryName: 'claude' },

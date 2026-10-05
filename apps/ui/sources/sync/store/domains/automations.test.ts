@@ -142,6 +142,12 @@ describe('shared workflow trigger observations', () => {
         const select = createWorkflowTriggerSetSelector('account_inline');
         expect(select(h.get()).map((set) => set.automationId)).toEqual(['legacy']);
         expect(select(h.get())).toBe(select(h.get()));
+        // Reviewed conversion keeps a manual Automation's steps without inventing a schedule.
+        const converted: WorkflowTriggerSetV1 = { ...current, automationId: 'legacy', revision: 2,
+            target: { kind: 'inline', definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'prompt',
+                document: { text: 'Manual prompt', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] } } };
+        h.get().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set: converted });
+        expect(select(h.get()).map((set) => set.automationId)).toEqual(['legacy']);
     });
 
     it('suppresses an unchanged observation in the real store and retires inline membership on retarget', () => {

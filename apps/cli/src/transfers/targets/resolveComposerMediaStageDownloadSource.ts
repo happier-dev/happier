@@ -11,7 +11,7 @@ import {
 } from '@/transfers/policy/serverRoutedTransferPolicy';
 import type { ComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
-import type { DownloadTransferSource } from './downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 
 export type ComposerMediaStageDownloadInitRequest = Readonly<{
   t: 'composer_media_stage_inspect_v1';

@@ -20,6 +20,7 @@ export const PromptDocArtifactHeaderV1Schema = z
     tags: z.array(z.string().min(1)).optional(),
     origin: z.enum(['built_in', 'user', 'imported']).optional(),
     locked: z.boolean().optional(),
+    favorite: z.boolean().optional(),
   })
   .passthrough();
 

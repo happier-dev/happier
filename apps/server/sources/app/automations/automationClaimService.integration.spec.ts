@@ -394,6 +394,7 @@ describe("automationClaimService (integration)", () => {
             accountId,
             machineId,
             leaseDurationMs: 30_000,
+            recipeFeaturePolicy: { workflowsEnabled: false },
         })).resolves.toEqual({ run: null, accountCurrentness: null });
     });
 

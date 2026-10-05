@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { createDaemonControlRequestLifetime as createRequestLifetime } from '../controlRequestLifetime';
 
 import {
   ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1,
@@ -93,31 +94,6 @@ function isFastifyExternalActionBodyParseError(error: unknown): boolean {
       || error.code === 'FST_ERR_CTP_EMPTY_JSON_BODY'
       || error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE'
     );
-}
-
-function createRequestLifetime(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Readonly<{ signal: AbortSignal; dispose: () => void }> {
-  const controller = new AbortController();
-  const abort = (): void => {
-    if (!controller.signal.aborted) {
-      controller.abort(new Error('External Action request ended'));
-    }
-  };
-  const abortIfResponseDidNotFinish = (): void => {
-    if (!reply.raw.writableEnded) abort();
-  };
-  request.raw.once('aborted', abort);
-  reply.raw.once('close', abortIfResponseDidNotFinish);
-  if (request.raw.aborted) abort();
-  return {
-    signal: controller.signal,
-    dispose: () => {
-      request.raw.removeListener('aborted', abort);
-      reply.raw.removeListener('close', abortIfResponseDidNotFinish);
-    },
-  };
 }
 
 const externalActionRequestAdmission = Symbol('externalActionRequestAdmission');

@@ -142,7 +142,7 @@ describe('Sync ready notification dedupe', () => {
         voiceOnReadyMock.mockReset();
         notifyActivityReadyMock.mockReset();
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         sync.disconnectServer();
     });
 

@@ -26,7 +26,7 @@ import {
 } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 import { testkitLocator } from '../../corpus/testkit/observations.test-support.js';
 import { describeTriageEntrySessionPhaseV1 } from './sessionStartOutcome.js';
-import { useTriageEntrySessionStart } from './useEntrySessionStart.js';
+import { useTriageEntrySessionStart, type TriageEntrySessionStartRequestV1 } from './useEntrySessionStart.js';
 
 /**
  * The controller is exercised through its actual mounted Host API boundary:
@@ -151,17 +151,20 @@ const REJOINED_RESULT = {
     delivery: 'alreadyAccepted',
 } as const satisfies TriageStartEntrySessionResultV1;
 
-let activeStartRequest = START_REQUEST;
+let activeStartRequest: TriageEntrySessionStartRequestV1 = START_REQUEST;
 let mintedKeys: string[] = [];
 let notice: string | null = null;
+let effectSetups = 0;
+const mintCreationKey = () => {
+    const key = `minted-key-${mintedKeys.length + 1}`;
+    mintedKeys.push(key);
+    return key;
+};
 
-const startProbeSurface = defineUiSurface(function StartProbe(_context: RenderContext): React.ReactElement {
+function StartProbe(_context: RenderContext): React.ReactElement {
+    React.useEffect(() => { effectSetups += 1; }, []);
     const controller = useTriageEntrySessionStart({
-        mintCreationKey: () => {
-            const key = `minted-key-${mintedKeys.length + 1}`;
-            mintedKeys.push(key);
-            return key;
-        },
+        mintCreationKey,
     });
     notice = describeTriageEntrySessionPhaseV1(controller.phase)?.labelKey ?? null;
     return (
@@ -170,7 +173,8 @@ const startProbeSurface = defineUiSurface(function StartProbe(_context: RenderCo
             onPress={() => { controller.start(activeStartRequest); }}
         />
     );
-});
+}
+const startProbeSurface = defineUiSurface(StartProbe);
 
 const mounted: PluginUiTestkit[] = [];
 let seeds: unknown[] = [];
@@ -181,6 +185,7 @@ let startInputs: TriageStartEntrySessionInputV1[] = [];
 let startCarriers: unknown[] = [];
 /** Every New Session settlement question this mount asked the host. */
 let draftRequests: unknown[] = [];
+let comparisonOpens: unknown[] = [];
 
 describe('terminal structured-input presentation', () => {
     it.each(['failed', 'cancelled'] as const)(
@@ -205,12 +210,15 @@ describe('terminal structured-input presentation', () => {
 type ScriptedSelection = 'submitted' | 'cancelled' | 'refused';
 
 async function mountProbe(input: Readonly<{
-    request?: typeof START_REQUEST;
+    strictMode?: boolean;
+    request?: TriageEntrySessionStartRequestV1;
     seedResult?: unknown;
     /** What this plugin's own start Action answers, press by press. */
     startResults?: readonly ('lost' | TriageStartEntrySessionResultV1)[];
     /** How the host answers the source selection, in order. Default: submitted. */
     selectionResults?: readonly ScriptedSelection[];
+    linkedSession?: Readonly<{ sessionId: string; serverId?: string; machineId: string; path: string }>;
+    projects?: readonly unknown[];
 }> = {}): Promise<Readonly<{
     fixture: PluginUiTestkit;
     actionCalls: readonly string[];
@@ -224,7 +232,7 @@ async function mountProbe(input: Readonly<{
         authorPlugin: { id: 'happier.triage', version: '0.0.0' },
         surface: startProbeSurface,
         surfaceContext: createSurfaceContextFixture(),
-        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ strictMode: input.strictMode }),
         handlers: {
             executeAction: async ({ action, input: actionInput, selectedActionInput }) => {
                 const actionId = String(action);
@@ -252,9 +260,20 @@ async function mountProbe(input: Readonly<{
                         }],
                     };
                 }
-                if (actionId === 'projects.list') return { items: [], truncated: false };
+                if (actionId === 'projects.list') return { items: input.projects ?? [], truncated: false };
+                if (actionId === 'session.open') {
+                    comparisonOpens.push(actionInput);
+                    return null;
+                }
                 throw new Error(`Unexpected action: ${actionId}`);
             },
+            readSession: async ({ sessionId }) => input.linkedSession?.sessionId === sessionId ? {
+                sessionId, ...(input.linkedSession.serverId === undefined ? {} : { serverId: input.linkedSession.serverId }),
+                lifecycle: 'active', runtime: 'idle', operational: 'ready',
+                workStatus: { bucket: 'finished', tone: 'neutral', word: 'Ready' },
+                workspace: { machineId: input.linkedSession.machineId, path: input.linkedSession.path },
+                pendingPermissions: [],
+            } : null,
             openNewSession: async ({ request, preparedReviewWorkspace }) => {
                 seeds.push(request);
                 if (preparedReviewWorkspace !== undefined) openedPreparations.push(preparedReviewWorkspace);
@@ -328,10 +347,95 @@ afterEach(async () => {
     startInputs = [];
     startCarriers = [];
     draftRequests = [];
+    comparisonOpens = [];
     mintedKeys = [];
     notice = null;
+    effectSetups = 0;
     activeStartRequest = START_REQUEST;
     for (const fixture of mounted.splice(0)) await fixture.dispose();
+});
+
+const PR_COMPARISON = { kind: 'pullRequest', locator: {
+    providerId: 'forge', repository: 'acme/repository', number: 17,
+    baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40),
+} } as const;
+
+describe('read-only PR Walk placement', () => {
+    it('opens a linked reachable Session comparison without starting or preparing a checkout', async () => {
+        const { fixture, actionCalls } = await mountProbe({
+            request: { ...START_REQUEST, comparisonDestination: {
+                kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
+            }, linkedSessionIds: ['linked-session'] },
+            linkedSession: { sessionId: 'linked-session', serverId: 'server-a', machineId: 'machine-a', path: '/workspaces/example' },
+            projects: [{ projectKey: { id: 'workspace-a' },
+                serverId: 'server-a', machineId: 'machine-a', rootPath: '/workspaces/example',
+                worktrees: [], reachable: true }],
+        });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(comparisonOpens).toEqual([{ sessionId: 'linked-session', serverId: 'server-a',
+            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
+        expect(startInputs).toEqual([]);
+        expect(preparedSelections).toEqual([]);
+        expect(actionCalls).not.toContain('sessions.spawn.profiles.list');
+    });
+
+    it('uses incumbent New Session placement without preparation or prompt delivery when no link is reachable', async () => {
+        const { fixture } = await mountProbe({
+            request: { ...START_REQUEST, comparisonDestination: {
+                kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
+            }, linkedSessionIds: ['sleeping-session'] },
+            startResults: [{ v: 1, type: 'linked', sessionId: 'session-a', disposition: 'created',
+                delivery: 'none', finalOpen: 'deferred' }],
+        });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests).toHaveLength(1);
+        expect(startInputs).toHaveLength(1);
+        expect(startInputs[0]).toMatchObject({ workspaceMode: 'reference_only', finalOpen: 'deferred',
+            destination: { kind: 'new', materialization: { kind: 'referenceOnly', directory: '/workspaces/example' } } });
+        expect(startInputs[0]?.delivery).toBeUndefined();
+        expect(preparedSelections).toEqual([]);
+        expect(seeds).toEqual([]);
+        expect(comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
+            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
+    });
+
+    it('does not use an equal machine id belonging to another Home', async () => {
+        const { fixture } = await mountProbe({
+            request: { ...START_REQUEST, comparisonDestination: {
+                kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
+            }, linkedSessionIds: ['linked-session'] },
+            linkedSession: { sessionId: 'linked-session', serverId: 'server-b', machineId: 'machine-a', path: '/workspaces/example' },
+            projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a',
+                machineId: 'machine-a', rootPath: '/workspaces/example', worktrees: [], reachable: true }],
+            startResults: [{ v: 1, type: 'linked', sessionId: 'session-a', disposition: 'created',
+                delivery: 'none', finalOpen: 'deferred' }],
+        });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests).toHaveLength(1);
+        expect(comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
+            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
+    });
+
+    it('asks for placement when an older Session projection omits its Home', async () => {
+        const { fixture } = await mountProbe({
+            request: { ...START_REQUEST, comparisonDestination: {
+                kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
+            }, linkedSessionIds: ['linked-session'] },
+            linkedSession: { sessionId: 'linked-session', machineId: 'machine-a', path: '/workspaces/example' },
+            projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a',
+                machineId: 'machine-a', rootPath: '/workspaces/example', worktrees: [], reachable: true }],
+            startResults: [{ v: 1, type: 'linked', sessionId: 'session-a', disposition: 'created',
+                delivery: 'none', finalOpen: 'deferred' }],
+        });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests).toHaveLength(1);
+        expect(comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
+            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
+    });
 });
 
 describe('single-entry compose checkout handoff', () => {
@@ -433,12 +537,14 @@ describe('a start whose own response never arrived', () => {
      * for the SAME retained materialization request can, and it is the only way
      * the retained creation key ever reaches the canonical creator's rejoin.
      */
-    it('authorizes the retained prepared request again rather than replaying the spent carrier', async () => {
+    it.each([false, true])('authorizes the retained prepared request again rather than replaying the spent carrier (StrictMode: %s)', async (strictMode) => {
         const { fixture } = await mountProbe({
+            strictMode,
             request: PREPARED_REVIEW_SEND_REQUEST,
             startResults: ['lost', REJOINED_RESULT],
         });
         const press = await fixture.getByRole('button', { name: 'Compose in worktree' });
+        if (strictMode) expect(effectSetups).toBeGreaterThan(1);
 
         await act(async () => { await fixture.press(press); });
         await settle();

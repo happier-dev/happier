@@ -93,6 +93,43 @@ describe('useSelectionListKeyboardNav (base)', () => {
         expect(harness.getCurrent().focusedIndex).toBe(1);
     });
 
+    it('keeps an opt-out step unhighlighted when its options refresh until the user navigates', async () => {
+        let ids = ['a', 'b'];
+        const onActivate = vi.fn();
+        const harness = await renderHook(() => useSelectionListKeyboardNav(makeParams({
+            flatVisibleOptionIds: ids,
+            autoFocusFirstOption: false,
+            onActivate,
+        })));
+        expect(harness.getCurrent().focusedOptionId).toBeNull();
+        ids = ['a', 'b', 'c'];
+        await harness.rerender();
+        expect(harness.getCurrent().focusedOptionId).toBeNull();
+        await act(async () => {
+            harness.getCurrent().handleKey(makeKeyEvent({ key: 'ArrowDown' }).event);
+        });
+        expect(harness.getCurrent().focusedOptionId).toBe('a');
+        await act(async () => { harness.getCurrent().handleKey(makeKeyEvent({ key: 'Enter' }).event); });
+        expect(onActivate).toHaveBeenCalledWith('a');
+    });
+
+    it('honors an explicit selected row but does not seed the first virtualized action when opted out', async () => {
+        const source = makeVirtualizedSource(['a', 'b', 'c']);
+        const unselected = await renderHook(() => useSelectionListKeyboardNav(makeParams({
+            flatVisibleOptionIds: [],
+            virtualizedOptionSource: source,
+            autoFocusFirstOption: false,
+        })));
+        expect(unselected.getCurrent().focusedOptionId).toBeNull();
+        const selected = await renderHook(() => useSelectionListKeyboardNav(makeParams({
+            flatVisibleOptionIds: [],
+            virtualizedOptionSource: source,
+            autoFocusFirstOption: false,
+            preferredFocusedOptionId: 'b',
+        })));
+        expect(selected.getCurrent().focusedOptionId).toBe('b');
+    });
+
     it('keeps explicit keyboard row focus in value mode after seeding from a preferred option', async () => {
         const onActivate = vi.fn();
         const onCommitInputValue = vi.fn();

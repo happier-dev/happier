@@ -24,9 +24,14 @@ import {
   type ComposerRefV1,
 } from '@happier-dev/plugin-ui';
 import type {
+  TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
   TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
+import { TriageGetResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import type { PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
+import type { TriageActionV1 } from '../../settings/actions.js';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import {
   TriageEvidenceDisclosureProvider,
@@ -63,16 +68,18 @@ import {
   readTriageSourceDetailContributionV1,
   readTriageSourceDescriptorV1,
   readTriageSourcePrepareReviewWorkspaceOperationV1,
+  readTriageSourceGetOperationV1,
 } from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
 import { TriageDetailWholeBody, TriageSessionPanel } from './sessionPanel.js';
-import { TriageDetailPanelMount, TriageDetailTabbedBody, type TriageDetailSourceMountV1 } from './body.js';
+import { TriageDetailPanelMount, TriageDetailTabbedBody, type TriageDetailSourceMountV1, type TriageDetailTabSelectionV1 } from './body.js';
 import { TriageAgentStep, TriagePermissionCard } from './storyRail.js';
 import { TriageFixPullRequests } from './fixPullRequests.js';
 import { useTriageDetailFixPullRequest } from './useTriageDetailFixPullRequest.js';
 import { planTriageDetailTabsV1 } from './tabs.js';
 import { TRIAGE_DETAIL_ACTIONS_PANEL_V1 } from '@happier-dev/triage-protocol/v1';
+import { triageEntryRowKey } from '../../projection/listWindow.js';
 
 /**
  * The mounted detail region: the aggregate's common header, and beneath it the
@@ -97,6 +104,7 @@ import { TRIAGE_DETAIL_ACTIONS_PANEL_V1 } from '@happier-dev/triage-protocol/v1'
  */
 
 export type TriageDetailRegionProps = Readonly<{
+  tabSelection?: TriageDetailTabSelectionV1;
   headerHosted?: boolean;
   row: TriageListRowV1;
   /** Reobserves the shell-owned selected snapshot used by both identity and body. */
@@ -172,6 +180,7 @@ const DETAIL_FILL_STYLE_V1 = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 
 const DETAIL_TITLE_STYLE_V1 = Object.freeze({ flex: 1, minWidth: 0 });
 
 const EMPTY_SESSIONS: readonly TriageLinkedSessionProjectionV1[] = Object.freeze([]);
+const IGNORE_AVAILABLE_TABS = (_tabs: readonly string[]) => {};
 
 /** The words the aggregate uses for what it currently knows about the entry. */
 const PRESENCE_COPY = Object.freeze({
@@ -205,6 +214,7 @@ export type TriageDetailHeaderViewProps = Readonly<{
   pin?: TriageDetailPinActionV1;
   linkedSessionsPageState?: 'idle' | 'loading' | 'failed';
   onLoadMoreLinkedSessions?: () => void;
+  onSelectLinkedSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
   /**
    * Whether the header lists the linked Sessions. A tabbed detail shows them
    * as the Overview story's agent step instead, so they appear once.
@@ -236,8 +246,35 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   lastKnownLocator?: NonNullable<TriageEntrySessionStartRequestV1['lastKnownLocator']>;
   repository?: NonNullable<TriageEntrySessionStartRequestV1['repository']>;
   reviewWorkspace?: NonNullable<TriageEntrySessionStartRequestV1['reviewWorkspace']>;
+  comparisonRead?: Readonly<{
+    operation: PluginUiTargetedContributionOperationV1;
+    instance: TriageDetailSurfaceInputV1['instance'];
+  }>;
+  linkedSessionIds: readonly string[];
 }>): React.ReactElement {
+  const host = usePluginHostApi();
   const controller = useTriageEntrySessionStart();
+  const [comparisonFailed, setComparisonFailed] = React.useState(false);
+  const [readingComparison, setReadingComparison] = React.useState(false);
+  const reading = React.useRef(false);
+  const mounted = React.useRef(true);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const readComparison = React.useCallback(async () => {
+    const read = props.comparisonRead;
+    if (read === undefined || props.target.kind !== 'entry') return undefined;
+    const entry = props.target.entryRef;
+    const localRef = { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId };
+    const result = TriageGetResultV1Schema.safeParse(await host.executeAction(read.operation.action, {
+      v: 1, instance: read.instance, localRef,
+      ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }),
+    }));
+    if (!result.success || result.data.kind !== 'present'
+      || !pluginJsonValuesEqual(result.data.localRef, localRef)) return undefined;
+    return result.data.comparisonSource;
+  }, [host, props.comparisonRead, props.lastKnownLocator, props.target]);
   const onAction = React.useCallback((request: TriageEntryActionRequestV1) => {
     // The pressed action travels WHOLE: its mode, its profile, its prompt, its
     // delivery and its arm are all read by the one controller below. This is
@@ -250,6 +287,11 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       );
       // Said beside the control that was pressed, never swallowed.
       if (executable.status !== 'resolved') return { kind: executable.status };
+      let comparisonSource;
+      if (executable.action.target.kind === 'reviewStart') {
+        try { comparisonSource = await readComparison(); } catch { /* Findings-only review remains available. */ }
+        if (!mounted.current) return null;
+      }
       controller.start({
         action: executable.action,
         entryRef: request.entryRef,
@@ -268,10 +310,44 @@ function TriageEntryScopedActionRegion(props: Readonly<{
         // re-reading the entry.
         ...(props.repository === undefined ? {} : { repository: props.repository }),
         ...(props.reviewWorkspace === undefined ? {} : { reviewWorkspace: props.reviewWorkspace }),
+        ...(comparisonSource === undefined ? {} : { comparisonSource }),
       });
       return null;
     })();
-  }, [controller, props]);
+  }, [controller, props, readComparison]);
+  const walk = React.useCallback(() => {
+    if (reading.current || props.target.kind !== 'entry') return;
+    const target = props.target;
+    reading.current = true;
+    setReadingComparison(true);
+    setComparisonFailed(false);
+    void (async () => {
+      try {
+        const comparison = await readComparison();
+        if (!mounted.current) return;
+        if (comparison?.kind !== 'pullRequest') { setComparisonFailed(true); return; }
+        const action: TriageActionV1 = {
+          actionId: 'walk-comparison', label: 'Walk through', enabled: true,
+          appliesTo: ['pullRequest'], profileId: null, workspaceMode: 'reference_only',
+          target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+        };
+        controller.start({
+          action, entryRef: target.entryRef, display: props.display,
+          sourceInstance: { source: target.entryRef.source, sourceInstanceId: target.sourceInstanceId },
+          presentation: props.presentation,
+          comparisonDestination: { kind: 'scmReview', comparison, view: 'walkthrough' },
+          linkedSessionIds: props.linkedSessionIds,
+          ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }),
+          ...(props.repository === undefined ? {} : { repository: props.repository }),
+        });
+      } catch {
+        if (mounted.current) setComparisonFailed(true);
+      } finally {
+        reading.current = false;
+        if (mounted.current) setReadingComparison(false);
+      }
+    })();
+  }, [controller, props, readComparison]);
   const retireReviewChooser = React.useCallback(() => {
     controller.reset();
   }, [controller]);
@@ -279,6 +355,10 @@ function TriageEntryScopedActionRegion(props: Readonly<{
 
   return (
     <Stack gap="small">
+      {props.workflowSubject === 'pullRequest' && props.comparisonRead !== undefined ? (
+        <Button titleKey="plugins.triage.surface.walkthrough" title="Walk through"
+          variant="secondary" disabled={readingComparison} onPress={walk} />
+      ) : null}
       <TriageEntryActionControls
         target={props.target}
         actions={props.actions.actions}
@@ -295,6 +375,9 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       {notice === null ? null : (
         <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
       )}
+      {comparisonFailed ? <Status tone="warning"
+        labelKey="plugins.triage.surface.comparisonUnavailable"
+        label="This source cannot open a comparison for this pull request." /> : null}
     </Stack>
   );
 }
@@ -332,7 +415,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
       {header.attention === null ? null : <Badge tone={header.attention.level === 'required' ? 'warning' : 'info'} value={header.attention.reasonLabel} />}
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
       {header.sourceReadFailed ? <Status tone="muted" labelKey="plugins.triage.surface.detail.connectionUnhealthy" label="This connection could not be read in the last pass." /> : null}
-      {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} />}
+      {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} onSelect={props.onSelectLinkedSession} />}
     </>
   );
 }
@@ -386,6 +469,27 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // revision-checked transaction the disclosed candidate becomes.
   const evidenceDisclosure = useTriageTierBEvidenceInsertion(props.originComposer);
   const row = props.row;
+  const entryKey = triageEntryRowKey(row.entryRef);
+  const [inlineSelection, setInlineSelection] = React.useState<Readonly<{
+    entryKey: string; sessionId: TriageLinkedSessionProjectionV1['sessionId'] | null; tab: string;
+  }>>({ entryKey, sessionId: null, tab: 'overview' });
+  const selectedSessionId = inlineSelection.entryKey === entryKey ? inlineSelection.sessionId : null;
+  const changeTab = React.useCallback((tab: string) => {
+    setInlineSelection((previous) => ({ entryKey,
+      sessionId: previous.entryKey === entryKey ? previous.sessionId : null, tab }));
+  }, [entryKey]);
+  const tabSelection = props.tabSelection ?? {
+    value: inlineSelection.entryKey === entryKey ? inlineSelection.tab : 'overview',
+    onChange: changeTab,
+    onAvailableTabsChange: IGNORE_AVAILABLE_TABS,
+  };
+  const selectInlineSession = (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => {
+    setInlineSelection({ entryKey, sessionId, tab: 'session' });
+    props.tabSelection?.onChange('session');
+  };
+  const selectPanelSession = (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => {
+    setInlineSelection((previous) => ({ ...previous, entryKey, sessionId }));
+  };
   const lookup = readTriageSourceDetailContributionV1(context, row.entryRef.source);
 
   // Which connection this row is showing, and the observation made through it,
@@ -452,7 +556,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const locator = observation?.locator;
   // Which tabs this entry's kind declares, joined with its linked fix PR's
   // (r0.42). The link is owned by `useTriageFixPullRequests`; an issue or error
-  // group with no fix PR the projection holds shows only the tabs it has.
+  // group retains the linked PR's declared tabs even while its mount is unavailable.
   const declaredKind = sourceDescriptor?.kinds.find((kind) => kind.id === row.entryRef.kindId);
   const fixDisplay = React.useMemo(() => (
     snapshot === undefined ? null : { title: snapshot.title, scopeLabel: snapshot.scopeLabel }
@@ -464,12 +568,16 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     workflowSubject,
     display: fixDisplay,
   });
-  const fixTabs = fixPullRequest.mount === null ? undefined : fixPullRequest.detailTabs;
+  const fixTabs = fixPullRequest.detailTabs;
   const composition = React.useMemo(() => planTriageDetailTabsV1({
     workflowSubject,
     entryTabs: declaredKind?.detailTabs,
     fixPullRequest: fixTabs === undefined ? null : { detailTabs: fixTabs },
   }), [declaredKind, fixTabs, workflowSubject]);
+  const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
+  React.useLayoutEffect(() => {
+    if (composition.kind === 'whole' && header.linkedSessions.length === 0) reportAvailableTabs?.([]);
+  }, [composition.kind, header.linkedSessions.length, reportAvailableTabs]);
   // The most recent linked Session, read live through the host's canonical
   // Session projection (r0.42): one watch feeds both the permission card and
   // the agent step.
@@ -520,6 +628,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       },
     };
   }, [detail, locator, observation, prepareReviewWorkspaceOperation, row.entryRef, snapshot]);
+  const getOperation = readTriageSourceGetOperationV1(context, row.entryRef.source);
+  const comparisonRead = React.useMemo(() => getOperation !== undefined && detail?.kind === 'ready'
+    ? { operation: getOperation, instance: detail.input.instance } : undefined, [detail, getOperation]);
+  const linkedSessionIds = React.useMemo(() => header.linkedSessions.map((session) => session.sessionId), [header.linkedSessions]);
   return (
     <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
       <ScrollArea style={DETAIL_HEADER_SCROLL_STYLE_V1}>
@@ -533,6 +645,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         pin={props.pin}
         onClose={props.onClose}
         showLinkedSessions={composition.kind === 'whole'}
+        onSelectLinkedSession={selectInlineSession}
         {...(detail?.kind === 'ready' ? {
           linkedSessionsPageState: detail.linkedSessionsPageState,
           onLoadMoreLinkedSessions: detail.loadMoreLinkedSessions,
@@ -550,6 +663,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             workflowSubject={workflowSubject}
             display={display}
             presentation={actionPresentation}
+            linkedSessionIds={linkedSessionIds}
+            {...(comparisonRead === undefined ? {} : { comparisonRead })}
             {...(locator === undefined ? {} : { lastKnownLocator: locator })}
             {...(repository === undefined ? {} : { repository })}
             {...(reviewWorkspace === undefined ? {} : { reviewWorkspace })}
@@ -561,7 +676,18 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       */}
       {composition.kind === 'tabs' && declaredKind?.detailActions === true && entryMount !== null ? (
         <TriagePostMutationCompletionProvider onComplete={completePostMutation}>
-          <TriageDetailPanelMount mount={entryMount} panel={TRIAGE_DETAIL_ACTIONS_PANEL_V1} fallback={null} />
+          <TriageDetailPanelMount
+            mount={{
+              ...entryMount,
+              instanceKey: deriveTriageDetailMountInstanceKey(
+                row.entryRef,
+                entryMount.input.instance.instance.sourceInstanceId,
+                'actions',
+              ),
+            }}
+            panel={TRIAGE_DETAIL_ACTIONS_PANEL_V1}
+            fallback={null}
+          />
         </TriagePostMutationCompletionProvider>
       ) : null}
       </Stack>
@@ -618,6 +744,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             <TriageDetailTabbedBody
               key={entryMount.instanceKey}
               tabs={composition.tabs}
+              tabSelection={tabSelection}
               entry={entryMount}
               fixPullRequest={fixPullRequest.mount}
               overviewLead={liveSession.state === null || liveSessionId === null ? null : (
@@ -632,10 +759,11 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               )}
               overviewTail={(
                 <>
-                  {fixPullRequest.state?.kind === 'ready' ? (
+                  {fixPullRequest.state !== null ? (
                     <TriageFixPullRequests state={fixPullRequest.state} pickable={fixPullRequest.pickable} />
                   ) : null}
                   <TriageAgentStep
+                    onSelectSession={selectInlineSession}
                     sessions={header.linkedSessions}
                     hasMore={header.linkedSessionsHasMore}
                     live={liveSession}
@@ -649,6 +777,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               )}
               activityTail={(
                 <TriageAgentStep
+                  onSelectSession={selectInlineSession}
                   variant="card"
                   sessions={header.linkedSessions}
                   hasMore={false}
@@ -657,7 +786,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                 />
               )}
               {...(header.linkedSessions.length === 0 ? {} : {
-                session: <TriageSessionPanel sessions={header.linkedSessions} />,
+                session: <TriageSessionPanel sessions={header.linkedSessions} selectedSessionId={selectedSessionId} onSelectSession={selectPanelSession} />,
               })}
               fallback={(
                 <EmptyState
@@ -674,6 +803,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         <TriageDetailWholeBody
           key={deriveTriageDetailMountInstanceKey(row.entryRef, detail.input.instance.instance.sourceInstanceId)}
           sessions={header.linkedSessions}
+          tabSelection={tabSelection}
+          selectedSessionId={selectedSessionId}
+          onSelectSession={selectPanelSession}
         >
         <TriagePostMutationCompletionProvider onComplete={completePostMutation}>
           <TriageEvidenceDisclosureProvider disclosure={evidenceDisclosure}>

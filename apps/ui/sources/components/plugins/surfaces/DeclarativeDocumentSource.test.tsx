@@ -255,9 +255,15 @@ function createDocumentHost(input: Readonly<{
             methods: input.methods ?? [],
         }),
         context: async () => unexpectedHostApiCall('context'),
+        widgetArea: async () => unexpectedHostApiCall('widgetArea'),
+        readEntityDragItem: async () => unexpectedHostApiCall('readEntityDragItem'),
+        updateEntityDragDrop: async () => unexpectedHostApiCall('updateEntityDragDrop'),
+        watchEntityDragDrop: async () => unexpectedHostApiCall('watchEntityDragDrop'),
         watchContext: async () => unexpectedHostApiCall('watchContext'),
         readSession: async () => unexpectedHostApiCall('readSession'),
+        readStoredImage: async () => unexpectedHostApiCall('readStoredImage'),
         watchSession: async () => unexpectedHostApiCall('watchSession'),
+        watchLiveStream: async () => unexpectedHostApiCall('watchLiveStream'),
         respondToSessionPermission: async () => unexpectedHostApiCall('respondToSessionPermission'),
         publishCurrentUiContext: () => unexpectedHostApiCall('publishCurrentUiContext'),
         settleEphemeralInput: async () => unexpectedHostApiCall('settleEphemeralInput'),
@@ -471,6 +477,29 @@ function renderProbeWithPrivateResourceBinding(
 }
 
 describe('useDeclarativeDocumentSource', () => {
+    it('adopts dynamic drag nodes only from the mounted occurrence inventory', async () => {
+        const model = { ...staticModel, declarativeInventory: {
+            actions: [], destinations: [], settings: [], uiQueries: [],
+            dragSources: [{ identity: { pluginId: 'acme.dashboard', localId: 'card' }, qualifiedId: 'acme.dashboard/card',
+                occurrenceId: '7', referenceSchema: { type: 'string' } }],
+            dropTargets: [{ identity: { pluginId: 'acme.dashboard', localId: 'tray' }, qualifiedId: 'acme.dashboard/tray', occurrenceId: '7' }],
+        } };
+        const hostApi = createDocumentHost({ readResource: async () => resourceRead({ version: 1,
+            root: { kind: 'dropTarget', targetId: 'tray', input: { lane: 'review' }, children: [
+                { kind: 'dragSource', sourceId: 'card', reference: '42', children: [{ kind: 'text', text: 'Card' }] },
+            ] },
+        }) });
+        let tree!: ReturnType<typeof create>;
+        try {
+            await act(async () => { tree = create(renderProbe(hostApi, model)); await flushMicrotasks(); });
+            expect(tree.root.findByType('output').props).toMatchObject({ strictProjectedModel: true, model: { root: {
+                kind: 'dropTarget', target: { qualifiedId: 'acme.dashboard/tray', occurrenceId: '7' }, input: { lane: 'review' },
+                children: [{ kind: 'dragSource', source: { qualifiedId: 'acme.dashboard/card', occurrenceId: '7' }, reference: '42' }],
+            } } });
+        } finally {
+            await act(async () => { tree?.unmount(); });
+        }
+    });
     it('adopts a dynamic host Action request without a contributed Action inventory entry', async () => {
         const hostApi = createDocumentHost({ readResource: async () => resourceRead({
             version: 1,

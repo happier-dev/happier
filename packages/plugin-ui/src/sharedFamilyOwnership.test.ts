@@ -38,7 +38,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Screen', 'Stack', 'Row', 'ScrollArea',
   'Surface', 'Card',
   'Text', 'Heading', 'Label',
-  'Icon', 'Image', 'BrandMark', 'QRCode',
+  'Icon', 'Image', 'StoredImage', 'BrandMark', 'QRCode',
   'Divider', 'Badge', 'Metadata', 'Link',
   'Markdown', 'CodeBlock',
   'Spinner', 'Status',
@@ -72,11 +72,20 @@ const APPROVED_CATALOG_VOCABULARY = [
   // Pane states and shell columns: existing public adapters over shared presentation owners.
   'FreshnessLine', 'NavigationList', 'NavigationList.Group', 'NavigationList.Row',
   'DetailsPane', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
+  // Entity drag-and-drop r1: declared sources/targets join the mounted host lifecycle.
+  'DragSource', 'DropTarget',
+  // Widgets platform r1 (WGT-11): the native metric, rows/table and one-series chart nodes.
+  'Metric', 'DataRows', 'DataTable', 'Chart',
+  // Widgets platform: declared areas delegate to the incumbent mounted host.
+  'WidgetSurface',
+  // Public setup and Voice author adapters documented by docs/plugin-platform.md.
+  'SetupSteps', 'SetupBlockTile', 'SetupBlockGrid', 'VoiceMarkArt', 'StatusCell', 'DictationButton',
 ] as const;
 
 type DeclarativeDisposition = Readonly<{
   kind: 'node';
-  node: 'text' | 'markdown' | 'stack' | 'group' | 'field' | 'status' | 'action' | 'list' | 'section' | 'item' | 'state' | 'metadata' | 'actionPanel';
+  node: 'text' | 'markdown' | 'stack' | 'group' | 'field' | 'status' | 'action' | 'list' | 'section' | 'item' | 'state' | 'metadata' | 'actionPanel' | 'dragSource' | 'dropTarget'
+    | 'metric' | 'rows' | 'table' | 'chart' | 'widgetArea';
   /** Exact node-local adapter that joins this catalog row to the renderer. */
   rendererSymbol: string;
 }> | Readonly<{
@@ -93,7 +102,7 @@ type DeclarativeDisposition = Readonly<{
 }>;
 
 type HostComposition = Readonly<{
-  /** The one thin adapter shared by the React and declarative entry paths. */
+  /** The one thin adapter joining the public request to its existing physical host. */
   adapter: Readonly<{ module: string; symbol: string }>;
   /** The incumbent physical host that consumes the adapter's mounted request. */
   physicalHost: Readonly<{ module: string; symbol: string; callbackSymbol: string }>;
@@ -778,6 +787,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     pluginOwner: { module: 'components/Foundation.tsx', symbol: 'Label' },
     coreConsumers: ['components/sessions/actions/ActionInputFields.tsx'],
     coreAdapter: { module: 'presentation/form/Fields.tsx', symbol: 'HappierField' },
+    corePresentationMechanism: { module: 'presentation/form/InputField.tsx', symbol: 'HappierInputField' },
     devMountSymbols: ['Label as PluginLabel'],
     declarative: { kind: 'not-applicable', reason: 'V2 field/group labels are projected by their owning adapters.' },
   },
@@ -825,6 +835,66 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
     devMountSymbols: ['Metadata as PluginMetadata'],
     declarative: { kind: 'node', node: 'metadata', rendererSymbol: 'HappierMetadata' },
+  },
+  {
+    publicName: 'Metric',
+    propTypeName: 'MetricProps',
+    family: 'Data metric',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'graduated',
+    publiclyExported: true,
+    sharedModule: 'presentation/data/Metric.tsx',
+    sharedSymbol: 'HappierDataMetric',
+    pluginOwner: { module: 'components/Data.tsx', symbol: 'Metric' },
+    coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
+    devMountSymbols: ['Metric as PluginMetric'],
+    declarative: { kind: 'node', node: 'metric', rendererSymbol: 'HappierDataMetric' },
+  },
+  {
+    publicName: 'DataRows',
+    propTypeName: 'DataRowsProps',
+    family: 'Data rows',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'graduated',
+    publiclyExported: true,
+    sharedModule: 'presentation/data/DataRows.tsx',
+    sharedSymbol: 'HappierDataRows',
+    pluginOwner: { module: 'components/Data.tsx', symbol: 'DataRows' },
+    coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
+    devMountSymbols: ['DataRows as PluginDataRows'],
+    declarative: { kind: 'node', node: 'rows', rendererSymbol: 'HappierDataRows' },
+  },
+  {
+    publicName: 'DataTable',
+    propTypeName: 'DataRowsProps',
+    family: 'Data table',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'graduated',
+    publiclyExported: true,
+    sharedModule: 'presentation/data/DataRows.tsx',
+    sharedSymbol: 'HappierDataTable',
+    pluginOwner: { module: 'components/Data.tsx', symbol: 'DataTable' },
+    coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
+    devMountSymbols: ['DataTable as PluginDataTable'],
+    declarative: { kind: 'node', node: 'table', rendererSymbol: 'HappierDataTable' },
+  },
+  {
+    publicName: 'Chart',
+    propTypeName: 'ChartProps',
+    family: 'Data chart',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'graduated',
+    publiclyExported: true,
+    sharedModule: 'presentation/data/Chart.tsx',
+    sharedSymbol: 'HappierDataChart',
+    pluginOwner: { module: 'components/Data.tsx', symbol: 'Chart' },
+    coreConsumers: ['components/plugins/shared/declarativeNodes.tsx'],
+    devMountSymbols: ['Chart as PluginChart'],
+    declarative: { kind: 'node', node: 'chart', rendererSymbol: 'HappierDataChart' },
   },
   {
     publicName: 'Link',
@@ -960,6 +1030,24 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'node', node: 'markdown', rendererSymbol: 'HappierMarkdown' },
   },
   {
+    publicName: 'StoredImage',
+    propTypeName: 'StoredImageProps',
+    family: 'Stored image',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/StoredImage.tsx',
+    sharedSymbol: 'HappierStoredImage',
+    pluginOwner: { module: 'components/StoredImage.tsx', symbol: 'StoredImage' },
+    coreConsumers: [
+      'components/sessions/media/SessionMediaInlineImages.tsx',
+      'components/workspaces/files/file/FileUriPreview.tsx',
+    ],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Session image reads require a mounted host; V2 has no stored-image node.' },
+  },
+  {
     publicName: 'CodeBlock',
     propTypeName: 'CodeBlockProps',
     family: 'Code',
@@ -1075,10 +1163,10 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       ? ['components/plugins/surfaces/DeclarativePluginSurface.tsx']
       : symbol === 'Toggle'
         ? ['components/ui/forms/Switch.web.tsx', 'components/ui/forms/Switch.tsx']
-        : [
-            'components/sessions/actions/ActionInputFields.tsx',
-            'components/plugins/surfaces/DeclarativePluginSurface.tsx',
-          ],
+        : ['components/sessions/actions/ActionInputFields.tsx'],
+    ...(['Field', 'TextField', 'Select'].includes(symbol)
+      ? { coreAdapter: { module: 'presentation/form/InputField.tsx', symbol: 'HappierInputField' } }
+      : {}),
     ...(symbol === 'Toggle'
       ? {
           deletedCoreDuplicates: [
@@ -1131,6 +1219,21 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     },
     devMountSymbols: ['Tabs as PluginTabs'],
     declarative: { kind: 'not-applicable', reason: 'Preview has no declarative Tabs node without a positive document consumer.' },
+  },
+  {
+    publicName: 'WidgetSurface',
+    propTypeName: 'WidgetSurfaceProps',
+    family: 'Host-mediated widget area',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/WidgetSurface.tsx', symbol: 'WidgetSurface' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'node', node: 'widgetArea', rendererSymbol: 'context.renderWidgetArea' },
   },
   {
     publicName: 'TargetedSurface',
@@ -1321,19 +1424,20 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     family: 'Collection',
     disposition: 'required',
     // COLLECTION.md r0.41: one item anatomy drawn as table, list, board or grid, with the split, push and drawer
-    // detail containers. PRs & Issues presents through it; Happier core's settings collections adopt it later.
+    // detail containers. PRs & Issues and the Plugins settings page consume the same public adapter.
     proofTier: 'behavior-owning',
-    phase: 'in-progress',
+    phase: 'graduated',
     publiclyExported: true,
     sharedModule: 'presentation/collection/collectionTable.ts',
     sharedSymbol: 'resolveHappierCollectionComposition',
     pluginOwner: { module: 'components/Collection.tsx', symbol: 'Collection' },
-    coreConsumers: [],
+    coreConsumers: ['components/settings/plugins/collection/PluginsPageCollection.tsx'],
+    coreAdapter: { module: 'components/Collection.tsx', symbol: 'Collection' },
     positiveConsumer: {
       kind: 'plugin-surface',
       pathFromRepoRoot: 'packages/plugins/triage/src/ui/shell/root.tsx',
     },
-    devMountSymbols: [],
+    devMountSymbols: ['CollectionPreviewSample'],
     declarative: { kind: 'not-applicable', reason: 'V2 has no collection node; a declarative surface uses List.' },
   },
   {
@@ -1408,6 +1512,30 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'V2 has no navigation-list row node.' },
   },
+  // These adapters reach the host-owned carry/target lifecycle. Source adoption is proven;
+  // loaded-platform graduation remains with the entity drag-and-drop integration boundary.
+  ...[
+    { publicName: 'DragSource', node: 'dragSource' as const },
+    { publicName: 'DropTarget', node: 'dropTarget' as const },
+  ].map((entry): GraduatedFamily => ({
+    publicName: entry.publicName,
+    propTypeName: `${entry.publicName}Props`,
+    family: entry.publicName,
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/EntityDragDrop.tsx',
+    sharedSymbol: entry.publicName,
+    pluginOwner: { module: 'components/EntityDragDrop.tsx', symbol: entry.publicName },
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/list/rows.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'node', node: entry.node, rendererSymbol: 'context.renderDragNode' },
+  })),
   // Named exports are catalogued too. These record source ownership, not loaded-platform graduation.
   ...[
     { publicName: 'DetailsPane', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailsPane' },
@@ -1430,6 +1558,53 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: [],
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'This mounted presentation uses the host binding; V2 has no corresponding node.' },
+  })),
+  {
+    publicName: 'SetupSteps',
+    propTypeName: 'SetupStepsProps',
+    family: 'Setup steps',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/SetupSteps.tsx',
+    sharedSymbol: 'HappierSetupSteps',
+    pluginOwner: { module: 'components/Setup.tsx', symbol: 'SetupSteps' },
+    coreConsumers: ['components/ui/setupBlocks/SetupSteps.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no setup-steps node.' },
+  },
+  // These five public adapters request the existing physical host. They do not duplicate its
+  // presentation or lifecycle and are source-present, not loaded-platform graduated.
+  ...[
+    { publicName: 'SetupBlockTile', module: 'components/Setup.tsx', callback: 'renderSetupBlockTile',
+      hostModule: 'components/ui/setupBlocks/SetupBlockTile.tsx', hostSymbol: 'SetupBlockTile' },
+    { publicName: 'SetupBlockGrid', module: 'components/Setup.tsx', callback: 'renderSetupBlockGrid',
+      hostModule: 'components/ui/setupBlocks/SetupBlockGrid.tsx', hostSymbol: 'SetupBlockGrid' },
+    { publicName: 'VoiceMarkArt', module: 'components/Voice.tsx', callback: 'renderVoiceMarkArt',
+      hostModule: 'components/voice/presence/VoiceMark.tsx', hostSymbol: 'VoiceMarkArt' },
+    { publicName: 'StatusCell', module: 'components/Voice.tsx', callback: 'renderStatusCell',
+      hostModule: 'components/voice/presence/VoiceStatusCell.tsx', hostSymbol: 'VoiceStatusCell' },
+    { publicName: 'DictationButton', module: 'components/Voice.tsx', callback: 'renderDictationButton',
+      hostModule: 'components/plugins/surfaces/PluginDictationButton.tsx', hostSymbol: 'PluginDictationButton' },
+  ].map((entry): GraduatedFamily => ({
+    publicName: entry.publicName,
+    propTypeName: `${entry.publicName}Props`,
+    family: entry.publicName,
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: entry.module, symbol: entry.publicName },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no corresponding node; this mounted adapter delegates to the existing host.' },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: { module: entry.hostModule, symbol: entry.hostSymbol, callbackSymbol: entry.callback },
+    },
   })),
   {
     publicName: 'PluginNavigation',
@@ -1527,25 +1702,24 @@ function withoutCommentProse(source: string): string {
 }
 
 function sourceForDeclarativeNodeRenderer(source: string, node: string): string | null {
-  const sourceWithoutComments = withoutCommentProse(source);
-  const rendererTableStart = sourceWithoutComments.indexOf('const DECLARATIVE_NODE_RENDERERS = Object.freeze({');
-  if (rendererTableStart < 0) return null;
-
-  const rendererTable = sourceWithoutComments.slice(rendererTableStart);
-  const entryPattern = new RegExp(`^ {4}${node}:\\s*`, 'mu');
-  const entry = entryPattern.exec(rendererTable);
-  if (!entry) return null;
-
-  const nextEntryPattern = /^ {4}[A-Za-z][A-Za-z0-9]*:\s*/gmu;
-  nextEntryPattern.lastIndex = entry.index + entry[0].length;
-  const nextEntry = nextEntryPattern.exec(rendererTable);
-  const entrySource = rendererTable.slice(entry.index, nextEntry?.index);
-  const namedRenderer = new RegExp(`^ {4}${node}:\\s*([A-Za-z][A-Za-z0-9]*)\\s*,?\\s*$`, 'mu').exec(entrySource);
-  if (!namedRenderer) return entrySource;
-
-  const declarationPattern = new RegExp(`^(?:const|function)\\s+${namedRenderer[1]}\\b`, 'mu');
-  const declaration = declarationPattern.exec(sourceWithoutComments);
-  return declaration ? sourceWithoutComments.slice(declaration.index, rendererTableStart) : null;
+  const file = ts.createSourceFile('declarative-renderers.tsx', withoutCommentProse(source), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declarations = file.statements.flatMap((statement) => ts.isVariableStatement(statement)
+    ? [...statement.declarationList.declarations] : []);
+  const table = declarations.find((entry) => ts.isIdentifier(entry.name) && entry.name.text === 'DECLARATIVE_NODE_RENDERERS')?.initializer;
+  const object = table && ts.isCallExpression(table) ? table.arguments[0] : table;
+  const tableObject = object && ts.isSatisfiesExpression(object) ? object.expression : object;
+  if (!tableObject || !ts.isObjectLiteralExpression(tableObject)) return null;
+  const entry = tableObject.properties.find((property) => ts.isPropertyAssignment(property)
+    && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && property.name.text === node);
+  if (!entry || !ts.isPropertyAssignment(entry)) return null;
+  const initializer = entry.initializer;
+  const renderer = ts.isCallExpression(initializer) && ts.isIdentifier(initializer.expression)
+    && initializer.expression.text === 'declarativeNode' ? initializer.arguments[1] : initializer;
+  if (!renderer) return null;
+  if (!ts.isIdentifier(renderer)) return renderer.getText(file);
+  const declaration = declarations.find((candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === renderer.text);
+  const functionDeclaration = file.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === renderer.text);
+  return declaration?.initializer?.getText(file) ?? functionDeclaration?.getText(file) ?? null;
 }
 
 function groupByFamily(entries: readonly GraduatedFamily[]): Map<string, readonly GraduatedFamily[]> {
@@ -1679,9 +1853,11 @@ function catalogProblems(
       if (entry.positiveConsumer.pathFromRepoRoot.includes('/dev/')) {
         problems.push(`${entry.publicName} positive consumer cannot be a dev gallery`);
       }
-      const consumerSource = read(join(repoRoot, entry.positiveConsumer.pathFromRepoRoot));
-      if (!sourceRendersPublicPluginUiComponent(consumerSource, entry.publicName)) {
-        problems.push(`${entry.publicName} positive consumer must render public ${entry.publicName} through a public import`);
+      if (isMaintainedPublicConsumerSource(entry.positiveConsumer)) {
+        const consumerSource = read(join(repoRoot, entry.positiveConsumer.pathFromRepoRoot));
+        if (!sourceRendersPublicPluginUiComponent(consumerSource, entry.publicName)) {
+          problems.push(`${entry.publicName} positive consumer must render public ${entry.publicName} through a public import`);
+        }
       }
     }
 
@@ -1690,8 +1866,10 @@ function catalogProblems(
       ?? entry.sharedSymbol;
     for (const consumer of entry.coreConsumers) {
       const consumerSource = read(join(appSourceRoot, consumer));
-      if (!consumerSource.includes('@happier-dev/plugin-ui/presentation')
-        || !consumerSource.includes(expectedCoreConsumerSymbol)) {
+      const reachesPublicAdapter = entry.coreAdapter?.symbol === entry.publicName
+        && sourceRendersPublicPluginUiComponent(consumerSource, entry.publicName);
+      if (!reachesPublicAdapter && (!consumerSource.includes('@happier-dev/plugin-ui/presentation')
+        || !consumerSource.includes(expectedCoreConsumerSymbol))) {
         problems.push(`${entry.publicName} core consumer ${consumer} does not reach ${expectedCoreConsumerSymbol}`);
       }
     }
@@ -1835,6 +2013,22 @@ function publicComponentPaths(): readonly string[] {
 const graduatedEntries = GRADUATED_FAMILIES.filter((entry) => entry.phase === 'graduated');
 
 describe('graduated shared presentation families (§8.2)', () => {
+  it('follows a named declarativeNode renderer without crediting unrelated source', () => {
+    const source = [
+      'const renderContainer = () => <HappierStack />;',
+      'const unrelated = () => <HappierList />;',
+      'const DECLARATIVE_NODE_RENDERERS = Object.freeze({',
+      '    stack: declarativeNode(noDisplayText, renderContainer, true),',
+      '    list: declarativeNode(noDisplayText, () => <HappierList />),',
+      '} satisfies Readonly<Record<string, unknown>>);',
+    ].join('\n');
+    const renderer = sourceForDeclarativeNodeRenderer(source, 'stack');
+    expect(renderer).toContain('HappierStack');
+    expect(renderer).not.toContain('HappierList');
+    expect(sourceForDeclarativeNodeRenderer(source.replace('renderContainer, true', 'missingRenderer, true'), 'stack'))
+      .toBeNull();
+  });
+
   it('keeps List multi-selection React Context module-local', async () => {
     const source = await read(join(repoRoot, 'packages/plugin-ui/src/components/ListMultiSelection.tsx'));
     expect(source).not.toContain('globalThis');
@@ -2045,7 +2239,9 @@ describe('graduated shared presentation families (§8.2)', () => {
       'QRCode',
       'Image',
       'BrandMark',
+      'StoredImage',
       'DiffViewer',
+      'WidgetSurface',
       'TargetedSurface',
       'SessionProvider',
       'SessionTranscript',
@@ -2057,12 +2253,13 @@ describe('graduated shared presentation families (§8.2)', () => {
       'ListDetailLayout',
       'Columns',
       'Column',
-      'Collection',
       'FreshnessLine',
       'NavigationList',
       'NavigationList.Group',
       'NavigationList.Row',
+      'DragSource', 'DropTarget',
       'DetailsPane', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
+      'SetupSteps', 'SetupBlockTile', 'SetupBlockGrid', 'VoiceMarkArt', 'StatusCell', 'DictationButton',
     ]);
   });
 
@@ -2118,6 +2315,21 @@ describe('graduated shared presentation families (§8.2)', () => {
       read(join(repoRoot, 'packages/plugins/triage/src/ui/detail/region.tsx')),
       'TargetedSurface',
     )).toBe(true);
+  });
+
+  it('records WidgetSurface as a host-mediated adapter over the existing widget area composition', () => {
+    const widget = GRADUATED_FAMILIES.find(entry => entry.publicName === 'WidgetSurface');
+    expect(widget).toMatchObject({ phase: 'in-progress', proofTier: 'behavior-owning',
+      sharedModule: 'presentationHost/context.ts', sharedSymbol: 'useOptionalPluginUiPresentationHost',
+      declarative: { kind: 'node', node: 'widgetArea', rendererSymbol: 'context.renderWidgetArea' } });
+    const adapter = read(join(packageSourceRoot, 'components/WidgetSurface.tsx'));
+    expect(adapter).toContain('useWidgetAreaPort(area)');
+    expect(adapter).toContain('renderWidgetArea(request)');
+    const host = read(join(appSourceRoot, 'components/plugins/surfaces/PluginSurfaceHost.tsx'));
+    expect(host).toMatch(/renderWidgetArea:\s*\(input\)\s*=>\s*\(\s*<PluginPageWidgetArea\b/u);
+    const area = read(join(appSourceRoot, 'components/widgets/area/PluginPageWidgetArea.tsx'));
+    expect(area).toContain('<WidgetArea');
+    expect(area).toContain('pagePort.execute(operation, pageContext');
   });
 
   it('records Triage bulk source adoption for List.SelectionActionBar', () => {
@@ -2202,8 +2414,10 @@ describe('graduated shared presentation families (§8.2)', () => {
         expect(consumer, `${entry.family} cannot graduate through a dev-only gallery`).not.toContain('/dev/');
         expect(consumer, `${entry.family} cannot graduate through the private surface carrier`).not.toContain('PluginSurfaceHost');
         const source = read(join(appSourceRoot, consumer));
-        expect(source, `${consumer} must reach the shared presentation owner`)
-          .toContain('@happier-dev/plugin-ui/presentation');
+        const reachesPublicAdapter = entry.coreAdapter?.symbol === entry.publicName
+          && sourceRendersPublicPluginUiComponent(source, entry.publicName);
+        expect(reachesPublicAdapter || source.includes('@happier-dev/plugin-ui/presentation'),
+          `${consumer} must reach the shared presentation owner`).toBe(true);
         const expectedConsumerSymbol = entry.corePresentationMechanism?.symbol ?? entry.coreAdapter?.symbol ?? entry.sharedSymbol;
         expect(source, `${consumer} must consume ${expectedConsumerSymbol}, not merely import the presentation barrel`)
           .toContain(expectedConsumerSymbol);

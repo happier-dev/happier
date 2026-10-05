@@ -3,10 +3,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
 import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import {
+    buildQualifiedPluginContributionKey,
     ApprovalRequestV2Schema,
     createActionExecutor,
     decideApprovalRequestTransition,
     DaemonPluginStructuredMessageActionExecuteRequestSchema,
+    DaemonPluginStructuredMessageActionExecuteResponseSchema,
     isApprovalRequiredByActionsSettings,
     normalizeActionsSettingsV1,
     PLUGIN_INVOCABLE_ACTION_IDS,
@@ -80,10 +82,23 @@ import { dispatchPluginResolvedSemanticCommand } from './dispatchPluginResolvedS
 import { getPluginUiEphemeralSharedScope } from './pluginUiEphemeralSharedScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
+import { createPluginEntityDragDropBinding, executeMountedPluginEntityDropAction, settlePluginEntityDropActionResult } from './entityDragDrop/pluginEntityDragDropBinding';
+import { createActionOperationRunner } from '../../../../../cli/src/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationStore } from '../../../../../cli/src/daemon/actionOperations/actionOperationStore';
 
 // The dispatcher and serializer stay real. The server-scoped RPC is the
 // system boundary that terminates this UI-side transport path.
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const newSessionNavigation = vi.hoisted(() => vi.fn());
+const nestedActionConfirmation = vi.hoisted(() => ({
+    onShow: null as null | ((confirm: () => void, cancel: () => void) => void),
+}));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: newSessionNavigation } }).module;
+});
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -116,7 +131,14 @@ beforeEach(() => {
 // platform dialog boundary is substituted in this non-rendering suite.
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ spies: {
+        // Native modal presentation is the boundary; the real transient Interaction owner settles the decision.
+        show: vi.fn((config: { props: { onConfirm(): void; onCancel(): void } }) => {
+            if (nestedActionConfirmation.onShow) nestedActionConfirmation.onShow(config.props.onConfirm, config.props.onCancel);
+            else queueMicrotask(() => config.props.onCancel?.());
+            return 'nested-action-confirmation';
+        }) as never,
+    } }).module;
 });
 
 const CALLER_PLUGIN_ID = 'happier.inspector';
@@ -258,7 +280,7 @@ const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
 function createClientTargetAction(input: Readonly<{
     identity: PluginContributionIdentityV1;
     dangerLevel?: 'safe' | 'writesRemote';
-    surfaces?: readonly ('ui' | 'voice')[];
+    surfaces?: PluginProjectedActionV2['surfaces'];
 }>): PluginProjectedActionV2 {
     const dangerLevel = input.dangerLevel ?? 'safe';
     const executionOrigin = clientActionExecutionOrigin(input.identity.pluginId);
@@ -298,7 +320,7 @@ function createClientActionActivation(input: Readonly<{
     pluginId?: string;
     localId?: string;
     dangerLevel?: 'safe' | 'writesRemote';
-    surfaces?: readonly ('ui' | 'voice')[];
+    surfaces?: PluginProjectedActionV2['surfaces'];
     inputSchema?: object;
     outputSchema?: object;
     handler: PluginClientActionHandler;
@@ -545,7 +567,7 @@ describe('stored image custody from delivered Actions', () => {
     );
 });
 
-async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBeforeReplay = false) {
+async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBeforeReplay = false, entityDrop = false, waived = false) {
     let stored: ApprovalRequest | null = null;
     let currentCustody = custody;
     const effects: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0][] = [];
@@ -553,7 +575,7 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
         v: 1,
         approvalWaivedSurfaces: { 'teams.members.remove': ['plugin'] },
         actions: { 'teams.members.remove': { approvalRequiredSurfaces: ['plugin'] } },
-    } : { v: 1 });
+    } : waived ? { v: 1, approvalWaivedSurfaces: { 'teams.members.remove': ['plugin'] } } : { v: 1 });
     // Only persistence and Home/daemon request boundaries are substituted. The
     // public dispatcher, policy, Artifact transitions and replay remain real.
     const deps = {
@@ -593,23 +615,314 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
         },
     });
     try {
-        const response = await api.handleRequest(executeActionRequest({
-            action: 'teams.members.remove',
-            input: { v: 1, teamId: 'team-1', membershipId: 'membership-1' },
-        }));
-        expect(response).toMatchObject({ kind: 'approval_request_created', artifactId: 'approval-home-1' });
-        expect(effects).toEqual([]);
+        const actionInput = { v: 1, teamId: 'team-1', membershipId: 'membership-1' };
+        let response: PluginUiJsonValueV1 = null;
+        let dropOutcome;
+        if (entityDrop) {
+            const runtime = createEntityDragDropRuntime();
+            const scope = { serverId: 'home-1', accountId: 'account-1' };
+            const target = { descriptor: { id: 'team', title: 'Team', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web' as const], acceptedKinds: ['session' as const], actions: [{ kind: 'host' as const, actionId: 'teams.members.remove' as const }] },
+                resolve: () => ({ status: 'allowed' as const, effect: { actionId: 'teams.members.remove', input: actionInput, preview: { verb: 'Remove', target: 'Member' } } }), isCurrent: () => true };
+            const binding = createPluginEntityDragDropBinding({ runtime, pluginId: CALLER_PLUGIN_ID, mountKey: 'surface', scope, isCurrent: () => true, readSource: () => null, readTarget: () => target,
+                executeAction: async (action, input) => {
+                    response = await api.handleRequest(executeActionRequest({ action, input }));
+                    return settlePluginEntityDropActionResult(response, action);
+                } });
+            runtime.registerSource({ id: 'session', scope, isCurrent: () => true, getItem: () => ({ kind: 'session', scope, address: { serverId: 'home-1', sessionId: 'session-1' } }) });
+            binding.mountTarget({ mountId: 'team', targetId: 'team', getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }) });
+            const carry = runtime.begin('session')!; carry.move({ x: 10, y: 10 });
+            dropOutcome = await carry.release();
+            binding.dispose();
+        } else response = await api.handleRequest(executeActionRequest({ action: 'teams.members.remove', input: actionInput }));
+        if (!waived) {
+            expect(response).toMatchObject({ kind: 'approval_request_created', artifactId: 'approval-home-1' });
+            expect(effects).toEqual([]);
+        }
+        const effectsAtDrop = [...effects];
         if (retireBeforeReplay) currentCustody = { kind: 'development', registeredRootId: 'replacement-root' };
-        const decision = await executor.execute('approval.request.decide', {
+        const decision = waived ? null : await executor.execute('approval.request.decide', {
             artifactId: 'approval-home-1', decision: 'approve',
         }, { surface: 'ui', authority: 'present_user', serverId: 'home-1' });
-        return { response, decision, effects, stored: () => stored };
+        return { response, decision, effects, dropOutcome, effectsAtDrop, stored: () => stored };
     } finally {
         api.dispose?.();
     }
 }
 
 describe('plugin-surface action branch selection', () => {
+    it.each(['same input', 'changed input'] as const)('executes independent physical drops with %s separately while exact request replay stays once', async (variation) => {
+        const identity = { pluginId: CALLER_PLUGIN_ID, localId: 'publish-drop' };
+        const projected = PluginProjectedActionV2Schema.parse({
+            ...resolveDaemonTargetAction(identity),
+            operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
+        });
+        const store = createActionOperationStore();
+        const runner = createActionOperationRunner({ store, resolveAction: actionId => ({ actionId, title: 'Publish drop', operation: projected.operation }) });
+        const effects: unknown[] = [];
+        const issued: PluginUiHostApiRequestEnvelopeV1[] = [];
+        const api = createPluginSurfaceActionHostApi({
+            surfaceContext: surfaceContext(), callerBinding: mountedCallerBinding(),
+            resolveContributedAction: requested => requested.pluginId === identity.pluginId && requested.localId === identity.localId ? projected : null,
+            contributedAction: { ...mountedActionBinding(),
+                // This is the UI-to-daemon transport boundary. The canonical
+                // daemon observer/store remain real, not a duplicate deduper.
+                execute: async (_machineId, request) => {
+                    const result = await runner.observe({ actionId: request.qualifiedActionId, requestId: request.requestId,
+                        input: request.input, scope: { accountId: 'account-1', machineId: 'machine-1' },
+                        // The third-party plugin effect is outside the host's deterministic logic.
+                        execute: async () => { effects.push(request.input); return { ok: true, result: { published: effects.length } }; },
+                    });
+                    return { supported: true, result: DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(result.ok
+                        ? result : { ok: false, code: result.errorCode }) };
+                },
+            },
+        });
+        const mounted = { surfaceContext: surfaceContext(), hostApi: { handleRequest: (request: PluginUiHostApiRequestEnvelopeV1) => {
+            issued.push(request); return api.handleRequest(request);
+        } } };
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'server-1', accountId: 'account-1' };
+        let input: PluginUiJsonValueV1 = { title: 'First' };
+        const target = { descriptor: { id: 'publish', title: 'Publish', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web' as const],
+            acceptedKinds: ['session' as const], actions: [{ kind: 'plugin' as const, action: identity }] },
+            resolve: () => ({ status: 'allowed' as const, effect: { actionId: `plugin:${buildQualifiedPluginContributionKey(identity)}`, input,
+                preview: { verb: 'Publish', target: 'Session' } } }), isCurrent: () => true };
+        const binding = createPluginEntityDragDropBinding({ runtime, pluginId: CALLER_PLUGIN_ID, mountKey: 'repeat-drop', scope, isCurrent: () => true,
+            readSource: () => null, readTarget: () => target,
+            executeAction: (action, value) => executeMountedPluginEntityDropAction(mounted, action, value),
+        });
+        const retireSource = runtime.registerSource({ id: 'session', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'session', scope, address: { serverId: scope.serverId, sessionId: 'session-1' } }) });
+        binding.mountTarget({ mountId: 'publish', targetId: 'publish', getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }) });
+        try {
+            const first = runtime.begin('session')!; first.move({ x: 10, y: 10 });
+            expect(await first.release()).toEqual({ status: 'applied' });
+            if (variation === 'changed input') input = { title: 'Second' };
+            const second = runtime.begin('session')!; second.move({ x: 10, y: 10 });
+            expect(await second.release()).toEqual({ status: 'applied' });
+            expect(effects).toEqual([{ title: 'First' }, variation === 'changed input' ? { title: 'Second' } : { title: 'First' }]);
+            expect(store.list({ accountId: 'account-1', machineId: 'machine-1' }).items).toHaveLength(2);
+            expect(new Set(issued.map(request => request.requestId)).size).toBe(2);
+            expect(await api.handleRequest(issued[0]!)).toEqual({ published: 1 });
+            expect(effects).toHaveLength(2);
+        } finally { binding.dispose(); retireSource(); api.dispose?.(); }
+    });
+    it('keeps mounted entity drops on the real approval/provenance and explicit-waiver front door', async () => {
+        const custody = { kind: 'development' as const, registeredRootId: 'caller-root' };
+        const approval = await runMountedHomeApproval(custody, false, true);
+        expect(approval.dropOutcome).toMatchObject({ status: 'refused', reason: { code: 'approval_required' } });
+        expect(approval.effectsAtDrop).toEqual([]);
+        expect(approval.stored()).toMatchObject({ executionOriginV1: { caller: { kind: 'plugin', pluginId: CALLER_PLUGIN_ID, sourceCustody: custody } } });
+        const waiver = await runMountedHomeApproval(custody, false, true, true);
+        expect(waiver.dropOutcome).toEqual({ status: 'applied' });
+        expect(waiver.effectsAtDrop).toHaveLength(1);
+        expect(waiver.stored()).toBeNull();
+    });
+    it('requires real UI approval for an automated nested mutation and retains an issued acknowledgement loss as unknown', async () => {
+        const nestedIdentity = { pluginId: CALLER_PLUGIN_ID, localId: 'change-remote' };
+        const nestedAction = PluginProjectedActionV2Schema.parse({
+            id: nestedIdentity.localId, pluginId: nestedIdentity.pluginId, occurrenceId: `occurrence-${CALLER_PLUGIN_ID}`,
+            title: 'Change remote state', scopes: ['global'], surfaces: ['agent'], execution: { target: 'daemon' },
+            dangerLevel: 'writesRemote', confirmation: { title: 'Apply change?' }, available: true,
+        });
+        let confirm!: () => void;
+        let dialogShown!: () => void;
+        const shown = new Promise<void>((resolve) => { dialogShown = resolve; });
+        nestedActionConfirmation.onShow = (approve) => { confirm = approve; dialogShown(); };
+        const requests: unknown[] = [];
+        machineRpcWithServerScopeMock.mockImplementation(async (request: Readonly<{ method: string; payload?: unknown; onIssued?: () => void }>) => {
+            if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return answerActionSchemasRead(request);
+            requests.push(request.payload); request.onIssued?.();
+            throw new Error('acknowledgement lost after the nested mutation was emitted');
+        });
+        const activation = createClientActionActivation({
+            surfaces: ['agent'], handler: async (_input, context) => await context.ui.executeAction(nestedIdentity, {}),
+        });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const pending = dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, invocationSurface: 'agent',
+                resolveContributedAction: (identity) => identity.localId === nestedIdentity.localId ? nestedAction : resolveExactClientAction(activation.action)(identity),
+                clientAction: {},
+            });
+            await shown;
+            expect(requests).toEqual([]);
+            confirm();
+            expect(await pending).toMatchObject({ ok: false, reason: 'plugin_ui_action_outcome_unknown' });
+            expect(requests).toEqual([expect.objectContaining({ executionSurface: 'agent', presentUserIntent: 'confirmed', invocation: expect.objectContaining({ kind: 'clientPluginAction' }) })]);
+            expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse(requests[0]).success).toBe(true);
+        } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); }
+    });
+
+    it('opens the canonical New Session draft from an unmounted client Action', async () => {
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
+        const accountLifetime = clientAccountLifetime();
+        const activation = createClientActionActivation({
+            accountLifetime,
+            handler: async (_input, context) => {
+                await context.ui.openNewSession({ prompt: 'Repair the selected issue' });
+                return null;
+            },
+        });
+        newSessionNavigation.mockClear();
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            await expect(dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+            })).resolves.toEqual({ ok: true, result: null });
+            const route = newSessionNavigation.mock.calls[0]?.[0] as Readonly<{ pathname: string; params: { draftId: string } }>;
+            expect(route.pathname).toBe('/new');
+            const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+            expect(readNewSessionDraftFromRepository({ scope: accountLifetime.scope, draftId: route.params.draftId }))
+                .toMatchObject({ input: 'Repair the selected issue' });
+        } finally { await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it('reads an unmounted client Action target projection from its registered authority', async () => {
+        const targetedContributions = {
+            target: { pluginId: CALLER_PLUGIN_ID, occurrenceId: `occurrence-${CALLER_PLUGIN_ID}`, sourceCustody: TARGET_SOURCE_CUSTODY },
+            points: [],
+        };
+        machineRpcWithServerScopeMock.mockImplementation(async (request: Readonly<{ method: string }>) => (
+            request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ
+                ? { status: 'current', targetedContributions, targetedSurfaceMounts: [] }
+                : answerActionSchemasRead(request)
+        ));
+        const activation = createClientActionActivation({
+            accountLifetime: clientAccountLifetime(),
+            handler: async (_input, context) => ({
+                ...(await context.ui.context()),
+                supportsSelection: context.ui.version().methods.includes('selectActionInput'),
+            }),
+        });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            await expect(dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                input: null,
+                resolveContributedAction: resolveExactClientAction(activation.action),
+                clientAction: {},
+            })).resolves.toEqual({ ok: true, result: { targetedContributions, supportsSelection: true } });
+            expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+                method: RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ,
+                machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                serverId: 'server-client-action',
+                payload: expect.objectContaining({ pluginId: CALLER_PLUGIN_ID }),
+            }));
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('refuses source handles from a newer target occurrence while the client Action remains registered', async () => {
+        machineRpcWithServerScopeMock.mockImplementation(async (request: Readonly<{ method: string }>) => (
+            request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ
+                ? { status: 'current', targetedContributions: {
+                    target: { pluginId: CALLER_PLUGIN_ID, occurrenceId: 'replacement-target', sourceCustody: TARGET_SOURCE_CUSTODY },
+                    points: [],
+                }, targetedSurfaceMounts: [] }
+                : answerActionSchemasRead(request)
+        ));
+        const activation = createClientActionActivation({
+            accountLifetime: clientAccountLifetime(),
+            handler: async (_input, context) => {
+                await expect(context.ui.context()).rejects.toMatchObject({ code: 'plugin_action_generation_retired' });
+                return { refused: true };
+            },
+        });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            await expect(dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: null,
+                resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+            })).resolves.toEqual({ ok: true, result: { refused: true } });
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('relays only host-admitted input from an unmounted client Action through its bound daemon authority', async () => {
+        const operation = COMPOSED_TARGETED_OPERATION;
+        const targetedContributions = { ...COMPOSED_TARGETED_CONTRIBUTIONS, target: {
+            ...COMPOSED_TARGETED_CONTRIBUTIONS.target, occurrenceId: `occurrence-${CALLER_PLUGIN_ID}`,
+        } };
+        const selectedAction = PluginProjectedActionV2Schema.parse({
+            id: operation.action.localId, pluginId: operation.action.pluginId,
+            occurrenceId: operation.contributor.occurrenceId, title: 'Prepare',
+            scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
+            dangerLevel: 'safe', available: true,
+        });
+        const relayAction = PluginProjectedActionV2Schema.parse({
+            id: 'start-reviewed', pluginId: CALLER_PLUGIN_ID, occurrenceId: `occurrence-${CALLER_PLUGIN_ID}`,
+            title: 'Start reviewed', scopes: ['global'], surfaces: ['ui'], execution: { target: 'daemon' },
+            dangerLevel: 'safe', available: true,
+        });
+        // Selection reads the declared schema from its daemon, not the projection.
+        clientActionSchemasByQualifiedId.set(buildQualifiedPluginContributionKey(operation.action), {
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        });
+        machineRpcWithServerScopeMock.mockImplementation(async (request: Readonly<{ method: string }>) => {
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+                return { status: 'current', targetedContributions, targetedSurfaceMounts: [] };
+            }
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {},
+                    installedPackagesById: { [selectedAction.pluginId]: {
+                        id: selectedAction.pluginId, displayName: 'Reviewer', version: '1.0.0', enabled: true,
+                        source: { kind: 'localPath', locator: 'reviewer' },
+                    } }, actionsById: { [`${selectedAction.pluginId}/${selectedAction.id}`]: selectedAction },
+                } };
+            }
+            return answerActionSchemasRead(request);
+        });
+        const transported: unknown[] = [];
+        const activation = createClientActionActivation({
+            accountLifetime: clientAccountLifetime(),
+            handler: async (_input, context) => {
+                const selected = await context.ui.selectActionInput({ operation, draft: {} });
+                if (selected.kind !== 'submitted') throw new Error('selection did not submit');
+                const carrier = { operation, result: selected };
+                await expect(context.ui.executeAction('start-reviewed', {}, {
+                    selectedActionInput: { ...carrier, result: { ...selected, input: { forged: true } } },
+                })).rejects.toMatchObject({ code: 'plugin_surface_targeted_selection_invalid' });
+                await context.ui.executeAction('start-reviewed', { selection: selected }, { selectedActionInput: carrier });
+                return { selected };
+            },
+        });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const result = await dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: null,
+                resolveContributedAction: (identity) => identity.localId === relayAction.id
+                    ? relayAction : resolveExactClientAction(activation.action)(identity),
+                clientAction: { execute: async (machineId, request) => {
+                    transported.push({ machineId, ...request });
+                    return { supported: true, result: { ok: true, result: null } };
+                } },
+            });
+            expect(result).toEqual({ ok: true, result: expect.objectContaining({ selected: expect.objectContaining({ kind: 'submitted', input: {} }) }) });
+            expect(transported).toEqual([expect.objectContaining({
+                machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                serverId: 'server-client-action',
+                invocation: expect.objectContaining({ kind: 'clientPluginAction' }),
+                selectedActionInputCarrier: expect.objectContaining({ operation,
+                    result: expect.objectContaining({ selection: expect.objectContaining({ target: {
+                        pluginId: CALLER_PLUGIN_ID, sourceCustody: TARGET_SOURCE_CUSTODY,
+                    } }) }),
+                }),
+            })]);
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
     it('reads the current UI snapshot only after current-intent approval for a writes-remote client Action', async () => {
         const snapshotAtDispatch: CurrentUiContextSnapshotV1 = {
             navigation: { area: 'app' as const, screen: 'initial' },
@@ -1305,13 +1618,14 @@ describe('plugin-surface action branch selection', () => {
         }
     });
 
-    it('keeps a known client handler fulfillment when caller cancellation arrives afterwards', async () => {
+    it.each(['synchronous', 'asynchronous'] as const)('keeps a known %s client handler fulfillment when caller cancellation arrives afterwards', async (settlement) => {
         const cancellation = new AbortController();
         let handlerReturned!: () => void;
         const handlerReturnedPromise = new Promise<void>((resolve) => { handlerReturned = resolve; });
         const handler = vi.fn(() => {
             handlerReturned();
-            return { committed: true };
+            const value = { committed: true };
+            return settlement === 'synchronous' ? value : Promise.resolve(value);
         });
         const clientHandler: PluginClientActionHandler = () => handler();
         const activation = createClientActionActivation({ handler: clientHandler });
@@ -1637,7 +1951,8 @@ describe('plugin-surface action branch selection', () => {
                     : { admitted: true, ...captureInput });
             }
             expect(approvalRequests).toHaveLength(2);
-            expect(approvalRequests.map(request => request.executionOriginV1?.requestId)).toEqual(['view-1', 'view-2']);
+            expect(approvalRequests.map(request => ApprovalRequestV2Schema.parse(request).executionOriginV1.requestId))
+                .toEqual(['view-1', 'view-2']);
         } finally {
             api.dispose?.();
         }
@@ -2322,6 +2637,29 @@ function resolveConfirmedDaemonTargetAction(
 // the UI asks the person, then carries the settled intent on the daemon RPC.
 // No daemon or server round trip may stand in for that local decision.
 describe('present-user confirmation for daemon-target Actions', () => {
+    it('sends a waived dangerous Action without asking or manufacturing present-user intent', async () => {
+        const storage = getStorage();
+        const previous = storage.getState();
+        storage.setState(state => ({ ...state, settings: { ...state.settings,
+            actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+                approvalWaivedSurfaces: { 'acme.releases/actions/publish': ['ui'] },
+            }),
+        } }));
+        try {
+            const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+                supported: true, result: { ok: true, result: { published: true } },
+            }));
+            await expect(dispatchPluginSurfaceAction({
+                action: { pluginId: 'acme.releases', localId: 'publish' }, input: { tag: 'v1' },
+                resolveContributedAction: resolveConfirmedDaemonTargetAction,
+                requestCurrentIntent: async () => ({ status: 'unavailable', code: 'no_present_user' }),
+                contributedAction: { machineId: 'machine-1', execute: contributed },
+            })).resolves.toEqual({ ok: true, result: { published: true } });
+            expect(contributed.mock.calls[0]?.[1]).not.toHaveProperty('presentUserIntent');
+        } finally {
+            storage.setState(previous);
+        }
+    });
     it('confirms locally before the daemon RPC and carries the settled present intent', async () => {
         const order: string[] = [];
         const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => {

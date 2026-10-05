@@ -208,6 +208,8 @@ vi.mock('@/components/settings/machines/hooks/useActiveSelectionMachineGroups', 
     }),
 }));
 
+const { SettingsView } = await import('./SettingsView');
+
 describe('SettingsView (web)', () => {
     afterEach(() => {
         vi.unstubAllGlobals();

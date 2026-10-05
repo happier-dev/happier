@@ -3,6 +3,7 @@ import type { AgentTerminalHostDisposeIntent } from '@happier-dev/plugin-sdk/age
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import { disposeSessionHookArtifactsForSession } from '@/plugins/runtime/hooks/session/service';
 import { logger } from '@/ui/logger';
+import { retireTerminalClientProcess } from '@/terminal/host/terminalClientCustody';
 
 import {
   readTerminalHostAttachmentState,
@@ -160,6 +161,9 @@ export async function executeTerminalHostDisposition(input: Readonly<{
         return { status: 'parked', reason: 'attachment_mismatch' };
       }
       try {
+        if (current.version === 3 && current.nativeClientProcess) {
+          await retireTerminalClientProcess(current.nativeClientProcess);
+        }
         await input.beforeDescriptorRetirement?.({
           happyHomeDir: input.happyHomeDir,
           sessionId: input.sessionId,

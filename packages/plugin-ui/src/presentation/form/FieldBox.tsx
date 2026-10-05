@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import type { HappierStyleProp } from '../portableTypes.js';
+import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 
 /** The compact rail/search well; phones take the platform target supplied by the adapter. */
 export const HAPPIER_SEARCH_FIELD_METRICS = Object.freeze({ heightPx: 32, iconInsetPx: 10, iconSizePx: 14, iconGapPx: 8, trailingInsetPx: 8 });
@@ -87,7 +87,7 @@ export function resolveHappierFieldBoxLabel(input: Readonly<{
 }
 
 /** The field box's own shape; colours come from the caller. */
-export const HAPPIER_FIELD_BOX_SHAPE: Readonly<ViewStyle> = Object.freeze({
+export const HAPPIER_FIELD_BOX_SHAPE: HappierPortableStyle = Object.freeze({
   minHeight: HAPPIER_FIELD_BOX_METRICS.minHeightPx,
   borderRadius: HAPPIER_FIELD_BOX_METRICS.radiusPx,
   borderWidth: HAPPIER_FIELD_BOX_METRICS.borderWidthPx,

@@ -558,6 +558,15 @@ test('dev-targets sync-service detached owns continuous synchronization independ
     assert.equal(status.preparation.targets.linux.state, 'ready');
     assert.equal(status.statuses[0].status.state, 'ready');
 
+    const preparationFile = join(root, 'repo-test', 'mutagen', 'sync-service-state.v1.json');
+    await writeFile(preparationFile, JSON.stringify({
+      version: 1, state: 'failed',
+      targets: { linux: { state: 'failed', error: 'transient beta transition' } },
+    }));
+    const recovered = await run(['sync-service', 'status', '--stack=repo-test'], root, commandEnv);
+    assert.equal(recovered.state, 'ready');
+    assert.equal(recovered.preparation.state, 'failed', 'startup failure remains historical information');
+
     const renderedStatus = await runRaw(
       ['sync-service', 'status', '--stack=repo-test'],
       root,
@@ -565,7 +574,7 @@ test('dev-targets sync-service detached owns continuous synchronization independ
     );
     assert.equal(renderedStatus.code, 0, renderedStatus.stderr);
     assert.match(renderedStatus.stdout, /synchronization readiness\tready/);
-    assert.match(renderedStatus.stdout, /linux synchronization\tready/);
+    assert.match(renderedStatus.stdout, /startup preparation history\tfailed/);
     assert.doesNotMatch(renderedStatus.stdout, /dependenc(?:y|ies)/i);
 
     const stopped = await run(['sync-service', 'stop', '--stack=repo-test'], root, commandEnv);
@@ -665,4 +674,25 @@ test('dev-targets add provisions a dedicated POSIX SSH connection and discovers 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('automatic worker power setup excludes manual targets and exposes OS permission failures', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-worker-power-cli-'));
+  try {
+    const bin = join(root, 'bin'); await mkdir(bin);
+    const log = join(root, 'connections');
+    await writeFile(join(bin, 'ssh'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$POWER_CONNECTIONS"\nexit 0\n');
+    await chmod(join(bin, 'ssh'), 0o755);
+    const env = { PATH: bin + ':' + process.env.PATH, POWER_CONNECTIONS: log };
+    for (const name of ['worker', 'manual']) await run(['add', name, '--stack=power-test', '--platform=posix', '--ssh=' + name, '--repo-dir=/home/dev/repo', '--cli-home-dir=/home/dev/cli'], root, env);
+    await run(['placement', 'set', 'commands', 'auto', '--targets=worker', '--stack=power-test'], root, env);
+    const configured = await run(['power', 'no-sleep', 'auto', '--stack=power-test'], root, env);
+    assert.deepEqual(configured.results.map((entry) => entry.name), ['worker']);
+    const connections = await readFile(log, 'utf8');
+    assert.equal(connections.includes('manual'), false, 'manual computers are outside automatic worker setup');
+    await writeFile(join(bin, 'ssh'), '#!/bin/sh\necho "sudo: authentication required" >&2\nexit 1\n');
+    const denied = await runRaw(['power', 'no-sleep', 'auto', '--stack=power-test', '--json'], root, env);
+    assert.equal(denied.code, 1);
+    assert.equal(JSON.parse(denied.stdout).results[0].results[0].ok, false);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

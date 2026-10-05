@@ -20,6 +20,9 @@ export type LocalTtsProviderTestContext = {
   voice: VoiceSettings;
   networkTimeoutMs: number;
   sample: string;
+  signal?: AbortSignal;
+  isCurrent?: () => boolean;
+  registerPlaybackStopper?: import('@/voice/runtime/playback/VoicePlaybackController').VoicePlaybackStopperRegistrar;
 };
 
 export type LocalTtsProviderSpec = {

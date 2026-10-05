@@ -107,4 +107,12 @@ describe('useVoiceSurfaceModel identity', () => {
 
         await hook.unmount();
     });
+
+    it('presents the Companion model independently of a retained Horizon placement preference', async () => {
+        seedVoiceSession();
+        const { useVoiceSurfaceModel } = await import('./useVoiceSurfaceModel');
+        const hook = await renderHook(() => useVoiceSurfaceModel({ variant: 'sidebar' }));
+        expect(hook.getCurrent()?.attemptControl.canStop).toBe(true);
+        await hook.unmount();
+    });
 });

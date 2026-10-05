@@ -70,13 +70,13 @@ describe('Session Board Action catalog rows', () => {
     }
   });
 
-  it('classifies the read, the two safe writes and the destructive removal distinctly', () => {
+  it('classifies the read and the consequential shared writes distinctly', () => {
     expect(getActionSpec('session.board.get').safety).toBe('safe');
     expect(getActionSpec('session.board.get').sideEffectClass).toBe('read');
     expect(getActionSpec('session.board.get').approval).toEqual({ result: 'required' });
 
     for (const actionId of ['session.board.item.upsert', 'session.board.layout.update'] as const) {
-      expect(getActionSpec(actionId).safety, actionId).toBe('safe');
+      expect(getActionSpec(actionId).safety, actionId).toBe('danger');
       expect(getActionSpec(actionId).sideEffectClass, actionId).toBe('write');
       expect(getActionSpec(actionId).approval, actionId).toEqual({ result: 'optional', flow: 'deferred' });
     }
@@ -86,10 +86,14 @@ describe('Session Board Action catalog rows', () => {
     expect(getActionSpec('session.board.item.remove').approval).toEqual({ result: 'optional', flow: 'deferred' });
   });
 
-  it('derives the destructive-removal approval default from safety and keeps it user-overridable', () => {
-    expect(isAgentInitiatedApprovalRequiredByDefault('session.board.item.remove')).toBe(true);
-    for (const actionId of ['session.board.get', 'session.board.item.upsert', 'session.board.layout.update'] as const) {
-      expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId).toBe(false);
+  it('derives shared-write approval defaults from safety and keeps them user-overridable', () => {
+    expect(isAgentInitiatedApprovalRequiredByDefault('session.board.get')).toBe(false);
+    for (const actionId of ['session.board.item.upsert', 'session.board.layout.update', 'session.board.item.remove'] as const) {
+      expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId).toBe(true);
+      const inherited = ActionsSettingsV1Schema.parse({ v: 1 });
+      expect(isApprovalRequiredByActionsSettings(actionId, inherited, { surface: 'agent' }), actionId).toBe(true);
+      const waived = setActionApprovalOverride({ settings: inherited, actionId, surface: 'agent', approvalRequired: false });
+      expect(isApprovalRequiredByActionsSettings(actionId, waived, { surface: 'agent' }), actionId).toBe(false);
     }
 
     const inherit = ActionsSettingsV1Schema.parse({ v: 1, actions: {} });

@@ -2,14 +2,14 @@ import { z } from 'zod';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ArtifactCallerAccessV1Schema } from './artifactAccessV1.js';
-import { StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
+import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
 import { ArtifactBodyV1Schema } from './artifactBinaryV1.js';
 
 /** Ordinary Artifact Action wire epoch V1. Mutation and identity objects are closed. */
 export const ARTIFACT_ACTION_IDS_V1 = [
   'artifact.create', 'artifact.get', 'artifact.list', 'artifact.update', 'artifact.delete',
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage',
-  'artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke',
+  'artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke', 'artifact.public_link.audit',
 ] as const;
 export const ArtifactActionIdV1Schema = z.enum(ARTIFACT_ACTION_IDS_V1);
 export type ArtifactActionIdV1 = z.infer<typeof ArtifactActionIdV1Schema>;
@@ -27,7 +27,11 @@ export type ArtifactProvenanceV1 = z.infer<typeof ArtifactProvenanceV1Schema>;
 export const ArtifactHeaderMetadataV1Schema = z.record(z.string(), StrictJsonValueSchema);
 
 const subject = z.object({ artifactId: z.string().min(1) }).strict();
-const acknowledgement = subject.extend({ revision: ArtifactRevisionV1Schema }).strict();
+const htmlPreview = {
+  previewUrl: z.string().url().optional(),
+  previewError: z.literal('artifact_html_preview_unavailable').optional(),
+};
+const acknowledgement = subject.extend({ revision: ArtifactRevisionV1Schema, ...htmlPreview }).strict();
 export const ArtifactPublicLinkCreateInputV1Schema = subject.extend(StoredContentPublicShareCreateRequestV1Schema.pick({
   expiresAt: true, maxUses: true, isConsentRequired: true,
 }).shape).strict();
@@ -93,10 +97,11 @@ export const ArtifactActionInputSchemasV1 = {
   'artifact.public_link.create': ArtifactPublicLinkCreateInputV1Schema,
   'artifact.public_link.list': subject,
   'artifact.public_link.revoke': ArtifactPublicLinkRevokeInputV1Schema,
+  'artifact.public_link.audit': ArtifactPublicLinkRevokeInputV1Schema,
 } as const;
 export const ArtifactActionOutputSchemasV1 = {
   'artifact.create': acknowledgement,
-  'artifact.get': z.object({ artifact: ArtifactDocumentV1Schema.nullable() }).strict(),
+  'artifact.get': z.object({ artifact: ArtifactDocumentV1Schema.nullable(), ...htmlPreview }).strict(),
   'artifact.list': z.object({ items: z.array(ArtifactHeaderV1Schema), nextCursor: z.string().min(1).optional() }).strict(),
   'artifact.update': acknowledgement,
   'artifact.delete': subject.extend({ deleted: z.literal(true) }).strict(),
@@ -104,9 +109,10 @@ export const ArtifactActionOutputSchemasV1 = {
   'artifact.revisions.list': subject.extend({ revisions: z.array(ArtifactBodyRevisionV1Schema), retentionCount: z.number().int().nonnegative() }).strict(),
   'artifact.revisions.restore': acknowledgement,
   'artifact.storage.usage': ArtifactStorageUsageV1Schema,
-  'artifact.public_link.create': z.object({ publicShare: StoredContentPublicShareV1Schema }).strict(),
+  'artifact.public_link.create': z.object({ publicShare: StoredContentPublicShareV1Schema, url: z.string().url() }).strict(),
   'artifact.public_link.list': StoredContentPublicSharesListResponseV1Schema,
   'artifact.public_link.revoke': subject.extend({ shareId: z.string().min(1), revoked: z.literal(true) }).strict(),
+  'artifact.public_link.audit': StoredContentPublicShareAccessLogResponseV1Schema,
 } as const;
 export type ArtifactActionInputV1<T extends ArtifactActionIdV1> = z.input<(typeof ArtifactActionInputSchemasV1)[T]>;
 export type ArtifactActionResultV1<T extends ArtifactActionIdV1> = z.output<(typeof ArtifactActionOutputSchemasV1)[T]>;

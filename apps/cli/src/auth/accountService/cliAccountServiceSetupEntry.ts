@@ -379,24 +379,11 @@ export async function runCliAccountServiceSetupEntry(
     try {
       contextTarget = await resolveCliHomeTarget(context.target);
       if (contextPolicy === undefined) {
-        const acquired = contextTarget.descriptor
-          ? await acquireTerminalAuthEnrollmentRuntime(
-              contextTarget.descriptor,
-              contextTarget.preferredTransport,
-              input.signal,
-            )
-          : {
-              ok: true as const,
-              runtime: {
-                runtimeOrigin: contextTarget.applicationUrl,
-                carrier: 'https' as const,
-                authenticatedCredentialDestination: {
-                  kind: 'https' as const,
-                  applicationUrl: contextTarget.applicationUrl,
-                },
-              },
-              close: async () => {},
-            };
+        const acquired = await acquireTerminalAuthEnrollmentRuntime(
+          contextTarget.descriptor ?? contextTarget,
+          contextTarget.preferredTransport,
+          input.signal,
+        );
         if (!acquired.ok) {
           return input.signal?.aborted
             ? { kind: 'cancelled' }
@@ -481,9 +468,9 @@ export async function runCliAccountServiceSetupEntry(
   if (effectiveService.kind === 'self') {
     try {
       selfTarget = contextTarget ?? await resolveCliHomeTarget(effectiveService.target);
-      if (selfTarget.descriptor && !selfTransport) {
+      if (!selfTransport) {
         const acquired = await acquireTerminalAuthEnrollmentRuntime(
-          selfTarget.descriptor,
+          selfTarget.descriptor ?? selfTarget,
           selfTarget.preferredTransport,
           input.signal,
         );
@@ -493,17 +480,6 @@ export async function runCliAccountServiceSetupEntry(
             : { kind: 'home_unavailable' };
         }
         selfTransport = acquired;
-      } else if (!selfTransport) {
-        const target = selfTarget;
-        selfTransport = {
-          ok: true,
-          runtime: {
-            runtimeOrigin: target.applicationUrl,
-            carrier: 'https',
-            authenticatedCredentialDestination: { kind: 'https', applicationUrl: target.applicationUrl },
-          },
-          close: async () => {},
-        };
       }
     } catch {
       return input.signal?.aborted

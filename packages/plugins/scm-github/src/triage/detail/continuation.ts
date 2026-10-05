@@ -1,4 +1,5 @@
 import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
+import { GithubComparisonContinuationV1Schema, type GithubComparisonContinuationV1 } from './contracts.js';
 
 /**
  * The paging position of one mounted GitHub detail panel.
@@ -26,6 +27,7 @@ export type GithubDetailFrontierV1 = Readonly<{
   /** 1-indexed page, exactly as GitHub numbers its own pagination. */
   page: number;
   perPage: number;
+  comparison?: GithubComparisonContinuationV1;
 }>;
 
 function isAdmissibleGeometry(page: number, perPage: number): boolean {
@@ -44,6 +46,7 @@ export function encodeGithubDetailContinuation(
     v: CONTINUATION_VERSION,
     page: frontier.page,
     perPage: frontier.perPage,
+    ...(frontier.comparison === undefined ? {} : { comparison: GithubComparisonContinuationV1Schema.parse(frontier.comparison) }),
   });
 }
 
@@ -67,5 +70,7 @@ export function decodeGithubDetailContinuation(token: string): GithubDetailFront
   if (raw['v'] !== CONTINUATION_VERSION) return null;
   if (typeof page !== 'number' || typeof perPage !== 'number') return null;
   if (!isAdmissibleGeometry(page, perPage)) return null;
-  return Object.freeze({ v: 1 as const, page, perPage });
+  const comparison = raw['comparison'] === undefined ? undefined : GithubComparisonContinuationV1Schema.safeParse(raw['comparison']);
+  if (comparison !== undefined && !comparison.success) return null;
+  return Object.freeze({ v: 1 as const, page, perPage, ...(comparison?.success ? { comparison: comparison.data } : {}) });
 }

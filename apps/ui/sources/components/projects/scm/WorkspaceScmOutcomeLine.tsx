@@ -17,6 +17,7 @@ export function WorkspaceScmOutcomeLine(props: Readonly<{
     writeEnabled: boolean;
     onRefresh: () => Promise<void>;
     onFetch?: () => void;
+    onShowConflicts?: () => void;
 }>) {
     const inFlight = useWorkspaceScmInFlightOperation(props.scope);
     const log = useWorkspaceScmOperationLog(props.scope);
@@ -40,7 +41,7 @@ export function WorkspaceScmOutcomeLine(props: Readonly<{
                 upstream: props.snapshot?.branch.upstream ?? null,
             }}
             machineName={null}
-            recovery={{ refresh: () => { void props.onRefresh(); }, fetch: props.onFetch, undoCommit }}
+            recovery={{ refresh: () => { void props.onRefresh(); }, fetch: props.onFetch, showConflicts: props.onShowConflicts, undoCommit }}
             haptics={Platform.OS !== 'web'}
         />
     );

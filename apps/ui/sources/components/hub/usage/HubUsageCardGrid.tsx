@@ -10,7 +10,6 @@ import { AccountUsageResetsLine } from '@/components/settings/connectedServices/
 import { UsageMeterRow, UsageMeterStack } from '@/components/settings/connectedServices/usage/UsageMeterRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
-import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -109,7 +108,6 @@ const HubUsageCard = React.memo(function HubUsageCard(props: Readonly<{
                     </View>
                 ) : null}
             </View>
-            {entry.fetchedAt != null ? <SurfaceAsOfLabel at={entry.fetchedAt} testID={`hub-usage.${entry.key}:as-of`} /> : null}
             <View style={stylesheet.meters}>
                 <UsageMeterStack>
                     {entry.meters.map((meter) => (

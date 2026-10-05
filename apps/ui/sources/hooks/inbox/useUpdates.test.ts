@@ -6,6 +6,9 @@ import { createDeferred, createRootLayoutFeaturesResponse, renderHook } from '@/
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
 import { useAppUpdateStatus } from '@/updates/useAppUpdateStatus';
 import { useUpdates } from './useUpdates';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
 
 const appStateRef = vi.hoisted(() => ({
     listener: null as ((nextAppState: string) => void) | null,
@@ -70,6 +73,13 @@ vi.mock('react-native', async () => {
             },
         }),
     };
+});
+
+// Session-envelope HTTP/process work is outside the mounted app-update journey.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Unexpected Session-envelope API call'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
 });
 
 vi.mock('expo-updates', () => ({
@@ -152,6 +162,39 @@ afterEach(() => {
 });
 
 describe('useUpdates (OTA runtime)', () => {
+    it('exposes current OTA operations through Actions and retires them with their last mounted app owner', async () => {
+        stubFeatureResponse(true);
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ appUpdateAction: executeAppUpdateAction }));
+        const context = { surface: 'ui' as const, authority: 'present_user' as const };
+        await expect(executor.execute('app.updates.get', {}, context)).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        const summary = await renderHook(() => useAppUpdateStatus());
+        const details = await renderHook(() => useAppUpdateStatus());
+        await flushMoreInAct();
+        await vi.waitFor(() => expect(summary.getCurrent().model.channel).toBe('ota'));
+        await expect(executor.execute('app.updates.restart', {}, context)).resolves.toMatchObject({ ok: false, errorCode: 'app_update_unavailable' });
+        expect(reloadAsyncMock).not.toHaveBeenCalled();
+        checkForUpdateAsyncMock.mockClear();
+        await act(async () => {
+            expect(await executor.execute('app.updates.check', {}, context)).toEqual({ ok: true, result: { status: 'requested' } });
+        });
+        expect(checkForUpdateAsyncMock).toHaveBeenCalledOnce();
+        expoUpdatesStateRef.current = { ...expoUpdatesStateRef.current, isUpdateAvailable: true, downloadError: new Error('download refused') };
+        await details.rerender();
+        expect(await executor.execute('app.updates.get', {}, context)).toMatchObject({ ok: true, result: { channel: 'ota', state: 'failed', action: 'retry' } });
+        checkForUpdateAsyncMock.mockClear();
+        await act(async () => { await executor.execute('app.updates.retry', {}, context); });
+        expect(checkForUpdateAsyncMock).toHaveBeenCalledOnce();
+        expoUpdatesStateRef.current = { ...expoUpdatesStateRef.current, isUpdateAvailable: false, isUpdatePending: true };
+        await summary.rerender();
+        await details.rerender();
+        await details.unmount();
+        // Closing the page cannot retire the still-mounted shell summary owner.
+        expect(await executor.execute('app.updates.get', {}, context)).toMatchObject({ ok: true, result: { state: 'ready', action: 'restart' } });
+        await act(async () => { await executor.execute('app.updates.restart', {}, context); });
+        expect(reloadAsyncMock).toHaveBeenCalledOnce();
+        await summary.unmount();
+        await expect(executor.execute('app.updates.get', {}, context)).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    });
     it('gates OTA checks and OTA-only state when updates.ota is disabled', async () => {
         stubFeatureResponse(false);
         expoUpdatesStateRef.current = {

@@ -7,7 +7,7 @@ import type { BackendRuntimeRegistration as ScmBackendRuntimeRegistration } from
 
 import { classifyGitDirectoryIgnores } from './directoryIgnores.js';
 import type { ScmBackend } from './types.js';
-import { detectGitRepo, getGitSnapshot, getGitWorktreesEnrichment } from './repository.js';
+import { createGitExecutionFeatureDetector, detectGitRepo, getGitSnapshot, getGitWorktreesEnrichment } from './repository.js';
 import { GIT_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
 import {
     assertPortableGitWorkspaceEntries,
@@ -38,6 +38,8 @@ import {
 import { gitChangeExclude, gitChangeInclude } from './operations/changeApply.js';
 import { gitChangeDiscard } from './operations/changeDiscard.js';
 import { gitCommitBackout, gitCommitCreate, gitCommitUndoLast } from './operations/commitOperations.js';
+import { gitCommitResolveOutcome } from './operations/commitOutcome.js';
+import { captureGitCommitTarget } from './operations/commitPublication.js';
 import { gitRemotePublish } from './operations/publishOperations.js';
 import { gitDiffCommit, gitDiffFile, gitLogList } from './operations/readOperations.js';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations.js';
@@ -50,6 +52,8 @@ import { gitWorktreeCreate, gitWorktreePrune, gitWorktreeRemove } from './operat
 import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 
 export function createGitBackend(): ScmBackend {
+    const gitFeatures = createGitExecutionFeatureDetector();
+    const commitCreate: ScmBackend['commitCreate'] = (input) => gitCommitCreate({ ...input, gitFeatures });
     return {
         id: 'git',
         declaredCapabilities: GIT_SCM_BACKEND_CAPABILITIES,
@@ -111,7 +115,14 @@ export function createGitBackend(): ScmBackend {
         changeInclude: gitChangeInclude,
         changeExclude: gitChangeExclude,
         changeDiscard: gitChangeDiscard,
-        commitCreate: gitCommitCreate,
+        commitCreate,
+        async commitCaptureTarget({ context }) {
+            const captured = await captureGitCommitTarget(context, { message: '' });
+            if (!captured.success) return { success: false, errorCode: captured.response.errorCode, error: captured.response.error };
+            const { headOid, ref, baseTreeOid } = captured.target;
+            return { success: true, target: { headOid, ref, baseTreeOid } };
+        },
+        commitResolveOutcome: gitCommitResolveOutcome,
         commitBackout: gitCommitBackout,
         commitUndoLast: gitCommitUndoLast,
         logList: gitLogList,
@@ -169,8 +180,8 @@ export function createGitBackend(): ScmBackend {
             return await gitPullRequestPrepareWorktree(input);
         },
         pullRequestRunStacked: async (input) => {
-            const { gitPullRequestRunStacked } = await import('./operations/runStackedPullRequestAction.js');
-            return await gitPullRequestRunStacked(input);
+            const { createGitRunStackedPullRequestAction } = await import('./operations/runStackedPullRequestAction.js');
+            return await createGitRunStackedPullRequestAction({ commitCreate }).runStacked(input);
         },
         repositoryInit: gitRepositoryInit,
         removeIndexLock: gitRemoveIndexLock,
@@ -211,7 +222,9 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
                 discard: backend.changeDiscard,
             },
             commit: {
+                captureTarget: backend.commitCaptureTarget,
                 create: backend.commitCreate,
+                resolveOutcome: backend.commitResolveOutcome,
                 backout: backend.commitBackout,
                 undoLast: backend.commitUndoLast,
             },

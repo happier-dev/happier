@@ -6,6 +6,7 @@ vi.mock('@/text', async () => {
 });
 
 const { formatTriggerSetSummary, formatTriggerSummary } = await import('./formatTriggerSummary');
+const { resolveTriggerEventGroup } = await import('./triggerEventGroups');
 
 function cron(scheduleExpr: string) {
     return { kind: 'schedule', schedule: { kind: 'cron', scheduleExpr, everyMs: null } } as const;
@@ -16,6 +17,17 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it('groups Run lifecycle triggers by their condition without exposing the private Run identity', () => {
+        for (const condition of ['terminal', 'needs_attention'] as const) {
+            const trigger = { kind: 'runLifecycle' as const, condition, source: { kind: 'workflow_run' as const, runId: 'run-private' } };
+            const group = resolveTriggerEventGroup(trigger);
+            expect(group).toBeDefined();
+            expect(group.title).toBe(formatTriggerSummary(trigger));
+            expect(group.title).not.toContain('run-private');
+            expect(group.id).toContain(condition);
+            expect(group.glyph).toBe(condition === 'needs_attention' ? 'hand' : 'arrows-clockwise');
+        }
+    });
     it('reads the common crons as a sentence and shows any other expression as it is', () => {
         expect(formatTriggerSummary(cron('0 7 * * *'))).toBe('workflows.triggers.summary.everyDayAt(time=07:00)');
         expect(formatTriggerSummary(cron('5 9 * * 1-5'))).toBe('workflows.triggers.summary.weekdaysAt(time=09:05)');

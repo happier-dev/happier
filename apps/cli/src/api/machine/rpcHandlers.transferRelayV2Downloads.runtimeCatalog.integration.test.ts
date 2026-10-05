@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';

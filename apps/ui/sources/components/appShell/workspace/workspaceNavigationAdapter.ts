@@ -1,18 +1,24 @@
 import type { CompactAppDestination, DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { hrefForDestinationRef, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationHistory, recordWorkspaceNavigation, stepWorkspaceNavigation, workspaceNavigationRestorationActions, type WorkspaceNavigationEntry } from './workspaceNavigationHistory';
-import { createWorkspaceEmptyTab, reduceWorkspaceState, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
+import { createWorkspaceEmptyTab, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
 import { isWorkspaceSingletonDestination } from './workspaceDestinationPolicy';
+import { createWorkspaceDestinationSplit } from './workspaceSplit';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type WorkspaceOpenOptions = Readonly<{
-    mode?: 'preview' | 'newTab' | 'splitRight' | 'splitDown';
+    mode?: 'preview' | 'newTab' | 'splitLeft' | 'splitRight' | 'splitUp' | 'splitDown';
     tabId?: string;
     groupId?: string;
+    beforeTabId?: string | null;
+    reuseExisting?: boolean;
     replace?: boolean;
     availableSizePx?: number;
     minimumFirstSizePx?: number;
     minimumSecondSizePx?: number;
 }>;
+
+export type WorkspaceOpenDestination = Readonly<{ tabId: string; groupId: string }>;
 
 /** The URL transport does not decide what a tab is or which destination is focused. */
 export type WorkspaceUrlTransport = Readonly<{
@@ -29,41 +35,73 @@ export function sameDestinationRef(a: DestinationRef, b: DestinationRef): boolea
 export function createWorkspaceNavigationAdapter(input: Readonly<{
     getState: () => WorkspaceState;
     getCatalog: () => readonly CompactAppDestination[];
+    getScope?: () => ServerAccountScope | null;
     dispatch: (action: WorkspaceAction) => void;
     transport: WorkspaceUrlTransport;
     createId: () => string;
     onChange: () => void;
+    resolveOpenHref?: (href: string) => string | null;
 }>) {
     let history = createWorkspaceNavigationHistory();
+    const resolveOpenTarget = (href: string): DestinationRef | null => {
+        const admitted = input.resolveOpenHref ? input.resolveOpenHref(href) : href;
+        return admitted ? resolveDestinationRefFromHref(input.getCatalog(), admitted) : null;
+    };
+    const findOpenDestination = (target: DestinationRef, state = input.getState()): WorkspaceOpenDestination | null => {
+        const catalog = input.getCatalog();
+        const singleton = isWorkspaceSingletonDestination(catalog, target);
+        const scope = input.getScope?.();
+        const sessionIdentity = (ref: DestinationRef) => {
+            const serverId = ref.params.serverId ?? scope?.serverId;
+            // Missing qualifiers denote the current persisted workspace realm,
+            // never an Account on an explicitly different Home.
+            return { id: ref.params.id, serverId, accountId: ref.params.accountId
+                ?? (serverId === scope?.serverId ? scope?.accountId : undefined) };
+        };
+        const identity = target.kind === 'session' ? sessionIdentity(target) : null;
+        const tab = Object.values(state.tabs).find(tab => {
+            if (singleton) return tab.target.kind === target.kind;
+            const href = hrefForDestinationRef(catalog, tab.target);
+            const normalized = href ? resolveDestinationRefFromHref(catalog, href) : null;
+            if (!normalized || normalized.kind !== target.kind) return false;
+            // SessionAddress owns resource identity; pane URL state and anchors belong
+            // to the retained view, and must not turn Go to it into a duplicate tab.
+            if (!identity) return sameDestinationRef(normalized, target);
+            const candidate = sessionIdentity(normalized);
+            return candidate.id === identity.id && candidate.serverId === identity.serverId
+                && candidate.accountId === identity.accountId;
+        });
+        const group = tab ? Object.values(state.groups).find(group => group.tabIds.includes(tab.id)) : null;
+        return tab && group ? { tabId: tab.id, groupId: group.id } : null;
+    };
     const focusedEntry = (): WorkspaceNavigationEntry => {
         const state = input.getState();
         const group = state.groups[state.focusedGroupId];
         const tab = state.tabs[group.activeTabId];
         return { tabId: tab.id, groupId: group.id, target: tab.target };
     };
-    const visit = (replace = false, projectUrl = true) => {
+    const visit = (replace = false, projectUrl = true, forceProjection = false) => {
         const entry = focusedEntry();
         const next = replace && history.index >= 0
             ? { entries: history.entries.map((item, index) => index === history.index ? entry : item), index: history.index }
             : recordWorkspaceNavigation(history, entry);
-        if (next === history) return;
+        const unchanged = next === history;
+        if (unchanged && !(projectUrl && forceProjection)) return;
         history = next;
         if (projectUrl) {
             const href = hrefForDestinationRef(input.getCatalog(), entry.target);
-            if (href) input.transport.commit(href, entry, replace, history.index);
+            if (href) input.transport.commit(href, entry, replace || unchanged, history.index);
         } else input.transport.adoptCurrent?.(entry, history.index);
-        input.onChange();
+        if (!unchanged) input.onChange();
     };
     const singletonActions = (state: WorkspaceState, target: DestinationRef): readonly WorkspaceAction[] | null => {
         // The catalog owns admission: subpaths never change an app page's mount identity.
         if (!isWorkspaceSingletonDestination(input.getCatalog(), target)) return null;
-        const tab = Object.values(state.tabs).find((item) => item.target.kind === target.kind);
-        if (!tab) return null;
-        const group = Object.values(state.groups).find((item) => item.tabIds.includes(tab.id));
-        return group ? [
-            { type: 'setTarget', tabId: tab.id, target },
-            { type: 'activateTab', groupId: group.id, tabId: tab.id },
-        ] : [];
+        const existing = findOpenDestination(target, state);
+        return existing ? [
+            { type: 'setTarget', tabId: existing.tabId, target },
+            { type: 'activateTab', groupId: existing.groupId, tabId: existing.tabId },
+        ] : null;
     };
     const restore = (entry: WorkspaceNavigationEntry) => {
         const state = input.getState();
@@ -74,11 +112,15 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         get history() { return history; },
         get canGoBack() { return history.index > 0; },
         get canGoForward() { return history.index < history.entries.length - 1; },
+        findOpenHref(href: string): WorkspaceOpenDestination | null {
+            const target = resolveOpenTarget(href);
+            return target ? findOpenDestination(target) : null;
+        },
         initialize(href: string) {
             this.openHref(href, { replace: true });
         },
         openHref(href: string, options: WorkspaceOpenOptions = {}, projectUrl = true): boolean {
-            const target = resolveDestinationRefFromHref(input.getCatalog(), href);
+            const target = resolveOpenTarget(href);
             if (!target) return false;
             const state = input.getState();
             if (options.tabId && !state.tabs[options.tabId]) return false;
@@ -87,7 +129,11 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             const openingGroupId = options.groupId ?? state.focusedGroupId;
             const mode = options.mode ?? 'preview';
             const admittedSingleton = singletonActions(state, target);
-            if (admittedSingleton) {
+            const reusable = options.reuseExisting && !options.tabId ? findOpenDestination(target) : null;
+            if (reusable && !admittedSingleton) {
+                if (mode !== 'preview') input.dispatch({ type: 'promoteTab', tabId: reusable.tabId });
+                input.dispatch({ type: 'activateTab', groupId: reusable.groupId, tabId: reusable.tabId });
+            } else if (admittedSingleton) {
                 if (admittedSingleton.length === 0) return false;
                 for (const action of admittedSingleton) input.dispatch(action);
                 if (mode === 'newTab') input.dispatch({ type: 'promoteTab', tabId: focusedEntry().tabId });
@@ -108,33 +154,27 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                     if (mode === 'newTab') input.dispatch({ type: 'promoteTab', tabId: existing.id });
                     input.dispatch({ type: 'activateTab', groupId: group.id, tabId: existing.id });
                 } else {
-                    const split = mode === 'splitRight' || mode === 'splitDown';
-                    if (split && (options.availableSizePx === undefined || options.minimumFirstSizePx === undefined || options.minimumSecondSizePx === undefined)) return false;
+                    const direction = mode === 'splitLeft' ? 'left' : mode === 'splitRight' ? 'right'
+                        : mode === 'splitUp' ? 'up' : mode === 'splitDown' ? 'down' : null;
+                    if (direction && (options.availableSizePx === undefined || options.minimumFirstSizePx === undefined)) return false;
                     const tab: WorkspaceTab = { id: input.createId(), target, pinned: false, preview: mode === 'preview' };
-                    const openAction: WorkspaceAction = { type: 'openTab', groupId: openingGroupId, tab };
-                    if (split) {
-                        const splitAction: WorkspaceAction = {
-                            type: 'splitTab', tabId: tab.id, sourceGroupId: openingGroupId,
-                            targetGroupId: openingGroupId, newGroupId: input.createId(),
-                            axis: mode === 'splitRight' ? 'row' : 'column', placement: 'after',
-                            availableSizePx: options.availableSizePx!, minimumFirstSizePx: options.minimumFirstSizePx!, minimumSecondSizePx: options.minimumSecondSizePx!,
-                        };
-                        // Admission stays with the layout/geometry owner. Calculate the
-                        // composed result before publishing either action so rejection is atomic.
-                        const opened = reduceWorkspaceState(state, openAction);
-                        const candidate = reduceWorkspaceState(opened, splitAction);
-                        if (candidate.root === state.root) return false;
-                        input.dispatch(openAction);
-                        input.dispatch(splitAction);
+                    const openAction: WorkspaceAction = { type: 'openTab', groupId: openingGroupId, tab, beforeTabId: options.beforeTabId };
+                    if (direction) {
+                        const action = createWorkspaceDestinationSplit(state, {
+                            groupId: openingGroupId, tab, direction, createId: input.createId,
+                            availableSizePx: options.availableSizePx!, minimumExistingSizePx: options.minimumFirstSizePx!,
+                        });
+                        if (!action) return false;
+                        input.dispatch(action);
                     } else input.dispatch(openAction);
                 }
             }
-            visit(options.replace, projectUrl);
+            visit(options.replace, projectUrl, true);
             return true;
         },
         activateTab(groupId: string, tabId: string) {
             input.dispatch({ type: 'activateTab', groupId, tabId });
-            visit();
+            visit(false, true, true);
         },
         dispatch(action: WorkspaceAction) {
             if (action.type === 'reopenTab') { this.reopenTab(action.tabId); return; }
@@ -154,6 +194,17 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         },
         closeTab(groupId: string, tabId: string) {
             input.dispatch({ type: 'closeTab', groupId, tabId, newTab: createWorkspaceEmptyTab(input.createId()) });
+            visit();
+        },
+        closeTabs(groupId: string, tabIds: readonly string[]) {
+            const state = input.getState();
+            const group = state.groups[groupId];
+            if (!group) return;
+            for (const tabId of new Set(tabIds)) {
+                if (group.tabIds.includes(tabId) && !state.tabs[tabId]?.pinned) {
+                    input.dispatch({ type: 'closeTab', groupId, tabId, newTab: createWorkspaceEmptyTab(input.createId()) });
+                }
+            }
             visit();
         },
         setParams(tabId: string, values: Readonly<Record<string, unknown>>) {

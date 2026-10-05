@@ -18,7 +18,11 @@ import {
     estimateXtermWebViewTextWriteBytes,
 } from './writeQueue';
 import { buildXtermWebViewHtml } from './xtermWebViewHtml';
-import type { EmbeddedTerminalWriteOptions } from '../../embedded/embeddedTerminalRendererHandle';
+import type { FindEngine, EmbeddedTerminalWriteOptions } from '../../embedded/embeddedTerminalRendererHandle';
+import { resolveXtermFindColors } from '../findColors';
+import { createWebViewFindEngine } from './findBridge';
+import { useEmbeddedFindKeyboard } from '@/keyboard/KeyboardShortcutProvider';
+import type { NativeHardwareKeyboardEventLike } from '@/keyboard/runtime';
 
 const XTERM_WEBVIEW_BOOT_RETRY_LIMIT = 1;
 // Inline readiness retries finish in roughly 1.5 seconds; this only bounds a WebView that never boots.
@@ -32,6 +36,7 @@ function createMessageId(): string {
 }
 
 export type XtermWebViewSurfaceHandle = Readonly<{
+    find?: FindEngine;
     write: (data: string, options?: EmbeddedTerminalWriteOptions) => boolean;
     writeBytes: (input: XtermWriteBytesInput) => boolean | Readonly<{ status: 'queued' }>;
     clear: () => void;
@@ -49,6 +54,7 @@ export type XtermWebViewRendererFailure = Readonly<{
 }>;
 
 export type XtermWebViewSurfaceProps = Readonly<{
+    onFindEngine?: (engine: FindEngine | null) => void;
     onInput: (data: string) => void;
     onPaste?: (data: string) => void | Promise<unknown>;
     onCopySelection?: (text: string) => void;
@@ -109,6 +115,7 @@ function readWriteCompleteEvent(value: unknown): XtermWriteCompleteEvent | null 
 export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, XtermWebViewSurfaceProps>(
     function XtermWebViewSurface(props, ref) {
         const { theme } = useUnistyles();
+        const findKeyboard = useEmbeddedFindKeyboard();
         const webViewRef = React.useRef<WebView>(null);
         const readyRef = React.useRef(false);
         const pendingEnvelopeRef = React.useRef<HostEnvelope[]>([]);
@@ -134,6 +141,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         cursorColor: theme.colors.text.primary,
                         selectionBackgroundColor: theme.colors.surface.selected,
                         isDark: Boolean(theme.dark),
+                        findColors: resolveXtermFindColors(theme.colors.find, theme.colors.surface.base),
                     },
                     fontSizePx: Math.max(8, Math.round(props.fontSize)),
                     lineHeightPx: Math.max(10, Math.round(props.lineHeightPx)),
@@ -150,6 +158,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                 theme.colors.surface.selected,
                 theme.colors.text.primary,
                 theme.dark,
+                theme.colors.find,
             ],
         );
 
@@ -186,6 +195,19 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
             },
             [maxChunkBytes],
         );
+        const postRef = React.useRef(postEnvelope); postRef.current = postEnvelope;
+        const [findBridge] = React.useState(() => createWebViewFindEngine((request) => {
+            if (readyRef.current) postRef.current({ v: 1, ...request });
+        }));
+        const onFindEngineRef = React.useRef(props.onFindEngine); onFindEngineRef.current = props.onFindEngine;
+        React.useEffect(() => {
+            findBridge.retire();
+            onFindEngineRef.current?.(null);
+            return () => { findBridge.retire(); onFindEngineRef.current?.(null); };
+        }, [findBridge, html, reloadNonce]);
+        React.useEffect(() => {
+            if (readyRef.current) postEnvelope({ v: 1, type: 'find.keybindings', payload: { signatures: findKeyboard.signatures } });
+        }, [findKeyboard.signatures, postEnvelope]);
 
         const flushPendingWrite = React.useCallback(() => {
             if (!readyRef.current) return;
@@ -249,6 +271,8 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                 return;
             }
             readyRef.current = false;
+            findBridge.retire();
+            onFindEngineRef.current?.(null);
             clearBootReadyTimeout();
             if (bootRetryCountRef.current < XTERM_WEBVIEW_BOOT_RETRY_LIMIT) {
                 bootRetryCountRef.current += 1;
@@ -256,7 +280,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                 return;
             }
             rejectPendingWritesAfterBootFailure(code);
-        }, [clearBootReadyTimeout, rejectPendingWritesAfterBootFailure]);
+        }, [clearBootReadyTimeout, findBridge, rejectPendingWritesAfterBootFailure]);
 
         React.useEffect(() => {
             const timeout = setTimeout(() => {
@@ -273,6 +297,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
         React.useImperativeHandle(
             ref,
             () => ({
+                get find() { return readyRef.current ? findBridge.engine : undefined; },
                 write: (data: string, options?: EmbeddedTerminalWriteOptions) => {
                     if (!data) return true;
                     return enqueueEnvelope(
@@ -314,7 +339,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                     postEnvelope({ v: 1, type: 'focus', payload: {} });
                 },
             }),
-            [enqueueEnvelope, postEnvelope, requestNativeFocus],
+            [enqueueEnvelope, postEnvelope, requestNativeFocus, findBridge],
         );
 
         React.useEffect(() => {
@@ -328,6 +353,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                     cursorColor: theme.colors.text.primary,
                     selectionBackgroundColor: theme.colors.surface.selected,
                     isDark: Boolean(theme.dark),
+                    findColors: resolveXtermFindColors(theme.colors.find, theme.colors.surface.base),
                 },
             });
             postEnvelope({
@@ -369,6 +395,17 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         }
                         const decoded = decodeChunkedEnvelope({ message: parsed });
                         if (!decoded) return;
+                        if (decoded.type === 'find.results') { findBridge.accept(decoded.payload); return; }
+                        if (decoded.type === 'find.key') {
+                            const payload = decoded.payload;
+                            if (!payload || typeof payload !== 'object') return;
+                            const value = payload as Partial<NativeHardwareKeyboardEventLike>;
+                            if (typeof value.key !== 'string' || typeof value.repeat !== 'boolean' || !value.modifiers) return;
+                            const { shift, ctrl, meta, alt } = value.modifiers;
+                            if ([shift, ctrl, meta, alt].some((flag) => typeof flag !== 'boolean')) return;
+                            findKeyboard.dispatch({ key: value.key, ...(typeof value.code === 'string' ? { code: value.code } : {}), repeat: value.repeat, modifiers: { shift, ctrl, meta, alt } });
+                            return;
+                        }
 
                         if (decoded.type === 'ready') {
                             if (bootFailureReportedRef.current) return;
@@ -376,6 +413,8 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                             if (!payload) return;
                             clearBootReadyTimeout();
                             readyRef.current = true;
+                            onFindEngineRef.current?.(findBridge.engine);
+                            postEnvelope({ v: 1, type: 'find.keybindings', payload: { signatures: findKeyboard.signatures } });
                             requestNativeFocus();
                             props.onReady(payload.cols, payload.rows);
                             postEnvelope({
@@ -387,6 +426,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                                     cursorColor: theme.colors.text.primary,
                                     selectionBackgroundColor: theme.colors.surface.selected,
                                     isDark: Boolean(theme.dark),
+                                    findColors: resolveXtermFindColors(theme.colors.find, theme.colors.surface.base),
                                 },
                             });
                             postEnvelope({

@@ -80,7 +80,10 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   };
 
   const endLifecycle = async (): Promise<void> => {
-    endLifecyclePromise ??= Promise.resolve(input.onSessionEnded?.());
+    endLifecyclePromise ??= Promise.resolve().then(() => input.onSessionEnded?.()).catch((error: unknown) => {
+      endLifecyclePromise = null;
+      throw error;
+    });
     await endLifecyclePromise;
   };
 

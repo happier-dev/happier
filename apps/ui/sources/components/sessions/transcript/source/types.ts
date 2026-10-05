@@ -9,7 +9,14 @@ import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInt
 import type { sync } from '@/sync/sync';
 
 export type TranscriptTargetWindowRequest = Parameters<typeof sync.loadTargetWindowMessages>[1];
-export type TranscriptHistoryState = Readonly<{ isLoaded: boolean; hasOlder: boolean; isLoadingOlder: boolean }>;
+export type TranscriptHistoryState = Readonly<{
+    isLoaded: boolean;
+    hasOlder: boolean;
+    isLoadingOlder: boolean;
+    hasNewer?: boolean;
+    isLoadingNewer?: boolean;
+    targetWindow?: Readonly<{ windowId: string; targetSeq: number; olderCursor: number | null; newerCursor: number | null }> | null;
+}>;
 export type SessionTranscriptSubmitOptions = Pick<NonNullable<Parameters<typeof sync.submitMessage>[4]>, 'callerSurface'>;
 export type SessionTranscriptActions = Readonly<{
     respondToPermission(params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>): Promise<void>;
@@ -41,6 +48,8 @@ export type SessionTranscriptSource = Readonly<{
     history: Readonly<{
         useState(): TranscriptHistoryState;
         loadOlder: ((options?: Parameters<typeof sync.loadOlderMessages>[1]) => Promise<TranscriptOlderPageLoadResult>) | null;
+        /** Find consumes both missing frontiers without leaving an active historical window. */
+        loadFindPage?: ((direction: 'older' | 'newer', options?: Parameters<typeof sync.loadOlderMessages>[1]) => Promise<TranscriptOlderPageLoadResult>) | null;
         loadTargetWindow: ((target: TranscriptTargetWindowRequest, options?: Parameters<typeof sync.loadTargetWindowMessages>[2]) => ReturnType<typeof sync.loadTargetWindowMessages>) | null;
     }>;
     loadSidechain: ((sidechainId: string) => ReturnType<typeof sync.ensureSidechainMessagesLoaded>) | null;

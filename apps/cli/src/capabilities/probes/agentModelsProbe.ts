@@ -8,7 +8,12 @@ import {
   getAgentStaticModels,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
-import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import {
+  AsyncTtlCache, ProviderModelDescriptorV1Schema, resolveModelStructuredOutputSupport,
+  type ProviderModelDescriptorV1, type BackendTargetRefV1,
+} from '@happier-dev/protocol';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type { StoredCredentials } from '@/persistence';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import {
@@ -36,6 +41,7 @@ export type ProbedAgentModel = Readonly<{
   contextWindowTokens?: number;
   extendedContextModelId?: string;
   modelOptions?: ReadonlyArray<ProbedAgentModelOption>;
+  capabilities?: ProviderModelDescriptorV1['capabilities'];
 }>;
 
 export type ProbedAgentModelsResult = Readonly<{
@@ -77,6 +83,7 @@ const ProbeDynamicModelInputSchema = z.object({
   contextWindowTokens: z.number().int().positive().max(100_000_000).optional(),
   extendedContextModelId: ProbeNonEmptyStringSchema.optional(),
   modelOptions: z.array(z.unknown()).optional(),
+  capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
 });
 const ProbeConfigOptionCandidateSchema = z.object({
   id: z.string().optional(),
@@ -108,16 +115,20 @@ function hasStaticAgentModelsFallback(agentId: CatalogAgentLookupId): boolean {
   return resolveAgentModelConfigForLookupId(agentId) !== null;
 }
 
+function buildDefaultModelPlaceholder(): ProbedAgentModel {
+  // The selection sentinel is not evidence that the native/catalog model was offered.
+  return { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } };
+}
+
 function buildStatic(
   agentId: CatalogAgentLookupId,
   cfg: NonNullable<ReturnType<typeof resolveAgentModelConfigForLookupId>>,
 ): ProbedAgentModelsResult {
   const supportsFreeform = cfg.supportsSelection === true && cfg.supportsFreeform === true;
   const seen = new Set<string>();
-  const availableModels = (cfg.supportsSelection === true
-    ? [
-      { id: 'default', name: 'Default' },
-      ...getAgentStaticModels(agentId).map((model) => ({
+  const staticModels: ProbedAgentModel[] = cfg.supportsSelection === true
+    ? getAgentStaticModels(agentId, { catalogOnly: true })
+      .map((model) => ({
         id: model.id,
         name: model.name,
         ...(typeof model.description === 'string' ? { description: model.description } : {}),
@@ -126,14 +137,17 @@ function buildStatic(
           ? { extendedContextModelId: model.extendedContextModelId }
           : {}),
         ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
-      })),
-    ]
-    : [{ id: 'default', name: 'Default' }]).filter((model) => {
-      const id = typeof model.id === 'string' ? model.id.trim() : '';
-      if (!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
+        ...(model.capabilities ? { capabilities: model.capabilities } : {}),
+      })) : [];
+  const availableModels = [
+    staticModels.find(model => model.id === 'default') ?? buildDefaultModelPlaceholder(),
+    ...staticModels.filter(model => model.id !== 'default'),
+  ].filter((model) => {
+    const id = typeof model.id === 'string' ? model.id.trim() : '';
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
   return {
     agentId,
     availableModels,
@@ -198,6 +212,7 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
       ? {}
       : { extendedContextModelId: parsed.data.extendedContextModelId }),
     ...(normalizedOptions && normalizedOptions.length > 0 ? { modelOptions: normalizedOptions } : {}),
+    ...(parsed.data.capabilities ? { capabilities: parsed.data.capabilities } : {}),
   };
 }
 
@@ -210,7 +225,7 @@ function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
   if (parsed.length === 0) return null;
 
   const withDefault: ProbedAgentModel[] = [
-    { id: 'default', name: 'Default' },
+    parsed.find((model) => model.id === 'default') ?? buildDefaultModelPlaceholder(),
     ...parsed.filter((m) => m.id !== 'default'),
   ];
 
@@ -308,12 +323,14 @@ function normalizeVerboseCliModel(modelRaw: unknown, displayedId?: string): Prob
   const name = readNonEmptyString(modelRaw.name) ?? id;
   const description = readNonEmptyString(modelRaw.description);
   const reasoningEffortOption = normalizeReasoningEffortOption(modelRaw.variants);
+  const capabilities = ProviderModelDescriptorV1Schema.shape.capabilities.safeParse(modelRaw.capabilities);
 
   return {
     id,
     name,
     ...(description ? { description } : {}),
     ...(reasoningEffortOption ? { modelOptions: [reasoningEffortOption] } : {}),
+    ...(capabilities.success && capabilities.data ? { capabilities: capabilities.data } : {}),
   };
 }
 
@@ -404,7 +421,7 @@ function normalizeModelsFromConfigOptions(configOptionsRaw: unknown): ProbedAgen
   if (optionsRaw.length > 0 && parsed.length === 0) return null;
 
   const withDefault: ProbedAgentModel[] = [
-    { id: 'default', name: 'Default' },
+    parsed.find((model) => model.id === 'default') ?? buildDefaultModelPlaceholder(),
     ...parsed.filter((m) => m.id !== 'default'),
   ];
 
@@ -449,7 +466,7 @@ export async function probeModelsFromAcpBackend(params: {
   return null;
 }
 
-export async function probeAgentModelsBestEffort(params: {
+async function probeAgentModels(params: {
   bypassCache?: boolean;
   agentId: CatalogAgentLookupId;
   catalogEntry?: AgentCatalogEntry | null;
@@ -469,7 +486,8 @@ export async function probeAgentModelsBestEffort(params: {
 }): Promise<ProbedAgentModelsResult> {
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
   const modelConfig = resolveAgentModelConfigForLookupId(params.agentId);
-  if (!isDynamicModelProbeEnabled({
+  const configuredAcp = params.backendTarget?.kind === 'configuredAcpBackend';
+  if (!configuredAcp && !isDynamicModelProbeEnabled({
     modelConfig,
     accountSettings: params.accountSettings ?? null,
     environment: params.env ?? process.env,
@@ -505,7 +523,7 @@ export async function probeAgentModelsBestEffort(params: {
     const nowMs2 = Date.now();
     if (!params.bypassCache && cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
-    const fallback = resolveStaticFallback(params.agentId);
+    const fallback = configuredAcp ? buildUnavailable(params.agentId) : resolveStaticFallback(params.agentId);
     const failedResult = (cold: ProbedAgentModelsResult, ttlMs = PROBE_MODELS_FAILURE_TTL_MS): ProbedAgentModelsResult => {
       const lastGood = cached2?.kind === 'success' && cached2.value.source === 'dynamic' ? cached2.value : null;
       const result = { ...(lastGood ?? cold), refreshError: true, cacheable: false };
@@ -605,4 +623,25 @@ export async function probeAgentModelsBestEffort(params: {
       return failedResult(fallback);
     }
   });
+}
+
+export async function probeAgentModelsBestEffort(
+  params: Parameters<typeof probeAgentModels>[0],
+): Promise<ProbedAgentModelsResult> {
+  const result = await probeAgentModels(params);
+  // Configured ACP targets have their own negotiated model evidence. They never
+  // inherit the native Agent's prompted-JSON publication contract.
+  if (params.backendTarget?.kind === 'configuredAcpBackend' || result.source === 'unavailable') return result;
+  const formats = readAgentStructuredOutputCapabilities(
+    readAgentCatalogSnapshot().agentDefinitionsById.get(params.agentId)?.richDefinition?.definition,
+  )?.formats;
+  return {
+    ...result,
+    availableModels: result.availableModels.map((model) => {
+      const support = resolveModelStructuredOutputSupport({ model, catalogModel: true, agentFormats: formats });
+      return support === 'unknown' && model.capabilities?.structuredOutput === undefined
+        ? model
+        : { ...model, capabilities: { ...model.capabilities, structuredOutput: support } };
+    }),
+  };
 }

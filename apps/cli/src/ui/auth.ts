@@ -45,7 +45,7 @@ import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import {
     claimTerminalAuthRequest,
     createTerminalAuthRequest,
-    HomeFeaturesUnreadableError,
+    TerminalAuthEnrollmentVerificationError,
     readTerminalAuthRequestStatus,
     resolveAuthenticatedExactHomeConnectionDescriptorObservation,
     verifyTerminalAuthEnrollmentRuntime,
@@ -248,20 +248,9 @@ export async function doAuth(options: Readonly<{
     if (!target.descriptor) {
         await applyAutoPublicServerUrlFromTailscaleServeBestEffort();
     }
-    const acquiredRuntime = target.descriptor
-        ? await acquireTerminalAuthEnrollmentRuntime(target.descriptor, target.preferredTransport, options.signal)
-        : {
-            ok: true as const,
-            runtime: {
-                runtimeOrigin: target.applicationUrl,
-                carrier: 'https' as const,
-                authenticatedCredentialDestination: {
-                    kind: 'https' as const,
-                    applicationUrl: target.applicationUrl,
-                },
-            },
-            close: async () => {},
-        };
+    const acquiredRuntime = await acquireTerminalAuthEnrollmentRuntime(
+        target.descriptor ?? target, target.preferredTransport, options.signal,
+    );
     if (!acquiredRuntime.ok) {
         console.log('Unable to reach the selected Home through an authenticated enrollment carrier.');
         return null;
@@ -281,9 +270,9 @@ export async function doAuth(options: Readonly<{
         });
     } catch (error) {
         console.log(
-            error instanceof HomeFeaturesUnreadableError
-                ? `${error.message} The authentication request was not created.`
-                : `Unable to verify the selected Home identity at ${configuration.apiServerUrl}; `
+            error instanceof TerminalAuthEnrollmentVerificationError
+                ? `${error.code}: ${error.message} The authentication request was not created.`
+                : 'Unable to verify the selected Home identity due to an unexpected verification failure; '
                     + 'the authentication request was not created.',
         );
         return null;

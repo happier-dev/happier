@@ -4,13 +4,14 @@ import type {
 import type {
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginUiResourceClient } from '@happier-dev/plugin-ui/advanced';
+import type { PluginUiResourceClient, PluginUiResourceEntry, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 
 import {
     machinePluginUiResourceRead,
     mapMachinePluginUiResourceTransportFailure,
 } from '@/sync/ops/machineContributionRegistryProjection';
-import { decodeBase64 } from '@/encryption/base64';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import {
@@ -53,7 +54,31 @@ export type PluginSurfaceResourceBinding = Readonly<{
     context?: PluginResourceContextV1;
     timeoutMs?: number;
     read?: PluginSurfaceResourceReadTransport;
+    /** Host-private shared owner; never accepted from a plugin request. */
+    store?: PluginUiResourceStore;
 }>;
+
+/** Hold the incumbent entry's static subscription until its current read settles. */
+export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, signal?: AbortSignal): Promise<PluginUiResourceSnapshot> {
+    return new Promise((resolve, reject) => {
+        let release = () => {};
+        let settled = false;
+        const finish = (error?: Error): void => {
+            if (settled) return;
+            const snapshot = entry.getSnapshot();
+            if (!error && snapshot.pending !== 'idle') return;
+            settled = true;
+            release();
+            signal?.removeEventListener('abort', abort);
+            if (error) reject(error); else resolve(snapshot);
+        };
+        const abort = (): void => finish(Object.assign(new Error('Resource operation was aborted'), { code: 'plugin_resource_aborted' }));
+        release = entry.subscribe(() => finish(), false);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort(); else finish();
+        if (settled) release();
+    });
+}
 
 /** A direct host-stamped Resource binding without a public Surface envelope. */
 export type PluginContextualResourceBinding = PluginSurfaceResourceBinding;
@@ -220,6 +245,20 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         const signal = mergedSignal.signal;
         try {
         if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
+
+        if (input.resource.store) {
+            try {
+                const snapshot = await readPluginResourceStoreSnapshot(input.resource.store.getEntry(reference), signal);
+                if (signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
+                if (snapshot.error || !snapshot.value) return errorPayload('unavailable', snapshot.error?.code ?? 'plugin_resource_unavailable');
+                return { contentType: snapshot.value.contentType, digest: snapshot.value.digest,
+                    bytesBase64: encodeBase64(snapshot.value.bytes, 'base64') };
+            } catch (error) {
+                if (signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
+                return errorPayload('unavailable', error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+                    ? error.code : 'plugin_resource_unavailable');
+            }
+        }
 
         let outcome: Awaited<ReturnType<PluginSurfaceResourceReadTransport>>;
         try {

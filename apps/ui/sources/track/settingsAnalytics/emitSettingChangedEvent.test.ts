@@ -42,7 +42,8 @@ describe('emitAccountSettingChangedEvents', () => {
             ...settingsDefaults,
             experiments: true,
             featureToggles: {
-                voice: true,
+                // Voice is on by default; turning it off is the person's feature preference change.
+                voice: false,
             },
         };
 
@@ -59,8 +60,8 @@ describe('emitAccountSettingChangedEvents', () => {
                 scope: 'feature_pref',
                 identity_scope: 'person',
                 source: 'ui',
-                prev_value: false,
-                next_value: true,
+                prev_value: true,
+                next_value: false,
             }),
         );
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);

@@ -182,21 +182,21 @@ describe('resolveBootCredentials', () => {
         await expectStoredCredentials('https://other.example.test', retained);
     });
 
-    it('leaves an unknown web Home address for the mounted connect flow', async () => {
+    it('leaves an unknown web Home address pending without restoring the retained Home credentials', async () => {
         stubWebRuntime('https://app.example.test/?server=https%3A%2F%2Fnew.example.test');
         await retainHome('https://retained.example.test', { token: 'retained-token' });
-        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'retained-token' });
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
         expect(getServerUrl()).toBe('https://retained.example.test');
         expect(listServerProfiles().some((profile) => profile.serverUrl === 'https://new.example.test')).toBe(false);
         expect(runtime.window.location.search).toContain('new.example.test');
     });
 
-    it('keeps the current server and credentials when active custody blocks a web server override', async () => {
+    it('preserves current custody without restoring another Home while a web override is pending', async () => {
         stubWebRuntime('http://happier.example.test/?server=http%3A%2F%2Flocalhost%3A24731');
         const retained = await retainHome('https://retained.example.test', { token: 'retained-token' });
         await saveHomeCredentials('http://localhost:24731', { token: 'target-token' });
         const pending = await markFirstKeyCustody(retained);
-        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'retained-token' });
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
         expect(getActiveServerSnapshot().serverId).toBe(retained.serverId);
         await expectStoredCredentials('http://localhost:24731', { token: 'target-token' });
         expect((await TokenStorage.readPendingExternalAuthState()).value).toEqual(pending);

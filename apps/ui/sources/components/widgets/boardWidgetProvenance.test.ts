@@ -60,8 +60,8 @@ function projectionWith(input: Readonly<{
 }
 
 const installedSource: SessionSurfaceItemV1['source'] = {
-    kind: 'installedSurface',
-    surface: { pluginId: 'acme.review', localId: 'review-status-widget' },
+    kind: 'widget',
+    instance: { v: 1, id: 'review-widget', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status-widget' } }, bindings: {} },
 };
 
 describe('Session widget provenance', () => {

@@ -102,6 +102,10 @@ import { PluginUiContributionsV2Schema } from './ui/v2.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginRoleDeclarationV1Schema } from './roles.js';
 import { PluginWorkflowContributionV1Schema } from './workflows.js';
+import { PluginInputTypeContributionV1Schema } from './inputTypes.js';
+export { PluginInputTypeContributionV1Schema, type PluginInputTypeContributionV1 } from './inputTypes.js';
+import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from './entityDragDrop.js';
+export * from './entityDragDrop.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
   PluginJsonValueV2Schema,
@@ -427,11 +431,18 @@ export const PluginAgentToolsCapabilityV2Schema = z.object({
 }).strict();
 export type PluginAgentToolsCapabilityV2 = z.infer<typeof PluginAgentToolsCapabilityV2Schema>;
 
+/** Prompted structured JSON consumed by the host's strict output normalizers. */
+export const PluginAgentStructuredOutputCapabilityV2Schema = z.object({
+  formats: z.tuple([z.literal('json')]),
+}).strict();
+export type PluginAgentStructuredOutputCapabilityV2 = z.infer<typeof PluginAgentStructuredOutputCapabilityV2Schema>;
+
 const PluginAgentCapabilitiesV2Shape = {
   surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
   sessions: PluginAgentSessionCapabilitiesV2Schema.optional(),
   executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema.optional(),
   tools: PluginAgentToolsCapabilityV2Schema.optional(),
+  structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
 };
 
 /**
@@ -564,6 +575,7 @@ const PluginAgentSessionCapabilitiesShape = {
   surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
   sessions: PluginAgentSessionCapabilitiesV2Schema,
   tools: PluginAgentToolsCapabilityV2Schema.optional(),
+  structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
 };
 const PluginAgentSessionPrimaryShape = {
   primary: z.literal('sessions'),
@@ -579,6 +591,7 @@ const PluginAgentExecutionPrimaryShape = {
     surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
     executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema,
     tools: PluginAgentToolsCapabilityV2Schema.optional(),
+    structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
   }).strict(),
 };
 const PluginAgentPrimaryContributionV2Schema = z.union([
@@ -818,6 +831,9 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'commands', schema: PluginCommandContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'resources', schema: PluginResourceContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'inputTypes', schema: PluginInputTypeContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'dragSources', schema: PluginDragSourceContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'dropTargets', schema: PluginDropTargetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'transcriptActivities', schema: PluginTranscriptActivityContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'sessionInfoSections', schema: PluginSessionInfoSectionContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'sessionHeaderActions', schema: PluginSessionHeaderActionDescriptorV1Schema }),

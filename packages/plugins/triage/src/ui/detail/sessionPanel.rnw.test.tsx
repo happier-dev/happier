@@ -26,9 +26,11 @@ const LINKED: readonly TriageLinkedSessionProjectionV1[] = Object.freeze([
 
 const calls: Array<Readonly<{ action: string; input: unknown }>> = [];
 const mounted: PluginUiTestkit[] = [];
+let openFails = false;
 
 async function mountBody(sessions: readonly TriageLinkedSessionProjectionV1[]) {
   calls.length = 0;
+  openFails = false;
   const surface = defineUiSurface(function EntryBody(_context: RenderContext): React.ReactElement {
     return (
       <TriageDetailWholeBody sessions={sessions}>
@@ -45,6 +47,7 @@ async function mountBody(sessions: readonly TriageLinkedSessionProjectionV1[]) {
     handlers: {
       executeAction: async ({ action, input }) => {
         calls.push({ action: String(action), input });
+        if (openFails) throw new Error('open failed');
         return {};
       },
     },
@@ -58,6 +61,20 @@ afterEach(async () => {
 });
 
 describe('Triage entry Session tab', () => {
+  it('shows an inline Open failure and lets the user retry the same Session', async () => {
+    const body = await mountBody(LINKED);
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Session' })); });
+    openFails = true;
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Open session' })); });
+    await expect(body.getByText('This Session could not be opened.')).resolves.toBeDefined();
+    openFails = false;
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Open session' })); });
+    await expect(body.queryByText('This Session could not be opened.')).resolves.toBeUndefined();
+    expect(calls).toEqual([
+      { action: 'session.open', input: { sessionId: 'session-linked' } },
+      { action: 'session.open', input: { sessionId: 'session-linked' } },
+    ]);
+  });
   it('presents the first linked Session live, follows the selection and still opens it in full', async () => {
     const body = await mountBody(LINKED);
     await expect(body.getByText("The source's own detail")).resolves.toBeDefined();

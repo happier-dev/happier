@@ -1,24 +1,133 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as privacyKit from "privacy-kit";
 import { createHash } from "node:crypto";
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilityHttpHeadersV1 } from "@happier-dev/protocol";
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ARTIFACT_HTML_BUNDLE_MIME_V1, encodePlainArtifactStoredContent, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilityHttpHeadersV1 } from "@happier-dev/protocol";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { sealPublicShareDataKeyV1, openPublicShareDataKeyV1, sealSessionDataKeyBundleV0, openSessionDataKeyBundleV0 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { publicShareRoutes } from "./publicShareRoutes";
+import { registerSessionListingRoutes } from "../session/registerSessionListingRoutes";
+import { registerSessionPatchRoute } from "../session/registerSessionPatchRoute";
+import { updateSessionMetadataTupleWithRetry } from "@happier-dev/cli-common/sessionMetadata";
+import { createPlainSessionOwnerMetadataEnvelopeV1 } from "@happier-dev/protocol";
+import { createAccountScopedCryptoMaterialSnapshotV1, sealSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataEnvelopeV1 } from "@happier-dev/protocol";
+import tweetnacl from "tweetnacl";
+import { resolveStoredContentPublicShareOrigin } from "@/app/share/storedContentPublicShareOrigin";
+import { artifactsRoutes } from '../artifacts/artifactsRoutes';
+import { frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol';
+import { loadPublicShareViewerContent } from './publicShareViewerClient';
 
 describe("stored-content public share owner (real SQLite)", () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-stored-public-share-", initEncrypt: true, env: {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-stored-public-share-", initEncrypt: true, initFiles: true, env: {
             HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: "1",
         } });
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('returns a private per-Artifact shell URL through ordinary access without creating a share', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            headerVersion: 1, bodyVersion: 1, header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'html', title: 'Private HTML' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '<h1>Private bytes</h1>' })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': owner.id } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ url: `${resolveStoredContentPublicShareOrigin(artifact.id)}/a/${artifact.id}` });
+            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
+            expect(await db.publicSessionShare.count({ where: { artifactId: artifact.id } })).toBe(0);
+            const host = new URL(response.json().url).host;
+            expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host } })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host: 'home.example.test' } })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host, cookie: 'account=secret' } })).statusCode).toBe(404);
+            const previous = process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN;
+            delete process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN;
+            try { expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': owner.id } })).json()).toEqual({ error: 'artifact_html_isolation_unavailable' }); }
+            finally { process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN = previous; }
+        });
+    });
+
+    it('publishes real retained bundle bytes through share admission, not an independent asset store', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const id = crypto.randomUUID();
+        const blobId = crypto.randomUUID();
+        const bytes = Buffer.from(JSON.stringify({ v: 1, entrypoint: 'index.html', files: {
+            'index.html': { mime: 'text/html', contentBase64: Buffer.from('<h1>Retained bundle</h1>').toString('base64') },
+        } }));
+        const reference = { blobId, mime: ARTIFACT_HTML_BUNDLE_MIME_V1, sizeBytes: bytes.length,
+            sha256: createHash('sha256').update(bytes).digest('hex') };
+        await withAuthenticatedTestApp(app => { publicShareRoutes(app); artifactsRoutes(app); }, async app => {
+            const headers = { 'x-test-user-id': owner.id };
+            const created = await app.inject({ method: 'POST', url: '/v1/artifacts/content/binary', headers, payload: {
+                id, header: encodePlainArtifactStoredContent({ kind: 'html', title: 'Bundle' }),
+                body: encodePlainArtifactStoredContent({ body: reference }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                blob: { blobId, content: { t: 'plain', v: bytes.toString('base64') } },
+            } });
+            expect(created.statusCode, created.body).toBe(200);
+            const lookupId = crypto.randomUUID();
+            const shared = await app.inject({ method: 'POST', url: '/v1/public-shares', headers,
+                payload: { subject: { kind: 'artifact', id }, lookupId, keyDerivation: 'fragment_v1' } });
+            expect(shared.statusCode, shared.body).toBe(200);
+            const readHeaders = { host: new URL(shared.json().isolatedOrigin).host };
+            const read = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers: readHeaders });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json().content.blob).toEqual({ blobId, content: { t: 'plain', v: bytes.toString('base64') } });
+            expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers: { ...readHeaders, cookie: 'account=secret' } })).statusCode).toBe(403);
+            await app.inject({ method: 'DELETE', url: `/v1/public-shares/${shared.json().publicShare.id}`, headers });
+            expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers: readHeaders })).statusCode).toBe(404);
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('opens %s binary publications through consent and revocation while private blobs stay authorized', async mode => {
+        const owner = await db.account.create({ data: { ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}), encryptionMode: mode } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const key = new Uint8Array(32).fill(21);
+        const secret = 'A'.repeat(43);
+        const encode = async (value: unknown) => mode === 'plain' ? encodePlainArtifactStoredContent(value) : privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(value, key)));
+        await withAuthenticatedTestApp(app => { publicShareRoutes(app); artifactsRoutes(app); }, async app => {
+            for (const [kind, mime] of [['image', 'image/png'], ['pdf', 'application/pdf'], ['file', 'application/octet-stream']] as const) {
+                const id = crypto.randomUUID();
+                const blobId = crypto.randomUUID();
+                const bytes = new Uint8Array([0, 128, 255, 13, 10]);
+                const reference = { blobId, mime, sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+                const blob = { blobId, content: mode === 'plain' ? { t: 'plain', v: privacyKit.encodeBase64(bytes) } : { t: 'encrypted', c: privacyKit.encodeBase64(new Uint8Array(frameSessionDataKeyBundleV0(await sealAesGcmPayloadWebCrypto(bytes, key)))) } };
+                const headers = { 'x-test-user-id': owner.id };
+                const created = await app.inject({ method: 'POST', url: '/v1/artifacts/content/binary', headers, payload: {
+                    id, header: await encode({ kind, title: 'Shared file' }), body: await encode({ body: reference }),
+                    dataEncryptionKey: mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : privacyKit.encodeBase64(new Uint8Array([31])), blob,
+                } });
+                expect(created.statusCode, created.body).toBe(200);
+                const lookupId = crypto.randomUUID();
+                const share = await app.inject({ method: 'POST', url: '/v1/public-shares', headers, payload: {
+                    subject: { kind: 'artifact', id }, lookupId, keyDerivation: 'fragment_v1', isConsentRequired: true,
+                    ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
+                } });
+                expect(share.statusCode, share.body).toBe(200);
+                const location = { origin: share.json().isolatedOrigin, pathname: `/s/${lookupId}`, hash: `#k=${secret}` };
+                const fetch: typeof globalThis.fetch = async (url, init) => {
+                    expect(init).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer' });
+                    expect(String(url)).not.toContain(secret);
+                    const request = new URL(String(url));
+                    const response = await app.inject({ method: 'GET', url: request.pathname + request.search, headers: { host: request.host } });
+                    return new Response(response.body, { status: response.statusCode });
+                };
+                expect(await loadPublicShareViewerContent({ location, fetch })).toEqual({ status: 'consent_required' });
+                expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: share.json().publicShare.id } })).useCount).toBe(0);
+                expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toMatchObject({ status: 'ready', binary: { bytes, mime } });
+                expect(await db.publicShareAccessLog.count({ where: { publicShareId: share.json().publicShare.id } })).toBe(1);
+                expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${id}/blobs/${blobId}`, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
+                await app.inject({ method: 'DELETE', url: `/v1/public-shares/${share.json().publicShare.id}`, headers });
+                expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toEqual({ status: 'unavailable' });
+            }
+        });
+    });
 
     it("publishes an ordinary plain Artifact through the canonical owner, with consent, use admission, audit and immediate revoke", async () => {
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
@@ -37,6 +146,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             expect(share.subject).toEqual({ kind: "artifact", id: artifact.id });
             expect((await app.inject({ method: "GET", url: `/v1/public-shares?subjectKind=artifact&subjectId=${artifact.id}`, headers: { "x-test-user-id": stranger.id } })).statusCode).toBe(403);
             const origin = create.json().isolatedOrigin;
+            expect(origin).toBe(resolveStoredContentPublicShareOrigin(artifact.id));
             const readHeaders = { host: new URL(origin).host };
             expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: readHeaders })).json()).toMatchObject({ requiresConsent: true });
             expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content?consent=true`, headers: readHeaders })).json()).toMatchObject({ encryptionMode: "plain", encryptedDataKey: null, content: { kind: "artifact", body: encodePlainArtifactStoredContent({ body: "Public text" }) } });
@@ -72,6 +182,10 @@ describe("stored-content public share owner (real SQLite)", () => {
             const created = await app.inject({ method: "POST", url: "/v1/public-shares", headers, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId, keyDerivation: "fragment_v1" } });
             expect(created.statusCode, created.body).toBe(200);
             const host = new URL(created.json().isolatedOrigin).host;
+            for (const url of [`/s/${lookupId}`, `/s/${lookupId}/viewer.js`]) {
+                expect((await app.inject({ method: 'GET', url, headers: { host, cookie: 'account=secret' } })).statusCode).toBe(404);
+                expect((await app.inject({ method: 'GET', url, headers: { host, authorization: 'Bearer secret' } })).statusCode).toBe(404);
+            }
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host: "home.example.test" } })).statusCode).toBe(404);
             const shell = await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } });
             expect(shell.statusCode, shell.body).toBe(200);
@@ -176,33 +290,124 @@ describe("stored-content public share owner (real SQLite)", () => {
     });
 
 
-    it("preserves the provenance-pinned legacy token envelope on a privacy-upgraded Session", async () => {
+    it("upgrades predecessor layout-zero E2EE metadata while preserving the provenance-pinned legacy token and DEK envelope", async () => {
         // Preview asset358465308/source86d1385864dd528b864a8ba72e4c3201f67aece3.
+        // ../0.2 publicShareEncryption.ts: Happy Public Share/v1 SecretBox
+        // payload {v:0,keyB64}; this retained vector is not a fragment envelope.
         const token = "released-preview-public-share-vector";
         const envelope = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHMJ6ZwXvlgV+Ew6Jtlspr/Sg/SEHyrn8lcqu7Euram/O2gprQ7e4Fe1w3nB1i3RVUrT1cj9PUi4jF5+isG5G/WnzMt54qn3pC0aKPXk8e2w==";
         const key = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
-        const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" } });
-        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "e2ee", metadata: privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0({ v: 1 }, key))), metadataLayoutVersion: 1,
-            ownerMetadata: JSON.stringify({ t: "encrypted", c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==" }) } });
-        await db.publicSessionShare.create({ data: { sessionId: session.id, createdByUserId: owner.id, tokenHash: createHash("sha256").update(token).digest(), encryptedDataKey: privacyKit.decodeBase64(envelope) } });
-        await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const response = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers: buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) });
+        const machineKey = new Uint8Array(32).fill(19);
+        const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+        const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: "e2ee", material: { type: "dataKey", machineKey }, dataKeyPublicKey: contentPublicKey });
+        const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(contentPublicKey), encryptionMode: "e2ee" } });
+        const metadata = { path: "/encrypted/owner/private", host: "owner-host", name: "Retained encrypted session" };
+        const encryptPayload = async (value: unknown) => privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(value, key)));
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "e2ee", metadata: await encryptPayload(metadata) } });
+        const share = await db.publicSessionShare.create({ data: { sessionId: session.id, createdByUserId: owner.id, tokenHash: createHash("sha256").update(token).digest(), encryptedDataKey: privacyKit.decodeBase64(envelope) } });
+        await withAuthenticatedTestApp(app => { publicShareRoutes(app); registerSessionListingRoutes(app); registerSessionPatchRoute(app); }, async app => {
+            const headers = buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION);
+            const blocked = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers });
+            expect(blocked.statusCode, blocked.body).toBe(409);
+            expect(blocked.json()).toMatchObject({ code: "metadata_privacy_upgrade_required" });
+            expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: share.id } })).useCount).toBe(0);
+            expect(await db.publicShareAccessLog.count({ where: { publicShareId: share.id } })).toBe(0);
+            await updateSessionMetadataTupleWithRetry({
+                initialSnapshot: { mode: "legacy_owner", metadataLayoutVersion: 0, metadataVersion: session.metadataVersion,
+                    metadataCiphertext: session.metadata, ownerMetadata: null, agentStateVersion: session.agentStateVersion,
+                    agentStateCiphertext: null, value: { metadata, agentState: null } },
+                mutation: { kind: "ownerMigration" },
+                ownerMigrationCurrentness: { expectedAccountEncryptionMode: "e2ee", expectedAccountContentPublicKeyFingerprint: material.contentPublicKeyFingerprint },
+                crypto: { encryptPayload, encodeOwnerMetadata: ownerMetadata => sealSessionOwnerMetadataEnvelopeV1({ material: material.material, ownerMetadata, randomBytes: length => new Uint8Array(length).fill(7) }) },
+                commit: async patch => {
+                    const result = await app.inject({ method: "PATCH", url: `/v2/sessions/${session.id}`, headers: { ...headers, "x-test-user-id": owner.id }, payload: patch });
+                    expect(result.statusCode, result.body).toBe(200);
+                    const body = result.json();
+                    return { result: "success" as const, metadataVersion: body.sharedMetadata.version, agentStateVersion: body.agentState.version };
+                },
+                refreshAfterConflict: async () => { throw new Error("Unexpected migration conflict"); },
+            });
+            const response = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers });
             expect(response.statusCode, response.body).toBe(200);
-            expect(openPublicShareDataKeyV1({ encryptedDataKey: response.json().encryptedDataKey, secret: token })).toEqual(key);
+            expect(response.json().session.metadataLayoutVersion).toBe(1);
+            expect(response.json().encryptedDataKey).toBe(envelope);
+            const retainedKey = openPublicShareDataKeyV1({ encryptedDataKey: response.json().encryptedDataKey, secret: token });
+            expect(retainedKey).toEqual(key);
+            const openedShared = await openSessionDataKeyBundleV0(privacyKit.decodeBase64(response.json().session.metadata), retainedKey!);
+            expect(openedShared.status).toBe("authenticated");
+            expect(JSON.stringify(openedShared)).not.toContain(metadata.path);
+            expect(JSON.stringify(openedShared)).not.toContain(metadata.host);
+            const upgraded = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(openSessionOwnerMetadataEnvelopeV1({ accountMode: "e2ee", envelope: JSON.parse(upgraded.ownerMetadata!), material: material.material })).toMatchObject({ ok: true, ownerMetadata: { workspace: { path: metadata.path, host: metadata.host } } });
+            expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: share.id } })).tokenHash).toEqual(share.tokenHash);
         });
     });
 
-    it("retains the existing typed privacy-upgrade denial for actual predecessor layout-zero Session metadata", async () => {
+    it("returns the typed privacy-upgrade state for a retained modern publication without consuming a visit", async () => {
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
-        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify({ path: "/owner/private", title: "Predecessor session" }) } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: '{"path":"/modern/owner/private"}' } });
+        const lookupId = crypto.randomUUID();
+        const share = await db.publicSessionShare.create({ data: { sessionId: session.id, createdByUserId: owner.id, tokenHash: createHash("sha256").update(lookupId).digest(), keyDerivation: "fragment_v1", maxUses: 1 } });
+        await withAuthenticatedTestApp(publicShareRoutes, async app => {
+            const pending = await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host: new URL(resolveStoredContentPublicShareOrigin(share.id)!).host } });
+            expect(pending.statusCode, pending.body).toBe(409);
+            expect(pending.json()).toMatchObject({ code: "metadata_privacy_upgrade_required" });
+            expect(pending.body).not.toContain("/modern/owner/private");
+            expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: share.id } })).useCount).toBe(0);
+            expect(await db.publicShareAccessLog.count({ where: { publicShareId: share.id } })).toBe(0);
+        });
+    });
+
+    it("discovers an archived predecessor public link on the owner's first visit and retains its token through the canonical privacy upgrade", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const metadata = { path: "/owner/private", host: "owner-host", name: "Predecessor session" };
+        // ../0.2 388915739e64655b454e0bee8198833a54e6eabc has flat metadata,
+        // no ownerMetadata/layout marker and SHA256(path token) publication.
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify(metadata), archivedAt: new Date() } });
         const token = crypto.randomUUID();
         const share = await db.publicSessionShare.create({ data: { sessionId: session.id, createdByUserId: owner.id, tokenHash: createHash("sha256").update(token).digest() } });
-        await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const response = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers: buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) });
+        const unshared = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify(metadata) } });
+        const stranger = await db.account.create({ data: { encryptionMode: "plain" } });
+        const direct = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify(metadata), archivedAt: new Date() } });
+        await db.sessionShare.create({ data: { sessionId: direct.id, sharedByUserId: owner.id, sharedWithUserId: stranger.id } });
+        const headers = { "x-test-user-id": owner.id, ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
+        await withAuthenticatedTestApp(app => { publicShareRoutes(app); registerSessionListingRoutes(app); registerSessionPatchRoute(app); }, async app => {
+            const response = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers });
             expect(response.statusCode).toBe(409);
             expect(response.body).not.toContain("/owner/private");
             expect(response.json()).toMatchObject({ code: "metadata_privacy_upgrade_required" });
             expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: share.id } })).useCount).toBe(0);
+            const discovery = await app.inject({ method: "GET", url: "/v2/sessions/metadata-upgrades", headers });
+            expect(discovery.statusCode, discovery.body).toBe(200);
+            expect(discovery.json().sessionIds).toContain(session.id);
+            expect(discovery.json().sessionIds).toContain(direct.id);
+            expect(Object.keys(discovery.json())).toEqual(["sessionIds"]);
+            expect(discovery.json().sessionIds).not.toContain(unshared.id);
+            expect((await app.inject({ method: "GET", url: "/v2/sessions/metadata-upgrades", headers: { "x-test-user-id": stranger.id } })).json()).toEqual({ sessionIds: [] });
+            expect((await app.inject({ method: "GET", url: "/v2/sessions/metadata-upgrades" })).statusCode).toBe(401);
+            expect((await app.inject({ method: "GET", url: "/v2/sessions/metadata-upgrades", headers: { ...headers, "x-test-auth-token-kind": "api_token" } })).statusCode).toBe(403);
+            await updateSessionMetadataTupleWithRetry({
+                initialSnapshot: { mode: "legacy_owner", metadataLayoutVersion: 0, metadataVersion: session.metadataVersion,
+                    metadataCiphertext: session.metadata, ownerMetadata: null, agentStateVersion: session.agentStateVersion,
+                    agentStateCiphertext: null, value: { metadata, agentState: null } },
+                mutation: { kind: "ownerMigration" },
+                ownerMigrationCurrentness: { expectedAccountEncryptionMode: "plain", expectedAccountContentPublicKeyFingerprint: null },
+                crypto: { encryptPayload: async value => JSON.stringify(value), encodeOwnerMetadata: createPlainSessionOwnerMetadataEnvelopeV1 },
+                commit: async patch => {
+                    const result = await app.inject({ method: "PATCH", url: `/v2/sessions/${session.id}`, headers, payload: patch });
+                    expect(result.statusCode, result.body).toBe(200);
+                    const body = result.json();
+                    return { result: "success" as const, metadataVersion: body.sharedMetadata.version, agentStateVersion: body.agentState.version };
+                },
+                refreshAfterConflict: async () => { throw new Error("Unexpected migration conflict"); },
+            });
+            const reopened = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers });
+            expect(reopened.statusCode, reopened.body).toBe(200);
+            expect(reopened.json().session.metadataLayoutVersion).toBe(1);
+            expect(reopened.body).not.toContain("/owner/private");
+            expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).ownerMetadata).toContain("/owner/private");
+            expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: share.id } })).tokenHash).toEqual(share.tokenHash);
+            expect((await app.inject({ method: "GET", url: "/v2/sessions/metadata-upgrades", headers })).json().sessionIds).not.toContain(session.id);
         });
     });
 

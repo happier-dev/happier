@@ -163,7 +163,7 @@ function deferOlderPageRequests(): { resolveOlderPage: () => void } {
 }
 
 async function seedPagedSession(): Promise<SyncGapFillDeferralTestAccess> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     const syncForTest = sync as unknown as SyncGapFillDeferralTestAccess;
     sync.disconnectServer();
 
@@ -193,7 +193,7 @@ describe('sync gap-fill deferral during user older pagination', () => {
 
     it('defers background catch-up while an older load is in flight and replays exactly once after it settles', async () => {
         const syncForTest = await seedPagedSession();
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const { resolveOlderPage } = deferOlderPageRequests();
 
         const olderLoad = sync.loadOlderMessages(SESSION_ID);

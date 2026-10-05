@@ -90,6 +90,8 @@ import {
     matchArtifactAccountEncryptionMigrationPostStateInTx,
     migrateArtifactAccountEncryptionInTx,
 } from "@/app/artifacts/artifactWriteService";
+import { prepareArtifactAccountEncryptionConversionBlobs } from '@/app/artifacts/artifactEncryptionConversionBlobService';
+import { cleanupRejectedArtifactBlobUploads } from '@/app/artifacts/artifactBlobService';
 import {
     matchAccountJsonKvEncryptionMigrationPostStateInTx,
     AccountJsonKvEncryptionMigrationConflictError,
@@ -921,6 +923,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
         }
 
         try {
+            const preparedArtifactBlobs = await prepareArtifactAccountEncryptionConversionBlobs({ accountId: userId, directive: artifacts });
             const result = await inTx(async (tx) => {
                 const fence =
                     await acquireAccountEncryptionTransitionCoordinatorFenceInTx(
@@ -1122,6 +1125,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                             accountId: userId,
                             toMode,
                             directive: replayRequest.artifacts,
+                            preparedBlobs: preparedArtifactBlobs,
                         });
                     const sessionsPostState =
                         await matchSessionAccountEncryptionMigrationPostStateInTx({
@@ -1600,6 +1604,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         fromMode: currentMode,
                         toMode,
                         directive: artifacts,
+                        preparedBlobs: preparedArtifactBlobs,
                     });
                 if (artifactMigration.status !== "applied") {
                     throw new AccountEncryptionMigrationDomainRejectedError(
@@ -1801,6 +1806,8 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     },
                 );
             }
+            // Activation has committed. A failed physical delete retains exact retry custody, not a failed mode change.
+            await cleanupRejectedArtifactBlobUploads(userId).catch(error => request.log.error({ err: error }, 'Artifact conversion cleanup retained for retry'));
             return reply.send(AccountEncryptionMigrateSuccessResponseSchema.parse({
                 success: true,
                 mode: result.mode,

@@ -177,7 +177,8 @@ function createHarness() {
             contributor: {
                 pluginId: source.pluginId,
                 contributionId: source.localId,
-                immutableGenerationId: 'generation-1',
+                occurrenceId: 'generation-1',
+                sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' },
             },
             protocol: {
                 id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,

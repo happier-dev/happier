@@ -1,7 +1,6 @@
 export * from './assignmentKeys';
 export * from './collapseKeys';
 export * from './constants';
-export * from './dragDropIntent';
 export * from './focus';
 export * from './mutations';
 export * from './names';

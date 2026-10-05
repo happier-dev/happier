@@ -16,6 +16,8 @@ import type { StoredCredentials } from '@/persistence';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { updateAccountSettingsV2OnceAgainstLatest } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
+import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 
 export function createCliConnectedServiceAction(params: Readonly<{
   credentials: StoredCredentials;
@@ -30,11 +32,21 @@ export function createCliConnectedServiceAction(params: Readonly<{
       request: async (request) => {
         const headers = params.resolveHeaders(context, actionId, request);
         if (!headers) throw Object.assign(new Error('action_authorization_unavailable'), { code: 'action_authorization_unavailable' });
+        signal?.throwIfAborted();
         const response = await axios.request<unknown>({
           url: `${params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()}${request.path}`,
           method: request.method, headers: { ...headers, 'Content-Type': 'application/json' },
           ...(request.body === undefined ? {} : { data: request.body }),
+          timeout: resolveConnectedServicesServerApiTimeoutMs(),
           ...(signal ? { signal } : {}), validateStatus: () => true,
+        }).catch((error: unknown) => {
+          const failure = classifyActionTransportFailure(error, {
+            mutation: request.method !== 'GET', requestIssued: true,
+            cancelled: signal?.aborted === true || axios.isCancel(error),
+          });
+          if (!failure) throw error;
+          const code = failure === 'network' ? 'server_unreachable' : failure;
+          throw Object.assign(new Error(code), { code });
         });
         if (response.status < 200 || response.status >= 300) {
           const code = response.data && typeof response.data === 'object' && 'error' in response.data && typeof response.data.error === 'string'

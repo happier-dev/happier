@@ -75,6 +75,7 @@ export function createActivitySurfaceSessionTarget(
 export function createActivitySurfaceSessionRoute(
     sessionId: string,
     serverId?: string | null,
+    query?: Readonly<Record<string, string>>,
 ): string {
-    return buildScopedSessionRouteHref({ sessionId, serverId });
+    return buildScopedSessionRouteHref({ sessionId, serverId, query });
 }

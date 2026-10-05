@@ -15,17 +15,22 @@ describe('applyPublicReleaseRingScopeToEnv', () => {
     expect(env.HAPPIER_RELEASE_RING).toBe('preview');
   });
 
-  it('does not override existing scoping env vars', () => {
+  it.each(['stable', 'preview', 'publicdev'] as const)('owns conflicting inherited hints for the explicit %s ring', (ring) => {
     const env = applyPublicReleaseRingScopeToEnv({
       HAPPIER_RELEASE_RING: 'dev',
       HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
-    }, 'preview');
-    expect(env.HAPPIER_PUBLIC_RELEASE_CHANNEL).toBe('dev');
-    expect(env.HAPPIER_RELEASE_RING).toBe('dev');
+      HAPPIER_RELEASE_CHANNEL: 'preview',
+      PATH: '/bin',
+    }, ring);
+    const label = ring === 'publicdev' ? 'dev' : ring;
+    expect(env.HAPPIER_PUBLIC_RELEASE_CHANNEL).toBe(label);
+    expect(env.HAPPIER_RELEASE_RING).toBe(label);
+    expect(env).not.toHaveProperty('HAPPIER_RELEASE_CHANNEL');
+    expect(env.PATH).toBe('/bin');
   });
 
-  it('does not inject scoping env vars for stable by default', () => {
-    const env = applyPublicReleaseRingScopeToEnv({ HELLO: 'world' }, 'stable');
+  it('retains the environment when no ring scope was requested', () => {
+    const env = applyPublicReleaseRingScopeToEnv({ HELLO: 'world' }, null);
     expect(env.HELLO).toBe('world');
     expect(env).not.toHaveProperty('HAPPIER_PUBLIC_RELEASE_CHANNEL');
     expect(env).not.toHaveProperty('HAPPIER_RELEASE_RING');

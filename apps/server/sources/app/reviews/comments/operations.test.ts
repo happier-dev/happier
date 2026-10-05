@@ -106,7 +106,7 @@ describe("review comment operations", () => {
         const other = (await create("session-2")).comment;
         const result = await operations.bulkTransition({ accountId: "account-1", actor: reviewAgentActor,
             input: { projectId: "project-1", commentIds: [own.id, other.id], expectedState: "open", toState: "dismissed", reason: "Verified",
-                expectedServerRevisions: { [own.id]: 1, [other.id]: 1 }, clientMutationId: "bulk-mixed-scope" } });
+                evidence: [], expectedServerRevisions: { [own.id]: 1, [other.id]: 1 }, clientMutationId: "bulk-mixed-scope" } });
         expect(result.updated).toMatchObject([{ id: own.id, state: "dismissed" }]);
         expect(result.failed).toMatchObject([{ commentId: other.id, errorCode: "review_comment_permission_denied" }]);
     });

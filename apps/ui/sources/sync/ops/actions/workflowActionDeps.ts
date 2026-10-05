@@ -10,6 +10,8 @@ import {
     WorkflowRunSummaryV1Schema,
     type WorkflowActionExecute,
     type WorkflowTriggerActionsDependencies,
+    type AutomationTemplateRetainedSessionV1,
+    WorkflowStepExecutionSelectionSchema,
 } from '@happier-dev/protocol';
 import {
     createAccountWorkflowTriggerActions,
@@ -24,6 +26,8 @@ import {
     SessionPullRequestBindingInputV1Schema,
     SessionPullRequestBindingResultV1Schema,
     type SessionPullRequestBindingInputV1,
+    CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
+    ConversationBindingReadResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -35,6 +39,8 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createWorkflowRunAccountStorage } from '@/sync/api/automations/apiWorkflowRunStorage';
+import { readActiveSessionPullRequestLinks } from '@/sync/api/plugins/data/sessionPullRequestLinks';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import {
     AutomationApiError,
@@ -49,8 +55,12 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { randomUUID } from '@/platform/randomUUID';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { parseCompatSessionByIdResponse } from '@/sync/engine/sessions/sessionHttpCompat';
+import { createSessionDataKeyHydrationPlan, hydrateSessionDataKeys, readSessionDataKeyCredentialKind } from '@/sync/encryption/sessionDataKeyHydration';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
@@ -73,15 +83,20 @@ function createUiTriggerSessionResolver(account: LazyActionAccountContext): NonN
         const machineId = session?.metadata?.machineId?.trim();
         const directory = session?.metadata?.path?.trim();
         if (!session || !machineId || !directory) targetUnavailable();
-        if (session.active !== true) return { project: { machineId, directory }, nativeGoalOwner: false };
-        if (options?.checkNativeGoalOwner !== true) return { project: { machineId, directory }, nativeGoalOwner: null };
+        const agentTarget = resolveSessionActionDefaultBackend({ session })?.agentTarget;
+        const selection = agentTarget ? WorkflowStepExecutionSelectionSchema.safeParse({
+            agentTarget, ...(session.metadata?.permissionMode ? { permissionMode: session.metadata.permissionMode } : {}),
+        }) : null;
+        const facts = { project: { machineId, directory }, ...(selection?.success ? { executionSelection: selection.data } : {}) };
+        if (session.active !== true) return { ...facts, nativeGoalOwner: false };
+        if (options?.checkNativeGoalOwner !== true) return { ...facts, nativeGoalOwner: null };
         const observed = await sessionRpcWithServerScope<unknown, { capabilitiesOnly: true }>({
             sessionId, serverId: account.serverId, method: SESSION_RPC_METHODS.SESSION_GOAL_GET, payload: { capabilitiesOnly: true },
         }).catch(() => null);
         account.assertCurrent();
         const nativeGoalOwner = observed !== null && typeof observed === 'object' && 'nativeGoalOwner' in observed
             && typeof observed.nativeGoalOwner === 'boolean' ? observed.nativeGoalOwner : null;
-        return { project: { machineId, directory }, nativeGoalOwner };
+        return { ...facts, nativeGoalOwner };
     };
 }
 
@@ -94,7 +109,7 @@ export function createUiWorkflowAction(params: Readonly<{
     const executeRelay = createUiAccountAction(params);
     const resolveSession = createUiTriggerSessionResolver(account);
     const invokePullRequestBinding = async (
-        input: SessionPullRequestBindingInputV1,
+        input: Exclude<SessionPullRequestBindingInputV1, { kind: 'list' }>,
         caller: Parameters<typeof resolveSession>[1],
     ) => {
         if (!caller) targetUnavailable();
@@ -138,6 +153,7 @@ export function createUiWorkflowAction(params: Readonly<{
     };
     const definitions = createWorkflowDefinitionActions({
         artifactStore: account.workflowArtifacts,
+        readWorkflowTriggerSummaries: () => triggers.readWorkflowSummaries(),
         encodeListCursor: account.encodeArtifactListCursor,
         readPluginWorkflows: async () => {
             account.assertCurrent();
@@ -203,6 +219,34 @@ export function createUiWorkflowAction(params: Readonly<{
     const triggers = createAccountWorkflowTriggerActions({
         automations,
         resolveEncryption: () => resolveEncryption(),
+        resolveRetainedSession: async (sessionId): Promise<AutomationTemplateRetainedSessionV1 | null> => {
+            account.assertCurrent();
+            const response = await account.request(`/v2/sessions/${encodeURIComponent(sessionId)}?accessProjectionVersion=1`, {
+                headers: { Authorization: `Bearer ${account.credentials.token}` },
+            }, { includeAuth: false });
+            account.assertCurrent();
+            if (!response.ok) return null;
+            const session = parseCompatSessionByIdResponse(await response.json())?.session;
+            account.assertCurrent();
+            if (!session || session.id !== sessionId || (session.encryptionMode !== 'plain' && session.encryptionMode !== 'e2ee')) return null;
+            if (session.encryptionMode === 'plain') return { sessionId, encryptionMode: 'plain' };
+            const locked = { sessionId, encryptionMode: 'e2ee' as const };
+            const credentialKind = readSessionDataKeyCredentialKind(account.credentials);
+            if (credentialKind === 'keyless') return locked;
+            const encryption = await createEncryptionFromAuthCredentials(account.credentials);
+            account.assertCurrent();
+            // The Session crypto owner opens this authenticated envelope with no cached-key admission.
+            const hydrated = await hydrateSessionDataKeys({
+                plan: createSessionDataKeyHydrationPlan({ sessions: [session], credentialKind, sessionDataKeys: new Map() }),
+                encryption, sessionDataKeys: new Map(), scope: { accountId: account.accountId, serverId: account.serverId },
+                shouldContinue: account.accountLifetime.isCurrent,
+            });
+            account.assertCurrent();
+            const state = hydrated.states.get(sessionId);
+            return !hydrated.stale && (state === 'ready' || state === 'legacy_fallback_ready')
+                ? { ...locked, material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials) }
+                : locked;
+        },
         randomBytes: getRandomBytes,
         newId: randomUUID,
         resolveWorkflow: async (ref) => {
@@ -218,11 +262,38 @@ export function createUiWorkflowAction(params: Readonly<{
             return result.grants.flatMap((grant) => grant.principal.kind === 'team' ? [grant.principal.teamId] : []);
         },
         resolveSession,
+        observeLegacyChannelAssociation: async ({ automationId }, caller) => {
+            try {
+                account.assertCurrent();
+                const result = await executeRelay({ actionId: 'action.invoke', input: {
+                    action: { pluginId: 'happier.channels', localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead }, input: { automationId },
+                }, context: { ...caller, surface: caller?.surface ?? 'ui', serverId: account.serverId, runtimeAccountId: account.accountId },
+                ...(caller?.signal ? { signal: caller.signal } : {}) });
+                account.assertCurrent();
+                const parsed = ConversationBindingReadResultV1Schema.safeParse(result);
+                return parsed.success && parsed.data.kind === 'automationAssociation' && parsed.data.automationId === automationId
+                    ? { kind: parsed.data.association } : { kind: 'unknown' };
+            } catch {
+                caller?.signal?.throwIfAborted();
+                account.assertCurrent();
+                return { kind: 'unknown' };
+            }
+        },
         pullRequests: {
             listLinks: async (sessionId, caller) => {
-                const result = await invokePullRequestBinding({ kind: 'list', sessionId }, caller);
-                if (result.kind !== 'links' || result.sessionId !== sessionId) targetUnavailable();
-                return result.pullRequestLinks;
+                const result = await current(() => readActiveSessionPullRequestLinks({
+                    accountLifetime: account.accountLifetime,
+                    readAvailability: () => readPluginAccountAvailability(account.accountLifetime.scope),
+                    sessionIds: [sessionId],
+                    ...(caller?.signal ? { signal: caller.signal } : {}),
+                }));
+                if (result.status !== 'ready') {
+                    const reason = result.status === 'rejected' ? result.code : result.reason;
+                    // Target failures use the strict Agent refusal details contract;
+                    // a collection transport reason is not an Agent admission refusal.
+                    throw Object.assign(new Error(`target_unavailable:${reason}`), { code: 'target_unavailable' });
+                }
+                return result.sessions.find((session) => session.sessionId === sessionId)?.pullRequestLinks.slice() ?? [];
             },
             attach: async ({ sessionId, pullRequest, automationId, triggerId, triggerRevision, triggerKind }, caller) => {
                 const result = await invokePullRequestBinding({ kind: 'attach', sessionId, pullRequest,

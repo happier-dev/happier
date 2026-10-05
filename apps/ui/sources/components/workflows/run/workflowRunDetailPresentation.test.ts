@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WorkflowProgressEnvelopeV1Schema } from '@happier-dev/protocol';
 
 import {
     createWorkflowInvocationIndexFixture,
@@ -25,6 +26,26 @@ import {
 } from './workflowRunDetailPresentation';
 
 describe('managed workflow Run presentation', () => {
+    it('offers an explicit engine replacement only for a stopped unavailable step with settled custody', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1' as const,
+            invocationPath: { blockId: 'analyze', scope: [] },
+            blockKind: 'step' as const,
+            attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code: 'target_unavailable' as const },
+        });
+        const project = (overrides: Partial<Parameters<typeof projectWorkflowInvocationRecovery>[0]> = {}) =>
+            projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null, ...overrides });
+        expect(project().canRunWithAnotherAgent).toBe(true);
+        expect(project({ run: { ...run, workflowCustodyState: 'pending' } }).canRunWithAnotherAgent).toBe(false);
+        expect(project({ progress: { ...progress, blockKind: 'action' } }).canRunWithAnotherAgent).toBe(false);
+        expect(project({ invocation: { ...invocation, lifecycle: 'running' } }).canRunWithAnotherAgent).toBe(false);
+        expect(project({ progress: { ...progress, reason: { code: 'workspace_missing' } } }).canRunWithAnotherAgent).toBe(false);
+        expect(project({ progress: null }).canRunWithAnotherAgent).toBe(false);
+    });
+
     it('keeps parent state and invocation lifecycle as separate vocabularies', () => {
         // `interrupted` exists only on the parent; `waiting_for_approval` only
         // on an invocation. Neither mapper may accept the other's value.

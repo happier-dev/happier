@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -89,6 +89,48 @@ function fireNodeLayout(node: { props: Record<string, unknown> }, height: number
 }
 
 describe('SelectionList (orchestrator)', () => {
+    beforeEach(() => {
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 0 });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('suppresses authored keyboard hints on touch even when the caller enables hints', async () => {
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 1 });
+        const { SelectionList } = await import('../SelectionList');
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<SelectionList {...defaultProps({ onSelect })} />);
+
+        expect(screen.findByTestId('sl:footer')).toBeNull();
+        await screen.pressByTestIdAsync('sl:root:option:fav-a');
+        expect(onSelect).toHaveBeenCalledWith('fav-a', expect.objectContaining({ id: 'fav-a' }));
+    });
+
+    it('lets a step wait for keyboard navigation before highlighting or activating an action', async () => {
+        const { act } = await import('react-test-renderer');
+        const { SelectionList } = await import('../SelectionList');
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<SelectionList {...defaultProps({
+            rootStep: makeRootStep({ autoFocusFirstOption: false }),
+            onSelect,
+        })} />);
+        const header = () => screen.findAllByTestId('sl:header')
+            .find((node) => typeof node.props.onKeyPress === 'function')!;
+        const key = (key: string) => ({ key, nativeEvent: { key }, preventDefault: () => {}, stopPropagation: () => {} });
+
+        expect(header().props.activeDescendantId).toBeUndefined();
+        await act(async () => { header().props.onKeyPress(key('Enter')); });
+        expect(onSelect).not.toHaveBeenCalled();
+        await act(async () => { header().props.onKeyPress(key('ArrowDown')); });
+        expect(header().props.activeDescendantId).toBe('sl:root:option:fav-a');
+        await act(async () => { header().props.onKeyPress(key('Enter')); });
+        expect(onSelect).toHaveBeenCalledWith('fav-a', expect.objectContaining({ id: 'fav-a' }));
+    });
+
     it('renders the persistent search header and footer when keyboardHintsEnabled is true', async () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps()} />);

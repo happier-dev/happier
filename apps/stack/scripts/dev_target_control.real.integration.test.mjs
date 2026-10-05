@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -106,6 +106,16 @@ test('native sync check accepts a healthy session from the real Mutagen public t
   ]);
   assert.match(nativeFields[12], /^[1-9][0-9]*$/u);
   assert.deepEqual(nativeFields.slice(13), ['ok', '0', '0']);
+
+  for (const content of ['written immediately before the native barrier\n', 'newer demand after the previous success\n']) {
+    await writeFile(join(alpha, 'healthy.txt'), content);
+    const flushed = spawnSync(controlExecutable, [
+      '--sync-flush', sessionName, '--', 'mutagen', 'sync', 'flush', sessionName,
+    ], { env, encoding: 'utf8' });
+    assert.ifError(flushed.error);
+    assert.equal(flushed.status, 0, flushed.stderr);
+    assert.equal(await readFile(join(beta, 'healthy.txt'), 'utf8'), content);
+  }
 
   runMutagen(['sync', 'pause', sessionName], env);
   const pausedPublicJsonStatus = runMutagen([

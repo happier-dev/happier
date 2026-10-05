@@ -127,7 +127,7 @@ describe('external Voice provider activation', () => {
         capabilities: { ...declaration.capabilities, tools: { effectCalls: 'stable_ids' } },
         settings: {
           schemaVersion: 1,
-          fields: [{ id: 'agentId', title: 'Agent ID', schema: { type: 'string' }, default: '', presentation: { control: 'text' } }],
+          fields: [{ id: 'agentId', title: 'Agent ID', schema: { type: 'string', maxLength: 256 }, default: '', presentation: { control: 'text' } }],
           actions: [{
             id: 'create-agent', title: 'Create Agent', patchFieldIds: ['agentId'],
             placement: { kind: 'contributionFooter' }, confirmation: { kind: 'none' },

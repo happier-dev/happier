@@ -66,6 +66,42 @@ test('dev-target doctor checks Mutagen and each target through passwordless SSH'
   assert.match(decodedPowerShell, /Get-Command corepack/);
 });
 
+test('dev-target doctor reports the observed runtime target independently of repository synchronization', async () => {
+  const calls = [];
+  const result = await runDevTargetsDoctor({ targets, env: {} }, {
+    async runProcess(input) {
+      calls.push(input);
+      return {
+        code: 0,
+        stdout: input.command === 'mutagen' ? '' : 'v24.0.0\n__HAPPIER_RUNTIME_TARGET__=' + JSON.stringify({
+          platform: input.args.includes('happier-stack-windows') ? 'win32' : 'linux',
+          arch: 'x64',
+        }) + '\n',
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.targets.map(target => target.runtimeTarget), [
+    { platform: 'linux', arch: 'x64' },
+    { platform: 'win32', arch: 'x64' },
+  ]);
+  assert.equal(calls.some(call => call.command === 'mutagen' && call.args.includes('sync')), false);
+});
+
+test('dev-target doctor never reports malformed or failed runtime identity as observed', async () => {
+  for (const [code, stdout] of [
+    [0, '__HAPPIER_RUNTIME_TARGET__={"platform":"linux","arch":24}'],
+    [0, '__HAPPIER_RUNTIME_TARGET__={malformed}'],
+    [1, '__HAPPIER_RUNTIME_TARGET__={"platform":"linux","arch":"x64"}'],
+  ]) {
+    const result = await runDevTargetsDoctor({ targets: [targets[0]], env: {} }, {
+      runProcess: async input => input.command === 'mutagen' ? { code: 0 } : { code, stdout },
+    });
+    assert.equal(result.targets[0].runtimeTarget, undefined);
+  }
+});
+
 test('dev-target doctor retries one transient SSH connect timeout before accepting the target', async () => {
   let sshAttempts = 0;
   const result = await runDevTargetsDoctor(

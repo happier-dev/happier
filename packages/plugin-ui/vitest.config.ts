@@ -1,4 +1,6 @@
-import { resolve } from 'node:path';
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
+import { resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from 'vitest/config';
 
@@ -8,7 +10,15 @@ import {
   type WorkspacePackageSpec,
 } from '../../scripts/testing/vitestWorkspacePackageResolution';
 
+const packageRoot = fileURLToPath(new URL('.', import.meta.url));
+const resolve = (...paths: string[]) => resolvePath(packageRoot, ...paths);
+
 const workspacePackages: readonly WorkspacePackageSpec[] = [
+  // Source tests must exercise the current declaration owner, not the SDK's vendored copy.
+  { packageName: '@happier-dev/protocol', packageSourceRoot: resolve('../protocol/src') },
+  { packageName: '@happier-dev/agents', packageSourceRoot: resolve('../agents/src') },
+  { packageName: '@happier-dev/cli-common', packageSourceRoot: resolve('../cli-common/src') },
+  { packageName: '@happier-dev/triage-protocol', packageSourceRoot: resolve('../triage-protocol/src') },
   {
     packageName: '@happier-dev/plugin-sdk',
     packageSourceRoot: resolve('../../packages/plugin-sdk/src'),
@@ -69,12 +79,14 @@ const reactNativeWebAliases = [
 
 export default defineConfig({
   test: {
+    ...resolveVitestWorkers(),
     projects: [
       {
         resolve: { alias: packageLocalReactAliases },
         plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
         test: {
           name: 'package',
+          root: packageRoot,
           globals: false,
           environment: 'node',
           setupFiles: ['./src/testSetup.ts'],
@@ -88,6 +100,7 @@ export default defineConfig({
         plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
         test: {
           name: 'rnw',
+          root: packageRoot,
           globals: false,
           environment: 'jsdom',
           // React's dev/prod CJS build is chosen by NODE_ENV, and only the dev

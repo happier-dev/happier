@@ -18,8 +18,9 @@ import {
   type StoredCredentials,
 } from '@/persistence';
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
+import { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
-import type { ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
+import { clientActionUnavailable, type ActionExecutorContext, type ActionExecutorDeps, type RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -38,10 +39,12 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
   & CliTranscriptActionExecutorOptions
   & Readonly<{
     runtimeActionExecute?: RuntimeActionExecute;
+    clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
     /** Bound by the live Session/Run host; private and deferred operations retain Artifact custody. */
     sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
     /** Current committed contributed Action declarations for catalog discovery. */
     listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
+    inputTypeDeps?: Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>;
     externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
     /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
     invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
@@ -116,6 +119,7 @@ export function createCliActionExecutor(
     },
     {
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
+      clientActionExecute: params.clientActionExecute ?? (async ({ actionId }) => clientActionUnavailable(actionId)),
       ...(params.runtimeActionExecute
         ? { runtimeActionExecute: params.runtimeActionExecute }
         : {}),
@@ -131,6 +135,7 @@ export function createCliActionExecutor(
       ...(params.listContributedActionDefinitions
         ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
         : {}),
+      ...(params.inputTypeDeps ?? (params.pluginActionExecutionOwner === 'current_process' ? createCommittedInputTypeDeps() : {})),
       ...(params.hostExternalSessionAction
         ? { hostExternalSessionAction: params.hostExternalSessionAction }
         : {}),

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Install Metro's lazy-loader bridge before storage can import its consumers.
 // The helper returns the actual Sync singleton, without replacing its methods.
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -7,8 +7,11 @@ import {
   encodePlainMachineStoredContent,
   SessionCurrentProjectionRecordV1Schema,
   SessionMetadataTuplePatchV1Schema,
+  SessionSpawnNewInputV2Schema,
+  V2SessionListResponseSchema,
   type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '@/sync/domains/state/storage';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -200,8 +203,23 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   const json = (body: unknown) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' },
   });
+  if (path === '/health') return json({});
+  if (path === '/v2/cursor') return json({ cursor: 0, changesFloor: 0 });
+  if (path === '/v2/changes') return json({ changes: [], nextCursor: 0 });
+  if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+  if (path === '/v2/account/settings') return json({ content: { t: 'plain', v: state.settings }, version: 1 });
   if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
   if (/^\/v1\/sessions\/[^/]+\/messages$/.test(path)) return json({ messages: [], hasMore: false });
+  // Named list resources must precede the generic session-by-id route.
+  if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v1/sessions') {
+    if (spawnSession.mock.calls.length > 0) {
+      await readSessions();
+      for (const session of Object.values(state.sessions) as Array<ReturnType<typeof createSessionFixture>>) {
+        if (!committedSessionRecords.has(session.id)) committedSessionRecords.set(session.id, sessionWireRecord(session));
+      }
+    }
+    return json(V2SessionListResponseSchema.parse({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
+  }
   const detail = /^\/v2\/sessions\/([^/]+)$/.exec(path);
   if (detail) {
     const id = decodeURIComponent(detail[1]);
@@ -230,15 +248,6 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
       daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
     })));
   }
-  if (path === '/v2/sessions' || path === '/v1/sessions') {
-    if (spawnSession.mock.calls.length > 0) {
-      await readSessions();
-      for (const session of Object.values(state.sessions) as Array<ReturnType<typeof createSessionFixture>>) {
-        if (!committedSessionRecords.has(session.id)) committedSessionRecords.set(session.id, sessionWireRecord(session));
-      }
-    }
-    return json({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null });
-  }
   return new Response('{}', { status: 404 });
 }
 
@@ -260,9 +269,30 @@ vi.mock('@/modal', async () => {
   }).module;
 });
 
-vi.mock('@/sync/ops/machines', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/sync/ops/machines')>()),
-  machineSpawnNewSession: (opts: unknown) => spawnSession(opts),
+// Native daemon RPC is the genuine boundary for current Session creation;
+// the retired flat machine-spawn adapter must not replace Action execution.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+  machineRpcWithServerScope: async (request: {
+    method: string;
+    payload: unknown;
+    onIssued?: () => void;
+  }) => {
+    if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) throw new Error(`Unexpected machine RPC: ${request.method}`);
+    const input = SessionSpawnNewInputV2Schema.parse(request.payload);
+    request.onIssued?.();
+    const spawned = await spawnSession({
+      ...input,
+      machineId: input.executionTarget.machineId,
+      directory: input.directory.kind === 'path' ? input.directory.path : input.directory,
+    });
+    return {
+      ...spawned,
+      disposition: 'created',
+      executionTarget: input.executionTarget,
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+    };
+  },
 }));
 
 // sessionExecutionRunGet is a protocol boundary; keep the mock flexible as the run schema evolves.
@@ -293,6 +323,10 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
   resolveRuntimeFeatureDecision: (args: any) => resolveRuntimeFeatureDecision(args),
   isRuntimeFeatureEnabled: async (args: any) => (await resolveRuntimeFeatureDecision(args)).state === 'enabled',
 }));
+
+const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+const restoreActionExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+afterAll(() => restoreActionExecutorModuleLoader());
 
 async function loadVoiceAgentPersistenceHarness() {
   const normalize = (id: string, session: Parameters<typeof createSessionFixture>[0]) =>
@@ -555,6 +589,10 @@ describe('VoiceExecutionTransport (persistence)', () => {
     });
 
     const secondController = createVoiceExecutionTransport();
+    // Real tuple migration leaves execution facts in the hydrated owner view,
+    // not in the reduced list row used for presence and presentation.
+    expect(state.sessions.s1.metadataLayoutVersion).toBe(1);
+    expect(readSessionOwnerMetadataView(state.sessions.s1)?.flavor).toBe('claude');
     await secondController.sendTurn('s1', 'hello again');
 
     expect(start).toHaveBeenCalledWith(

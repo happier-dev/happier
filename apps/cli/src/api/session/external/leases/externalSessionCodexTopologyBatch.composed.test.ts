@@ -76,6 +76,8 @@ const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
         throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
     };
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+// Packaged process execution is outside these transcript-only fixtures.
+const unavailableInvocationRipgrep = { run: async () => { throw new Error('Packaged ripgrep unavailable in transcript fixture'); } };
 
 function jsonl(value: unknown): string {
     return `${JSON.stringify(value)}\n`;
@@ -195,6 +197,7 @@ function invocation() {
         maxSerializedBytes: 524_288,
         managedEndpointRead: unavailableManagedEndpointRead,
         exec: unavailableInvocationExec,
+        ripgrep: unavailableInvocationRipgrep,
     };
 }
 

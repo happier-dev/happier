@@ -237,6 +237,7 @@ function createComposerDocument(input: Readonly<{
             onComposerFocusChange: () => {},
             onComposerFocusRequestChange: () => {},
             onComposerInputFlushRequestChange: () => {},
+            onPromptPickerOpenRequestChange: () => {},
             flushComposerInput: () => {},
             onComposerActionBarLayoutChange: () => {},
             inputPersistence: {

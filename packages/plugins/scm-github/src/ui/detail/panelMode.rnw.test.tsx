@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
+import { defineUiSurface, Tabs } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -121,20 +123,40 @@ afterEach(async () => {
  * body for exactly one panel. The body renders that panel and no tab strip of
  * its own, and its Overview panel is the story rail's source half.
  */
-async function mountPanel(panel: string): Promise<PluginUiTestkit> {
+async function mountPanel(panel: string | (() => string), options: Readonly<{
+  visible?: () => boolean;
+  readCapabilities?: (signal: AbortSignal) => Promise<JsonValue>;
+}> = {}): Promise<PluginUiTestkit> {
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({
       identity: { instanceId: `fixture-instance-panel-${panel}`, mountNonce: `fixture-mount-panel-${panel}` },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: renderSurface,
+      surface: defineUiSurface((context) => {
+        const body = renderSurface(typeof panel === 'function' ? {
+          ...context, launchInput: { ...(launchInput() as Record<string, JsonValue>), panel: panel() },
+        } : context);
+        // The SDK artifact boundary returns an opaque UI element; the RNW host requires a real React element.
+        if (body !== null && !React.isValidElement(body)) throw new Error('Expected a React-native author surface');
+        return options.visible === undefined ? body : <Tabs value={options.visible() ? 'source' : 'session'}
+          onValueChange={() => {}} ariaLabel="Detail planes" tabList="host">
+          <Tabs.Item value="source" title="Source" retention="retain">{body}</Tabs.Item>
+          <Tabs.Item value="session" title="Session" />
+        </Tabs>;
+      }),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      launchInput: { ...(launchInput() as Record<string, JsonValue>), panel } as JsonValue,
+      launchInput: { ...(launchInput() as Record<string, JsonValue>), panel: typeof panel === 'string' ? panel : panel() } as JsonValue,
       handlers: {
-        executeAction: async ({ action }) => {
+        executeAction: async ({ action, signal }) => {
           const localId = (action as { localId: string }).localId;
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities && options.readCapabilities !== undefined) return await options.readCapabilities(signal);
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) return failingChecksAnswer();
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline) return {
+            kind: 'timeline',
+            rows: [{ id: 'timeline-1', kind: 'unsupported', rawKind: 'provider-specific-event', actor: 'Mara', summary: 'Source-only timeline record.' }],
+            omittedRowCount: 0, projectionTruncated: false,
+          } as JsonValue;
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles) {
             return {
               kind: 'changedFiles',
@@ -156,6 +178,36 @@ async function mountPanel(panel: string): Promise<PluginUiTestkit> {
 }
 
 describe('the GitHub detail as Triage panels', () => {
+  it('keeps a root capabilities read across source panels but pauses it while the source is hidden', async () => {
+    let visible = true;
+    let panel = 'overview';
+    const signals: AbortSignal[] = [];
+    const detail = await mountPanel(() => panel, { visible: () => visible, readCapabilities: async (signal) => {
+      signals.push(signal);
+      return await new Promise<JsonValue>(() => {});
+    } });
+    expect(signals).toHaveLength(1);
+    const original = signals[0];
+    panel = 'files';
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(signals).toHaveLength(1);
+    expect(original?.aborted).toBe(false);
+    visible = false;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    visible = true;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(signals.at(-1)?.aborted).toBe(false);
+    await act(async () => { await detail.retire(); });
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+  it('composes host Activity as a public story section', async () => {
+    const detail = await mountPanel('activity');
+    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+    await expect(detail.getByText('Source-only timeline record.')).resolves.toBeDefined();
+    await expect(detail.getByText('provider-specific-event · Mara')).resolves.toBeDefined();
+    await expect(detail.queryAllByRole('tab')).resolves.toEqual([]);
+  });
   it('renders only the requested panel, with no tab strip of its own', async () => {
     const detail = await mountPanel('checks');
     await expect(detail.getByText('build')).resolves.toBeDefined();

@@ -115,15 +115,10 @@ async function settlePublicationPlan(
  * rematerializes that exact account inside one request closure, rereads the
  * provider entity before any effect, and returns the re-observed entity.
  *
- * They are declared `surfaces: ['ui']`, and the ABSENCE of `agent` and
- * `mcp` is the human gate: an agent cannot reach them at all — no prompt to
- * approve, no tool, no exposure. There is no list of exempted callers here and
- * none may be added. `ui` is the write's whole product reach: the daemon
- * derives the invoking surface from the authenticated mounted-UI provenance,
- * so this source's own mounted detail body reaches each write as present-user
- * authority while direct plugin code — ActionsService — checks only the
- * `plugin` surface and is refused here; nothing between the press and the
- * provider write is shared mutable state. There is no queue, no receipt, no
+ * UI, agent, MCP and CLI invoke the same native write through the shared host
+ * approval policy. Non-safe danger levels and confirmation require approval
+ * by default; the handler still validates the exact configured entry and current
+ * provider state. There is no queue, no receipt, no
  * lease, no in-flight registry, and no retry timer: an ambiguous outcome is
  * reported as uncertain and the user decides, because a retry would re-decide
  * on their behalf against state they never saw.

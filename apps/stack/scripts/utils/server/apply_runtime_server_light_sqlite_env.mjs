@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
-} from '@happier-dev/cli-common/firstPartyRuntime';
+} from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 
 function firstNonEmpty(...values) {
   for (const value of values) {

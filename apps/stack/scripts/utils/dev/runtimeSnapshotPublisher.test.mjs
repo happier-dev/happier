@@ -44,6 +44,7 @@ test(`repository publication preserves local authority and tracked results on ${
       producerStackBaseDir: '/stacks/repo-dev-a1cc5e0671',
     },
     requestedComponents: ['daemon'],
+    observedStartedSeq: 123,
     env: { HAPPIER_STACK_STACK: 'repo-dev-a1cc5e0671' },
     children,
     workerPath: '/work/happier/runtime-publication-worker.mjs',
@@ -84,6 +85,7 @@ test(`repository publication preserves local authority and tracked results on ${
         producerStackBaseDir: '/stacks/repo-dev-a1cc5e0671',
       },
       requestedComponents: ['daemon'],
+      observedStartedSeq: 123,
     },
   );
   assert.equal(
@@ -119,6 +121,7 @@ test(`repository publication parses a real worker result on ${platform}`, {
     rootDir: platform === 'linux' ? fileURLToPath(new URL('../../../', import.meta.url)) : root,
     platform,
     authority: { producerStackName: 'repo-dev-a1cc5e0671' },
+    observedStartedSeq: null,
     requestedComponents: ['web'],
     env: process.env,
     workerPath,
@@ -139,6 +142,7 @@ test('repository publication preserves bounded child failure evidence', async ()
     () => publishRepositoryRuntimeSnapshotInChildProcess({
       rootDir: '/work/happier',
       authority: { producerStackName: 'repo-dev-a1cc5e0671' },
+      observedStartedSeq: null,
       requestedComponents: ['daemon'],
       env: process.env,
       spawnProcImpl(_label, _command, _args, _env, options) {
@@ -225,7 +229,8 @@ test('the repository controller publishes the resolver’s actual changed subset
     { rootDir, authority, env, requestedComponents: ['server'] },
     { rootDir, authority, env, requestedComponents: ['daemon'] },
   ]);
-  assert.deepEqual(published, [{ rootDir, authority, env, requestedComponents: ['server'] }]);
+  assert.equal(published[0].observedStartedSeq, null);
+  assert.deepEqual(published.map(({ observedStartedSeq, ...input }) => input), [{ rootDir, authority, env, requestedComponents: ['server'] }]);
   assert.deepEqual(stateWrites.at(-1), {
     path: runtimeStatePath,
     patch: {
@@ -326,18 +331,26 @@ test('publication hints use the build owner canonical component order', async ()
   assert.deepEqual(requests, [['server'], ['daemon']]);
 });
 
-test('a burst during publication performs exactly one trailing identity recomputation', async () => {
+test('a burst during publication reports queued progress on stderr and performs exactly one trailing identity recomputation', async (t) => {
   const firstPublishEntered = createDeferred();
   const releaseFirstPublish = createDeferred();
   const resolvedRequests = [];
   const publications = [];
+  const requestObservations = [];
+  let startedSeq = 100;
+  const progress = [];
+  const stdout = [];
+  t.mock.method(process.stderr, 'write', (chunk) => { progress.push(String(chunk)); return true; });
+  t.mock.method(process.stdout, 'write', (chunk) => { stdout.push(String(chunk)); return true; });
   const publisher = createBackgroundRuntimeSnapshotPublisher({
+    captureObservedStartedSeq: () => startedSeq,
     resolveComponents: async ({ requestedComponents }) => {
       resolvedRequests.push(requestedComponents);
       return { components: requestedComponents, currentSnapshotId: 'snapshot-old' };
     },
-    publishComponents: async ({ components }) => {
+    publishComponents: async ({ components, observedStartedSeq }) => {
       publications.push(components);
+      requestObservations.push(observedStartedSeq);
       if (publications.length === 1) {
         firstPublishEntered.resolve();
         await releaseFirstPublish.promise;
@@ -351,11 +364,16 @@ test('a burst during publication performs exactly one trailing identity recomput
 
   const first = publisher.markRefreshed(['server']);
   await firstPublishEntered.promise;
+  startedSeq = 200;
   const second = publisher.markRefreshed(['server']);
+  startedSeq = 300;
   const third = publisher.markRefreshed(['daemon']);
+  startedSeq = 400;
+  assert.ok(progress.some((message) => message.includes('daemon')), 'a queued component must be visible before the incumbent finishes');
   releaseFirstPublish.resolve();
 
   await Promise.all([first, second, third]);
+  assert.deepEqual(stdout, [], 'publication progress must not contaminate JSON stdout');
 
   assert.deepEqual(resolvedRequests, [
     ['server'],
@@ -367,6 +385,7 @@ test('a burst during publication performs exactly one trailing identity recomput
     ['server'],
     ['daemon'],
   ]);
+  assert.deepEqual(requestObservations, [100, 200, 300], 'dispatch delay must not replace the component admission observation');
 });
 
 test('startup watcher daemon dirtiness folds into restart reconciliation before daemon publication', async () => {

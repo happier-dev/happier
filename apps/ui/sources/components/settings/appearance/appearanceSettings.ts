@@ -1,15 +1,29 @@
-import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
+import { themeModeStorageBinding } from './themeModeSettingBinding';
+import { glassIntensityStorageBinding, glassPresetStorageBinding, glassSurfaceStorageBinding } from './glassSettingBindings';
 
 /** Appearance's searchable settings. Rows render their labels from these declarations. */
 export const APPEARANCE_SETTINGS = defineSettingsPage({
     pageId: 'appearance',
     sections: {
+        personalize: {
+            settings: {
+                // Opens the guided flow from Appearance (lab personalize R3); the choices it walks
+                // through are each declared on their own page.
+                personalize: {
+                    titleKey: 'personalize.replayTitle',
+                    descriptionKey: 'personalize.replaySubtitle',
+                    operation: { requiresHumanInteraction: true, kind: 'interaction' },
+                },
+            },
+        },
         theme: {
             titleKey: 'settingsAppearance.theme',
             settings: {
+                themeMode: { titleKey: 'settingsAppearance.theme', keywordKeys: ['settingsAppearance.themeOptions.light', 'settingsAppearance.themeOptions.dark'], storage: themeModeStorageBinding },
                 themes: { titleKey: 'settingsAppearance.themeProfiles.title' },
-                themeToggle: { titleKey: 'settingsAppearance.themeToggle.title', descriptionKey: 'settingsAppearance.themeToggle.description', storage: { scope: 'local', key: 'titleStripThemeToggleVisible', access: 'read_write' } },
+                themeToggle: { titleKey: 'settingsAppearance.glassControls.toolbarTitle', descriptionKey: 'settingsAppearance.glassControls.toolbarDescription', storage: { scope: 'local', key: 'titleStripThemeToggleVisible', access: 'read_write' } },
             },
         },
         text: {
@@ -44,12 +58,6 @@ export const APPEARANCE_SETTINGS = defineSettingsPage({
                 widgetFrameBoard: { titleKey: 'widgetFrame.surfaceBoard', storage: { scope: 'local', key: 'widgetFrameStyleBoard', access: 'read_write', allowedValues: ['card', 'plain'] } },
                 widgetFrameCompanion: { titleKey: 'widgetFrame.surfaceCompanion', storage: { scope: 'local', key: 'widgetFrameStyleCompanion', access: 'read_write', allowedValues: ['card', 'plain'] } },
                 widgetGalleryView: { titleKey: 'widgetFrame.addViewTitle', descriptionKey: 'widgetFrame.addViewDescription', storage: { scope: 'local', key: 'widgetGalleryViewV1', access: 'read_write', allowedValues: ['grid', 'list'] } },
-            },
-        },
-        effects: {
-            titleKey: 'settingsAppearance.visualEffects.title',
-            settings: {
-                backdropBlur: { titleKey: 'settingsAppearance.backdropBlur', descriptionKey: 'settingsAppearance.backdropBlurDescription', storage: { scope: 'local', key: 'uiBackdropBlurEnabled', access: 'read_write' } },
             },
         },
         sessions: {
@@ -87,10 +95,19 @@ export const APPEARANCE_SETTINGS = defineSettingsPage({
             },
         },
         glass: {
-            titleKey: 'settingsAppearance.glass.title',
+            titleKey: 'settingsAppearance.glassControls.title',
             settings: {
-                glassBlur: { titleKey: 'settingsAppearance.glass.enable', storage: { scope: 'account', key: 'glassBlurEnabled', access: 'read_write' } },
-                glassIntensity: { titleKey: 'settingsAppearance.glass.intensity', storage: { scope: 'account', key: 'glassBlurIntensity', access: 'read_write' } },
+                glassPreset: { titleKey: 'settingsAppearance.glassControls.material', storage: glassPresetStorageBinding },
+                glassIntensity: { titleKey: 'settingsAppearance.glassControls.blur', storage: glassIntensityStorageBinding },
+                glassCustomize: { titleKey: 'settingsAppearance.glassControls.customize' },
+                glassChromeBlur: { titleKey: 'settingsAppearance.glassControls.chrome', descriptionKey: 'settingsAppearance.glassControls.blur', storage: glassSurfaceStorageBinding('chrome', 'blur') },
+                glassChromeOpacity: { titleKey: 'settingsAppearance.glassControls.chrome', descriptionKey: 'settingsAppearance.glassControls.opacity', host: settingsHosts.web, storage: glassSurfaceStorageBinding('chrome', 'opacity') },
+                glassSidebarBlur: { titleKey: 'settingsAppearance.glassControls.sidebar', descriptionKey: 'settingsAppearance.glassControls.blur', storage: glassSurfaceStorageBinding('sidebar', 'blur') },
+                glassSidebarOpacity: { titleKey: 'settingsAppearance.glassControls.sidebar', descriptionKey: 'settingsAppearance.glassControls.opacity', host: settingsHosts.web, storage: glassSurfaceStorageBinding('sidebar', 'opacity') },
+                glassContentBlur: { titleKey: 'settingsAppearance.glassControls.content', descriptionKey: 'settingsAppearance.glassControls.blur', storage: glassSurfaceStorageBinding('content', 'blur') },
+                glassContentOpacity: { titleKey: 'settingsAppearance.glassControls.content', descriptionKey: 'settingsAppearance.glassControls.opacity', host: settingsHosts.web, storage: glassSurfaceStorageBinding('content', 'opacity') },
+                glassFloatingBlur: { titleKey: 'settingsAppearance.glassControls.floating', descriptionKey: 'settingsAppearance.glassControls.blur', storage: glassSurfaceStorageBinding('floating', 'blur') },
+                glassFloatingOpacity: { titleKey: 'settingsAppearance.glassControls.floating', descriptionKey: 'settingsAppearance.glassControls.opacity', host: settingsHosts.web, storage: glassSurfaceStorageBinding('floating', 'opacity') },
             },
         },
     },

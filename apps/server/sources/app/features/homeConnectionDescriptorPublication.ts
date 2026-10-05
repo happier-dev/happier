@@ -1,6 +1,7 @@
 import {
     HomeConnectionDescriptorV1Schema,
     HomeConnectionEndpointV1Schema,
+    isLoopbackHostname,
     type HomeConnectionDescriptorV1,
     type HomeConnectionEndpointV1,
     type IrohEndpointDescriptorV1,
@@ -33,8 +34,8 @@ import {
  * - the stable canonical authentication origin (`resolveConfiguredCanonicalServerUrl`),
  * - the explicitly configured public server URL (`resolveConfiguredPublicServerUrl`)
  *   — an HTTPS endpoint is published only when this explicit ingress fact
- *   exists and is HTTPS, never merely because the canonical auth origin is an
- *   HTTPS URL,
+ *   exists and is HTTPS or loopback HTTP, never merely because the canonical
+ *   auth origin is an eligible URL,
  * - the current Iroh endpoint lifecycle (`getHomeIrohEndpointState`), included
  *   only while that owner reports active endpoint facts,
  * - the durable outer-descriptor continuity fact owned by this module. It
@@ -138,7 +139,9 @@ function nextMonotonicOuterRevision(params: Readonly<{
 function httpsEndpointFromIngress(publicServerUrl: string | null): HomeConnectionEndpointV1 | null {
     if (!publicServerUrl) return null;
     try {
-        if (new URL(publicServerUrl).protocol !== "https:") return null;
+        const ingress = new URL(publicServerUrl);
+        if (ingress.protocol !== "https:"
+            && !(ingress.protocol === "http:" && isLoopbackHostname(ingress.hostname))) return null;
     } catch {
         return null;
     }

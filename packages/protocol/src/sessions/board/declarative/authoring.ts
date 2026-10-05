@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPluginDeclarativeDataNodeV1 } from '../../../plugins/contributions/ui/declarativeDataV1.js';
 import { PluginDeclarativeDocumentV1Schema } from '../../../plugins/contributions/ui/declarativeDocumentAuthoringV1.js';
 import { preflightPluginDeclarativeDocumentV1 } from '../../../plugins/contributions/ui/declarativeDocumentPreflightV1.js';
 import type { PluginDeclarativeNodeV2 } from '../../../plugins/contributions/ui/v2.js';
@@ -12,7 +13,9 @@ export const SessionSurfaceDeclarativeDocumentV1Schema = z.unknown().superRefine
   while (pending.length > 0) {
     const node = pending.pop()!;
     // Plugin-owned bindings cannot acquire authority from a Session record.
-    if (node.kind === 'field' || node.kind === 'collectionList' || node.kind === 'targetedSurface'
+    if ((isPluginDeclarativeDataNodeV1(node) && node.data.kind === 'resource')
+      || node.kind === 'field' || node.kind === 'collectionList' || node.kind === 'targetedSurface'
+      || node.kind === 'dragSource' || node.kind === 'dropTarget' || node.kind === 'widgetArea'
       || (node.kind === 'action' && node.hostAction === undefined)
       || (node.kind === 'item' && (node.action !== undefined || node.input !== undefined))) {
       context.addIssue({ code: 'custom', message: 'This declarative binding requires a producer-admitted host Action or installed plugin' });

@@ -41,6 +41,7 @@ import { EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, 
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { StreamLanguage, indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import { search, SearchQuery, setSearchQuery, getSearchQuery, findNext, findPrevious, openSearchPanel, closeSearchPanel } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 
 import { javascript } from '@codemirror/lang-javascript';
@@ -88,6 +89,14 @@ globalThis.HAPPIER_CODEMIRROR_WEBVIEW = {
   tags,
   closeBrackets,
   closeBracketsKeymap,
+  search,
+  SearchQuery,
+  setSearchQuery,
+  getSearchQuery,
+  findNext,
+  findPrevious,
+  openSearchPanel,
+  closeSearchPanel,
   langs: {
     javascript,
     python,

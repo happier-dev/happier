@@ -71,9 +71,12 @@ describe('workflow Action contracts', () => {
     const definition = validateWorkflowDefinition({ blocks: ['Work'] }, { context: {
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
     } }).normalizedDefinition;
-    const result = { definition, revision: { headerVersion: 3, bodyVersion: 4 }, changedBlockIds: ['step-1'] };
+    const result = { definition, revision: { headerVersion: 3, bodyVersion: 4 },
+      metadata: { title: 'Renamed', description: 'Exact saved description' }, changedBlockIds: ['step-1'] };
     expect(WorkflowActionOutputSchemasV1['workflow.definition.edit'].parse(result)).toEqual(result);
-    expect(WorkflowActionOutputSchemasV1['workflow.definition.edit'].safeParse({ ...result, metadata: { title: 'Extra' } }).success).toBe(false);
+    const { metadata: _metadata, ...withoutMetadata } = result;
+    expect(WorkflowActionOutputSchemasV1['workflow.definition.edit'].safeParse(withoutMetadata).success).toBe(false);
+    expect(WorkflowActionOutputSchemasV1['workflow.definition.edit'].safeParse({ ...result, metadata: { ...result.metadata, unexpected: true } }).success).toBe(false);
   });
   it('requires the exact Run recovery handle on self-wait failures only', () => {
     expect(WorkflowActionFailureV1Schema.safeParse({
@@ -264,7 +267,7 @@ describe('workflow Action contracts', () => {
       workspaceTarget: { project: { machineId: 'machine-1', directory: '/workspace', checkoutRootPath: '/workspace' } },
       origin: { kind: 'direct' },
     } as const;
-    const result = { run, definition, acceptedContext, checkpoint: null };
+    const result = { run, callerAccess: { canEdit: true }, definition, authoredDefinition: definition, acceptedContext, checkpoint: null };
     expect(WorkflowActionOutputSchemasV1['workflow.run.get'].safeParse({ ...result, definition: createDeepWorkflowDefinition() }).success).toBe(true);
     expect(WorkflowActionOutputSchemasV1['workflow.run.get'].safeParse(result).success).toBe(true);
     const { frozenChildren: _frozenChildren, ...incompleteContext } = acceptedContext;

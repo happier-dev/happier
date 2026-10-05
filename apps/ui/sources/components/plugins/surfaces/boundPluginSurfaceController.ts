@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { createPluginWidgetAreaHostHandler } from './pluginWidgetAreaHost';
+import type { PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { createPluginDeclaredResourceStore } from './PluginContextualResourceStoreProvider';
 
 import type {
     ActionExecutorContext,
@@ -26,6 +29,7 @@ import {
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSurfaceContextV1,
     type PluginUiTargetedContributionsV1,
+    type PluginUiWidgetAreaRequestV1,
     type CurrentUiContextSnapshotV1,
 } from '@happier-dev/protocol/plugins/ui';
 
@@ -336,6 +340,8 @@ export type BoundPluginSurfaceController = Readonly<{
     /** The one exact surface context for this mount. */
     surfaceContext: PluginUiSurfaceContextV1;
     hostApi: PluginSurfaceHostApiV1;
+    /** Private declaration-aware facade over the shared Resource owner. */
+    resourceStore?: PluginUiResourceStore;
     /** Private approved descriptor; it never enters the public subscription result. */
     readLiveStreamViewing: (subscriptionId: string) => import('@happier-dev/protocol').DaemonPluginUiCaptureSourceDescriptorV1 | null;
     /**
@@ -390,6 +396,14 @@ export type BoundPluginSurfaceController = Readonly<{
      */
     openSurface: (
         destination: PluginContributionIdentityV1,
+    ) => Promise<PluginUiJsonValueV1>;
+    /**
+     * A declarative page's `widgetArea` node reaches the page's declared area through this same
+     * mounted facade; the installed area handler remains the one admission and currentness owner.
+     */
+    widgetArea?: (
+        request: PluginUiWidgetAreaRequestV1,
+        options?: Readonly<{ signal?: AbortSignal }>,
     ) => Promise<PluginUiJsonValueV1>;
     /**
      * Host-internal mount predicate for an adapter that must avoid delivering a
@@ -582,6 +596,24 @@ function createBoundPluginSurfaceOpenDispatcher(input: Readonly<{
     };
 }
 
+function createBoundPluginSurfaceWidgetAreaDispatcher(input: Readonly<{
+    surfaceContext: PluginUiSurfaceContextV1;
+    hostApi: PluginSurfaceHostApiV1;
+}>): NonNullable<BoundPluginSurfaceController['widgetArea']> {
+    let requestSequence = 0;
+    return (payload, options) => {
+        requestSequence += 1;
+        const request: PluginUiHostApiRequestEnvelopeV1 = {
+            version: 1,
+            requestId: `bound-surface-widget-area:${requestSequence}`,
+            surface: input.surfaceContext,
+            method: 'widgetArea',
+            payload,
+        };
+        return Promise.resolve(input.hostApi.handleRequest(request, options?.signal ? { signal: options.signal } : undefined));
+    };
+}
+
 type NormalizeCurrentUiContextPublicationResult =
     | Readonly<{ ok: true; enrichment: CurrentUiContextMountedEnrichment | null }>
     | Readonly<{ ok: false }>;
@@ -743,6 +775,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         const dispatchAction = createBoundPluginSurfaceActionDispatcher({ surfaceContext, hostApi });
         const applyComposer = createBoundPluginSurfaceComposerApplyDispatcher({ surfaceContext, hostApi });
         const openSurface = createBoundPluginSurfaceOpenDispatcher({ surfaceContext, hostApi });
+        const widgetArea = createBoundPluginSurfaceWidgetAreaDispatcher({ surfaceContext, hostApi });
         let accountRetirement: Readonly<{ dispose(): void }> | undefined;
         let parentRetirement: Readonly<{ dispose(): void }> | undefined;
         let disposed = false;
@@ -775,10 +808,13 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             // public context and typed refusal for omitted methods; the mounted
             // host separately keeps an offline exact target presentation-inert.
             interactive: hostApi.installedMethods.length > 0,
+            // This context-only facade never admits capture viewings.
+            readLiveStreamViewing: () => null,
             subscribeResourceInvalidations: () => () => {},
             dispatchAction,
             applyComposer,
             openSurface,
+            widgetArea,
             isCurrent,
             onRetire,
             retire,
@@ -886,6 +922,14 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // subscription contract. The daemon owns exact-resource admission once
     // this selected-member gate has installed the transport.
     const canWatchResource = canReadResource && resourceCapability?.dynamic === true;
+    const resourceStore = canReadResource && daemon && accountLifetime && input.facts.pluginUiProjection
+        ? createPluginDeclaredResourceStore({ accountLifetime, pluginId: input.facts.pluginId,
+            machineId: daemon.machineId, serverId: daemon.serverId ?? null,
+            expectedCallerOccurrenceId: daemon.expectedOccurrenceId,
+            resourcesById: input.facts.pluginUiProjection.resourcesById,
+            ...(surfaceContext.sessionId ? { sessionId: surfaceContext.sessionId } : {}),
+            ...(input.facts.resourceContext?.kind === 'surface' ? { surfaceContext: input.facts.resourceContext } : {}) })
+        : null;
     // The mount lifetime, observable to the handlers: an action or resource read
     // that settles after disposal must not reach a retired surface (§3.1).
     const hostActionContext: ActionExecutorContext | undefined = input.facts.serverId || daemonBoundAtConstruction
@@ -1021,6 +1065,11 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             })
         )
         : null;
+    const hostAction = {
+        execute: binding?.executeHostAction ?? (homeFamilyScope ? scopedHomeActionExecutor(homeFamilyScope) : createFrontDoorActionExecute()),
+        ...(hostActionContext ? { context: hostActionContext } : {}),
+    };
+    const widgetArea = createPluginWidgetAreaHostHandler({ facts: input.facts, isCurrent, lifetimeSignal: mountLifetime.signal, hostAction, callerBinding });
     const hostApi = createPluginSurfaceActionHostApi({
         pluginUiProjection: input.facts.pluginUiProjection,
         surfaceContext,
@@ -1032,22 +1081,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         isContributedActionAvailable: isDaemonInteractionEnabled,
         isCurrent,
         resourceLifetimeSignal: mountLifetime.signal,
-        hostAction: {
-            // The mount's own Home and Account are the exact scope this surface
-            // was admitted under, so its host Actions travel the same scoped
-            // front door every Home and Team administration surface already
-            // uses. Without it the whole Home family — `teams.*`,
-            // `home.governance.*`, managed identity and shared Saved Secrets —
-            // is advertised to a plugin and then answered `unsupported_action`,
-            // because the default executor carries no Home port at all. The
-            // scope must be the mount's own Home: a surface bound to one Home
-            // never reaches another one through an ambient Account scope.
-            execute: binding?.executeHostAction
-                ?? (homeFamilyScope
-                    ? scopedHomeActionExecutor(homeFamilyScope)
-                    : createFrontDoorActionExecute()),
-            ...(hostActionContext ? { context: hostActionContext } : {}),
-        },
+        hostAction,
         ...(callerBinding ? { callerBinding } : {}),
         ...(input.facts.resolveContributedAction
             ? { resolveContributedAction: input.facts.resolveContributedAction }
@@ -1075,6 +1109,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                                 ? {}
                                 : { context: input.facts.resourceContext }),
                             ...(binding?.readResource ? { read: binding.readResource } : {}),
+                            ...(resourceStore ? { store: resourceStore } : {}),
                         },
                     }
                     : {}),
@@ -1094,7 +1129,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ...(binding?.openSurface ? { openSurface: binding.openSurface } : {}),
         ...(selectActionInput ? { selectActionInput } : {}),
         ...(createOpenNewSession ? { createOpenNewSession } : {}),
-        mountedHostApiHandlers: { ...hostApiMountedHandlers, ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}) },
+        mountedHostApiHandlers: { ...hostApiMountedHandlers, ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}), ...(widgetArea ? { widgetArea } : {}) },
         ...(storedImages ? { onActionResult: storedImages.retainActionResult } : {}),
         ...(disposeHostApiMountedHandlers
             ? { disposeMountedHostApiHandlers: disposeHostApiMountedHandlers }
@@ -1103,6 +1138,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const dispatchAction = createBoundPluginSurfaceActionDispatcher({ surfaceContext, hostApi });
     const applyComposer = createBoundPluginSurfaceComposerApplyDispatcher({ surfaceContext, hostApi });
     const openSurface = createBoundPluginSurfaceOpenDispatcher({ surfaceContext, hostApi });
+    const widgetAreaDispatch = createBoundPluginSurfaceWidgetAreaDispatcher({ surfaceContext, hostApi });
     let accountRetirement: Readonly<{ dispose(): void }> | undefined;
     let parentRetirement: Readonly<{ dispose(): void }> | undefined;
     let disposed = false;
@@ -1119,6 +1155,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         accountRetirement?.dispose();
         parentRetirement?.dispose();
         hostApi.dispose?.();
+        resourceStore?.dispose();
         resourceInvalidationListeners.clear();
     };
     accountRetirement = accountLifetime?.onRetire(dispose);
@@ -1129,6 +1166,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     return Object.freeze({
         surfaceContext,
         hostApi,
+        ...(resourceStore ? { resourceStore } : {}),
         readLiveStreamViewing: (subscriptionId) => liveStreams?.readViewing(subscriptionId) ?? null,
         installedMethods: hostApi.installedMethods,
         get admissionMethods(): readonly PluginUiHostMethodV1[] {
@@ -1142,6 +1180,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         dispatchAction,
         applyComposer,
         openSurface,
+        widgetArea: widgetAreaDispatch,
         isCurrent,
         onRetire,
         retire,
@@ -1204,6 +1243,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             facts.executionOrigin?.materializationRef.materializationId,
             facts.resourceCapability?.readable,
             facts.resourceCapability?.dynamic,
+            stableJsonStringify(facts.pluginUiProjection?.resourcesById ?? null),
             serializeBoundPluginSurfaceResourceContext(facts.resourceContext),
             facts.accountLifetime,
             facts.parentLifetime,

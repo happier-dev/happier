@@ -1,5 +1,14 @@
 import * as React from 'react';
-import { AccessibilityInfo } from 'react-native';
+import { AccessibilityInfo, Platform } from 'react-native';
+
+type MediaChangeEvent = Readonly<{ matches: boolean }>;
+type TransparencyMediaQuery = Readonly<{
+    matches: boolean;
+    addEventListener?: (event: 'change', listener: (event: MediaChangeEvent) => void) => void;
+    removeEventListener?: (event: 'change', listener: (event: MediaChangeEvent) => void) => void;
+    addListener?: (listener: (event: MediaChangeEvent) => void) => void;
+    removeListener?: (listener: (event: MediaChangeEvent) => void) => void;
+}>;
 
 /**
  * Tracks the OS "Reduce Transparency" accessibility setting. When enabled the
@@ -13,6 +22,38 @@ export function useReduceTransparency(): boolean {
 
     React.useEffect(() => {
         let mounted = true;
+
+        if (Platform.OS === 'web') {
+            // react-native-web does not expose Reduce Transparency through AccessibilityInfo.
+            const maybeWindow = (globalThis as {
+                window?: { matchMedia?: (query: string) => TransparencyMediaQuery };
+            }).window;
+            if (typeof maybeWindow?.matchMedia !== 'function') return;
+
+            let query: TransparencyMediaQuery;
+            try {
+                query = maybeWindow.matchMedia('(prefers-reduced-transparency: reduce)');
+            } catch {
+                // An unavailable preference is not a request to reduce transparency.
+                return;
+            }
+            setReduceTransparency(query.matches === true);
+            const onChange = (event: MediaChangeEvent) => {
+                if (mounted) setReduceTransparency(event.matches === true);
+            };
+            if (typeof query.addEventListener === 'function') {
+                query.addEventListener('change', onChange);
+                return () => {
+                    mounted = false;
+                    query.removeEventListener?.('change', onChange);
+                };
+            }
+            query.addListener?.(onChange);
+            return () => {
+                mounted = false;
+                query.removeListener?.(onChange);
+            };
+        }
 
         AccessibilityInfo.isReduceTransparencyEnabled?.()
             .then((enabled) => {

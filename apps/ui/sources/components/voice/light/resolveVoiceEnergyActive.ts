@@ -1,7 +1,7 @@
 /**
  * Everything the energy clock's activation depends on.
  *
- * All eight are already observable somewhere else — the host's motion presence, the
+ * These are already observable somewhere else — the host's motion presence, the
  * provider resolver, the reduced-motion preference, the mounted surfaces and the
  * level store. Nothing here is persisted, and no Voice lifecycle state is added:
  * this is a predicate over facts that exist, which is why it can be a pure
@@ -14,14 +14,10 @@ export type VoiceEnergyActivationInputs = Readonly<{
     providerReady: boolean;
     /** Reduced motion is off and no frozen preview is pinned. */
     motionAllowed: boolean;
-    /** At least one Voice surface is mounted: Horizon, the Orb, or the composer planet. */
+    /** At least one Voice surface is visible and registered with the owner. */
     hasVisibleConsumer: boolean;
-    /** A Voice attempt exists. */
-    attemptActive: boolean;
-    /** The microphone channel is open. */
-    inputSourceActive: boolean;
-    /** The playback channel is open. */
-    outputSourceActive: boolean;
+    /** Actual nonzero amplitude, not merely an open capture/playback writer. */
+    audioAmplitudePresent: boolean;
     /** The settle-back-to-still transition has not finished yet. */
     settleTransitionPending: boolean;
 }>;
@@ -30,7 +26,7 @@ export type VoiceEnergyActivationInputs = Readonly<{
  * Whether the energy frame callback should run at all.
  *
  * The first four gates only say a surface *could* animate. The fifth clause is
- * what makes idle actually idle — see §2.4a: without it, a mounted, visible,
+ * what makes silence still: without it, a mounted, visible,
  * motion-allowed Voice surface would drive a 60 Hz loop forever while the planet
  * is supposed to be motionless, and nothing in a screenshot would reveal it.
  *
@@ -43,9 +39,6 @@ export function resolveVoiceEnergyActive(inputs: VoiceEnergyActivationInputs): b
         && inputs.motionAllowed
         && inputs.hasVisibleConsumer
         && (
-            inputs.attemptActive
-            || inputs.inputSourceActive
-            || inputs.outputSourceActive
-            || inputs.settleTransitionPending
+            inputs.audioAmplitudePresent || inputs.settleTransitionPending
         );
 }

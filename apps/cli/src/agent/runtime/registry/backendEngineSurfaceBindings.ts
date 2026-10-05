@@ -403,7 +403,16 @@ function bindNativeAgentAttachSurface(params: Readonly<{
     const attach = params.runtime.surfaces?.attach;
     if (!attach) return null;
     const managedAttach = isHostProviderCliAttachSurface(attach) ? attach.attachManaged.bind(attach) : null;
+    const prepareInvocation = isHostProviderCliAttachSurface(attach) ? attach.prepareInvocation.bind(attach) : null;
     return Object.freeze({
+        ...(prepareInvocation ? {
+            prepareInvocation: async (request: Parameters<HostProviderCliAttachSurface['prepareInvocation']>[0]) => {
+                assertCurrentNativeAgentSurfaceGeneration(params);
+                const result = await prepareInvocation(request);
+                assertCurrentNativeAgentSurfaceGeneration(params);
+                return result;
+            },
+        } : {}),
         ...(managedAttach ? {
             attachManaged: async (request: Parameters<HostProviderCliAttachSurface['attachManaged']>[0]) => {
                 assertCurrentNativeAgentSurfaceGeneration(params);

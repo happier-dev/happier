@@ -1,6 +1,6 @@
 import { createSessionAccessActionChip } from '@/components/sessions/agentInput/definitions/createSessionAccessActionChip';
 import * as React from 'react';
-import type { ActionId, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { ActionId, SessionInitialTriggerV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import {
@@ -13,6 +13,7 @@ import { createTranscriptStorageActionChip } from '@/components/sessions/agentIn
 import { createWindowsRemoteSessionLaunchModeActionChip } from '@/components/sessions/agentInput/definitions/createWindowsRemoteSessionLaunchModeActionChip';
 import { buildNewSessionActionShortcutChips } from '@/components/sessions/agentInput/sessionActions/buildNewSessionActionShortcutChips';
 import { NewSessionServerSelectionContent } from '@/components/sessions/new/components/NewSessionServerSelectionContent';
+import { createNewSessionTriggersActionChip } from '@/components/sessions/new/components/NewSessionTriggersActionChip';
 import { storage } from '@/sync/domains/state/storage';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
@@ -41,6 +42,9 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
     seededPlacementActionChip?: AgentInputExtraActionChip | null;
     showAutomationActionChips: boolean;
+    showInitialTriggers?: boolean;
+    initialTriggers?: SessionInitialTriggerV1[];
+    onInitialTriggersChange?: React.Dispatch<React.SetStateAction<SessionInitialTriggerV1[]>>;
     automationLabel: string;
     /** Opens the shared Automation editor with the composed draft. */
     onOpenAutomationEditor: () => void;
@@ -90,6 +94,12 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         })
     ), [params.automationLabel, params.onOpenAutomationEditor]);
 
+    const triggersActionChip = React.useMemo(() => params.showInitialTriggers && params.initialTriggers && params.onInitialTriggersChange
+        ? createNewSessionTriggersActionChip({ initialTriggers: params.initialTriggers,
+            onInitialTriggersChange: params.onInitialTriggersChange,
+            machineId: params.selectedMachineId, serverId: params.targetServerId }) : null,
+    [params.showInitialTriggers, params.initialTriggers, params.onInitialTriggersChange, params.selectedMachineId, params.targetServerId]);
+
     const storageActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.externalSessionsFeatureEnabled || !params.supportsDirectTranscriptStorage) return null;
         return createTranscriptStorageActionChip({
@@ -125,6 +135,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         if (params.showAutomationActionChips) {
             chips.push(automationActionChip);
         }
+        if (triggersActionChip) chips.push(triggersActionChip);
         if (params.seededPlacementActionChip) {
             chips.push(params.seededPlacementActionChip);
         }
@@ -168,6 +179,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.windowsTerminalAvailable,
         params.onWindowsRemoteSessionLaunchModeChange,
         automationActionChip,
+        triggersActionChip,
         serverPickerActionChip,
         storageActionChip,
         behaviorAgentId,

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
 import type { PauseController } from '@/utils/timing/pauseController';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
@@ -134,6 +136,7 @@ describe('sync AppState pause/resume', () => {
 
     it('keeps native socket connectivity during routine background while a Voice activity lease is active', async () => {
         platformOs.value = 'ios';
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
         const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
         const releaseActivityLease = sync.acquireUserRequestLease();
@@ -151,6 +154,7 @@ describe('sync AppState pause/resume', () => {
 
     it('runs one changes-only catch-up after an intentional foreground connection reports subscribed', async () => {
         platformOs.value = 'ios';
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
         (sync as unknown as { subscribeToUpdates(): void }).subscribeToUpdates();
         const resumeSync = vi.spyOn(sync, 'resumeSync').mockResolvedValue(undefined);
@@ -208,6 +212,8 @@ describe('sync AppState pause/resume', () => {
         (await save('session-a', 'local-a', activeScope));
         (await save('other-account-session', 'other-local', otherScope));
 
+        await loadSyncSingletonForTests();
+
         const { sync } = await import('./sync');
         let releaseReplay!: () => void;
         const replayBarrier = new Promise<void>((resolve) => {
@@ -238,6 +244,8 @@ describe('sync AppState pause/resume', () => {
             serverId: String(getActiveServerSnapshot().serverId ?? ''),
             accountId: 'account-a',
         });
+
+        await loadSyncSingletonForTests();
 
         const { sync } = await import('./sync');
         (sync as any).credentials = { token: 'token', secret: 'secret' };
@@ -281,6 +289,7 @@ describe('sync AppState pause/resume', () => {
     });
 
     it('resumes a paused bootstrap and exposes hydrated artifacts when draft hydration is unavailable', async () => {
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
         const { storage } = await import('./domains/state/storage');
         const events: string[] = [];
@@ -332,6 +341,7 @@ describe('sync AppState pause/resume', () => {
     });
 
     it('pauses on background and resumes on active (disconnect/connect socket)', async () => {
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
 
         expect(appStateAddListener).toHaveBeenCalled();
@@ -352,6 +362,7 @@ describe('sync AppState pause/resume', () => {
 
     it('keeps Tauri desktop sync active when AppState reports background', async () => {
         tauriDesktopState.value = true;
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
 
         expect(appStateAddListener).toHaveBeenCalled();
@@ -373,6 +384,7 @@ describe('sync AppState pause/resume', () => {
         const markActiveSpy = vi
             .spyOn(Encryption, 'markNativeCryptoWorkerQueueActive')
             .mockResolvedValue();
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
 
         try {
@@ -420,6 +432,8 @@ describe('sync AppState pause/resume', () => {
         };
         vi.stubGlobal('window', { ...existingWindow, localStorage });
 
+        await loadSyncSingletonForTests();
+
         const { sync } = await import('./sync');
 
         expect(createJsThreadLagTelemetryMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -456,6 +470,7 @@ describe('sync AppState pause/resume', () => {
         globalWithDocument.document = documentStub;
 
         try {
+            await loadSyncSingletonForTests();
             const { sync } = await import('./sync');
             const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
 
@@ -489,6 +504,7 @@ describe('sync AppState pause/resume', () => {
         globalWithDocument.document = documentStub;
 
         try {
+            await loadSyncSingletonForTests();
             const { sync } = await import('./sync');
             const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
 
@@ -504,6 +520,8 @@ describe('sync AppState pause/resume', () => {
     it('treats Tauri desktop as foreground even when AppState is not active (keeps reachability enabled)', async () => {
         tauriDesktopState.value = true;
         appStateCurrentState.value = 'background';
+
+        await loadSyncSingletonForTests();
 
         const { sync } = await import('./sync');
         const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
@@ -526,7 +544,7 @@ describe('sync AppState pause/resume', () => {
         globalWithDocument.document = documentStub;
 
         try {
-            await import('./sync');
+            await loadSyncSingletonForTests();
 
             expect(apiSocketConnect).toHaveBeenCalledTimes(1);
         } finally {
@@ -553,6 +571,7 @@ describe('sync AppState pause/resume', () => {
         globalWithDocument.document = documentStub;
 
         try {
+            await loadSyncSingletonForTests();
             const { sync } = await import('./sync');
 
             const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
@@ -597,6 +616,7 @@ describe('sync AppState pause/resume', () => {
         globalWithDocument.document = documentStub;
 
         try {
+            await loadSyncSingletonForTests();
             const { sync } = await import('./sync');
             const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
             const releaseAcceptanceLease = sync.acquireUserRequestLease();
@@ -633,6 +653,7 @@ describe('sync AppState pause/resume', () => {
         });
 
         try {
+            await loadSyncSingletonForTests();
             const { sync } = await import('./sync');
             const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
             sync.acquireUserRequestLease();

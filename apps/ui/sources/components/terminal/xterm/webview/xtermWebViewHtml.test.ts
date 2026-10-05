@@ -52,6 +52,10 @@ describe('buildXtermWebViewHtml', () => {
         const activeTerminal = terminal as Terminal | null;
         if (!activeTerminal) throw new Error('WebView terminal not booted');
         try {
+            // Both renderer adapters preserve the user's terminal colors without contrast rewriting.
+            expect(activeTerminal.options.minimumContrastRatio).toBe(1);
+            expect(activeTerminal.options.drawBoldTextInBrightColors).toBe(false);
+            expect(activeTerminal.options.fontWeightBold).toBe('bold');
             send('\u001b[c', 'replay');
             await Promise.all(parsed);
             expect(messages.filter((message) => message.type === 'input')).toEqual([]);

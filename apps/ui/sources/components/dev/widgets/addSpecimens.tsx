@@ -33,6 +33,7 @@ function candidate(pluginId: string, localId: string, title: string, pluginName:
         sharedPluginName: false,
         icon,
         homeDefault: 'available',
+        target: 'session',
     };
 }
 
@@ -51,7 +52,9 @@ const BOARD = projectSessionBoard({
     items: new Map([
         ['checklist', boardItem('Release checklist', { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('- [x] Backoff capped at 5 attempts') })],
         ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: { kind: 'html', html: '<main></main>' }, requestedCapabilities: {} })],
-        ['conv', boardItem('External conversations', { kind: 'installedSurface', surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' } })],
+        ['conv', boardItem('External conversations', { kind: 'widget', instance: {
+            v: 1, id: 'conv', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' } }, bindings: {},
+        } })],
     ]),
     capabilities: { readTranscript: true, editSessionRecords: true },
     freshness: 'fresh',

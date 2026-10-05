@@ -126,9 +126,16 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             consumeOutsidePointerDown={consumeOutsidePointerDown}
             containerStyle={containerStyle}
             onRequestClose={onRequestClose}
+            preserveHostFocus={props.preserveHostFocus}
+            matchAnchorWidth={props.matchAnchorWidth}
+            fillHeight={props.fillHeight}
+            header={props.header}
+            footer={props.footer}
             testID={testID ? `${testID}:surface` : undefined}
         >
-            {items.length === 0 && emptyStateLabel ? (
+            <View style={props.fillHeight ? emptyStyles.bodyFill : emptyStyles.body}>
+            <View style={emptyStyles.list}>
+            {items.length === 0 && props.emptyState != null ? props.emptyState : items.length === 0 && emptyStateLabel ? (
                 <View
                     style={emptyStyles.container}
                     testID={testID ? `${testID}:empty` : undefined}
@@ -147,14 +154,21 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
                     disableTransitions
                     testID={testID ? `${testID}:list` : undefined}
                     maxHeight={maxHeight}
-                    heightBehavior={resolvePopoverSelectionListHeightBehavior()}
+                    heightBehavior={props.fillHeight ? undefined : resolvePopoverSelectionListHeightBehavior()}
+                    fillAvailableSpace={props.fillHeight}
                 />
             )}
+            </View>
+            {props.preview}
+            </View>
         </CommandMenuSurface>
     );
 });
 
 const emptyStyles = StyleSheet.create((theme) => ({
+    body: { flexDirection: 'row', minHeight: 0, flexShrink: 1 },
+    bodyFill: { flexDirection: 'row', minHeight: 0, flex: 1 },
+    list: { flex: 1, minWidth: 0, minHeight: 0 },
     container: {
         paddingHorizontal: 24,
         paddingVertical: 28,

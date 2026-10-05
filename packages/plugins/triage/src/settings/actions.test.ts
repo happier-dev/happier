@@ -53,6 +53,13 @@ function storedFrom(actions: readonly TriageActionV1[]): unknown {
 }
 
 describe('the Triage action record', () => {
+    it('normalizes profile references through the Launch Profile id owner', () => {
+        const profileId = 'é'.repeat(256);
+        const read = parseTriageActions(storedFrom([{ ...ASK, profileId: ` ${profileId} ` }]));
+        expect(read.kind).toBe('parsed');
+        expect(read.value.actions[0]?.profileId).toBe(profileId);
+    });
+
     it('seeds only actions the current product can run when nothing has ever been written', () => {
         const read = parseTriageActions(undefined);
 

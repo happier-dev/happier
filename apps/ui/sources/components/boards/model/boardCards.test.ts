@@ -17,7 +17,6 @@ import {
     buildBoardCards,
     countSessionsByMachine,
     describeBoardColumnLine,
-    groupBoardCardsByStatus,
     reconcileBoardCards,
     type BoardCardFacts,
 } from './boardCards';
@@ -47,6 +46,41 @@ const workingSession = createSessionListRenderableSessionFixture({
 });
 
 describe('board cards', () => {
+    it('projects FIN lean authored-step and loop progress without opening full runs', () => {
+        const ref = { kind: 'workflow_run', qualifiedId: { serverId: 'home-a', id: 'r1' } } as const;
+        const facts: BoardCardFacts = {
+            nowMs: NOW, session: () => null, machine: () => null, machineSessionCounts: new Map(),
+            workflow: () => null, accountScopedHome: () => true,
+            workflowRun: () => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+                stepProgress: { completed: 3, total: 5, currentLoop: { completed: 2, total: 8 } },
+            }), null),
+        };
+        expect(buildBoardCards([member(ref)], facts)[0]?.body).toMatchObject({
+            kind: 'workflow_run', progress: { completed: 3, total: 5, currentLoop: { completed: 2, total: 8 } },
+        });
+        const missing = buildBoardCards([member(ref)], { ...facts,
+            workflowRun: () => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ stepProgress: null }), null) });
+        expect(missing[0]?.body).toMatchObject({ progress: null });
+    });
+
+    it('projects library trigger summaries and distinguishes manual from unavailable scheduled next-run facts', () => {
+        const ref = { kind: 'workflow', qualifiedId: { serverId: 'home-a', id: 'wf1' } } as const;
+        const facts: BoardCardFacts = {
+            nowMs: NOW, session: () => null, machine: () => null, machineSessionCounts: new Map(),
+            workflowRun: () => null, accountScopedHome: () => true,
+            workflow: () => ({ title: 'Nightly', triggers: [{ kind: 'schedule', schedule: {
+                kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null,
+            } }], summary: { needsYouCount: 2, lastRun: { state: 'succeeded', createdAt: '2026-10-01T00:00:00Z' } } }),
+        };
+        expect(buildBoardCards([member(ref)], facts)[0]?.body).toMatchObject({
+            triggerSummary: 'workflows.triggers.summary.everyHours:1', nextRun: { kind: 'unavailable' }, needsYouCount: 2,
+        });
+        const notRead = buildBoardCards([member(ref)], { ...facts, workflow: () => ({ title: 'Manual', triggers: [], summary: null }) })[0];
+        expect(notRead?.body)
+            .toMatchObject({ triggerSummary: 'workflows.triggers.summary.manual', nextRun: { kind: 'unscheduled' }, needsYouCount: null });
+        expect(notRead?.status.word).toBe('boards.card.notLoaded');
+    });
+
     it('counts running and needs-you sessions per machine from the loaded rows, through the shared status owner', () => {
         const machineKey = (serverId: string, id: string) => JSON.stringify(['machine', serverId, id]);
         // The same machine id on two Homes is two machines: each counts only its own Home's rows.
@@ -84,10 +118,6 @@ describe('board cards', () => {
             ['machine', 'needs_you'],
             ['machine', 'offline'],
             ['workflow', 'idle'],
-        ]);
-        const groups = groupBoardCardsByStatus(cards);
-        expect(groups.map((group) => [group.bucket, group.cards.length])).toEqual([
-            ['needs_you', 2], ['working', 0], ['finished', 1], ['idle', 1], ['offline', 1],
         ]);
     });
 

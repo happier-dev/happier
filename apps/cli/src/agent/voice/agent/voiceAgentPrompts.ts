@@ -2,7 +2,7 @@ import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
 import { buildPromptPlanV1, renderPromptPlanV1, type PromptBlockV1 } from '@happier-dev/protocol';
 
 import { listDisabledActionIdsForSurfaceFromEnv } from '../../../settings/actionsSettings';
-import type { VoiceAgentTurn } from './voiceAgentTypes';
+import type { VoiceAgentTurn, VoiceAgentStartParams } from './voiceAgentTypes';
 
 function renderConversationHistory(history: readonly VoiceAgentTurn[]): string {
   return [
@@ -28,6 +28,7 @@ export function buildVoiceAgentBootstrapPrompt(params: Readonly<{
   disabledActionIds?: readonly string[];
   memoryRecallGuidanceEnabled?: boolean;
   systemAppendBlocks?: readonly string[];
+  voicePolicy?: VoiceAgentStartParams['voicePolicy'];
 }>): string {
   const disabledActionIds = resolveDisabledVoicePromptActionIds(params.disabledActionIds);
   const blocks: PromptBlockV1[] = [
@@ -35,6 +36,7 @@ export function buildVoiceAgentBootstrapPrompt(params: Readonly<{
       id: 'voice.bootstrap.system',
       scope: 'session' as const,
       text: buildLocalVoiceAgentSystemPrompt({
+        ...params.voicePolicy,
         verbosity: params.verbosity,
         disabledActionIds,
         memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
@@ -104,6 +106,8 @@ export function buildVoiceAgentSeededUserTurnPrompt(params: Readonly<{
   memoryRecallGuidanceEnabled?: boolean;
   systemAppendBlocks?: readonly string[];
   history?: readonly VoiceAgentTurn[];
+  voicePolicy?: VoiceAgentStartParams['voicePolicy'];
+  welcomeAlreadyDelivered?: boolean;
 }>): string {
   const disabledActionIds = resolveDisabledVoicePromptActionIds(params.disabledActionIds);
   return renderPromptPlanV1(buildPromptPlanV1({
@@ -113,6 +117,10 @@ export function buildVoiceAgentSeededUserTurnPrompt(params: Readonly<{
         id: 'voice.seeded.system',
         scope: 'session',
         text: buildLocalVoiceAgentSystemPrompt({
+          ...params.voicePolicy,
+          ...(params.welcomeAlreadyDelivered && params.voicePolicy ? {
+            welcome: { ...params.voicePolicy.welcome, enabled: false },
+          } : {}),
           verbosity: params.verbosity,
           disabledActionIds,
           memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,

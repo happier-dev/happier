@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PluginDeclarativeMetricNodeV1Schema, PluginDeclarativeTableNodeV1Schema, PluginDeclarativeRowsNodeV1Schema, PluginDeclarativeChartNodeV1Schema, type PluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
 import { ActionIdSchema, type ActionId } from '../../../actions/actionIds.js';
 import { asProtocolZod } from '../../actions/internalProtocolZodAdapter.js';
 
@@ -219,6 +220,10 @@ export const PluginDeclarativeProjectedStateNodeV1Schema = z.object({
  * would duplicate the authoring grammar as a second decision-maker.
  */
 export type PluginDeclarativeProjectedNodeV1 =
+  | (PluginDeclarativeDataNodeV1 & Readonly<{ path: string; order: number }>)
+  | Readonly<{ kind: 'dragSource'; path: string; order: number; source: PluginDeclarativeProjectedQualifiedReferenceV1; reference: PluginJsonValueV2; organizing?: boolean; children: readonly PluginDeclarativeProjectedNodeV1[] }>
+  | Readonly<{ kind: 'dropTarget'; path: string; order: number; target: PluginDeclarativeProjectedQualifiedReferenceV1; input?: PluginJsonValueV2; children: readonly PluginDeclarativeProjectedNodeV1[] }>
+  | Readonly<{ kind: 'widgetArea'; path: string; order: number; area: string; context?: Readonly<Record<string, PluginJsonValueV2>> }>
   | Readonly<{ kind: 'text'; path: string; order: number; text: PluginLocalizedStringV2; tone?: PluginDeclarativeToneV2 }>
   | Readonly<{ kind: 'markdown'; path: string; order: number; text: PluginLocalizedStringV2 }>
   | Readonly<{
@@ -335,6 +340,13 @@ export type PluginDeclarativeProjectedNodeV1 =
 
 export const PluginDeclarativeProjectedNodeV1Schema: z.ZodType<PluginDeclarativeProjectedNodeV1> = z.lazy(
   () => z.union([
+    PluginDeclarativeMetricNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
+    PluginDeclarativeTableNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
+    PluginDeclarativeRowsNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
+    PluginDeclarativeChartNodeV1Schema.extend(ProjectedNodeBaseV1Shape),
+    z.object({ kind: z.literal('dragSource'), ...ProjectedNodeBaseV1Shape, source: PluginDeclarativeProjectedQualifiedReferenceV1Schema, reference: PluginJsonValueV2Schema, organizing: z.boolean().optional(), children: z.array(PluginDeclarativeProjectedNodeV1Schema) }).strict(),
+    z.object({ kind: z.literal('dropTarget'), ...ProjectedNodeBaseV1Shape, target: PluginDeclarativeProjectedQualifiedReferenceV1Schema, input: PluginJsonValueV2Schema.optional(), children: z.array(PluginDeclarativeProjectedNodeV1Schema) }).strict(),
+    z.object({ kind: z.literal('widgetArea'), ...ProjectedNodeBaseV1Shape, area: z.string().trim().min(1), context: z.record(z.string(), PluginJsonValueV2Schema).optional() }).strict(),
     z.object({ kind: z.literal('text'), ...ProjectedNodeBaseV1Shape, text: PluginLocalizedStringV2Schema, tone: PluginDeclarativeToneV2Schema.optional() }).strict(),
     z.object({ kind: z.literal('markdown'), ...ProjectedNodeBaseV1Shape, text: PluginLocalizedMarkdownV2Schema }).strict(),
     z.object({
@@ -475,6 +487,8 @@ export type PluginDeclarativeProjectedModelV1 = Readonly<{
     destinations: readonly PluginDeclarativeProjectedQualifiedReferenceV1[];
     settings: readonly PluginDeclarativeProjectedSettingsBindingV1[];
     uiQueries: readonly NormalizedPluginCollectionUiQueryDescriptorV1[];
+    dragSources?: readonly (PluginDeclarativeProjectedQualifiedReferenceV1 & Readonly<{ referenceSchema: PluginJsonSchemaV2 }>)[];
+    dropTargets?: readonly PluginDeclarativeProjectedQualifiedReferenceV1[];
   }>;
   root: PluginDeclarativeProjectedNodeV1;
 }>;
@@ -494,6 +508,8 @@ export const PluginDeclarativeProjectedModelV1Schema: z.ZodType<PluginDeclarativ
       destinations: z.array(PluginDeclarativeProjectedQualifiedReferenceV1Schema),
       settings: z.array(PluginDeclarativeProjectedSettingsBindingV1Schema),
       uiQueries: z.array(NormalizedPluginCollectionUiQueryDescriptorV1Schema),
+      dragSources: z.array(PluginDeclarativeProjectedQualifiedReferenceV1Schema.extend({ referenceSchema: PluginJsonSchemaV2Schema })).optional(),
+      dropTargets: z.array(PluginDeclarativeProjectedQualifiedReferenceV1Schema).optional(),
     }).strict(),
     root: PluginDeclarativeProjectedNodeV1Schema,
   }).strict();

@@ -8,7 +8,7 @@ import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 
-async function resolveGitStatePath(context: ScmBackendContext, statePath: string): Promise<string | null> {
+export async function resolveGitStatePath(context: ScmBackendContext, statePath: string): Promise<string | null> {
     const result = await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
@@ -31,9 +31,11 @@ async function directoryExists(path: string): Promise<boolean> {
     }
 }
 
-async function readTrimmedFile(path: string): Promise<string | null> {
+async function readTrimmedFile(path: string, format: 'trimmed' | 'raw' = 'trimmed'): Promise<string | null> {
     try {
-        const value = (await readFile(path, 'utf8')).trim();
+        const content = await readFile(path, 'utf8');
+        if (format === 'raw') return content;
+        const value = content.trim();
         return value || null;
     } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
@@ -107,9 +109,9 @@ export async function readGitBranchOperationState(context: ScmBackendContext): P
     return { ...state, headOid: await readHeadOid(context), conflicts, unresolvedCount: conflicts.length, canContinue: conflicts.length === 0, canSkip: state.kind !== 'merge' && Boolean(state.replayCommit) };
 }
 
-async function readGitStateFile(context: ScmBackendContext, name: string) {
+export async function readGitStateFile(context: ScmBackendContext, name: string, format: 'trimmed' | 'raw' = 'trimmed') {
     const path = await resolveGitStatePath(context, name);
-    return path ? readTrimmedFile(path) : null;
+    return path ? readTrimmedFile(path, format) : null;
 }
 
 async function readHeadOid(context: ScmBackendContext) {

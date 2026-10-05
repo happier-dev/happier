@@ -75,14 +75,6 @@ describe('PermissionFooter (codexDecision)', () => {
         return flattenStyleFragments(textNode.props.style);
     }
 
-    // The app Text adapter composes [defaultTypography, scaledCallerStyle] arrays; resolve
-    // nested arrays the way React Native flattens composed styles.
-    function flattenStyleFragments(style: unknown): Array<Record<string, unknown>> {
-        if (!style) return [];
-        if (Array.isArray(style)) return style.flatMap(flattenStyleFragments);
-        return [style as Record<string, unknown>];
-    }
-
     function getStyleFragments(node: ReactTestInstance) {
         return flattenStyleFragments(node.props.style);
     }

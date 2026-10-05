@@ -1655,6 +1655,10 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const executeAction = (async () => {
             throw new Error('This example does not execute a nested Action.');
         }) satisfies PluginClientActionContext['ui']['executeAction'];
+        // These are remote UI Host capabilities, not internal domain services.
+        const unexpectedUiHostOperation = async () => {
+            throw new Error('This navigation example only opens a surface.');
+        };
         const context = {
             plugin: { id: 'example.public-authoring', version: '1.0.0' },
             contribution: {
@@ -1663,7 +1667,14 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             },
             invocationSurface: 'voice',
             signal: new AbortController().signal,
-            ui: { executeAction, openSurface },
+            ui: {
+                executeAction,
+                openSurface,
+                version: () => { throw new Error('This navigation example does not negotiate UI Host capabilities.'); },
+                context: unexpectedUiHostOperation,
+                selectActionInput: unexpectedUiHostOperation,
+                openNewSession: unexpectedUiHostOperation,
+            },
             ephemeralSharedScope: null,
         } satisfies PluginClientActionContext;
         await handler({}, context);

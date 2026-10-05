@@ -75,7 +75,9 @@ export function createReadOnlySessionTranscriptSource(input: ReadOnlySessionTran
     function readHistoryState(historyState: TranscriptHistoryState | undefined): TranscriptHistoryState {
         const state = historyState ?? { isLoaded: true, hasOlder: loadOlder != null, isLoadingOlder: false };
         const next = olderLoadCount > 0 && !state.isLoadingOlder ? { ...state, isLoadingOlder: true } : state;
-        if (!historyStateCache || next.isLoaded !== historyStateCache.isLoaded || next.hasOlder !== historyStateCache.hasOlder || next.isLoadingOlder !== historyStateCache.isLoadingOlder) historyStateCache = next;
+        if (!historyStateCache || next.isLoaded !== historyStateCache.isLoaded || next.hasOlder !== historyStateCache.hasOlder
+            || next.isLoadingOlder !== historyStateCache.isLoadingOlder || next.hasNewer !== historyStateCache.hasNewer
+            || next.isLoadingNewer !== historyStateCache.isLoadingNewer || next.targetWindow !== historyStateCache.targetWindow) historyStateCache = next;
         return historyStateCache;
     }
     let current = materialize(input);

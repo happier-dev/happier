@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
-import Animated, { useSharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
+import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -13,28 +13,23 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeaderMarkTile } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
-import {
-    DEFAULT_REORDER_ROW_HEIGHT,
-    useListInlineReorder,
-} from '@/components/ui/lists/useListInlineReorder';
+import { EntityFlatReorderList, EntityFlatReorderRow, executeEntityReorderAction, entityReorderPreview, entityReorderRefused, type EntityFlatReorderBinding } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import {
-    TREE_DROP_OVERLAY_KIND_NONE,
-    type TreeDropOverlayKind,
-    type TreeDropOverlaySharedValues,
-} from '@/components/ui/treeDragDrop';
 import { Typography } from '@/constants/Typography';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { buildSummaryMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import type { ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import type { UseQualifiedConnectedAccountGroupsResult } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
@@ -47,7 +42,7 @@ import {
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiGroupMember,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
-import { reorderConnectedServicePoolMembersV1, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
+import { compareConnectedServicePoolMemberOrderV1, resolveAnchoredListMoveV1, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountPresentationAccount,
@@ -65,9 +60,9 @@ import {
 
 import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '../account/accountBlockFormatters';
 import { AgentDefaultMenuButton } from '../defaults/AgentDefaultMenuButton';
+import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import type { AgentDefaultChoice } from '../defaults/agentDefaultChoices';
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
-import { PoolMembersDropOverlay } from './PoolMembersDropOverlay';
 import { PoolMembersSelectField, type PoolMembershipCandidate } from './PoolMembersSelectField';
 import { PoolMemberRow, type PoolMemberNote, type PoolMemberUsage } from './PoolMemberRow';
 import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './PoolQuotaLimitsSelectField';
@@ -88,8 +83,6 @@ const EMPTY_USAGE: Readonly<Record<string, PoolMemberQuota>> = Object.freeze({})
 const ADVANCED_SETTING_COUNT = 7;
 /** Width at which the pool meter can carry the wide reset column (label, bar, value, "next in … · 14:20"). */
 const LEFT_WIDE_MIN_WIDTH_PX = 520;
-/** The member drop overlay measures against this container; the lifted row must not be clipped. */
-const MEMBERS_REORDER_CONTAINER_STYLE = { position: 'relative', overflow: 'visible' } as const;
 
 const identityPresenter: ConnectedAccountIdentityPresenter = (input) => ({
     label: input.label ?? null,
@@ -124,6 +117,7 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     accounts: ReadonlyArray<QualifiedPoolDetailAccount>;
     accountLabels?: Readonly<Record<string, string | undefined>>;
     serviceLabel: string;
+    legacyServiceId?: string | null;
     mutations: QualifiedPoolDetailMutations;
     /** `false` when the server or runtime cannot honor automatic fallback. */
     fallbackControlsEnabled?: boolean;
@@ -144,6 +138,7 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     /** Latest failure reported by the mutation owner; a rejected change must not fail silently. */
     error?: string | null;
     onShareWithTeam?: () => void;
+    onConnectAccount?: () => void;
     sharedWithTeamsAdministration?: React.ReactNode;
     /** Clock for countdowns; the live page passes nothing. */
     now?: number;
@@ -155,10 +150,9 @@ export type QualifiedPoolDetailViewProps = Readonly<{
 function sortMembersByPriority(
     members: ReadonlyArray<QualifiedConnectedAccountUiGroupMember>,
 ): ReadonlyArray<QualifiedConnectedAccountUiGroupMember> {
-    return [...members].sort((left, right) => (
-        left.priority !== right.priority
-            ? left.priority - right.priority
-            : left.ref.accountId.localeCompare(right.ref.accountId)
+    return [...members].sort((left, right) => compareConnectedServicePoolMemberOrderV1(
+        { accountId: left.ref.accountId, priority: left.priority },
+        { accountId: right.ref.accountId, priority: right.priority },
     ));
 }
 
@@ -313,6 +307,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const [membersMenuOpen, setMembersMenuOpen] = React.useState(props.initialManageMembersOpen === true);
     const [recoveryOpen, setRecoveryOpen] = React.useState(false);
     const [moreOpen, setMoreOpen] = React.useState(false);
+    const [compact, setCompact] = React.useState(false);
     /** The pool meter shows the reset clock ("· 14:20") only where the row has room for it. */
     const [leftWide, setLeftWide] = React.useState(true);
     const onLeftLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -321,19 +316,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         const next = width >= LEFT_WIDE_MIN_WIDTH_PX;
         setLeftWide((current) => (current === next ? current : next));
     }, []);
-    /** Account ids in the order a drop just produced, held only while the priority patches run. */
-    const [optimisticOrder, setOptimisticOrder] = React.useState<ReadonlyArray<string> | null>(null);
-
-    const overlayVisible = useSharedValue(0);
-    const overlayKind = useSharedValue<TreeDropOverlayKind>(TREE_DROP_OVERLAY_KIND_NONE);
-    const overlayTop = useSharedValue(0);
-    const overlayHeight = useSharedValue(0);
-    const overlayLeft = useSharedValue(0);
-    const overlayRight = useSharedValue(0);
-    const overlayDepth = useSharedValue(0);
-    const overlayShared = React.useMemo<TreeDropOverlaySharedValues>(() => ({
-        overlayVisible, overlayKind, overlayTop, overlayHeight, overlayLeft, overlayRight, overlayDepth,
-    }), [overlayDepth, overlayHeight, overlayKind, overlayLeft, overlayRight, overlayTop, overlayVisible]);
+    const scope = useActiveServerAccountScope();
 
     const label = React.useMemo(() => presentQualifiedConnectedAccountTarget({
         target: { kind: 'group', service: group.ref.service, groupId: group.ref.groupId },
@@ -362,17 +345,8 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         return { name: shown.label ?? presentation.primaryLabel, email: shown.email };
     }, [accountLabels, accounts, group, present, props.serviceLabel]);
 
-    const sortedMembers = React.useMemo(() => {
-        const byPriority = sortMembersByPriority(group.members);
-        if (!optimisticOrder) return byPriority;
-        const byAccountId = new Map(byPriority.map((member) => [member.ref.accountId, member]));
-        const ordered = optimisticOrder
-            .map((accountId) => byAccountId.get(accountId))
-            .filter((member): member is QualifiedConnectedAccountUiGroupMember => member != null);
-        const seen = new Set(ordered.map((member) => member.ref.accountId));
-        return [...ordered, ...byPriority.filter((member) => !seen.has(member.ref.accountId))];
-    }, [group.members, optimisticOrder]);
-    const memberItems = React.useMemo(() => sortedMembers.map((member) => ({ id: member.ref.accountId })), [sortedMembers]);
+    const sortedMembers = React.useMemo(() => sortMembersByPriority(group.members), [group.members]);
+    const memberItems = React.useMemo(() => sortedMembers.map((member) => ({ id: member.ref.accountId, title: identityOf(member.ref.accountId).name })), [identityOf, sortedMembers]);
     const memberAccountIds = React.useMemo(() => sortedMembers.map((member) => member.ref.accountId), [sortedMembers]);
 
     /** Snapshots as the pool counts them: only the limits the pool is told to count. */
@@ -404,41 +378,33 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         lowestRemainingByAccountId: usage.lowestRemainingByAccountId,
     }), [group.activeAccountId, group.members, group.policy.strategy, usage]);
 
-    /** Persist a dropped order: applied locally once, then one priority patch per moved member. */
-    const commitOrder = React.useCallback(async (orderedAccountIds: ReadonlyArray<string>) => {
-        setOptimisticOrder([...orderedAccountIds]);
-        try {
-            await reorderConnectedServicePoolMembersV1({
-                group, accountIds: orderedAccountIds,
-                members: (current) => current.members.map((member) => ({ accountId: member.ref.accountId, priority: member.priority })),
-                patch: (current, accountId, priority) => {
-                    const member = current.members.find((candidate) => candidate.ref.accountId === accountId)!;
-                    return mutations.patchMember({ group: current, account: member.ref, priority });
-                },
-            });
-        } finally {
-            setOptimisticOrder(null);
-        }
-    }, [group, mutations]);
-
-    const reorder = useListInlineReorder({
-        items: memberItems,
-        enabled: sortedMembers.length > 1,
-        overlayShared,
-        onCommitOrder: commitOrder,
-        fallbackRowHeight: DEFAULT_REORDER_ROW_HEIGHT,
-    });
-
-    const moveMember = React.useCallback((accountId: string, direction: -1 | 1) => {
-        const order = sortedMembers.map((member) => member.ref.accountId);
-        const index = order.indexOf(accountId);
-        const target = index + direction;
-        if (index < 0 || target < 0 || target >= order.length) return;
-        const next = [...order];
-        next.splice(index, 1);
-        next.splice(target, 0, accountId);
-        void commitOrder(next);
-    }, [commitOrder, sortedMembers]);
+    const binding: EntityFlatReorderBinding = {
+        scope, kind: 'pool-member', items: memberItems,
+        getItem: (id) => {
+            const member = sortedMembers.find(member => member.ref.accountId === id);
+            return scope && member ? { kind: 'pool-member', scope, pool: group.ref, member: member.ref } : null;
+        },
+        getSourceId: (item) => item.kind === 'pool-member' && sameQualifiedConnectedAccountGroupRef(item.pool, group.ref)
+            && item.member.service.pluginId === group.ref.service.pluginId && item.member.service.localId === group.ref.service.localId
+            ? item.member.accountId : null,
+        resolve: (accountId, position) => {
+            if (!scope) return entityReorderRefused('reorder_scope_unavailable');
+            if (mutations.mutating) return entityReorderRefused('reorder_unavailable');
+            const ids = memberItems.map(item => item.id);
+            const next = resolveAnchoredListMoveV1(ids, accountId, position);
+            if (!next) return entityReorderRefused('reorder_member_gone');
+            if (next.every((id, index) => id === ids[index])) return entityReorderRefused('same-position');
+            return { status: 'allowed', effect: { actionId: 'connectedServices.pools.reorder', input: { group: group.ref, move: { accountId, position } }, preview: entityReorderPreview(position, memberItems) } };
+        },
+        execute: async (effect) => {
+            if (!scope) return { status: 'refused', reason: { code: 'reorder_scope_unavailable', message: t('entityDragDrop.reasons.gone') } };
+            const outcome = await executeEntityReorderAction(effect, scope);
+            return outcome.status === 'refused' ? {
+                ...outcome,
+                reason: { ...outcome.reason, message: resolveConnectedServiceSettingsErrorMessage({ code: outcome.reason.code }) },
+            } : outcome;
+        },
+    };
 
     const patchPolicy = React.useCallback(async (policy: Partial<ConnectedServiceAuthGroupPolicyV1>) => {
         if (!fallbackControlsEnabled) return;
@@ -485,13 +451,15 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const membershipCandidates = React.useMemo<ReadonlyArray<PoolMembershipCandidate>>(
         () => accounts.map((account) => {
             const identity = identityOf(account.ref.accountId);
+            const plan = memberQuota[account.ref.accountId]?.snapshot?.planLabel;
+            const subtitle = [identity.email, plan].filter(Boolean).join(' · ');
             return {
                 accountId: account.ref.accountId,
                 title: identity.name,
-                ...(identity.email ? { subtitle: identity.email } : {}),
+                ...(subtitle ? { subtitle } : {}),
             };
         }),
-        [accounts, identityOf],
+        [accounts, identityOf, memberQuota],
     );
 
     /** Apply a membership change: removals first, then adds, threading the returned group. */
@@ -631,9 +599,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         { id: 'delete', title: t('connectedServices.pools.delete.title'), destructive: true },
     ];
 
-    const orderedMembers = reorder.frozenItems
-        .map((item) => sortedMembers.find((member) => member.ref.accountId === item.id))
-        .filter((member): member is QualifiedConnectedAccountUiGroupMember => member != null);
+    const orderedMembers = sortedMembers;
 
     const manageMembers = (
         <PoolMembersSelectField
@@ -645,13 +611,15 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             open={membersMenuOpen}
             onOpenChange={setMembersMenuOpen}
             searchPlaceholder={t('connectedServicesPool.searchAccounts', { service: props.serviceLabel })}
-            renderTrigger={({ toggle, disabled }) => (
+            onConnectAccount={props.onConnectAccount}
+            serviceLabel={props.serviceLabel}
+            renderTrigger={({ toggle, disabled }) => memberCount === 0 ? <View /> : (
                 <RoundButton
                     testID={`${TEST_ID}:manage-members`}
                     size="small"
-                    display="secondary"
-                    title={t('connectedServicesPool.manageMembers')}
-                    leading={<Icon name="users" size={14} color={theme.colors.text.primary} />}
+                    display={compact ? 'inverted' : 'secondary'}
+                    title={t(compact ? 'connectedServicesPool.manage' : 'connectedServicesPool.manageMembers')}
+                    leading={compact ? undefined : <Icon name="users" size={14} color={theme.colors.text.primary} />}
                     disabled={disabled}
                     onPress={toggle}
                 />
@@ -660,17 +628,22 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     );
 
     return (
-        <ItemList testID={TEST_ID}>
+        <ItemList testID={TEST_ID} pageColumn="wide" onLayout={(event) => {
+            const width = event.nativeEvent.layout.width;
+            if (width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+        }}>
             <SettingsPageHeader
                 testID={`${TEST_ID}:summary`}
                 title={label}
                 alwaysShowTitle
+                compactPresentation="centered"
+                primaryAction={compact ? { title: t('connectedServicesPool.rename'), onPress: () => { void rename(); } } : undefined}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <Icon name="stack" size={26} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
-                titleAccessory={(
+                titleAccessory={!compact ? (
                     <IconButton
                         testID={`${TEST_ID}:rename`}
                         accessibilityLabel={t('connectedServicesPool.rename')}
@@ -679,14 +652,20 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                         iconSize={15}
                         onPress={() => { void rename(); }}
                     />
-                )}
-                meta={[{
-                    key: 'members',
-                    text: memberCount > 0
+                ) : undefined}
+                details={<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: compact ? 'center' : 'flex-start', gap: 6 }}>
+                    <ConnectedServiceMark legacyServiceId={props.legacyServiceId} size="inline" />
+                    <Text style={styles.headerMeta}>{compact ? props.serviceLabel : memberCount > 0
                         ? t('connectedServicesPool.membersOn', { service: props.serviceLabel, on: enabledCount, total: memberCount })
-                        : props.serviceLabel,
-                }]}
-                actions={(
+                        : props.serviceLabel}</Text>
+                    {compact && props.agentDefaults ? <><Text style={styles.headerMeta}>·</Text><AgentDefaultMenuButton
+                        testID={`${TEST_ID}:default-for`}
+                        presentation="text"
+                        choices={props.agentDefaults.choices}
+                        onChange={props.agentDefaults.setDefault}
+                    /></> : null}
+                </View>}
+                actions={!compact ? (
                     <View style={styles.headerActions}>
                         {props.agentDefaults ? (
                             <AgentDefaultMenuButton
@@ -721,7 +700,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             )}
                         />
                     </View>
-                )}
+                ) : undefined}
             />
             {nameDraft !== null ? (
                 <ItemGroup>
@@ -747,10 +726,10 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                     <Item
                         testID={`${TEST_ID}:now`}
                         title={nowTitle}
-                        subtitle={nowDetail}
+                        subtitle={compact && !waiting ? group.policy.strategy === 'least_limited' ? t('connectedServicesPool.leadLeastLimited') : group.policy.strategy === 'priority' ? t('connectedServicesPool.leadInOrder') : nowDetail : nowDetail}
                         subtitleLines={0}
-                        leftElement={waiting ? <Icon name="clock" size={18} color={theme.colors.state.warning.foreground} /> : undefined}
-                        rightElement={nowAction ? (
+                        leftElement={<Icon name={waiting ? 'clock' : 'circle'} size={18} color={waiting ? theme.colors.state.warning.foreground : theme.colors.text.secondary} />}
+                        rightElement={nowAction && !compact ? (
                             <RoundButton
                                 testID={nowAction.testID}
                                 size="small"
@@ -767,7 +746,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 </ItemGroup>
             ) : null}
 
-            {memberCount > 0 ? (
+            {memberCount > 0 && !compact ? (
                 <ItemGroup
                     title={t('connectedServicesPool.leftTitle')}
                     description={t('connectedServicesPool.leftDescription')}
@@ -813,8 +792,14 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 </ItemGroup>
             ) : null}
 
+            <ItemGroup
+                title={memberCount > 0 ? t('connectedServicesPool.membersTitle') : undefined}
+                description={memberCount > 0 ? t(compact ? 'connectedServicesPool.membersCompactDescription' : 'connectedServicesPool.membersDescription') : undefined}
+                action={memberCount > 0 ? manageMembers : undefined}
+            >
             {memberCount === 0 ? (
-                <ItemGroup surface="none">
+                <>
+                    {manageMembers}
                     <SurfaceStateCard
                         testID={`${TEST_ID}:no-members`}
                         kind="empty"
@@ -824,18 +809,10 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                         reason={t('connectedServicesPool.emptyReason', { service: props.serviceLabel })}
                         action={{ label: t('connectedServicesPool.manageMembers'), onPress: () => setMembersMenuOpen(true) }}
                     />
-                </ItemGroup>
+                </>
             ) : null}
-
-            <ItemGroup
-                title={t('connectedServicesPool.membersTitle')}
-                description={memberCount > 0 ? t('connectedServicesPool.membersDescription') : undefined}
-                action={manageMembers}
-                // No members: the invitation above says it; no empty sheet under the title.
-                surface={memberCount > 0 ? 'sheet' : 'none'}
-            >
                 {memberCount > 0 ? (
-                    <View style={MEMBERS_REORDER_CONTAINER_STYLE}>
+                    <EntityFlatReorderList binding={binding} testID={`${TEST_ID}:reorder`}>
                         {orderedMembers.map((member, index) => {
                             const accountId = member.ref.accountId;
                             const identity = identityOf(accountId);
@@ -855,20 +832,20 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                     ? { kind: 'meters', meters: buildSummaryMeters(snapshot.meters, [], 'primary').slice(0, 2) }
                                     : quota?.loading ? { kind: 'loading' } : { kind: 'none' };
                             const actionId = (suffix: string) => `connected-services-pool:${group.ref.groupId}:member:${accountId}:action:${suffix}`;
-                            const actions: ItemAction[] = [
+                            const actions = (moveBy: (direction: -1 | 1) => void): ItemAction[] => [
                                 {
                                     id: actionId('move-up'),
                                     title: t('connectedServices.pools.detail.moveUp'),
                                     icon: 'arrow-up',
                                     disabled: index === 0,
-                                    onPress: index === 0 ? undefined : () => moveMember(accountId, -1),
+                                    onPress: index === 0 ? undefined : () => moveBy(-1),
                                 },
                                 {
                                     id: actionId('move-down'),
                                     title: t('connectedServices.pools.detail.moveDown'),
                                     icon: 'arrow-down',
                                     disabled: index === memberCount - 1,
-                                    onPress: index === memberCount - 1 ? undefined : () => moveMember(accountId, 1),
+                                    onPress: index === memberCount - 1 ? undefined : () => moveBy(1),
                                 },
                                 {
                                     id: actionId('remove'),
@@ -879,7 +856,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                 },
                             ];
                             return (
-                                <PoolMemberReorderRow key={accountId} accountId={accountId} reorder={reorder}>
+                                <EntityFlatReorderRow key={accountId} id={accountId}>{({ renderHandle, moveBy }) => (
                                     <PoolMemberRow
                                         testID={`${TEST_ID}:member:${accountId}`}
                                         title={identity.name}
@@ -892,18 +869,18 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                         onMakeActive={!isActive && fallbackControlsEnabled ? () => setActiveMember(member.ref) : null}
                                         onEnabledChange={(next) => setMemberEnabled(member.ref, next)}
                                         onOpen={props.onOpenAccount ? () => props.onOpenAccount?.(member.ref) : null}
-                                        actions={actions}
-                                        reorderGesture={reorder.gestureForRow(accountId, index)}
+                                        actions={actions(moveBy)}
+                                        reorderHandle={renderHandle(`${TEST_ID}:member:${accountId}:reorder-handle`)}
+                                        showDivider={index < orderedMembers.length - 1}
                                     />
-                                </PoolMemberReorderRow>
+                                )}</EntityFlatReorderRow>
                             );
                         })}
-                        <PoolMembersDropOverlay shared={overlayShared} testID={`${TEST_ID}:drop-overlay`} />
-                    </View>
+                    </EntityFlatReorderList>
                 ) : null}
             </ItemGroup>
 
-            <ItemGroup title={t('connectedServicesPool.behaviorTitle')}>
+            {memberCount > 0 ? <ItemGroup title={t('connectedServicesPool.behaviorTitle')}>
                 <SegmentedChoiceItem<GroupStrategy>
                     testID={`${TEST_ID}:strategy`}
                     testIDPrefix={`${TEST_ID}:strategy`}
@@ -1131,7 +1108,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                         mode="info"
                     />
                 </ExpandableItem>
-            </ItemGroup>
+            </ItemGroup> : null}
 
             {props.agentDefaults ? (
                 <ItemGroup title={t('connectedServicesPool.usedByTitle')}>
@@ -1161,6 +1138,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             {/* The irreversible action closes the page, its consequence said once. */}
             <ItemGroup surface="none">
                 <View style={styles.exit}>
+                    {compact && props.onShareWithTeam ? <RoundButton testID={`${TEST_ID}:share`} size="small" display="inverted" title={t('teams.credentials.create.action')} onPress={props.onShareWithTeam} /> : null}
                     <RoundButton
                         testID={`${TEST_ID}:delete`}
                         size="small"
@@ -1179,25 +1157,8 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     );
 });
 
-/** Wraps a member row in the reorder transform + layout reporter so the drag math measures real heights. */
-const PoolMemberReorderRow = React.memo(function PoolMemberReorderRow(props: Readonly<{
-    accountId: string;
-    reorder: ReturnType<typeof useListInlineReorder<{ id: string }>>;
-    children: React.ReactNode;
-}>) {
-    const { accountId, reorder } = props;
-    const onLayout = React.useCallback(
-        (event: Parameters<typeof reorder.onRowLayout>[1]) => reorder.onRowLayout(accountId, event),
-        [accountId, reorder],
-    );
-    return (
-        <Animated.View style={reorder.animatedStyleForRow(accountId)} onLayout={onLayout}>
-            {props.children}
-        </Animated.View>
-    );
-});
-
 const stylesheet = StyleSheet.create((theme) => ({
+    headerMeta: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary },
     headerActions: {
         flexDirection: 'row',
         alignItems: 'center',

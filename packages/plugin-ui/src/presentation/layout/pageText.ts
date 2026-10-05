@@ -13,6 +13,7 @@ export type HappierPageTextWeight = 'regular' | 'medium' | 'semiBold' | 'bold';
  */
 export type HappierPageTextRole =
   | 'pageTitle'
+  | 'heroTitle'
   | 'pageDescription'
   | 'meta'
   | 'sectionTitle'
@@ -40,6 +41,7 @@ const ios = Platform.OS === 'ios';
  */
 export const HAPPIER_PAGE_TEXT: Readonly<Record<HappierPageTextRole, HappierPageTextStep>> = Object.freeze({
   pageTitle: { weight: 'bold', fontSize: 22, lineHeight: 28, letterSpacing: -0.4 },
+  heroTitle: { weight: 'bold', fontSize: 28, lineHeight: 34, letterSpacing: -0.4 },
   pageDescription: { weight: 'regular', fontSize: 14, lineHeight: 20 },
   meta: { weight: 'regular', fontSize: 13, lineHeight: 18 },
   sectionTitle: { weight: 'bold', fontSize: ios ? 15 : 14, lineHeight: 20, letterSpacing: -0.1 },

@@ -61,9 +61,15 @@ vi.mock('@/features/serverFeaturesClient', () => ({
   fetchServerFeaturesSnapshot: fetchServerFeaturesSnapshotMock,
 }));
 
-vi.mock('@/auth/terminalAuthEnrollmentRuntime', () => ({
-  acquireTerminalAuthEnrollmentRuntime: acquireTerminalAuthEnrollmentRuntimeMock,
-}));
+vi.mock('@/auth/terminalAuthEnrollmentRuntime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/auth/terminalAuthEnrollmentRuntime')>();
+  return {
+    acquireTerminalAuthEnrollmentRuntime: (...args: Parameters<typeof actual.acquireTerminalAuthEnrollmentRuntime>) =>
+      'descriptor' in args[0] && !args[0].descriptor
+        ? actual.acquireTerminalAuthEnrollmentRuntime(...args)
+        : acquireTerminalAuthEnrollmentRuntimeMock(...args),
+  };
+});
 vi.mock('@/api/api', () => ({
   ApiClient: { create: machineRegistrationMocks.apiCreate },
 }));

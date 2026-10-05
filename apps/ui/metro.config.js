@@ -362,9 +362,9 @@ config.transformer.getTransformOptions = async () => ({
   },
 });
 
-// Never bundle route-adjacent test/spec files into runtime app bundles.
-// They may import Vitest APIs, which crash when executed in Expo runtime.
-const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
+// Tests anywhere in the watched workspace are never runtime bundle inputs.
+// Colocated tests can import Vitest or use dynamic imports Metro cannot transform.
+const testModuleBlockList = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
 const hstackWebArtifactExportBlockList = /[\\/]\.expo[\\/]hstack[\\/]web-artifact-export[\\/]/;
@@ -409,10 +409,10 @@ const nestedDependencyNodeModulesBlockList =
   /[\\/]node_modules[\\/](?!react-native[\\/]node_modules[\\/]@react-native[\\/])(?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
   config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
+  ? [...existingBlockList, testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList];
+    ? [existingBlockList, testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
+    : [testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList];
 
 addInternalWorkspaceWatchFolders();
 

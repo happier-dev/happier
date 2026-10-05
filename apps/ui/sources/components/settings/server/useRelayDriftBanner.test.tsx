@@ -1,3 +1,4 @@
+import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 
@@ -238,6 +239,7 @@ describe('useRelayDriftBanner', () => {
             },
         ];
         state.runner = {
+            ...createManualSystemTaskRunner('dev').runner,
             mode: 'dev',
             start: async () => 'task_1',
             cancel: async () => {},
@@ -1033,6 +1035,7 @@ describe('useRelayDriftBanner', () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const startMock = vi.fn(async () => 'task_1');
         state.runner = {
+            ...createManualSystemTaskRunner('unavailable').runner,
             mode: 'unavailable',
             start: startMock,
             cancel: async () => {},

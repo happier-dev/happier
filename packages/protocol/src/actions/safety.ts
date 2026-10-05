@@ -3,8 +3,7 @@ import { z } from 'zod';
 import { ACTION_ID_FAMILIES_V1, type RuntimeActionIdV1 } from './actionIds.js';
 import { RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS } from './danger.js';
 
-export const ActionSafetySchema = z.enum(['safe', 'danger']);
-export type ActionSafety = z.infer<typeof ActionSafetySchema>;
+export { ActionSafetySchema, type ActionSafety } from './safetyVocabulary.js';
 
 export const RuntimeActionHostEffectClassSchema = z.enum([
   'readOnly',

@@ -12,6 +12,15 @@ import { useTranscriptNavigationSessionPresent } from '../navigation/useTranscri
 afterEach(standardCleanup);
 
 describe('read-only transcript source', () => {
+    it('publishes changed coverage frontiers even when the loaded rows and older state are unchanged', async () => {
+        const snapshot = { messages: [], reducerState: null, metadata: null, agentState: null,
+            historyState: { isLoaded: true, hasOlder: false, hasNewer: true, isLoadingOlder: false } };
+        const source = createReadOnlySessionTranscriptSource({ sessionId: 'static-frontiers', ...snapshot });
+        const hook = await renderHook(() => source.history.useState());
+        await act(async () => { source.update({ ...snapshot, historyState: { ...snapshot.historyState, hasNewer: false } }); });
+        expect(hook.getCurrent()).toMatchObject({ hasOlder: false, hasNewer: false });
+        await hook.unmount();
+    });
     it('keeps a static navigation present independent of a colliding viewer Session', async () => {
         const previous = storage.getState();
         const session = createSessionFixture({ id: 'static-navigation', active: true, thinking: true, thinkingAt: Date.now(), activeAt: Date.now() });

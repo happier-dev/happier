@@ -177,6 +177,36 @@ describe('controlled Tabs', () => {
 });
 
 describe('a tab strip owned by the host frame', () => {
+  it('retains a visited host panel while withdrawing its active interval', async () => {
+    const signals: AbortSignal[] = [];
+    function Counter() {
+      const [count, setCount] = useState(0);
+      const activity = useTabPanelActivity();
+      if (activity.active) signals.push(activity.activeSignal);
+      return <button onClick={() => setCount(count + 1)}>Count {count}</button>;
+    }
+    function Harness() {
+      const [value, setValue] = useState('occurrences');
+      return <>
+        <button data-testid="switch-panel" onClick={() => setValue(value === 'occurrences' ? 'trace' : 'occurrences')}>Switch</button>
+        <Tabs value={value} onValueChange={setValue} ariaLabel="Error detail" tabList="host">
+          <Tabs.Item value="occurrences" title="Occurrences" retention="retain"><Counter /></Tabs.Item>
+          <Tabs.Item value="trace" title="Trace"><Text value="Trace body" /></Tabs.Item>
+        </Tabs>
+      </>;
+    }
+    const mount = mountTabs(<Harness />);
+    const firstInterval = signals.at(-1)!;
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('button:not([data-testid])')?.click(); });
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('[data-testid="switch-panel"]')?.click(); });
+    expect(firstInterval.aborted).toBe(true);
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('[data-testid="switch-panel"]')?.click(); });
+    expect(mount.container.textContent).toContain('Count 1');
+    expect(signals.at(-1)?.aborted).toBe(false);
+    mount.unmount();
+    expect(signals.at(-1)?.aborted).toBe(true);
+  });
+
   it('renders only the selected panel, with its active interval, and no tablist', async () => {
     const seen: boolean[] = [];
     function Probe() {
@@ -199,6 +229,30 @@ describe('a tab strip owned by the host frame', () => {
     expect(mount.container.textContent).toContain('Files content');
     expect(mount.container.textContent).not.toContain('Overview content');
     expect(seen.at(-1)).toBe(true);
+  });
+});
+
+describe('one shared renderer behind a tab strip', () => {
+  it('keeps shared state across tab selection and labels the one current panel', async () => {
+    function Counter() {
+      const [count, setCount] = useState(0);
+      return <button data-testid="shared-count" onClick={() => setCount(count + 1)}>Selected occurrence {count}</button>;
+    }
+    function Harness() {
+      const [value, setValue] = useState('occurrences');
+      return <Tabs value={value} onValueChange={setValue} ariaLabel="Source detail" sharedPanel={<Counter />}>
+        <Tabs.Item value="occurrences" title="Occurrences" />
+        <Tabs.Item value="trace" title="Trace" />
+      </Tabs>;
+    }
+    const mount = mountTabs(<Harness />);
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('[data-testid="shared-count"]')?.click(); });
+    await act(async () => { mount.container.querySelectorAll<HTMLElement>('[role="tab"]')[1]?.click(); });
+    expect(mount.container.textContent).toContain('Selected occurrence 1');
+    const panels = mount.container.querySelectorAll<HTMLElement>('[role="tabpanel"]');
+    expect(panels).toHaveLength(1);
+    expect(panels[0]?.getAttribute('aria-labelledby')).toBe(mount.container.querySelectorAll<HTMLElement>('[role="tab"]')[1]?.id);
+    mount.unmount();
   });
 });
 

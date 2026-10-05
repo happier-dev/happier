@@ -140,6 +140,9 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   placementOrigin?: MachinePoolSelectionOriginV1;
   organizationPlacement?: SessionOrganizationPlacementV1;
   initialAccess?: import('@happier-dev/protocol').SessionInitialAccessDraftV1;
+  initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];
+  /** Birth-only preparation; an authenticated creation-key rejoin never re-admits drafts. */
+  prepareInitialTriggers?: () => Promise<readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[]>;
   reportsTo?: import('@happier-dev/protocol').SessionReportsToV1;
   /** Canonical Action host's resolved snapshot; never accepted from raw public Action input. */
   initialSessionRolesV1?: import('@happier-dev/protocol').SessionRolesV1;
@@ -597,6 +600,7 @@ async function dispatchReplaySeededSpawn(args: Readonly<{
   const {
     placementOrigin: _creationOwnedPlacementOrigin,
     initialAccess: _creationOwnedInitialAccess,
+    initialTriggers: _creationOwnedInitialTriggers,
     reportsTo: _creationOwnedReportsTo,
     initialSessionRolesV1: _creationOwnedRoles,
     primaryTeamId: _creationOwnedPrimaryTeamId,
@@ -702,6 +706,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     },
     agentState: null,
     ...(params.initialAccess !== undefined ? { initialAccess: params.initialAccess } : {}),
+    ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
     ...(params.reportsTo !== undefined ? { reportsTo: params.reportsTo } : {}),
     ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
     ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
@@ -950,6 +955,7 @@ export async function createSpawnedSession(
     ...(params.directoryKind ? { directoryKind: params.directoryKind } : {}),
     ...(params.managedDirectorySeed ? { managedDirectorySeed: params.managedDirectorySeed } : {}),
     ...(params.initialAccess !== undefined ? { initialAccess: params.initialAccess } : {}),
+    ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
     ...(params.reportsTo !== undefined ? { reportsTo: params.reportsTo } : {}),
     ...(params.initialSessionRolesV1 !== undefined ? { initialSessionRolesV1: params.initialSessionRolesV1 } : {}),
     ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
@@ -1009,26 +1015,6 @@ export async function createSpawnedSession(
   const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
   await assertStoredAuthTokenValidForSpawn(params.credentials.token);
   params.signal?.throwIfAborted();
-  if (params.initialSessionRolesV1 && !params.directTransport && !params.machineActionTransport) {
-    // The moving 0.2 predecessor silently strips unknown spawn fields. Use the
-    // existing current spawn protocol at this remote boundary, before either
-    // normal dispatch or Replay row creation can lose the protected snapshot.
-    const target = await readMachineOperationProtocolCapabilitiesV1({
-      credentials: params.credentials,
-      machineId: exactMachineId,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
-    if (!supportsMachineSessionSpawnProtocolVersionV1(target?.capabilities, 2)) {
-      throw createCodedError(
-        'The selected daemon requires an update to create a Session with inherited roles',
-        SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-        {
-          kind: 'update_required', operation: 'session.spawn_new', component: 'daemon',
-          reason: 'session_roles_snapshot_update_required',
-        },
-      );
-    }
-  }
   if (params.sessionCreationTag && params.sessionCreationCorrespondence) {
     const lookup = await lookupSessionsByTags({
       token: params.credentials.token,
@@ -1134,6 +1120,33 @@ export async function createSpawnedSession(
       };
     }
   }
+  const preparedInitialTriggers = params.resumeOnly !== true && params.prepareInitialTriggers
+    ? await params.prepareInitialTriggers()
+    : params.initialTriggers;
+  const hasInitialTriggers = (preparedInitialTriggers?.length ?? 0) > 0;
+  if (params.resumeOnly !== true && (params.initialSessionRolesV1 || hasInitialTriggers)
+    && !params.directTransport && !params.machineActionTransport) {
+    // The moving 0.2 predecessor strips these unknown birth fields. The current
+    // spawn protocol is required before dispatch or Replay persistence, but not rejoin.
+    const target = await readMachineOperationProtocolCapabilitiesV1({
+      credentials: params.credentials, machineId: exactMachineId,
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+    if (!supportsMachineSessionSpawnProtocolVersionV1(target?.capabilities, 2)) {
+      if (hasInitialTriggers) {
+        throw createCodedError('The selected daemon requires an update to create a Session with initial triggers',
+          SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE);
+      }
+      throw createCodedError('The selected daemon requires an update to create a Session with inherited roles',
+        SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, {
+          kind: 'update_required', operation: 'session.spawn_new', component: 'daemon',
+          reason: 'session_roles_snapshot_update_required',
+        });
+    }
+  }
+  const birthSpawnRequestInput = { ...spawnRequestInput,
+    ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) };
+  const birthSpawnRequest = SpawnDaemonSessionRequestSchema.parse(birthSpawnRequestInput);
   const dispatchSpawnRequest = async (request: SpawnDaemonSessionRequest): Promise<unknown> => {
     try {
       if ((params.creationAuthorization || params.callerInputConstraints) && !params.directTransport) {
@@ -1196,9 +1209,9 @@ export async function createSpawnedSession(
 
   if (params.replaySeededCreation) {
     return await createReplaySeededSpawnedSession({
-      params,
+      params: { ...params, ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) },
       replaySeededCreation: params.replaySeededCreation,
-      spawnRequestInput,
+      spawnRequestInput: birthSpawnRequestInput,
       dispatchSpawnRequest,
       initialInputLocalId,
       ...(initialInputHandoff ? { initialInputHandoff } : {}),
@@ -1209,7 +1222,7 @@ export async function createSpawnedSession(
   if (params.resumeOnly === true) {
     spawnResponse = { success: true as const, status: 'pending' as const, sessionIdStatus: 'pending' as const, spawnNonce };
   } else {
-    spawnResponse = await dispatchSpawnRequest(spawnRequest);
+    spawnResponse = await dispatchSpawnRequest(birthSpawnRequest);
   }
   const resolveSpawnSessionByNonce = async (
     nonce: string,

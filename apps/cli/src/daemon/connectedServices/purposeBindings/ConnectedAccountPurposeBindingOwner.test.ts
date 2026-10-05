@@ -114,6 +114,25 @@ const authorized = {
 } as const;
 
 describe('ConnectedAccountPurposeBindingOwner', () => {
+  it('materializes each widget Resource through that viewer own purpose selection and refuses a missing or revoked choice', async () => {
+    const widgetPurpose = { consumer: { pluginId: 'acme.metrics', localId: 'metrics' }, purpose: 'read' };
+    const viewers = await Promise.all(['A', 'B'].map(async accountId => {
+      let available = true;
+      const fixture = createOwner({ resolveAvailable: () => available });
+      await fixture.store.update(() => ({ v: 1, bindings: [{ purpose: widgetPurpose, target: { kind: 'account', account: { service, accountId } } }] }));
+      return { ...fixture, revoke: () => { available = false; fixture.store.invalidate(); } };
+    }));
+    const scope = { purpose: widgetPurpose, serviceRefs: [service], signal: new AbortController().signal };
+    const read = (viewer: typeof viewers[number]) => viewer.owner.materialize({ ...scope, request: { kind: 'environment', keys: ['TOKEN'] } });
+    expect(await read(viewers[0]!)).toEqual({ kind: 'environment', env: { TOKEN: 'token:A' } });
+    expect(await read(viewers[1]!)).toEqual({ kind: 'environment', env: { TOKEN: 'token:B' } });
+    viewers[1]!.revoke();
+    await expect(read(viewers[1]!)).rejects.toBeInstanceOf(PluginError);
+    expect(await read(viewers[0]!)).toEqual({ kind: 'environment', env: { TOKEN: 'token:A' } });
+    await viewers[1]!.store.update(() => ({ v: 1, bindings: [] }));
+    expect(await viewers[1]!.owner.getBinding(scope)).toBeNull();
+    await expect(read(viewers[1]!)).rejects.toBeInstanceOf(PluginError);
+  });
   it('composes one exact Agent + managed Provider session snapshot and rejects every overlap', () => {
     const managedPurpose = {
       consumer: { pluginId: 'happier.provider.test', localId: 'managed-runtime' },

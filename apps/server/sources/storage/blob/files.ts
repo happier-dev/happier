@@ -1,7 +1,9 @@
-import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, writeLightPublicFile } from '@/flavors/light/files';
-import { createLocalPrivateFilesBackendFromEnv } from '@/storage/privateFiles/privateFilesLocal';
+import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, resolveLightPublicFilesDir, writeLightPublicFile } from '@/flavors/light/files';
+import { createLocalPrivateFilesBackendFromEnv, resolveLocalPrivateFilesDir } from '@/storage/privateFiles/privateFilesLocal';
 import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import type { PrivateFilesBackend } from '@/storage/privateFiles/privateFiles';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, relative, sep } from 'node:path';
 
 export type ImageRef = {
     width: number;
@@ -120,7 +122,35 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
 }
 
 export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): void {
-    privateBackend = createLocalPrivateFilesBackendFromEnv(env);
+    const localPrivate = createLocalPrivateFilesBackendFromEnv(env);
+    let available = false;
+    privateBackend = {
+        async init() {
+            available = false;
+            try {
+                await localPrivate.init();
+                const publicRoot = await realpath(resolveLightPublicFilesDir(env));
+                const privateRoot = await realpath(resolveLocalPrivateFilesDir(env));
+                const contains = (parent: string, child: string) => {
+                    const path = relative(parent, child);
+                    return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
+                };
+                available = !contains(publicRoot, privateRoot) && !contains(privateRoot, publicRoot);
+            } catch { available = false; }
+        },
+        async writePrivateFile(key, data) {
+            if (!available) throw new PrivateStorageUnavailableError();
+            await localPrivate.writePrivateFile(key, data);
+        },
+        async readPrivateFile(key) {
+            if (!available) throw new PrivateStorageUnavailableError();
+            return localPrivate.readPrivateFile(key);
+        },
+        async deletePrivateFile(key) {
+            if (!available || !localPrivate.deletePrivateFile) throw new PrivateStorageUnavailableError();
+            await localPrivate.deletePrivateFile(key);
+        },
+    };
     backend = {
         async init() {
             await ensureLightFilesDir(env);

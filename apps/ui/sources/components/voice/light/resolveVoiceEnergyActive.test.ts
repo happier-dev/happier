@@ -11,9 +11,7 @@ const LIVE: VoiceEnergyActivationInputs = {
     providerReady: true,
     motionAllowed: true,
     hasVisibleConsumer: true,
-    attemptActive: true,
-    inputSourceActive: false,
-    outputSourceActive: false,
+    audioAmplitudePresent: true,
     settleTransitionPending: false,
 };
 
@@ -25,9 +23,7 @@ const GATES = [
 ] as const satisfies readonly (keyof VoiceEnergyActivationInputs)[];
 
 const LIVENESS = [
-    'attemptActive',
-    'inputSourceActive',
-    'outputSourceActive',
+    'audioAmplitudePresent',
     'settleTransitionPending',
 ] as const satisfies readonly (keyof VoiceEnergyActivationInputs)[];
 
@@ -45,15 +41,13 @@ describe('resolveVoiceEnergyActive', () => {
         // visible, motion-allowed Voice surface runs a 60 Hz loop all day while
         // the planet is meant to be motionless (§2.4a) — and no screenshot would
         // ever show it.
-        expect(resolveVoiceEnergyActive({ ...LIVE, attemptActive: false })).toBe(false);
+        expect(resolveVoiceEnergyActive({ ...LIVE, audioAmplitudePresent: false })).toBe(false);
     });
 
     it.each(LIVENESS)('runs the clock when only %s is true', (term) => {
         const idle: VoiceEnergyActivationInputs = {
             ...LIVE,
-            attemptActive: false,
-            inputSourceActive: false,
-            outputSourceActive: false,
+            audioAmplitudePresent: false,
             settleTransitionPending: false,
         };
         expect(resolveVoiceEnergyActive({ ...idle, [term]: true })).toBe(true);
@@ -65,8 +59,7 @@ describe('resolveVoiceEnergyActive', () => {
         expect(resolveVoiceEnergyActive({
             ...LIVE,
             motionAllowed: false,
-            inputSourceActive: true,
-            outputSourceActive: true,
+            audioAmplitudePresent: true,
         })).toBe(false);
     });
 });

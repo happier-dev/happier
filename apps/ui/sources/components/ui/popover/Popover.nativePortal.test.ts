@@ -801,7 +801,7 @@ describe('Popover (native portal)', () => {
         expect(overlayStyle.height).toBe(28);
     });
 
-    it('falls back to a dim backdrop when blur is disabled in local appearance settings', async () => {
+    it('does not let the retired device-local switch override Account material', async () => {
         localSettingState.uiBackdropBlurEnabled = false;
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');
@@ -834,8 +834,10 @@ describe('Popover (native portal)', () => {
             await flushInitialPositioning();
         });
 
-        const blurNodes = tree?.root.findAllByType('BlurView' as any) ?? [];
-        expect(blurNodes).toHaveLength(0);
+        // SDK availability may turn blur into a tint; the requested material
+        // must still reach the real backdrop owner without the old local gate.
+        const { PopoverBackdrop } = await import('./backdrop');
+        expect(tree?.root.findByType(PopoverBackdrop).props.backdropEffect).toBe('blur');
     });
 
 });

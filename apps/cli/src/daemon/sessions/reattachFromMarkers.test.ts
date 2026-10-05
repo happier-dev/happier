@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { reattachTrackedSessionsFromMarkers } from './reattachFromMarkers';
 import { configuration } from '@/configuration';
 import { findAllHappyProcesses, findHappyProcessByPid } from '../doctor';
+import { readProcessIdentityByPid } from '../processIdentity';
 import { adoptSessionsFromMarkers } from '../reattach';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
@@ -41,6 +42,20 @@ const emptyAdoptResult = {
 function mockHappyProcessesForDiscovery(processes: ReadonlyArray<any>): void {
   vi.mocked(findAllHappyProcesses).mockResolvedValue([...processes]);
   vi.mocked(findHappyProcessByPid).mockImplementation(async (pid) => processes.find((processInfo) => processInfo.pid === pid) ?? null);
+}
+
+// Model the OS boundary separately from process discovery; keep identity parsing real.
+function readObservedLinuxProcess(pid: number, command: string) {
+  return readProcessIdentityByPid(pid, {
+    platform: 'linux',
+    linuxBoundary: {
+      readFile: async (path) => path.endsWith('/stat')
+        ? `${pid} (runner) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 12345 22`
+        : path.endsWith('/cmdline') ? command : '',
+      readdir: async () => [],
+      readlink: async () => '/workspace',
+    },
+  });
 }
 
 const {
@@ -204,6 +219,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       const pidToTrackedSession = new Map<number, any>();
       await reattachTrackedSessionsFromMarkers({
         pidToTrackedSession,
+        readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(
+          pid, pid === exactMarker.pid ? exactCommand : incompleteCommand,
+        ),
       });
 
       const exactTracked =
@@ -1170,7 +1188,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
 
     const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const result = await reattachTrackedSessionsFromMarkers({
+      pidToTrackedSession,
+      readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(pid,
+        '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123'),
+    });
 
     expect(result).toEqual({
       orphanedDeadDaemonSessions: [],
@@ -1190,6 +1212,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         pid: 54321,
         happySessionId: 'session-123',
         startedBy: 'daemon',
+        processStartTimeMs: 190,
         processCommandHash:
           'hash:/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123',
         processCommand:
@@ -1549,7 +1572,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    await reattachTrackedSessionsFromMarkers({
+      pidToTrackedSession,
+      readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(pid,
+        'C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon'),
+    });
 
     expect(pidToTrackedSession.get(12345)).toEqual(
       expect.objectContaining({
@@ -1572,6 +1599,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       happySessionId: 'session-123',
       startedBy: 'daemon',
       cwd: '/tmp/project',
+      processStartTimeMs: 190,
       processCommandHash:
         'hash:C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon',
       processCommand:
@@ -1619,7 +1647,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    await reattachTrackedSessionsFromMarkers({
+      pidToTrackedSession,
+      readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(pid,
+        'C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon --existing-session session-123'),
+    });
 
     expect(pidToTrackedSession.get(12345)).toEqual(
       expect.objectContaining({
@@ -1647,6 +1679,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       happySessionId: 'session-123',
       startedBy: 'daemon',
       cwd: '/tmp/project',
+      processStartTimeMs: 190,
       processCommandHash:
         'hash:C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon --existing-session session-123',
       processCommand:

@@ -20,3 +20,42 @@ Use public contracts from `@happier-dev/plugin-sdk/scm/hosting` for hosting
 work and `@happier-dev/plugin-sdk/scm/backend` for repository work. Keep host
 credentials, account selection, process policy, and workspace lifecycle with
 the host-provided context/services rather than creating a parallel registry.
+
+## Commit publication in development
+
+<Callout type="info">
+  These commit and comparison contracts describe unreleased 0.3 development
+  source. Their declaration does not certify a plugin's implementation.
+</Callout>
+
+A backend must report publication truth separately from command success. A
+published commit can have a later hook or index-reconciliation failure; retain
+the candidate/commit identity and warning. An unknown outcome requires
+reconciliation, not automatic replay. Consumers use the typed SCM response and
+the host's existing Action confirmation policy.
+
+Expected-parent commits and safe-plan application require explicitly advertised
+capabilities. A host-prepared tree must match the expected candidate, parent,
+ref and captured index authority; it cannot be combined with another scope or
+patch selection. Hook-content inclusion is explicit, while message-only rewrites
+are returned as the actual message. The Git backend shares one writer across
+ordinary commits, stacked requests and accepted plans.
+
+The backend command service supports `stdinInteraction`: it waits for the named
+stdout line, obtains the response and closes stdin. Git uses this at its prepared
+ref transaction; cancellation and process cleanup remain host-owned. Do not
+replace this seam with a plugin process runner or publish refs from a consumer.
+
+Comparison evidence belongs to the configured source read operation. Return
+captured endpoints, paged inventory and explicit content/freshness gaps; a display
+preview or `diffAvailable` flag cannot authorize exact selections. The GitHub
+source extends its existing read Action, retaining the host's credential and
+grant context. Walkthrough outputs use the host's saved result and analysis
+Actions rather than a plugin-owned generator or result store.
+
+## Related
+
+- [Host Actions](/plugins/api/host-actions) — generated inputs, outputs and policy.
+- [SDK entrypoints](/plugins/api/sdk-entrypoints) — public contracts by task.
+- [Diffs and review](/code/diffs#walk-through-changes) — user workflow and current presentation limits.
+- [Git](/code/git#propose-a-sequence-of-commits) — proposal acceptance and recovery.

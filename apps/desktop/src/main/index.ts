@@ -160,6 +160,7 @@ async function openMainWindow(): Promise<void> {
         console.log(`[boot] runtime config ${JSON.stringify(runtimeConfig)}`);
     }
     const window = createMainWindow({
+        eventBus,
         preloadArguments: runtimeConfig === null ? [] : [encodeRuntimeConfigArgument(runtimeConfig)],
     });
     mainWindow = window;

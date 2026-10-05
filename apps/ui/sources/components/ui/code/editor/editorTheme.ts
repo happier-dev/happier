@@ -18,6 +18,9 @@ export type CodeEditorTheme = Readonly<{
     lineNumberColor: string;
     activeLineColor: string;
     selectionColor: string;
+    findMatchColor?: string;
+    findCurrentMatchColor?: string;
+    findCurrentMatchForeground?: string;
     syntax: CodeEditorSyntaxTheme;
 }>;
 
@@ -37,24 +40,27 @@ type CodeEditorThemeSource = Readonly<{
         | 'surface'
         | 'syntax'
         | 'text'
-    >;
+    > & Partial<Pick<Theme['colors'], 'find'>>;
 }>;
 
 function withoutHash(value: string): string {
     return value.startsWith('#') ? value.slice(1) : value;
 }
 
-export function resolveCodeEditorTheme(theme: CodeEditorThemeSource): CodeEditorTheme {
+export function resolveCodeEditorTheme(theme: CodeEditorThemeSource, paint: Partial<Pick<CodeEditorTheme, 'backgroundColor' | 'activeLineColor' | 'selectionColor'>> = {}): CodeEditorTheme {
     const colors = theme.colors;
     return {
         monacoThemeName: theme.dark ? 'happier-editor-dark' : 'happier-editor-light',
         isDark: Boolean(theme.dark),
-        backgroundColor: colors.surface.inset,
+        backgroundColor: paint.backgroundColor ?? colors.surface.inset,
         textColor: colors.text.primary,
         dividerColor: colors.border.default,
         lineNumberColor: colors.text.tertiary,
-        activeLineColor: colors.surface.elevated,
-        selectionColor: colors.accent.blue,
+        activeLineColor: paint.activeLineColor ?? colors.surface.elevated,
+        selectionColor: paint.selectionColor ?? colors.accent.blue,
+        findMatchColor: colors.find?.matchAll,
+        findCurrentMatchColor: colors.find?.matchCurrent,
+        findCurrentMatchForeground: colors.find?.matchCurrentForeground,
         syntax: {
             defaultColor: colors.syntax.default,
             keywordColor: colors.syntax.keyword,

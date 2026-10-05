@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
+import * as ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const forbiddenPrivateImportPattern = /^(?:apps\/ui|@\/components|@\/sync|@\/theme|@happier-dev\/protocol)(?:\/|$)/u;
@@ -21,6 +22,34 @@ function importedSpecifiers(source: string): string[] {
     ...source.matchAll(/(?:^|[\s;({])require\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
     ...source.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gmu),
   ].map((match) => match[1]);
+}
+
+/** Only these exact neutral bindings may cross an admitted presentation leaf. */
+function importsOnlyNeutralInputContract(source: string, contract: 'field' | 'picker' = 'field'): boolean {
+  const specifier = '@happier-dev/plugin-sdk/actions';
+  const syntax = ts.createSourceFile('actionInputFields.ts', source, ts.ScriptTarget.Latest, true);
+  const imports = syntax.statements.filter((statement): statement is ts.ImportDeclaration =>
+    ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === specifier,
+  );
+  if (imports.length === 0 || imports.length !== importedSpecifiers(source).filter(value => value === specifier).length) return false;
+  if (imports.some(statement => !statement.importClause || statement.importClause.name
+    || !statement.importClause.namedBindings || !ts.isNamedImports(statement.importClause.namedBindings))) return false;
+  const bindings = imports.flatMap(statement => {
+    const clause = statement.importClause;
+    if (!clause || clause.name || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings)) return [];
+    return clause.namedBindings.elements.map(element => ({
+      name: element.propertyName?.text ?? element.name.text,
+      typeOnly: clause.isTypeOnly || element.isTypeOnly,
+    }));
+  });
+  const allowedBindings: Readonly<Record<string, boolean>> = contract === 'field'
+    ? { InputFieldHint: true, readInputPath: false, writeInputPath: false }
+    : { actionInputOptionValueKey: false, readActionInputOptionValue: false };
+  return bindings.length === Object.keys(allowedBindings).length
+    && new Set(bindings.map(binding => binding.name)).size === bindings.length
+    && bindings.every(binding => Object.hasOwn(allowedBindings, binding.name)
+      && allowedBindings[binding.name] === binding.typeOnly);
 }
 
 function collectSourceFiles(directory: string): string[] {
@@ -48,7 +77,7 @@ describe('author package boundary', () => {
   /**
    * §3.10.1.1 — dependency direction inside this package.
    *
-   *   presentation → React/RN + the environment seam only
+   *   presentation → React/RN + environment and exact neutral field contracts
    *   adapters     → presentation + plugin-sdk/ui
    *
    * Without this, shared primitives could quietly start requiring
@@ -73,12 +102,18 @@ describe('author package boundary', () => {
       const isCanonicalIconContract = /presentation[\\/]content[\\/]Icon\.ts$/u.test(filePath);
       const isCanonicalRenderableImageContract = /presentation[\\/]content[\\/]renderableImage\.ts$/u.test(filePath);
       const isCanonicalLiveStreamReference = /presentation[\\/]media[\\/]liveStreamReference\.ts$/u.test(filePath);
+      const isCanonicalInputFieldContract = /presentation[\\/]form[\\/]actionInputFields\.ts$/u.test(filePath)
+        && importsOnlyNeutralInputContract(source);
+      const isCanonicalInputPickerContract = /presentation[\\/]form[\\/]inputPicker\.tsx$/u.test(filePath)
+        && importsOnlyNeutralInputContract(source, 'picker');
       return importedSpecifiers(source)
         .filter((specifier) => !allowedPresentationSpecifier(specifier))
         .filter((specifier) => !(isTypeOnlyEnvironmentContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalIconContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalRenderableImageContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalLiveStreamReference && specifier === '@happier-dev/plugin-sdk/ui'))
+        .filter((specifier) => !(isCanonicalInputFieldContract && specifier === '@happier-dev/plugin-sdk/actions'))
+        .filter((specifier) => !(isCanonicalInputPickerContract && specifier === '@happier-dev/plugin-sdk/actions'))
         .map((specifier) => `${relative(sourceRoot, filePath)} → ${specifier}`);
     });
 
@@ -107,6 +142,21 @@ describe('author package boundary', () => {
           typeOnly ? 'type-only' : `value import of ${specifier}`,
         ).toBe('type-only');
       }
+    }
+  });
+
+  it('admits only the neutral input path values and erased field type, not an SDK service or transport', () => {
+    const source = "import { readInputPath, writeInputPath, type InputFieldHint } from '@happier-dev/plugin-sdk/actions';";
+    const picker = "import { actionInputOptionValueKey, readActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';";
+    expect(importsOnlyNeutralInputContract(source)).toBe(true);
+    expect(importsOnlyNeutralInputContract(picker, 'picker')).toBe(true);
+    expect(importsOnlyNeutralInputContract(source.replace('type InputFieldHint', 'InputFieldHint'))).toBe(false);
+    for (const [neutralSource, contract] of [[source, 'field'], [picker, 'picker']] as const) {
+      expect(importsOnlyNeutralInputContract(neutralSource.replace(' }', ', createActionsService }'), contract)).toBe(false);
+      expect(importsOnlyNeutralInputContract(neutralSource.replace('import {', 'import actions, {'), contract)).toBe(false);
+      expect(importsOnlyNeutralInputContract(neutralSource + "\nimport * as actions from '@happier-dev/plugin-sdk/actions';", contract)).toBe(false);
+      expect(importsOnlyNeutralInputContract(neutralSource + "\nexport { createActionsService } from '@happier-dev/plugin-sdk/actions';", contract)).toBe(false);
+      expect(importsOnlyNeutralInputContract(neutralSource + "\nimport('@happier-dev/plugin-sdk/actions');", contract)).toBe(false);
     }
   });
 

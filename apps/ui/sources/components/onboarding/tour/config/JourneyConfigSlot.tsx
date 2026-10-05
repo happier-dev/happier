@@ -42,6 +42,8 @@ export type JourneyConfigSlotLayout = 'scroll' | 'flow';
 export type JourneyConfigSlotProps = Readonly<{
     controller: JourneyConfigControllerSurface;
     layout?: JourneyConfigSlotLayout;
+    /** Scroll layout: fill the phone action rail when Back already lives in the header. */
+    primarySizing?: 'content' | 'fill';
     testID?: string;
 }>;
 
@@ -112,6 +114,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: 'transparent',
         backgroundColor: theme.colors.button.primary.background,
     },
+    actionFill: {
+        flex: 1,
+        minWidth: 0,
+    },
+    actionFillChrome: {
+        width: '100%',
+    },
     quietActionButton: {
         backgroundColor: 'transparent',
         borderColor: 'transparent',
@@ -161,6 +170,7 @@ function ConfigActionButton(props: Readonly<{
     onPress: JourneyConfigAction;
     disabled?: boolean | null;
     primary?: boolean;
+    fill?: boolean;
     quiet?: boolean;
     testID: string;
 }>): React.ReactElement {
@@ -189,7 +199,7 @@ function ConfigActionButton(props: Readonly<{
             accessibilityRole="button"
             accessibilityState={{ disabled }}
             disabled={disabled}
-            style={disabled ? styles.actionButtonDisabled : null}
+            style={[props.fill ? styles.actionFill : null, disabled ? styles.actionButtonDisabled : null]}
             onPress={invokePress}
             // @ts-expect-error React Native's Pressable props omit RNW's keyboard hook.
             onKeyDown={Platform.OS === 'web' ? handleWebEnterKeyDown : undefined}
@@ -200,6 +210,7 @@ function ConfigActionButton(props: Readonly<{
                 style={[
                     styles.actionButton,
                     props.primary ? styles.primaryActionButton : null,
+                    props.fill ? styles.actionFillChrome : null,
                     props.quiet ? styles.quietActionButton : null,
                     feedback.animatedStyle,
                 ]}
@@ -264,14 +275,6 @@ export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactEle
                 {hasActions ? (
                     <View testID={`${testID}-actions`} style={styles.actionBar}>
                         <View style={styles.secondaryActions}>
-                            {showBack && controller.onBack ? (
-                                <ConfigActionButton
-                                    testID={`${testID}-back`}
-                                    label={controller.backLabel ?? t('common.back')}
-                                    onPress={controller.onBack}
-                                    quiet
-                                />
-                            ) : null}
                             {showSkip && controller.onSkip ? (
                                 <ConfigActionButton
                                     testID={`${testID}-skip`}
@@ -282,15 +285,24 @@ export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactEle
                                 />
                             ) : null}
                         </View>
-                        {showPrimary && controller.onPrimary ? (
-                            <ConfigActionButton
-                                testID={`${testID}-primary`}
-                                label={renderMaybeText(controller.primaryLabel)}
-                                disabled={controller.primaryDisabled}
-                                primary
-                                onPress={controller.onPrimary}
-                            />
-                        ) : null}
+                        <View style={styles.secondaryActions}>
+                            {showBack && controller.onBack ? (
+                                <ConfigActionButton
+                                    testID={`${testID}-back`}
+                                    label={controller.backLabel ?? t('common.back')}
+                                    onPress={controller.onBack}
+                                />
+                            ) : null}
+                            {showPrimary && controller.onPrimary ? (
+                                <ConfigActionButton
+                                    testID={`${testID}-primary`}
+                                    label={renderMaybeText(controller.primaryLabel)}
+                                    disabled={controller.primaryDisabled}
+                                    primary
+                                    onPress={controller.onPrimary}
+                                />
+                            ) : null}
+                        </View>
                     </View>
                 ) : null}
             </View>
@@ -313,22 +325,25 @@ export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactEle
             {hasActions ? (
                 <>
                     <View testID={`${testID}-actions`} style={styles.actionBar}>
-                        <View style={styles.secondaryActions}>
-                            {showBack && controller.onBack ? (
-                                <ConfigActionButton
-                                    testID={`${testID}-back`}
-                                    label={controller.backLabel ?? t('common.back')}
-                                    onPress={controller.onBack}
-                                    quiet
-                                />
-                            ) : null}
-                        </View>
+                        {showBack || props.primarySizing !== 'fill' ? (
+                            <View style={styles.secondaryActions}>
+                                {showBack && controller.onBack ? (
+                                    <ConfigActionButton
+                                        testID={`${testID}-back`}
+                                        label={controller.backLabel ?? t('common.back')}
+                                        onPress={controller.onBack}
+                                        quiet
+                                    />
+                                ) : null}
+                            </View>
+                        ) : null}
                         {showPrimary && controller.onPrimary ? (
                             <ConfigActionButton
                                 testID={`${testID}-primary`}
                                 label={renderMaybeText(controller.primaryLabel)}
                                 disabled={controller.primaryDisabled}
                                 primary
+                                fill={props.primarySizing === 'fill'}
                                 onPress={controller.onPrimary}
                             />
                         ) : null}

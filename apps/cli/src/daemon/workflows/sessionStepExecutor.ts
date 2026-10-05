@@ -7,6 +7,9 @@ import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
 import {
   resolveSessionSpawnConnectedServicesDefaultsPayload,
   type ResolveSpawnConnectedServicesTeamResourceCatalog,
@@ -18,7 +21,7 @@ import type {
   WorkflowSessionAuthoringSelection,
   WorkflowWorkspaceDescriptorV1,
 } from '@happier-dev/protocol/workflows';
-import type { ResolvedRoleV1, SessionAwarenessOriginV1 } from '@happier-dev/protocol';
+import type { ResolvedRoleV1, SessionAwarenessOriginV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol';
 import {
   classifyWorkflowAbort,
@@ -75,6 +78,8 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
   /** Accepted Run depth, shared by every retry and recovery. */
   workDepth: number;
   originRunId: string;
+  /** Frozen Run visibility, not the Workflow's mutable access document. */
+  visibleTeamId?: string | null;
   machineAdmissionTransport: NonNullable<Parameters<typeof enqueueWorkflowSessionInput>[0]['machineAdmissionTransport']>;
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
 }>): CreateFreshWorkflowSessionConversation {
@@ -127,6 +132,23 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     if (selection.permissionMode && !permissionMode) {
       throw new WorkflowSessionCompositionError('target_unavailable');
     }
+    let team: ReturnType<typeof TeamSummaryV1Schema.parse> | null = null;
+    if (deps.visibleTeamId) {
+      const parsed = TeamSummaryV1Schema.safeParse(await createAccountServerActionDeps({
+        token: deps.credentials.token,
+        serverId: deps.serverId,
+        serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+      }).homeDomainAction!({ actionId: 'teams.get', input: { v: 1, teamId: deps.visibleTeamId }, context: {}, ...(signal ? { signal } : {}) }));
+      if (!parsed.success) throw new WorkflowSessionCompositionError('target_unavailable');
+      team = parsed.data;
+    }
+    if (team && (team.id !== deps.visibleTeamId || team.archivedAt !== null)) {
+      throw new WorkflowSessionCompositionError('target_unavailable');
+    }
+    const initialAccess: SessionInitialAccessDraftV1 | undefined = team
+      ? { grants: [{ subject: { kind: 'team', teamId: team.id }, accessLevel: 'view', canApprovePermissions: false }] }
+      : undefined;
+    signal?.throwIfAborted();
     const created = await createSpawnedSession({
       credentials: deps.credentials,
       machineId: deps.machineId,
@@ -135,6 +157,12 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       spawnNonce: creationKey,
       originKind: 'run_step',
       originRunId: deps.originRunId,
+      ...(team ? {
+        initialAccess,
+        // Ordinary Team visibility is view-only, not a primary-Team choice.
+        // Required Teams use the existing server policy writer and edit floor.
+        ...(team.policy.sessionCreationPolicy === 'team_required' ? { primaryTeamId: team.id } : {}),
+      } : {}),
       workDepth: deps.workDepth + 1,
       ...(frozenRole ? { initialSessionRolesV1: {
         roleId: frozenRole.roleId, overrides: {}, sessionRoles: { [frozenRole.roleId]: frozenRole }, notes: '',

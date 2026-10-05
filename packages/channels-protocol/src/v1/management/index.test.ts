@@ -143,7 +143,7 @@ describe('Channels V1 management currentness witnesses', () => {
     it('caps every published Collection row revision witness at the Collection column ceiling', () => {
         const found = boundsByProperty();
         const revisionProperties = [...found.keys()]
-            .filter((name) => name === 'revision' || name.endsWith('Revision'));
+            .filter((name) => name !== 'triggerRevision' && (name === 'revision' || name.endsWith('Revision')));
         // The published management surface must actually carry these witnesses;
         // an empty sweep would make the assertion below vacuously true.
         expect(revisionProperties).toEqual(expect.arrayContaining([
@@ -159,6 +159,8 @@ describe('Channels V1 management currentness witnesses', () => {
             expect({ [name]: [...(found.get(name) ?? [])] })
                 .toEqual({ [name]: [PLUGIN_COLLECTION_REVISION_MAX] });
         }
+        // The scoped trigger belongs to Automation, not a Channels Collection row.
+        expect([...(found.get('triggerRevision') ?? [])]).toEqual([Number.MAX_SAFE_INTEGER]);
     });
 
     it('keeps Channels-owned authority epochs on the wider safe-integer bound', () => {

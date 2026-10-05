@@ -4,6 +4,9 @@ import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import { resolveVoiceTranscriptEntryId } from './voiceTranscriptEntryIdentity';
 import { resolveVoiceTranscriptRenderWindow, VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
 import { isVoiceTurnInterrupted, voiceTurnInterruptionVersion } from './voiceTurnInterruption';
+import { resolveVoiceContinuationNoteText } from './voiceTranscriptNotePresentation';
+import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
+import { getPreferredLanguage } from '@/text';
 
 export type VoiceTranscriptEntry = Readonly<{
     id: string;
@@ -19,6 +22,8 @@ type TranscriptSelectorCacheEntry = Readonly<{
     slice: unknown;
     limit: number;
     interruptionVersion: number;
+    viewerDeviceId: string | null;
+    language: string;
     result: ReadonlyArray<VoiceTranscriptEntry>;
 }>;
 
@@ -103,7 +108,7 @@ function extractMessageText(message: unknown): string | null {
     return null;
 }
 
-function projectTranscriptEntry(message: unknown, entryId?: string): VoiceTranscriptEntry | null {
+function projectTranscriptEntry(message: unknown, viewerDeviceId: string | null, entryId?: string): VoiceTranscriptEntry | null {
     const record = readRecord(message);
     if (!record) return null;
     const id = entryId ?? resolveVoiceTranscriptEntryId(message);
@@ -120,7 +125,7 @@ function projectTranscriptEntry(message: unknown, entryId?: string): VoiceTransc
         id,
         createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
         kind,
-        text,
+        text: kind === 'note' ? resolveVoiceContinuationNoteText(record.meta, viewerDeviceId) ?? text : text,
         ...(kind === 'assistant' && isVoiceTurnInterrupted(id)
             ? { interrupted: true }
             : {}),
@@ -130,18 +135,21 @@ function projectTranscriptEntry(message: unknown, entryId?: string): VoiceTransc
 export function selectVoiceTranscriptEntriesForConversationSession(
     state: Readonly<{ sessionMessages?: Record<string, unknown> }> | null | undefined,
     conversationSessionId: string | null | undefined,
-    options?: Readonly<{ limit?: number }>,
+    options?: Readonly<{ limit?: number; viewerDeviceId?: string | null }>,
 ): ReadonlyArray<VoiceTranscriptEntry> {
     const resolvedConversationSessionId = normalizeNonEmptyString(conversationSessionId);
     if (!resolvedConversationSessionId) return EMPTY_ENTRIES;
 
     const limit = resolveVoiceTranscriptRenderWindow(options?.limit);
+    const viewerDeviceId = options?.viewerDeviceId === undefined ? getDeviceAnalyticsId() : options.viewerDeviceId;
+    const language = getPreferredLanguage();
     const slice = state?.sessionMessages?.[resolvedConversationSessionId];
     // Interruption state changes without rewriting the message slice, so its
     // version participates in the memo key.
     const interruptionVersion = voiceTurnInterruptionVersion();
     const cached = readTranscriptSelectorCache(resolvedConversationSessionId);
-    if (cached && cached.slice === slice && cached.limit === limit && cached.interruptionVersion === interruptionVersion) {
+    if (cached && cached.slice === slice && cached.limit === limit && cached.interruptionVersion === interruptionVersion
+        && cached.viewerDeviceId === viewerDeviceId && cached.language === language) {
         return cached.result;
     }
 
@@ -155,13 +163,13 @@ export function selectVoiceTranscriptEntriesForConversationSession(
         for (let cursor = canonicalIds.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
             const messageId = canonicalIds[cursor];
             const message = typeof messageId === 'string' ? canonicalMessagesById[messageId] : undefined;
-            const entry = projectTranscriptEntry(message);
+            const entry = projectTranscriptEntry(message, viewerDeviceId);
             if (entry) newestFirst.push(entry);
         }
         const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
             ? EMPTY_ENTRIES
             : Object.freeze(newestFirst.reverse());
-        writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, result });
+        writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, viewerDeviceId, language, result });
         return result;
     }
 
@@ -204,13 +212,13 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     const newestFirst: VoiceTranscriptEntry[] = [];
     for (let cursor = orderKeys.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
         const { record, id } = orderKeys[cursor]!;
-        const entry = projectTranscriptEntry(record, id);
+        const entry = projectTranscriptEntry(record, viewerDeviceId, id);
         if (entry) newestFirst.push(entry);
     }
 
     const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
         ? EMPTY_ENTRIES
         : Object.freeze(newestFirst.reverse());
-    writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, result });
+    writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, viewerDeviceId, language, result });
     return result;
 }

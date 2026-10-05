@@ -25,12 +25,7 @@ const triageSourceRoot = join(import.meta.dirname, '..');
 const retiredLocalCursorModule = join(import.meta.dirname, 'collectionCursorProtocol.ts');
 
 /** The child projection `defineProtocolObject` embeds for the canonical cursor. */
-const CANONICAL_CURSOR_PROJECTION = Object.freeze({
-    type: 'string',
-    minLength: 1,
-    maxLength: 4096,
-    pattern: ProtocolCollectionOpaqueCursorV1Schema.jsonSchema.pattern,
-});
+const { $schema: _dialect, ...CANONICAL_CURSOR_PROJECTION } = ProtocolCollectionOpaqueCursorV1Schema.jsonSchema;
 
 function triageSourceFiles(): readonly string[] {
     const files: string[] = [];

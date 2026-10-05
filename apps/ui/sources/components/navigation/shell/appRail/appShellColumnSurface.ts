@@ -1,6 +1,7 @@
 import { StyleSheet } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
+import { glassSurfacePlaneStyle } from '@/components/ui/glass/glassSurfacePaint';
 
 /**
  * The column's plane: the sidebar grey with its hairline edge against the page. One owner for the
@@ -9,7 +10,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 export const appShellColumnSurface = StyleSheet.create((theme) => ({
     column: {
         flexShrink: 0,
-        backgroundColor: theme.colors.surface.inset,
+        ...glassSurfacePlaneStyle(theme.colors.surface.inset, 'sidebar'),
         borderRightWidth: StyleSheet.hairlineWidth,
         borderRightColor: theme.colors.border.default,
     },
@@ -19,7 +20,7 @@ export const appShellColumnSurface = StyleSheet.create((theme) => ({
      * paint it themselves.
      */
     plane: {
-        backgroundColor: theme.colors.surface.inset,
+        ...glassSurfacePlaneStyle(theme.colors.surface.inset, 'sidebar'),
     },
     /**
      * A peeked column is a layer over the open column or the page: its lift falls on the trailing

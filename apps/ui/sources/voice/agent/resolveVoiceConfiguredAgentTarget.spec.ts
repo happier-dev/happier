@@ -13,11 +13,9 @@ const { machineContributionRegistryProjectionDescribe } = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
-  getMachineContributionRegistryProjectionRevision: () => 0,
+vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>(),
   machineContributionRegistryProjectionDescribe,
-  machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-  machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 import {
@@ -65,9 +63,6 @@ function enableExternalAgentProjection(generation: number): void {
             },
           },
         },
-      },
-      backendsById: {
-        [EXTERNAL_AGENT_ID]: { id: EXTERNAL_AGENT_ID, agentId: EXTERNAL_AGENT_ID },
       },
       familiesById: {},
     }),
@@ -130,9 +125,6 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
             },
           },
         },
-        backendsById: {
-          [agentId]: { id: agentId, agentId },
-        },
         familiesById: {},
       }),
     });
@@ -173,9 +165,6 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
               sessions: { open: ['create'], delivery: ['newTurn'], cancel: false },
             },
           },
-        },
-        backendsById: {
-          [agentId]: { id: agentId, agentId },
         },
         familiesById: {},
       }),
@@ -253,38 +242,42 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
     });
   });
 
-  it('fails closed when the persisted external selection is disabled for this account', async () => {
-    enableExternalAgentProjection(7);
-    const { storage } = await import('@/sync/domains/state/storage');
-    const original = storage.getState().settings;
-    storage.setState((state) => ({
-      ...state,
-      settings: {
-        ...state.settings,
-        backendEnabledByTargetKey: {
-          ...state.settings.backendEnabledByTargetKey,
-          [EXTERNAL_TARGET_KEY]: false,
+  it.each([EXTERNAL_TARGET_KEY, 'malformed-persisted-key'])(
+    'fails closed when the persisted external selection is disabled for this account (key=%s)',
+    async (agentTargetKey) => {
+      enableExternalAgentProjection(7);
+      const { storage } = await import('@/sync/domains/state/storage');
+      const original = storage.getState().settings;
+      storage.setState((state) => ({
+        ...state,
+        settings: {
+          ...state.settings,
+          backendEnabledByTargetKey: {
+            ...state.settings.backendEnabledByTargetKey,
+            [EXTERNAL_TARGET_KEY]: false,
+          },
         },
-      },
-    }));
-    try {
-      const result = await resolveVoiceConfiguredAgentTarget({
-        machineId: 'machine-1',
-        selection: {
-          agentId: EXTERNAL_AGENT_ID,
-          agentTargetKey: EXTERNAL_TARGET_KEY,
-          agentIdentity: EXTERNAL_IDENTITY,
-        },
-      });
+      }));
+      try {
+        expect(storage.getState().settings.backendEnabledByTargetKey[EXTERNAL_TARGET_KEY]).toBe(false);
+        const result = await resolveVoiceConfiguredAgentTarget({
+          machineId: 'machine-1',
+          selection: {
+            agentId: EXTERNAL_AGENT_ID,
+            agentTargetKey,
+            agentIdentity: EXTERNAL_IDENTITY,
+          },
+        });
 
-      expect(result).toMatchObject({
-        ok: false,
-        errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
-      });
-    } finally {
-      storage.setState((state) => ({ ...state, settings: original }));
-    }
-  });
+        expect(result).toMatchObject({
+          ok: false,
+          errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
+        });
+      } finally {
+        storage.setState((state) => ({ ...state, settings: original }));
+      }
+    },
+  );
 
   it('keeps a legacy persisted Agent id working as a raw backend target when no exact facts were recorded', async () => {
     machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });

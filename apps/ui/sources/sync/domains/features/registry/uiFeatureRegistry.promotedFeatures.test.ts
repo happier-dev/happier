@@ -15,6 +15,9 @@ const promotedFeatureIds = [
     'sessions.direct',
     'sessions.folders',
     'terminal.embeddedPty',
+    // Voice Experience (plan r1 VE-04/VE-06): the composer mark, presence and "Set up voice" are the
+    // product's Voice entry; the Settings → Features switch remains the person's own off switch.
+    'voice',
 ] satisfies FeatureId[];
 
 describe('UI promoted feature registry', () => {
@@ -40,5 +43,13 @@ describe('UI promoted feature registry', () => {
                 featureToggles: {},
             }, featureId)).toBe(true);
         }
+    });
+
+    it('preserves an explicit Voice off choice over its standard default', () => {
+        expect(resolveUiFeatureToggleEnabled({
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: { voice: false },
+        }, 'voice')).toBe(false);
     });
 });

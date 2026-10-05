@@ -15,6 +15,7 @@ import {
     savePendingOutboxMessage,
     type PersistedPendingOutboxMessage,
 } from '@/sync/domains/state/pendingOutboxPersistence';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { createSessionEncryptionUnavailableError } from '@/sync/encryption/sessionEncryptionUnavailableError';
@@ -1059,25 +1060,13 @@ const pendingCancellationRequestedLocalIdsByScopedSession = new Map<string, Set<
 const deletedPendingLocalIdsByScopedSession = new Map<string, Set<string>>();
 type PendingSnapshotRefreshToken = {
     readonly acceptedLocalIdsAfterCapture: Set<string>;
-    /**
-     * The highest session sequence this client could already have observed when the snapshot
-     * request was ISSUED — the server's own monotone per-session counter. A commit ABOVE it is
-     * newer than the snapshot's server read; a commit at or below it is old news this client may
-     * simply not have loaded yet.
-     *
-     * `null` when the client held no loaded committed message at that point — a marked-loaded but
-     * empty transcript included — i.e. no basis to call anything newer than the read (see
-     * `resolveCommittedTranscriptSeqHighWaterMark`).
-     */
     readonly committedTranscriptSeqAtCapture: number | null;
-    /**
-     * Set when a local write (a pending PATCH) has moved the projection past any read older than
-     * itself, so THIS refresh may no longer apply — see
-     * {@link supersedePendingSnapshotRefreshForLocalWrite}.
-     * It is the refresh's AUTHORITY that the write invalidates, not the two capture-time facts
-     * above: those describe the response's own read, which a local write does not move, and a
-     * successor answered by that same still-outstanding read still needs them.
-     */
+    readonly pendingVersionAtCapture: number | null;
+    readonly sessionEncryptionAtCapture: ReturnType<Encryption['getSessionEncryption']>;
+    readonly transcriptAtCapture: ReturnType<typeof storage.getState>['sessionMessages'][string] | undefined;
+    readonly requestAtCapture: Parameters<typeof fetchAndApplyPendingMessagesV2>[0]['request'];
+    readonly isOutboxScopeCurrentAtCapture: Parameters<typeof fetchAndApplyPendingMessagesV2>[0]['isOutboxScopeCurrent'];
+    readonly completion: Promise<void>;
     isSupersededByLocalWrite: boolean;
 };
 const latestPendingSnapshotRefreshByScopedSession = new Map<string, PendingSnapshotRefreshToken>();
@@ -1103,6 +1092,15 @@ function captureCommittedTranscriptSeqForSession(sessionId: string): number | nu
     });
 }
 
+function readPendingSnapshotVersion(scope: ServerAccountScope, sessionId: string): number | null {
+    const state = storage.getState();
+    const row = readSessionListRowForServerId(state.sessionListRowsByServerId, scope.serverId, sessionId);
+    if (row?.pendingVersion !== undefined) return row.pendingVersion;
+    return areServerAccountScopesEqual(getActiveServerAccountScope(), scope)
+        ? state.sessions[sessionId]?.pendingVersion ?? null
+        : null;
+}
+
 function collectCommittedTranscriptLocalIdsAboveSeq(sessionId: string, aboveSeq: number): ReadonlySet<string> {
     const sessionMessages = storage.getState().sessionMessages[sessionId];
     if (!sessionMessages) return new Set<string>();
@@ -1125,9 +1123,8 @@ function collectCommittedTranscriptLocalIdsAboveSeq(sessionId: string, aboveSeq:
  * flaps pending → committed → pending → committed, moving the transcript's content height three
  * times for one utterance (`.project/reviews/2026-08-06-simplify-and-native/C3-void-writer.md`).
  *
- * The fence is the capture point of the RESPONSE being applied — see the token construction in
- * {@link fetchAndApplyPendingMessagesV2}, which inherits an in-flight refresh's capture because the
- * transport may answer both from one GET.
+ * Each refresh owns its server read and capture point. Overlapping callers share the complete
+ * refresh only while the Pending version and transcript are unchanged.
  *
  * The discriminator is the server's own monotone per-session `seq`, NOT membership in the loaded
  * transcript. A pending row and a committed message for one localId can coexist PERMANENTLY: the
@@ -1363,20 +1360,7 @@ function markPendingLocalIdAcceptedAfterSnapshotCapture(
         ?.acceptedLocalIdsAfterCapture.add(localId);
 }
 
-/**
- * A pending PATCH has written a projection that every read older than it is now stale against, so
- * the refresh currently registered for this scoped session must not apply its response.
- *
- * The invalidation is the refresh's AUTHORITY only. Deleting the map entry used to express it, but
- * that also erased the entry's capture-time facts — the accepted-localId fence and the session
- * sequence mark — which belong to the still-outstanding GET rather than to the refresh that issued
- * it. `apiSocket.request` can answer a refresh registered AFTER this write from that same GET, and
- * such a successor inherits from this entry; with the entry gone it took a fresh EMPTY accepted set,
- * the trivially-passing state of {@link pendingSnapshotRepresentsAcceptedLocalIdsAfterCapture}, and
- * applied a pre-ACK response over a row the server already owned — message loss. The superseded
- * token stays owned by its own refresh, so the `finally` in {@link fetchAndApplyPendingMessagesV2}
- * still clears it and the inheritance window is unchanged.
- */
+/** A successful local Pending write invalidates older reads for this Home and session. */
 function supersedePendingSnapshotRefreshForLocalWrite(
     scope: ServerAccountScope,
     sessionId: string,
@@ -1545,6 +1529,7 @@ function retirePendingProjectionAfterConfirmedCancellation(
 async function deletePendingOutboxMessageAtServer(params: {
     sessionId: string;
     localId: string;
+    outboxScope: ServerAccountScope;
     recipient?: PendingMessage['recipient'];
     request: (path: string, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
@@ -1552,6 +1537,7 @@ async function deletePendingOutboxMessageAtServer(params: {
     if (!response.ok && response.status !== 404) {
         await assertPendingResponseOk(response, 'Failed to delete pending message');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, params.sessionId);
 }
 
 async function completePendingOutboxCancellationIfRequested(params: {
@@ -1982,39 +1968,51 @@ export async function fetchAndApplyPendingMessagesV2(params: {
     outboxScope: ServerAccountScope;
     isOutboxScopeCurrent?: () => boolean | Promise<boolean>;
 }): Promise<void> {
-    const { sessionId, encryption, request } = params;
+    const { sessionId } = params;
     const refreshKey = pendingSnapshotKey(params.outboxScope, sessionId, params.recipient);
-    // The capture point must belong to the RESPONSE, not to the caller. `apiSocket.request` shares
-    // one in-flight GET with every later caller and drops the de-dupe entry only in the FIRST
-    // caller's continuation, so a refresh starting after the committed twin can be answered by the
-    // request an earlier refresh issued before it. While that earlier refresh is still registered,
-    // inherit its capture: the response is either the predecessor's — captured exactly then — or
-    // this refresh's own, which was issued later still and therefore cannot be older than the
-    // inherited mark. Keying on the PRESENCE of a predecessor is load-bearing: `??` would silently
-    // take a fresh capture whenever the predecessor's mark is `null` — exactly the no-basis state
-    // the mark exists to preserve — and reopen the false withhold on the adopting refresh.
-    // BOTH capture-time facts are inherited, for the one reason above.
-    // `markPendingLocalIdAcceptedAfterSnapshotCapture` records an accepted localId on the LATEST
-    // registered token only, so every accept the predecessor recorded still postdates the response
-    // this refresh may adopt; a fresh empty set would pass the accepted-ID guard vacuously and
-    // publish a pre-ACK response over a row the server already owns, which is message loss rather
-    // than a flap. The set is COPIED, not aliased: each token records the accepts after its OWN
-    // capture, and sharing one Set would let this refresh's later accepts bind the predecessor
-    // retroactively. A predecessor superseded by a local write is still inherited from — the write
-    // took its authority, not its capture (see
-    // {@link supersedePendingSnapshotRefreshForLocalWrite}) — but this refresh starts authoritative.
+    const state = storage.getState();
+    const pendingVersionAtCapture = readPendingSnapshotVersion(params.outboxScope, sessionId);
+    const transcriptAtCapture = state.sessionMessages[sessionId];
+    const sessionEncryptionAtCapture = state.sessions[sessionId]?.encryptionMode === 'plain'
+        ? null
+        : params.encryption?.getSessionEncryption(sessionId) ?? null;
     const inFlightRefresh = latestPendingSnapshotRefreshByScopedSession.get(refreshKey);
+    if (inFlightRefresh
+        && !inFlightRefresh.isSupersededByLocalWrite
+        && inFlightRefresh.pendingVersionAtCapture === pendingVersionAtCapture
+        && inFlightRefresh.sessionEncryptionAtCapture === sessionEncryptionAtCapture
+        && inFlightRefresh.requestAtCapture === params.request
+        && inFlightRefresh.isOutboxScopeCurrentAtCapture === params.isOutboxScopeCurrent
+        && inFlightRefresh.transcriptAtCapture === transcriptAtCapture) {
+        return inFlightRefresh.completion;
+    }
+
+    // Coalesce the complete read and reconciliation at the existing Home/session/recipient owner.
+    // A receipt, transcript repair, or local edit starts its own read rather than adopting older
+    // HTTP work. Each token consequently owns its own capture facts.
+    const completion = Promise.resolve().then(() => fetchAndApplyPendingMessagesV2Owned(params, refreshKey, refreshToken));
     const refreshToken: PendingSnapshotRefreshToken = {
-        acceptedLocalIdsAfterCapture: new Set<string>(inFlightRefresh?.acceptedLocalIdsAfterCapture),
-        committedTranscriptSeqAtCapture: inFlightRefresh
-            ? inFlightRefresh.committedTranscriptSeqAtCapture
-            : captureCommittedTranscriptSeqForSession(sessionId),
+        acceptedLocalIdsAfterCapture: new Set<string>(),
+        committedTranscriptSeqAtCapture: captureCommittedTranscriptSeqForSession(sessionId),
+        pendingVersionAtCapture,
+        sessionEncryptionAtCapture,
+        transcriptAtCapture,
+        requestAtCapture: params.request,
+        isOutboxScopeCurrentAtCapture: params.isOutboxScopeCurrent,
+        completion,
         isSupersededByLocalWrite: false,
     };
     latestPendingSnapshotRefreshByScopedSession.set(refreshKey, refreshToken);
+    return completion;
+}
 
+async function fetchAndApplyPendingMessagesV2Owned(
+    params: Parameters<typeof fetchAndApplyPendingMessagesV2>[0],
+    refreshKey: string,
+    refreshToken: PendingSnapshotRefreshToken,
+): Promise<void> {
+    const { sessionId, request } = params;
     try {
-    const session = storage.getState().sessions[sessionId] ?? null;
     if (isDemoModeActive()) {
         storage.getState().applyPendingSnapshot(sessionId, {
             messages: storage.getState().sessionPending[sessionId]?.messages ?? [],
@@ -2022,17 +2020,15 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         });
         return;
     }
-    const sessionEncryptionMode: 'e2ee' | 'plain' = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-    const sessionEncryption = sessionEncryptionMode === 'plain'
-        ? null
-        : encryption?.getSessionEncryption(sessionId) ?? null;
+    const sessionEncryption = refreshToken.sessionEncryptionAtCapture;
 
-    const response = await request(`${pendingQueuePath(sessionId, params.recipient)}?includeDiscarded=1`, { method: 'GET' });
+    const response = await request(`${pendingQueuePath(sessionId, params.recipient)}?includeDiscarded=1`, { method: 'GET', cache: 'no-store' });
     // This refresh may apply only while it is BOTH the latest registered refresh and unsuperseded by
     // a local write.
     const isRefreshTokenAuthoritative = (): boolean =>
         latestPendingSnapshotRefreshByScopedSession.get(refreshKey) === refreshToken
-        && !refreshToken.isSupersededByLocalWrite;
+        && !refreshToken.isSupersededByLocalWrite
+        && readPendingSnapshotVersion(params.outboxScope, sessionId) === refreshToken.pendingVersionAtCapture;
     const isRefreshScopeCurrent = async (): Promise<boolean> => {
         if (!isRefreshTokenAuthoritative()) return false;
         const isScopeCurrent = params.isOutboxScopeCurrent
@@ -3080,6 +3076,7 @@ export async function updatePendingMessageV2(params: {
         if (!response.ok) {
             await assertPendingResponseOk(response, 'Failed to update pending message');
         }
+        supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
         // A replacement identity changes the server row's lookup key. Do not
         // update the local projection unless this exact response confirms it;
         // an older server that strips the new field must leave the editor
@@ -3091,7 +3088,6 @@ export async function updatePendingMessageV2(params: {
                 ? readPendingLocalId(payload.localId)
                 : null;
             if (responseLocalId !== params.replacementLocalId) {
-                supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
                 throw new PendingMessageMutationProtocolUnsupportedError();
             }
             confirmedLocalId = responseLocalId;
@@ -3110,7 +3106,6 @@ export async function updatePendingMessageV2(params: {
         // already succeeded, so superseding beneath them would leave an in-flight pre-PATCH read
         // free to overwrite the write the server just accepted.
         markPendingLocalIdAcceptedAfterSnapshotCapture(params.outboxScope, sessionId, confirmedLocalId, recipient);
-        supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
         // Past that acceptance boundary a retired owner scope may only stop the
         // LOCAL projection — the write is already durable, and rejecting here
         // loses the Composer's one post-accept settlement and its prepared media.
@@ -3193,6 +3188,7 @@ export async function updatePendingRequestedActionV2(params: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
+    if (response.ok) supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, params.sessionId);
     if (!response.ok) {
         await throwPendingAuthErrorIfNeeded(response);
     }
@@ -3211,7 +3207,6 @@ export async function updatePendingRequestedActionV2(params: {
     // of that fact.
     markPendingLocalIdAcceptedAfterSnapshotCapture(params.outboxScope, params.sessionId, localId);
     if (!isPlainObject(payload) || typeof payload.didUpdate !== 'boolean') return;
-    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, params.sessionId);
     const current = (await findPendingOutboxMessage(params.sessionId, localId, params.outboxScope));
     const projection = findPendingProjectionByCanonicalLocalId(params.sessionId, localId, params.outboxScope);
     // Past the accepted PATCH a retired owner scope may only stop the LOCAL
@@ -3333,6 +3328,7 @@ export async function deletePendingMessageV2(params: {
         if (!response.ok && response.status !== 404) {
             await assertPendingResponseOk(response, 'Failed to delete pending message');
         }
+        supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     } catch (error) {
         throw error;
     }
@@ -3365,6 +3361,7 @@ export async function discardPendingMessageV2(params: {
     if (!response.ok) {
         await assertPendingResponseOk(response, 'Failed to discard pending message');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     await fetchAndApplyPendingMessagesV2({
         sessionId, recipient, encryption, request, outboxScope: params.outboxScope,
         isOutboxScopeCurrent: params.isOutboxScopeCurrent,
@@ -3390,6 +3387,7 @@ export async function dismissPendingDeliveryV2(params: {
     if (!response.ok) {
         await assertPendingResponseOk(response, 'Failed to dismiss pending delivery');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     await fetchAndApplyPendingMessagesV2({
         sessionId, recipient, encryption, request, outboxScope: params.outboxScope,
         isOutboxScopeCurrent: params.isOutboxScopeCurrent,
@@ -3416,6 +3414,7 @@ export async function blockPendingDeliveryV2(params: {
     if (!response.ok) {
         await assertPendingResponseOk(response, 'Failed to block pending delivery');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     await fetchAndApplyPendingMessagesV2({
         sessionId, recipient, encryption, request, outboxScope: params.outboxScope,
         isOutboxScopeCurrent: params.isOutboxScopeCurrent,
@@ -3441,6 +3440,7 @@ export async function sendPendingDeliveryAsNewV2(params: {
     if (!response.ok) {
         await assertPendingResponseOk(response, 'Failed to send pending delivery as new');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     const payload = await response.json().catch(() => null) as { newLocalId?: unknown } | null;
     const newLocalId = readPendingLocalId(payload?.newLocalId);
     if (!newLocalId) {
@@ -3481,6 +3481,7 @@ export async function markPendingDeliveryHandledV2(params: {
     if (!response.ok) {
         await assertPendingResponseOk(response, 'Failed to mark pending delivery handled');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     const existing = revalidateResolvedPendingMutationTarget(
         sessionId,
         target,
@@ -3513,6 +3514,7 @@ export async function restoreDiscardedPendingMessageV2(params: {
     if (!response.ok) {
         await assertPendingResponseOk(response, 'Failed to restore discarded message');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     await fetchAndApplyPendingMessagesV2({
         sessionId, recipient, encryption, request, outboxScope: params.outboxScope,
         isOutboxScopeCurrent: params.isOutboxScopeCurrent,
@@ -3535,6 +3537,7 @@ export async function deleteDiscardedPendingMessageV2(params: {
         if (!response.ok && response.status !== 404) {
             await assertPendingResponseOk(response, 'Failed to delete discarded message');
         }
+        supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
         markPendingLocalIdDeleted(params.outboxScope, sessionId, localId);
         await fetchAndApplyPendingMessagesV2({
             sessionId, recipient, encryption, request, outboxScope: params.outboxScope,
@@ -3568,8 +3571,16 @@ export async function reorderPendingMessagesV2(params: {
         body: JSON.stringify({ orderedLocalIds }),
     });
     if (!response.ok) {
+        // These route responses reject admission before queue positions are changed.
+        // Other failures can follow an accepted write (for example changed-event emission).
+        if (response.status === 400 || response.status === 404) {
+            throw new HappyError('Pending reorder was rejected', false, {
+                kind: 'server', status: response.status, code: 'pending_reorder_rejected',
+            });
+        }
         await assertPendingResponseOk(response, 'Failed to reorder pending messages');
     }
+    supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     await fetchAndApplyPendingMessagesV2({
         sessionId, recipient, encryption, request, outboxScope: params.outboxScope,
         isOutboxScopeCurrent: params.isOutboxScopeCurrent,

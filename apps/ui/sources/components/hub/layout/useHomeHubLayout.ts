@@ -1,54 +1,58 @@
 import * as React from 'react';
-
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import type { HomeHubLayoutIntent } from '@happier-dev/protocol/home';
+import type { WidgetInstanceV1, WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
-
-import {
-    applyHomeHubLayoutIntent,
-    listHiddenHomeSetupSteps,
-    resolveHomeHubLayout,
-    type HomeHubLayoutValue,
-    type HomeHubSection,
-} from './homeHubLayout';
+import { resolveHomeHubLayout, listHiddenHomeSetupSteps, HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubSection } from './homeHubLayout';
 import { useHomeWidgetCandidates } from './useHomeWidgetCandidates';
-import { HOME_HUB_BUILTIN_SECTIONS } from '../homeHubSections';
+import { useHomeHubArtifactLayout } from './useHomeHubArtifactLayout';
 
 export type HomeHubLayout = Readonly<{
     sections: readonly HomeHubSection<WidgetCandidate>[];
-    /** Installed widgets not on Home (Customize → Add widgets). */
     available: readonly WidgetCandidate[];
     isDefault: boolean;
-    /** How many "Get set up" steps the person dismissed (Customize → Hidden setup steps). */
     hiddenSetupStepCount: number;
-    move: (id: string, step: -1 | 1) => void;
-    /** Customize's drag: the listed sections in their new order. */
-    reorder: (orderedIds: readonly string[]) => void;
-    setHidden: (id: string, hidden: boolean) => void;
-    setFrameStyle: (id: string, style: 'card' | 'plain' | null) => void;
-    showHiddenSetupSteps: () => void;
-    reset: () => void;
+    status: 'loading' | 'ready' | 'error';
+    errorCode?: string;
+    retry: () => Promise<void>;
+    canCancelFailedIntent: boolean;
+    cancelFailedIntent: () => void;
+    move: (id: string, step: -1 | 1) => Promise<void>;
+    moveTo: (id: string, position: Extract<HomeHubLayoutIntent, { kind: 'move_to' }>['position']) => Promise<void>;
+    reorder: (orderedIds: readonly string[]) => Promise<void>;
+    setHidden: (id: string, hidden: boolean) => Promise<void>;
+    setFrameStyle: (id: string, style: 'card' | 'plain' | null) => Promise<void>;
+    showHiddenSetupSteps: () => Promise<void>;
+    reset: () => Promise<void>;
+    addInstance: (instance: WidgetInstanceV1) => Promise<void>;
+    remove: (instanceId: string) => Promise<void>;
+    rename: (instanceId: string, displayName?: string) => Promise<void>;
+    setInputs: (instanceId: string, bindings: WidgetInputBindingsV1) => Promise<void>;
+    setWidth: (instanceId: string, width: 'half' | 'full') => Promise<void>;
 }>;
-
-/** The Account's home layout (synced across devices through Account Settings). */
+/** Projection only: acknowledged Account Artifact layout plus stable, unpersisted defaults. */
 export function useHomeHubLayout(): HomeHubLayout {
-    const [layout, setLayout] = useSettingMutable('homeHubLayoutV1');
+    const state = useHomeHubArtifactLayout();
     const widgets = useHomeWidgetCandidates();
-    const resolved = React.useMemo(() => resolveHomeHubLayout(layout, HOME_HUB_BUILTIN_SECTIONS, widgets), [layout, widgets]);
-    return React.useMemo(() => {
-        const write = (next: HomeHubLayoutValue) => {
-            if (next !== layout) setLayout({ ...next, order: [...next.order], hidden: [...next.hidden] });
-        };
-        return {
-            sections: resolved.sections,
-            available: resolved.available,
-            isDefault: layout.order.length === 0 && layout.hidden.length === 0 && !layout.sections,
-            hiddenSetupStepCount: listHiddenHomeSetupSteps(layout).length,
-            move: (id, step) => write(applyHomeHubLayoutIntent(layout, HOME_HUB_BUILTIN_SECTIONS, widgets, { kind: 'move', sectionId: id, step })),
-            reorder: (sectionIds) => write(applyHomeHubLayoutIntent(layout, HOME_HUB_BUILTIN_SECTIONS, widgets, { kind: 'reorder', sectionIds: [...sectionIds] })),
-            showHiddenSetupSteps: () => write(applyHomeHubLayoutIntent(layout, HOME_HUB_BUILTIN_SECTIONS, widgets, { kind: 'restore_setup' })),
-            setHidden: (id, hidden) => write(applyHomeHubLayoutIntent(layout, HOME_HUB_BUILTIN_SECTIONS, widgets, { kind: 'visibility', sectionId: id, hidden })),
-            setFrameStyle: (sectionId, frameStyle) => write(applyHomeHubLayoutIntent(layout, HOME_HUB_BUILTIN_SECTIONS, widgets, { kind: 'frameStyle', sectionId, frameStyle })),
-            reset: () => write(applyHomeHubLayoutIntent(layout, HOME_HUB_BUILTIN_SECTIONS, widgets, { kind: 'reset' })),
-        };
-    }, [layout, resolved, setLayout, widgets]);
+    const layout = state.layout;
+    const resolved = React.useMemo(() => resolveHomeHubLayout(layout, HOME_HUB_BUILTIN_DEFINITIONS, widgets), [layout, widgets]);
+    const dispatch = state.dispatch;
+    return React.useMemo(() => ({
+        sections: resolved.sections, available: resolved.available,
+        isDefault: layout.order.length === 0 && layout.hidden.length === 0 && layout.instances.length === 0 && !layout.sections,
+        hiddenSetupStepCount: listHiddenHomeSetupSteps(layout).length,
+        status: state.status, ...(state.errorCode ? { errorCode: state.errorCode } : {}), retry: state.retry,
+        canCancelFailedIntent: Boolean(state.failedIntent), cancelFailedIntent: state.cancelFailedIntent,
+        move: (sectionId, step) => dispatch({ kind: 'move', sectionId, step }),
+        moveTo: (sectionId, position) => dispatch({ kind: 'move_to', sectionId, position }, { rethrow: true }),
+        reorder: sectionIds => dispatch({ kind: 'reorder', sectionIds: [...sectionIds] }),
+        setHidden: (sectionId, hidden) => dispatch({ kind: 'visibility', sectionId, hidden }),
+        setFrameStyle: (sectionId, frameStyle) => dispatch({ kind: 'frameStyle', sectionId, frameStyle }),
+        showHiddenSetupSteps: () => dispatch({ kind: 'restore_setup' }),
+        reset: () => dispatch({ kind: 'reset' }),
+        addInstance: instance => dispatch({ kind: 'widget_add', instance }),
+        remove: instanceId => dispatch({ kind: 'widget_remove', instanceId }),
+        rename: (instanceId, displayName) => dispatch({ kind: 'widget_rename', instanceId, ...(displayName ? { displayName } : {}) }),
+        setInputs: (instanceId, bindings) => dispatch({ kind: 'widget_inputs', instanceId, bindings }),
+        setWidth: (instanceId, width) => dispatch({ kind: 'widget_width', instanceId, width }),
+    }), [dispatch, layout, resolved, state.cancelFailedIntent, state.errorCode, state.failedIntent, state.retry, state.status]);
 }

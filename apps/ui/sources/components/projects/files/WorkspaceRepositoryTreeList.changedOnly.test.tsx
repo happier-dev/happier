@@ -98,6 +98,7 @@ describe('WorkspaceRepositoryTreeList · Changed only', () => {
                 neutral: { foreground: '#b70' },
                 success: { foreground: '#0a0' },
                 danger: { foreground: '#d00' },
+                active: { foreground: '#07f', background: '#eef' },
             },
         },
     } as any;
@@ -150,6 +151,14 @@ describe('WorkspaceRepositoryTreeList · Changed only', () => {
         expect(textOf(screen.findHostByTestId(`${rowId('apps/ui/sources')}-changes`))).toBe('3');
     });
 
+    it('renders permanent file metadata before any hover or action-menu interaction', async () => {
+        const screen = await render({ renderRowMetadata: (node) => node.type === 'file'
+            ? React.createElement('Text', { testID: `find-count:${node.path}` }, '3') : null });
+        expect(textOf(screen.findHostByTestId('find-count:AGENTS.md'))).toBe('3');
+        const row = screen.findAll((node) => node.props.testID === rowId('AGENTS.md') && node.props.node !== undefined)[0];
+        expect(row.props.rowActions).toBeNull();
+    });
+
     it('closes and reopens a folder of the footprint', async () => {
         const screen = await render();
         await act(async () => {
@@ -170,6 +179,19 @@ describe('WorkspaceRepositoryTreeList · Changed only', () => {
         expect(textOf(screen.findHostByTestId(`${rowId('AGENTS.md')}-change`))).toBe('M');
         const selected = screen.findAll((node) => node.props?.testID === rowId('AGENTS.md') && node.props.selected === true);
         expect(selected.length).toBeGreaterThan(0);
+    });
+
+    it('lights up a selected commit proposal\'s files with their part, and leaves the checkboxes meaning staging', async () => {
+        const checked = new Set(['AGENTS.md']);
+        const screen = await render({
+            rowSelection: { revision: 1, getState: (node) => (checked.has(node.path) ? 'checked' : 'unchecked'), onToggle: vi.fn(), accessibilityLabel: (node) => node.name },
+            rowProposal: { revision: 'p1', paths: new Set(['apps/ui/sources/components/settings/modal/SettingsModal.tsx']),
+                notes: new Map([['apps/ui/sources/components/settings/modal/SettingsModal.tsx', '1 of 2 changes']]) },
+        });
+        expect(textOf(screen.findHostByTestId(`${rowId('apps/ui/sources/components/settings/modal/SettingsModal.tsx')}-proposal-note`))).toBe('1 of 2 changes');
+        expect(screen.findAllByTestId(`${rowId('AGENTS.md')}-proposal-note`)).toHaveLength(0);
+        const agents = screen.findHostByTestId(`${rowId('AGENTS.md')}-select`);
+        expect(agents?.props['aria-checked'] ?? agents?.props.accessibilityState?.checked).toBe(true);
     });
 
     it('says nothing has changed and offers every file back when the list is empty', async () => {

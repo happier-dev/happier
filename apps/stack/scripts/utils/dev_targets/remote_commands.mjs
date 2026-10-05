@@ -51,8 +51,11 @@ const COMMAND_RULES = [
   { when: { script: ['check:first-party-plugins:finite', 'check:first-party-plugins:finite:local', 'plugins:aggregate:finite', 'test:migration:bundled-plugin-projections', 'test:migration:governance'] }, set: { ...validation, generatorCheck: '1', componentOverride: 'apps/cli' } },
 ];
 const FINAL_COMMAND_RULES = [
+  { when: { entry: ['remote_runtime_build.mjs'] }, set: { heavyClass: 'compilation' } },
   { when: { validation: ['1'] }, set: { commandClass: 'targeted-validation' } },
   { when: { validation: ['1'], component: ['.'] }, set: { commandClass: 'full-validation' } },
+  { when: { family: ['build'] }, set: { heavyClass: 'compilation' } },
+  { when: { kind: ['typecheck'] }, set: { heavyClass: 'compilation' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
 ];
 function commandBasename(value) {
@@ -300,7 +303,7 @@ function posixQuote(value) {
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 }
 
-function powershellQuote(value) {
+export function powershellQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
@@ -311,8 +314,8 @@ function powershellNativeArgument(value) {
   return powershellQuote(escaped);
 }
 
-function encodePowerShell(script) {
-  return Buffer.from(String(script), 'utf16le').toString('base64');
+export function buildRemotePowerShellCommand(script) {
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(String(script), 'utf16le').toString('base64')}`;
 }
 
 function prependRemotePath(target, script) {
@@ -535,7 +538,7 @@ export function buildRemoteCancelCommand(target, { executionId } = {}) {
 function wrapRemoteScript(target, script) {
   const wrappedScript = prependRemotePath(target, script);
   if (target.platform === 'windows') {
-    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodePowerShell(wrappedScript)}`;
+    return buildRemotePowerShellCommand(wrappedScript);
   }
   return `bash -lc ${posixQuote(wrappedScript)}`;
 }
@@ -575,7 +578,11 @@ export function buildRemoteEnsureDirectoriesCommand(target) {
   );
 }
 
+export const REMOTE_DOCTOR_RUNTIME_TARGET_PREFIX = '__HAPPIER_RUNTIME_TARGET__=';
+
 export function buildRemoteDoctorCommand(target) {
+  const runtimeTargetExpression = JSON.stringify(REMOTE_DOCTOR_RUNTIME_TARGET_PREFIX)
+    + ' + JSON.stringify({platform:process.platform,arch:process.arch})';
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
@@ -588,6 +595,7 @@ export function buildRemoteDoctorCommand(target) {
           `${command} --version`,
           'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
         ]),
+        `node -p ${powershellNativeArgument(runtimeTargetExpression)}`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -600,6 +608,7 @@ export function buildRemoteDoctorCommand(target) {
         `command -v ${command} >/dev/null || { echo "${label} is required on the remote target" >&2; exit 127; }`
       )),
       ...REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN.map(({ command }) => `${command} --version`),
+      `node -p ${posixQuote(runtimeTargetExpression)}`,
     ].join('; '),
   );
 }

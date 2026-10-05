@@ -1,4 +1,5 @@
 import type { CliActionMachineAdmissionTransport } from '@/session/actions/createCliActionExecutorFromCredentials';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 /** A local process has no authority to substitute Account admission for this socket. */
 export class MachineAdmissionTransportUnavailableError extends Error {
@@ -13,11 +14,12 @@ export class MachineAdmissionTransportUnavailableError extends Error {
 let currentTransport: Readonly<{
   serverId: string;
   transport: CliActionMachineAdmissionTransport;
+  clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
 }> | null = null;
 
 /** The daemon installs its current Machine socket once for process-local Action ingress. */
 export function installDaemonMachineAdmissionTransport(
-  binding: Readonly<{ serverId: string; transport: CliActionMachineAdmissionTransport }>,
+  binding: Readonly<{ serverId: string; transport: CliActionMachineAdmissionTransport; clientActionExecute?: ActionExecutorDeps['clientActionExecute'] }>,
 ): () => void {
   if (currentTransport) throw new Error('daemon_machine_admission_transport_already_installed');
   currentTransport = binding;
@@ -28,4 +30,8 @@ export function installDaemonMachineAdmissionTransport(
 
 export function getDaemonMachineAdmissionTransport(serverId: string): CliActionMachineAdmissionTransport | null {
   return currentTransport?.serverId === serverId ? currentTransport.transport : null;
+}
+
+export function getDaemonClientActionExecutor(serverId: string): ActionExecutorDeps['clientActionExecute'] {
+  return currentTransport?.serverId === serverId ? currentTransport.clientActionExecute : undefined;
 }

@@ -14,6 +14,7 @@ import { waitForPidInspection } from '@/testkit/process/pidInspection';
 import type { TrackedSession } from './types';
 import { spawnTestProcess } from '@/testkit/process/spawn';
 import { projectPath } from '@/projectPath';
+import { readProcessIdentityByPid } from './processIdentity';
 import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
@@ -85,10 +86,31 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
 
       const happyProcesses = await findAllHappyProcesses();
       const map = new Map<number, TrackedSession>();
-      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map });
+      const identity = await readProcessIdentityByPid(p.pid);
+      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map,
+        processIdentityByPid: new Map(identity ? [[p.pid, identity]] : []) });
       expect(adopted).toBe(1);
       expect(map.get(p.pid)?.reattachedFromDiskMarker).toBe(true);
       expect(map.get(p.pid)?.processCommandHash).toBe(hashProcessCommand(proc.command));
+    });
+
+    it('heals an incomplete marker with the canonical OS command hash, not the longer discovery command', async () => {
+      const { findHappyProcessByPid } = await import('./doctor');
+      const { readProcessIdentityByPid } = await import('./processIdentity');
+      const { writeSessionMarker, readSessionMarkerForPid, hashProcessCommand } = await import('./sessionRegistry');
+      const child = spawnTestProcess(process.execPath, ['-e',
+        `/* ${projectPath()}/bin/happier.mjs codex --started-by daemon --existing-session healed-canonical-reader ${'x'.repeat(1500)} */ setInterval(() => {}, 1000)`]);
+      const pid = child.pid!;
+      spawned.push(() => { child.kill('SIGTERM'); });
+      const discovery = await waitForPidInspection(findHappyProcessByPid, pid);
+      const identity = await readProcessIdentityByPid(pid);
+      expect(discovery?.command.length).toBeGreaterThan(identity!.command.length);
+      await writeSessionMarker({ pid, happySessionId: 'healed-canonical-reader', startedBy: 'daemon', cwd: process.cwd() });
+      const sessions = new Map<number, TrackedSession>();
+      await reattach({ pidToTrackedSession: sessions });
+      expect(sessions.get(pid)?.processCommandHash).toBe(hashProcessCommand(identity!.command));
+      expect((await readSessionMarkerForPid(pid))?.processCommandHash).toBe(hashProcessCommand(identity!.command));
+      expect((await readSessionMarkerForPid(pid))?.processStartTimeMs).toBe(identity!.processStartTimeMs);
     });
 
     it('rejects foreign scope in markerless and poisoned-marker recovery, including placeholder recovery', async () => {
@@ -167,7 +189,9 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       const markers = await listSessionMarkers();
       const happyProcesses = await findAllHappyProcesses();
       const map = new Map<number, TrackedSession>();
-      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map });
+      const identity = await readProcessIdentityByPid(p.pid);
+      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map,
+        processIdentityByPid: new Map(identity ? [[p.pid, identity]] : []) });
       expect(adopted).toBe(0);
       expect(map.size).toBe(0);
     });

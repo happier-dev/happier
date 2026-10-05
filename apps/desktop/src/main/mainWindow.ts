@@ -1,6 +1,8 @@
 import { BrowserWindow } from 'electron';
 
+import type { DesktopEventBus } from './ipc/eventBus';
 import { PRELOAD_SCRIPT_PATH } from './paths';
+import { readDesktopWindowState } from './windowState';
 
 /**
  * Shape declared for the Tauri target's `main` window in `apps/ui/src-tauri/tauri.conf.json`,
@@ -12,10 +14,14 @@ import { PRELOAD_SCRIPT_PATH } from './paths';
 export const MAIN_WINDOW_LABEL = 'main';
 
 export function createMainWindow(
-    options: Readonly<{ platform?: NodeJS.Platform; preloadArguments?: readonly string[] }> = {},
+    options: Readonly<{
+        eventBus: Pick<DesktopEventBus, 'emit'>;
+        platform?: NodeJS.Platform;
+        preloadArguments?: readonly string[];
+    }>,
 ): BrowserWindow {
     const platform = options.platform ?? process.platform;
-    return new BrowserWindow({
+    const window = new BrowserWindow({
         title: 'Happier',
         width: 800,
         height: 600,
@@ -33,6 +39,14 @@ export function createMainWindow(
             webviewTag: false,
         },
     });
+    const publishWindowState = () => {
+        options.eventBus.emit('desktopWindow://state', readDesktopWindowState(window));
+    };
+    window.on('maximize', publishWindowState);
+    window.on('unmaximize', publishWindowState);
+    window.on('enter-full-screen', publishWindowState);
+    window.on('leave-full-screen', publishWindowState);
+    return window;
 }
 
 /** Mirrors `show_main_window`: present the window and give it focus. */

@@ -3,6 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { resolveGlassCapability } from './resolveGlassCapability';
 
 describe('resolveGlassCapability', () => {
+    it('honors Solid from predecessor account settings instead of independently enabling web blur', () => {
+        expect(resolveGlassCapability({
+            liquidGlassAvailable: false,
+            blurAvailable: false,
+            webBlurAvailable: true,
+            reduceTransparency: false,
+            settings: { glassBlurEnabled: false, glassBlurIntensity: 'strong' },
+            surfaceGroup: 'floating',
+        })).toBe('solid');
+    });
+
+    it('keeps Auto working content solid and follows native inactive-window behavior', () => {
+        const input = {
+            liquidGlassAvailable: false,
+            blurAvailable: false,
+            webBlurAvailable: true,
+            reduceTransparency: false,
+            settings: { glassBlurEnabled: true, glassBlurIntensity: 'regular' as const },
+        };
+        expect(resolveGlassCapability({ ...input, surfaceGroup: 'content' })).toBe('solid');
+        expect(resolveGlassCapability({ ...input, surfaceGroup: 'floating', highContrast: true })).toBe('webBlur');
+        expect(resolveGlassCapability({ ...input, surfaceGroup: 'floating', windowActive: false })).toBe('solid');
+    });
+
     it('prefers Liquid Glass when available', () => {
         expect(resolveGlassCapability({
             liquidGlassAvailable: true,

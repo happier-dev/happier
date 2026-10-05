@@ -54,7 +54,7 @@ async function fixture(isEnabled = true) {
         },
       }),
     }),
-  } as unknown as ActionExecutorDeps);
+  } satisfies Pick<ActionExecutorDeps, 'sessionActivityGet' | 'sessionAwarenessWait'> as unknown as ActionExecutorDeps);
   const bridge = createActionToolExecutorBridge({ surface: 'mcp', executor: {
     execute: (id, value, context) => owner.execute(id, value, { ...context, serverId: 'home' }),
   } });
@@ -96,6 +96,7 @@ describe('MCP passive watch over the real observation owner', () => {
       expect(watched).toMatchObject({ target: input.target, condition: input.condition, resourceUri: expect.any(String) });
       const uri = watched.resourceUri as string;
       const baseline = await f.client.readResource({ uri });
+      if (!baseline.contents[0] || !('text' in baseline.contents[0])) throw new Error('Missing text resource');
       expect(JSON.parse(String(baseline.contents[0]!.text)).snapshot.awareness.runtime).toBe('working');
       expect(f.listeners.size).toBe(0);
       const notifications: string[] = [];
@@ -107,6 +108,7 @@ describe('MCP passive watch over the real observation owner', () => {
       f.change();
       await expect.poll(() => notifications).toEqual([uri]);
       const current = await f.client.readResource({ uri });
+      if (!current.contents[0] || !('text' in current.contents[0])) throw new Error('Missing text resource');
       expect(JSON.parse(String(current.contents[0]!.text)).snapshot.awareness.runtime).toBe('idle');
       if (cleanup === 'unsubscribe') await f.client.unsubscribeResource({ uri });
       else await f.client.close();

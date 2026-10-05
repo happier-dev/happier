@@ -1,64 +1,42 @@
 import * as React from 'react';
-
-import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
+import { resolveHappierDropChooserSections } from '@happier-dev/plugin-ui/presentation';
+import type { EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
+import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
+import { useEntityDragChooser, useEntityDragDropSnapshot, type EntityDragDropRuntime } from '@/components/ui/treeDragDrop';
 import { t } from '@/text';
-
-import type { SessionListMoveSheetTarget } from './buildSessionListMoveSheetTargets';
 
 export type SessionListMoveSheetProps = Readonly<{
     sourceLabel: string;
-    targets: ReadonlyArray<SessionListMoveSheetTarget>;
-    onSelectTarget: (target: SessionListMoveSheetTarget) => void;
+    runtime: EntityDragDropRuntime;
+    sourceId: string;
+    onComplete?: (outcome: EntityDropOutcomeV1 | null) => void;
     onCancel: () => void;
 }>;
 
-function buildSubtitle(target: SessionListMoveSheetTarget): string | undefined {
-    if (!target.disabled) return undefined;
-    switch (target.disabledReason) {
-        case 'descendant-cycle':
-            return t('sessionsList.moveSheetDisabledDescendant');
-        case 'max-depth-exceeded':
-            return t('sessionsList.moveSheetDisabledMaxDepth');
-        case 'same-position':
-            return t('sessionsList.moveSheetDisabledCurrent');
-        default:
-            return t('sessionsList.moveSheetDisabledUnavailable');
-    }
-}
-
+/** The mounted Session source offers every current applicable destination, with its owner's reason. */
 export function SessionListMoveSheet(props: SessionListMoveSheetProps): React.ReactElement {
-    const targetById = React.useMemo(() => new Map(props.targets.map((target) => [target.id, target])), [props.targets]);
-    const options = React.useMemo<ReadonlyArray<SelectionListOption>>(() => props.targets.map((target) => ({
-        id: target.id,
-        label: target.kind === 'root' ? t('sessionsList.moveToWorkspaceRoot') : target.label,
-        subtitle: buildSubtitle(target),
-        disabled: target.disabled,
-    })), [props.targets]);
-    const rootStep = React.useMemo<SelectionListStep>(() => ({
-        id: 'root',
-        title: t('sessionsList.moveSheetTitle', { item: props.sourceLabel }),
-        inputPlaceholder: t('sessionsList.moveSheetSearchPlaceholder'),
-        emptyStateLabel: t('sessionsList.moveSheetEmpty'),
-        sections: [{
-            kind: 'static',
-            id: 'destinations',
-            title: t('sessionsList.moveSheetDestinations'),
-            options,
-        }],
-    }), [options, props.sourceLabel]);
-
-    return (
-        <SelectionList
-            rootStep={rootStep}
-            onSelect={(id) => {
-                const target = targetById.get(id);
-                if (!target || target.disabled) return;
-                props.onSelectTarget(target);
-            }}
-            onRequestClose={props.onCancel}
-            keyboardHintsEnabled={false}
-            disableTransitions
-            testID="session-list-move-sheet"
-        />
-    );
+    const chooser = useEntityDragChooser(props.runtime, props.sourceId);
+    useEntityDragDropSnapshot(props.runtime);
+    const onOpenChange = chooser.onOpenChange;
+    React.useEffect(() => { onOpenChange(true); }, [onOpenChange]);
+    const destinations = props.runtime.getDestinations(props.sourceId);
+    const sections = resolveHappierDropChooserSections({
+        options: destinations.map((destination, index) => ({
+            id: String(index), label: destination.label ?? (destination.admission.status === 'allowed'
+                ? destination.admission.effect.preview.verb : destination.admission.preview?.verb ?? t('sessionsList.moveSheetDestinations')),
+            group: destination.group,
+            refusedReason: destination.admission.status === 'refused' ? destination.admission.reason.message : null,
+        })),
+        unavailableTitle: t('entityDragDrop.chooser.unavailable'),
+    });
+    const rootStep: SelectionListStep = {
+        id: 'root', title: t('sessionsList.moveSheetTitle', { item: props.sourceLabel }),
+        inputPlaceholder: t('sessionsList.moveSheetSearchPlaceholder'), emptyStateLabel: t('sessionsList.moveSheetEmpty'),
+        sections: sections.map((section, index) => ({ kind: 'static', id: String(index), title: section.title,
+            options: section.options.map(option => ({ id: option.id, label: option.label, subtitle: option.detail, disabled: option.disabled })) })),
+    };
+    return <SelectionList rootStep={rootStep}
+        onSelect={id => { void chooser.select(destinations[Number(id)]).then(outcome => { if (outcome) props.onComplete?.(outcome); }); }}
+        onRequestClose={() => { onOpenChange(false); props.onCancel(); }}
+        keyboardHintsEnabled={false} disableTransitions testID="session-list-move-sheet" />;
 }

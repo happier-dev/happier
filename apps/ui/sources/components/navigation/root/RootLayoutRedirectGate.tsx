@@ -10,8 +10,7 @@ import {
 } from '@/hooks/session/sessionRouteAuthRecovery';
 import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { shouldHoldAuthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride';
-import { resolveAuthenticatedWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
+import { resolveWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
 import {
     commitWebServerUrlOverride,
 } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
@@ -31,12 +30,17 @@ import {
 
 class HomeConnectRequiresDraft extends Error {}
 
+const WebServerOverrideNavigationContext = React.createContext<Readonly<{
+    draftHref: string | null;
+    consumeDraft: () => void;
+}> | null>(null);
+
 /**
  * Single navigation-subscribing render owner for the app root layout.
  *
  * It subscribes to `useSegments()` / `usePathname()` / `useGlobalSearchParams()` (which change per
  * navigation) plus the connectivity/server signals that drive the unauthenticated redirect and the
- * session-route auth-recovery hold, and it owns the web-server-override "applying" hold. It is the
+ * session-route auth-recovery hold. It is the
  * ONLY navigation-subscribing owner in the root-layout render path: when no redirect/hold applies it
  * returns its `children` unchanged. Because the parent (`RootLayout`) never re-renders on navigation,
  * the child element reference is stable and React skips re-rendering the entire Stack subtree — this
@@ -45,21 +49,18 @@ class HomeConnectRequiresDraft extends Error {}
 export function RootLayoutRedirectGate({ children }: { children: React.ReactNode }): React.ReactElement | null {
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
-    const refreshAuth = auth.refreshFromActiveServer;
     const segments = useSegments();
     const pathname = usePathname();
     const globalSearchParams = useGlobalSearchParams();
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
     const activeServerSnapshot = useActiveServerSnapshot();
-    const bootstrappedServerUrlRef =
-        React.useRef(
-            activeServerSnapshot.serverUrl ?? null,
-        );
-    const onboardingJourneyActive = useOnboardingJourneySessionActive();
-    const onboardingJourneyOwnsTransientDemoServer =
-        doesOnboardingJourneyOwnTransientDemoServer(onboardingJourneyActive);
-
+    const suppliedHomeNavigation = React.useContext(WebServerOverrideNavigationContext);
+    React.useEffect(() => {
+        if (!suppliedHomeNavigation?.draftHref) return;
+        router.replace(suppliedHomeNavigation.draftHref as never);
+        suppliedHomeNavigation.consumeDraft();
+    }, [suppliedHomeNavigation]);
     const sessionRouteAuthRecovery = React.useMemo(
         () => resolveSessionRouteAuthRecoveryState({
             routeParams: globalSearchParams,
@@ -84,16 +85,45 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
         [isAuthenticated, pathname, sessionRouteAuthRecovery],
     );
 
+    React.useEffect(() => {
+        if (suppliedHomeNavigation?.draftHref) return;
+        if (!shouldNormalizeSessionRouteForAuthRecovery) return;
+        if (!sessionRouteAuthRecovery.baseHref) return;
+        router.replace(sessionRouteAuthRecovery.baseHref);
+    }, [sessionRouteAuthRecovery.baseHref, shouldNormalizeSessionRouteForAuthRecovery, suppliedHomeNavigation?.draftHref]);
+
+    const shouldRedirect =
+        !isAuthenticated
+        && !isPublicRouteForUnauthenticated(segments)
+        && !shouldHoldProtectedRouteForAuthRecovery;
+
+    // Avoid rendering protected screens for a frame during redirect.
+    if (suppliedHomeNavigation?.draftHref) {
+        return null;
+    }
+    if (shouldRedirect) {
+        return <Redirect href="/" />;
+    }
+
+    return <>{children}</>;
+}
+
+/** Admit a supplied Home below modal ownership and before shell or cache consumers mount. */
+export function WebServerOverrideGate({ children }: { children: React.ReactNode }): React.ReactElement | null {
+    const { refreshFromActiveServer: refreshAuth } = useAuth();
+    const activeServerSnapshot = useActiveServerSnapshot();
+    const bootstrappedServerUrlRef = React.useRef(activeServerSnapshot.serverUrl ?? null);
+    const onboardingJourneyActive = useOnboardingJourneySessionActive();
+    const onboardingJourneyOwnsTransientDemoServer = doesOnboardingJourneyOwnTransientDemoServer(onboardingJourneyActive);
     const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
         !onboardingJourneyOwnsTransientDemoServer
-        && shouldHoldAuthenticatedShellForWebServerOverride(isAuthenticated),
+        && resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: bootstrappedServerUrlRef.current }).kind === 'switch_server',
     );
     const webServerOverrideHandledRef = React.useRef(false);
+    const [draftHref, setDraftHref] = React.useState<string | null>(null);
+    const consumeDraft = React.useCallback(() => { setDraftHref(null); }, []);
+    const navigation = React.useMemo(() => ({ draftHref, consumeDraft }), [draftHref, consumeDraft]);
     React.useEffect(() => {
-        if (!isAuthenticated) {
-            setIsApplyingWebServerOverride(false);
-            return;
-        }
         if (onboardingJourneyOwnsTransientDemoServer) {
             // The journey's seeded relay is presentation-only. Keep both the override
             // action and the root hold pending until that temporary ownership ends.
@@ -101,8 +131,7 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
             return;
         }
         if (webServerOverrideHandledRef.current) return;
-        const overrideAction = resolveAuthenticatedWebServerUrlOverrideAction({
-            isAuthenticated,
+        const overrideAction = resolveWebServerUrlOverrideAction({
             bootstrappedServerUrl:
                 bootstrappedServerUrlRef.current,
         });
@@ -115,10 +144,12 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
         setIsApplyingWebServerOverride(overrideAction.kind === 'switch_server');
         const suppliedNewHome = overrideAction.kind === 'switch_server'
             && !resolveUniqueServerProfileByUrl(overrideAction.serverUrl);
+        let cancelled = false;
+        const controller = new AbortController();
         fireAndForget((async () => {
             const openUnsavedHomeDraft = () => {
                 if (!suppliedNewHome || overrideAction.kind !== 'switch_server') return;
-                router.replace(`/settings/server/add?address=${encodeURIComponent(overrideAction.serverUrl)}&source=url` as never);
+                setDraftHref(`/settings/server/add?address=${encodeURIComponent(overrideAction.serverUrl)}&source=url`);
             };
             while (true) {
                 try {
@@ -130,6 +161,7 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
                                 const connected = await connectHomeAtAddress({
                                     serverUrl,
                                     source: 'url',
+                                    signal: controller.signal,
                                     confirmInsecureHttp: confirmInsecureHomeHttp,
                                     confirmCanonicalUrl: confirmCanonicalHomeUrl,
                                 });
@@ -150,14 +182,26 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
                             window.history.replaceState(null, '', nextRelativeUrl);
                         },
                     });
+                    if (cancelled) return;
                     webServerOverrideHandledRef.current = true;
                     setIsApplyingWebServerOverride(false);
                     return;
                 } catch (error) {
-                    if (error instanceof HomeConnectRequiresDraft) {
+                    if (cancelled) return;
+                    const dismissOverride = async () => {
+                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                            window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
+                        }
                         webServerOverrideHandledRef.current = true;
                         openUnsavedHomeDraft();
-                        setIsApplyingWebServerOverride(false);
+                        try {
+                            await refreshAuth();
+                        } finally {
+                            if (!cancelled) setIsApplyingWebServerOverride(false);
+                        }
+                    };
+                    if (error instanceof HomeConnectRequiresDraft) {
+                        await dismissOverride();
                         return;
                     }
                     const shouldRetry = await Modal.confirm(
@@ -168,35 +212,19 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
                             confirmText: t('common.retry'),
                         },
                     );
+                    if (cancelled) return;
                     if (shouldRetry) continue;
-                    webServerOverrideHandledRef.current = true;
-                    openUnsavedHomeDraft();
-                    setIsApplyingWebServerOverride(false);
+                    await dismissOverride();
                     return;
                 }
             }
-        })(), { tag: 'RootLayout.webServerOverride' });
-    }, [isAuthenticated, onboardingJourneyOwnsTransientDemoServer, refreshAuth]);
-
-    React.useEffect(() => {
-        if (!shouldNormalizeSessionRouteForAuthRecovery) return;
-        if (!sessionRouteAuthRecovery.baseHref) return;
-        router.replace(sessionRouteAuthRecovery.baseHref);
-    }, [sessionRouteAuthRecovery.baseHref, shouldNormalizeSessionRouteForAuthRecovery]);
-
-    const shouldRedirect =
-        !isAuthenticated
-        && !isPublicRouteForUnauthenticated(segments)
-        && !shouldHoldProtectedRouteForAuthRecovery;
-
-    // Avoid rendering protected screens for a frame during redirect.
-    if (shouldRedirect) {
-        return <Redirect href="/" />;
-    }
+        })(), { tag: 'WebServerOverrideGate' });
+        return () => { cancelled = true; controller.abort(); };
+    }, [onboardingJourneyOwnsTransientDemoServer, refreshAuth]);
 
     if (isApplyingWebServerOverride && !onboardingJourneyOwnsTransientDemoServer) {
         return null;
     }
 
-    return <>{children}</>;
+    return <WebServerOverrideNavigationContext.Provider value={navigation}>{children}</WebServerOverrideNavigationContext.Provider>;
 }

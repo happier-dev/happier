@@ -1,4 +1,12 @@
 export type { HostedWebBridgeEnvelopeV1 } from '../ui.js';
+export type { PluginUiWidgetAreaDeclarationV1 } from '../ui.js';
+export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from './hostApi.js';
+export type { PluginUiEntityDropDestinationV1 } from './hostApi.js';
+export type {
+    PluginUiReadEntityDragItemRequestV1,
+    PluginUiUpdateEntityDragDropRequestV1,
+    PluginUiUpdateEntityDragDropResultV1,
+} from './hostApi.js';
 export {
     CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1,
     CURRENT_UI_CONTEXT_MAX_COMMANDS_V1,
@@ -172,3 +180,4 @@ export type { UiRenderer } from '../ui.js';
 export type { UiTranslationBundle } from '../ui.js';
 export type { UiView } from '../ui.js';
 export { defineHostedWebBridgeMessage } from './hostedWeb.js';
+export type { PluginUiWatchEntityDragDropRequestV1, PluginUiEntityDragDropStateV1 } from './hostApi.js';

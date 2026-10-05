@@ -125,7 +125,7 @@ function buildHistoryRow(message: NormalizedMessage): SessionMessageHistoryRemot
  * The shared page pipeline hands `older` pages back ascending because the transcript renders them
  * that way. History rows are ordered here, once, instead of at each consumer.
  */
-function compareHistoryRowsNewestFirst(a: SessionMessageHistoryRemoteRow, b: SessionMessageHistoryRemoteRow): number {
+export function compareHistoryRowsNewestFirst(a: SessionMessageHistoryRemoteRow, b: SessionMessageHistoryRemoteRow): number {
     if (a.seq !== b.seq) return b.seq - a.seq;
     if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
     return b.messageId.localeCompare(a.messageId);

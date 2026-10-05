@@ -87,12 +87,12 @@ describe('AuthContext credential invalidation handling', () => {
     });
 
     it('disconnects first-key rejected auth through the connection owner without stopping secondary-server continuity', async () => {
-        const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
+        const { AuthProvider, ConcurrentSessionCacheRuntime, getCurrentAuth } = await import('./AuthContext');
 
         const screen = await renderScreen(
             React.createElement(AuthProvider, {
                 initialCredentials: { token: 'token-a', secret: 'secret-a' },
-                children: React.createElement(React.Fragment, null),
+                children: React.createElement(ConcurrentSessionCacheRuntime, null, React.createElement(React.Fragment)),
             }),
         );
 

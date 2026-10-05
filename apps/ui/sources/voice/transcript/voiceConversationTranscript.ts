@@ -26,6 +26,7 @@ import {
     isCanonicalVoiceTranscriptPersistenceEvent,
 } from './canonicalProjector';
 import type { VoiceTranscriptTurn } from './voiceTranscriptEvents';
+import type { VoiceContinuationProvenance } from './voiceTranscriptNoteMeta';
 
 export type { VoiceTranscriptEvent, VoiceTranscriptTurn } from './voiceTranscriptEvents';
 
@@ -55,6 +56,7 @@ export function appendVoiceConversationAssistantText(params: Readonly<{
 export function appendVoiceConversationNoteText(params: Readonly<{
     conversationSessionId: string;
     text: string;
+    continuation?: VoiceContinuationProvenance;
 }>): void {
     projector.projectNoteText(params);
 }

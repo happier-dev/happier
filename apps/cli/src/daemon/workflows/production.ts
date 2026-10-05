@@ -852,9 +852,14 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     if (this.params.checkpoint.frontier.nextBlockOrdinal >= nextBlockOrdinal) return;
     await this.serialized(async () => {
       if (this.params.checkpoint.frontier.nextBlockOrdinal >= nextBlockOrdinal) return;
+      // A completed leaf may have advanced our parent token after Pause was
+      // requested. That fresh token authorizes checkpoint progress, not Resume.
+      const control = await this.readControl();
+      if (control === 'cancel_requested') throw new WorkflowControlBoundary('cancelled');
       const checkpoint = WorkflowCheckpointEnvelopeV1Schema.parse({
         ...this.params.checkpoint,
-        frontier: { ...this.params.checkpoint.frontier, nextBlockOrdinal },
+        frontier: { ...this.params.checkpoint.frontier, nextBlockOrdinal,
+          ...(control === 'pause_requested' ? { paused: true } : {}) },
       });
       const checkpointEnvelope = this.serializeCheckpoint(checkpoint);
       try {
@@ -862,7 +867,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
           operation: 'transition', runId: this.params.runId, parentAttempt: this.params.parentAttempt,
           accountCurrentness: this.params.encryption.witness,
           expectedRevision: this.params.revision,
-          state: 'running', checkpointEnvelope,
+          state: control === 'pause_requested' ? 'pause_requested' : 'running', checkpointEnvelope,
         }));
         this.params.revision = Math.max(this.params.revision, run.revision);
         this.params.checkpoint = checkpoint;
@@ -1463,6 +1468,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       workDepth: accepted.workDepth,
       originRunId: claim.runId,
       machineAdmissionTransport: params.execution.machineAdmissionTransport,
+      visibleTeamId: initial.keyCensus.visibleTeamId,
       ...(params.execution.resolveTeamCredentialResourceCatalog
         ? { resolveTeamCredentialResourceCatalog: params.execution.resolveTeamCredentialResourceCatalog }
         : {}),

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { Theme } from '@/theme';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 import { TranscriptJumpAttention } from './navigation/TranscriptJumpHighlightOverlay';
 
@@ -10,13 +11,13 @@ import { TranscriptJumpAttention } from './navigation/TranscriptJumpHighlightOve
 export function UserMessageBubble(props: Readonly<{
     theme?: Theme;
     discarded?: boolean;
-    attention?: Pick<React.ComponentProps<typeof TranscriptJumpAttention>, 'sessionId' | 'routeMessageId' | 'seq' | 'radius'>;
+    attention?: Pick<React.ComponentProps<typeof TranscriptJumpAttention>, 'sessionAddress' | 'routeMessageId' | 'seq' | 'radius'>;
     children: React.ReactNode;
 }>) {
     const { theme: currentTheme } = useUnistyles();
     const theme = props.theme ?? currentTheme;
     const style = {
-        backgroundColor: theme.colors.message.user.background,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.message.user.background, 'content', true),
         paddingHorizontal: 14,
         paddingVertical: 8,
         borderRadius: theme.parts.userBubble.radius,

@@ -585,10 +585,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
   const restart = (input: Readonly<{ terminalKey: string; cwd: string; cols?: number; rows?: number; initialCommand?: string; launchProcess?: TerminalLaunchProcess; sessionId?: string }>): EnsureOk | ErrorResult => {
     reapIdle();
     const existing = terminalIdByKey.get(input.terminalKey) ?? null;
+    const sessionId = input.sessionId ?? (existing ? sessionsById.get(existing)?.sessionId : undefined);
     if (existing) {
       closeById(existing);
     }
-    return ensure(input);
+    return ensure({ ...input, ...(sessionId ? { sessionId } : {}) });
   };
 
   const read = (input: Readonly<{ terminalId: string; cursor: number; maxBytes: number; maxEvents: number }>): ReadOk | ErrorResult => {

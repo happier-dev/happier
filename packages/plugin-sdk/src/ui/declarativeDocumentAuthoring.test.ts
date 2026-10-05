@@ -11,6 +11,19 @@ import {
 import * as publicUi from './index.js';
 
 describe('declarative document author projection', () => {
+    it('authors drag nodes through the same closed document facade', () => {
+        const document = definePluginDeclarativeDocumentV1({
+            version: 1,
+            root: { kind: 'dropTarget', targetId: 'tray', input: { lane: 'review' }, children: [
+                { kind: 'dragSource', sourceId: 'card', reference: { cardId: '42' }, organizing: true,
+                    children: [{ kind: 'text', text: 'Card' }] },
+            ] },
+        });
+        expect(document.root).toMatchObject({ kind: 'dropTarget', children: [{ kind: 'dragSource', reference: { cardId: '42' } }] });
+        expect(() => definePluginDeclarativeDocumentV1({
+            version: 1, root: { ...document.root, actionId: 'session.message.send' },
+        } as unknown as PluginDeclarativeDocumentV1)).toThrow(/unrecognized key/iu);
+    });
     it('projects the canonical document facade through the public UI subpath', () => {
         expect(publicUi.definePluginDeclarativeDocumentV1)
             .toBe(definePluginDeclarativeDocumentV1);

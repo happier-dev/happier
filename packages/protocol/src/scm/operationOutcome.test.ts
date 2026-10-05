@@ -2,8 +2,26 @@ import { describe, expect, it } from 'vitest';
 import * as scm from './index.js';
 import { ScmBranchCreateResponseSchema } from './branches.js';
 import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN } from './repositoryProvisioning.js';
+import { ScmCommitPublicationSchema } from './commitPublication.js';
 
 describe('SCM operation outcomes', () => {
+  it('accepts verified index tree evidence only after successful publication and index reconciliation', () => {
+    const publication = { state: 'published', expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main', candidateOid: 'b'.repeat(40), indexReconciliation: 'reconciled', indexTreeOid: 'c'.repeat(40) };
+    expect(ScmCommitPublicationSchema.parse(publication)).toEqual(publication);
+    for (const indexReconciliation of ['not_required', 'pending', 'failed']) expect(ScmCommitPublicationSchema.safeParse({ ...publication, indexReconciliation }).success).toBe(false);
+    for (const state of ['not_published', 'unknown']) expect(ScmCommitPublicationSchema.safeParse({ ...publication, state }).success).toBe(false);
+    expect(ScmCommitPublicationSchema.safeParse({ ...publication, indexTreeOid: 'not-an-oid' }).success).toBe(false);
+    const { indexTreeOid: _legacyAbsent, ...legacyPublication } = publication;
+    expect(ScmCommitPublicationSchema.safeParse(legacyPublication).success).toBe(true);
+  });
+  it('consumes publication truth without interpreting an unpublished candidate as a landed commit', () => {
+    const publication = { state: 'published' as const, expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main', candidateOid: 'b'.repeat(40), indexReconciliation: 'failed' as const };
+    expect(scm.normalizeScmOperationOutcome({ success: false, errorCode: 'INDEX_RECONCILIATION_FAILED', publication })).toMatchObject({ kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: publication.candidateOid } });
+    expect(scm.normalizeScmOperationOutcome({ success: false, errorCode: 'INDEX_LOCKED', outcome: { v: 1, kind: 'failed', errorCode: 'INDEX_LOCKED', nextActions: [{ kind: 'retry' }] }, publication })).toMatchObject({ kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: publication.candidateOid }, nextActions: [{ kind: 'reconcile_index' }] });
+    expect(scm.normalizeScmOperationOutcome({ success: false, outcome: scm.createScmOperationUnknownOutcome({ kind: 'repository_status' }), publication })).toMatchObject({ kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: publication.candidateOid } });
+    expect(scm.normalizeScmOperationOutcome({ success: false, publication: { ...publication, state: 'unknown' } })).toMatchObject({ kind: 'outcome_unknown', reconciliation: { kind: 'commit', commitSha: publication.candidateOid } });
+    expect(scm.normalizeScmOperationOutcome({ success: false, errorCode: 'COMMIT_HOOK_CONTENT_CHANGED', publication: { ...publication, state: 'not_published' } })).toMatchObject({ kind: 'needs_input' });
+  });
   it('exposes existing mutation schemas and confirmation authority through the SCM facade', () => {
     expect(scm.ScmBranchCreateResponseSchema).toBe(ScmBranchCreateResponseSchema);
     expect(scm.REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN).toBe(REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN);

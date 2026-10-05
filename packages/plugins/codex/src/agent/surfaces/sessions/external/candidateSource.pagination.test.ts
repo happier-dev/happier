@@ -1,6 +1,9 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
@@ -79,6 +82,145 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 import { listCodexSessionCandidates } from './candidateSource.js';
+import { pageCodexExternalSessionTranscript } from './transcriptSource.js';
+import { createCodexExternalSessionsContribution } from './contribution.js';
+
+describe('Codex candidate conversation search', () => {
+  it('finds an unescaped Unicode query whose decoded lowercase differs from ripgrep folding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-content-unicode-'));
+    try {
+      const sessions = join(root, 'sessions', '2026', '07', '23');
+      await mkdir(sessions, { recursive: true });
+      const id = 'cccccccc-1111-1111-1111-111111111111';
+      await writeFile(join(sessions, `rollout-2026-07-23T10-00-00-${id}.jsonl`), [
+        { type: 'session_meta', payload: { id, cwd: '/repo' } },
+        { type: 'event_msg', payload: { type: 'agent_message', message: 'İstanbul' } },
+      ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+      appServerProbe.threads = [];
+      const ripgrep = { run: async ({ args, paths }: { args: readonly string[]; paths: readonly string[] }) => {
+        const launcher = fileURLToPath(new URL('../../../../../../../../apps/cli/scripts/ripgrep_launcher.cjs', import.meta.url));
+        try {
+          const result = await promisify(execFile)(process.execPath, [launcher, JSON.stringify([...args, '--', ...paths])]);
+          return { ...result, exitCode: 0 };
+        } catch (error) {
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return { exitCode: 1, stdout: '', stderr: '' };
+          throw error;
+        }
+      } };
+      const page = await listCodexSessionCandidates({ source: { kind: 'codexHome', home: 'user', homePath: root },
+        env: {}, exec: {} as ExecService, searchTarget: 'content', searchTerm: 'İstanbul', ripgrep, limit: 10 });
+      expect(page.candidates[0]?.match).toMatchObject({ snippet: 'İstanbul', messageIndex: 0 });
+      expect(page.contentCoverage).toBe('complete');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('re-matches decoded rollout text, excludes tool metadata, and identifies native-only gaps', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-content-'));
+    try {
+      const sessions = join(root, 'sessions', '2026', '07', '23');
+      await mkdir(sessions, { recursive: true });
+      const id = 'aaaaaaaa-1111-1111-1111-111111111111';
+      const file = join(sessions, `rollout-2026-07-23T10-00-00-${id}.jsonl`);
+      await writeFile(file, [
+        { type: 'session_meta', payload: { id, cwd: '/repo' } },
+        { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Ordinary title' }] } },
+        { type: 'event_msg', payload: { type: 'agent_message', message: 'Body-only café\nwith "quotes"' } },
+        { type: 'response_item', payload: { type: 'function_call', call_id: 'call', name: 'exec_command', arguments: JSON.stringify({ cmd: 'metadata phrase' }) } },
+        { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'abandoned question' }] } },
+        { type: 'event_msg', payload: { type: 'agent_message', message: 'abandoned phrase' } },
+        { type: 'event_msg', payload: { type: 'thread_rolled_back', num_turns: 1 } },
+      ].map((row) => JSON.stringify(row).replace(/é/g, '\\u00e9')).join('\n') + '\n');
+      appServerProbe.threads = [{ id: 'native-only', updatedAt: 123 }];
+      const ripgrep = { run: vi.fn(async ({ args, paths }: { args: readonly string[]; paths: readonly string[]; signal?: AbortSignal }) => {
+        const patterns = args.flatMap((arg, index) => arg === '-e' ? [args[index + 1]!] : []);
+        const matches = [];
+        for (const path of paths) {
+          const text = (await readFile(path, 'utf8')).toLowerCase();
+          if (patterns.some((pattern) => text.includes(pattern.toLowerCase()))) matches.push(path);
+        }
+        return { exitCode: matches.length ? 0 : 1, stdout: matches.map((path) => path + '\0').join(''), stderr: '' };
+      }) };
+      const params = { source: { kind: 'codexHome' as const, home: 'user' as const, homePath: root }, env: {}, exec: {} as ExecService, searchTarget: 'content' as const, ripgrep, limit: 10 };
+      const transcriptItems = [];
+      let transcriptCursor: string | undefined;
+      for (let index = 0; index < 20; index += 1) {
+        const transcript = await pageCodexExternalSessionTranscript({ ...params, remoteSessionId: id, direction: 'older', maxBytes: 1024 * 1024, maxItems: 1, cursor: transcriptCursor });
+        transcriptItems.push(...transcript.items);
+        if (!transcript.hasMore || !transcript.nextCursor) break;
+        transcriptCursor = transcript.nextCursor;
+      }
+      expect(JSON.stringify(transcriptItems)).not.toContain('abandoned phrase');
+      expect(JSON.stringify(transcriptItems)).toContain('Body-only');
+      expect(JSON.stringify(transcriptItems)).toContain('Ordinary title');
+      const page = await listCodexSessionCandidates({ ...params, searchTerm: 'café\nwith "quotes"' });
+      expect(page.candidates.find((candidate) => candidate.remoteSessionId === id)?.match).toEqual({ snippet: 'Body-only café\nwith "quotes"', sourceItemId: expect.stringMatching(/^codex:/), messageIndex: 1 });
+      expect(page.candidates.find((candidate) => candidate.remoteSessionId === 'native-only')?.match).toBeUndefined();
+      expect(page.candidates.some((candidate) => candidate.remoteSessionId === 'native-only')).toBe(true);
+      expect(page.contentCoverage).toBe('partial');
+      const first = await listCodexSessionCandidates({ ...params, searchTerm: 'Body-only', limit: 1 });
+      expect(first.nextCursor).toBeTruthy();
+      for (const change of [{ searchTerm: 'other' }, { searchTarget: 'metadata' as const }]) {
+        await expect(listCodexSessionCandidates({ ...params, searchTerm: 'Body-only', cursor: first.nextCursor!, ...change })).rejects.toThrow(/source changed/i);
+      }
+      const metadata = await listCodexSessionCandidates({ ...params, searchTerm: 'metadata phrase' });
+      expect(metadata.candidates.filter((candidate) => candidate.match)).toEqual([]);
+      const abandoned = await listCodexSessionCandidates({ ...params, searchTerm: 'abandoned phrase' });
+      expect(abandoned.candidates.filter((candidate) => candidate.match)).toEqual([]);
+      const controller = new AbortController();
+      ripgrep.run.mockImplementationOnce(async ({ signal }) => {
+        expect(signal).toBe(controller.signal);
+        controller.abort();
+        signal?.throwIfAborted();
+        return { exitCode: 1, stdout: '', stderr: '' };
+      });
+      await expect(listCodexSessionCandidates({ ...params, signal: controller.signal, searchTerm: 'Body-only' })).rejects.toThrow();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('keeps a large decoded body hit within the invocation payload budget', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-content-large-'));
+    try {
+      const sessions = join(root, 'sessions', '2026', '07', '23');
+      await mkdir(sessions, { recursive: true });
+      const id = 'bbbbbbbb-1111-1111-1111-111111111111';
+      const file = join(sessions, `rollout-2026-07-23T10-00-00-${id}.jsonl`);
+      const query = '  large café\n"needle"  ';
+      const text = 'distant-prefix ' + 'İ😀before '.repeat(2000) + 'first-context ' + query + ' nearby-first😀 ' + ' after😀'.repeat(2000) + ' second-context ' + query + ' distant-tail';
+      await writeFile(file, jsonl({ type: 'session_meta', payload: { id, cwd: '/repo' } }) + jsonl({ type: 'event_msg', payload: { type: 'agent_message', message: text } }));
+      const ripgrep = { run: async () => ({ exitCode: 0, stdout: file + '\0', stderr: '' }) };
+      const page = await listCodexSessionCandidates({ source: { kind: 'codexHome', home: 'user', homePath: root }, env: {}, exec: {} as ExecService, searchTarget: 'content', searchTerm: query, ripgrep, limit: 1 });
+      const snippet = page.candidates[0]?.match?.snippet;
+      expect(snippet).toContain(query);
+      expect(snippet).toContain('first-context');
+      expect(snippet).toContain('nearby-first😀');
+      expect(snippet).not.toMatch(/distant-prefix|second-context|distant-tail/);
+      expect(snippet?.length).toBeLessThan(1000);
+      expect(snippet).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+      expect(page.candidates[0]?.match).toMatchObject({ sourceItemId: expect.stringMatching(/^codex:/), messageIndex: 0 });
+      const maxSerializedBytes = 4096;
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: root } });
+      const invocation = {
+        source: { kind: 'codexHome', home: 'user', homePath: root }, maxItems: 1, searchTarget: 'content', searchTerm: query,
+        signal: new AbortController().signal, deadlineAtMs: Date.now() + 30_000, maxSerializedBytes,
+        ripgrep,
+        // The app-server process is the real system boundary mocked above.
+        exec: {} as ExecService,
+      } as const;
+      const result = await contribution.listCandidates(invocation);
+      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+      expect(result.value.candidates).toHaveLength(1);
+      expect(result.value.candidates[0]?.match?.snippet).toContain(query);
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(maxSerializedBytes);
+      expect(result.value.contentCoverage).toBe('complete');
+      const packedSnippet = result.value.candidates[0]?.match?.snippet;
+      if (typeof packedSnippet !== 'string') throw new Error('Expected a decoded hit.');
+      const narrowerBytes = Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(JSON.stringify(packedSnippet)) + Buffer.byteLength(JSON.stringify(query)) + 64;
+      const narrower = await contribution.listCandidates({ ...invocation, maxSerializedBytes: narrowerBytes });
+      if (!narrower.ok) throw new Error(`${narrower.code}: ${narrower.message}`);
+      expect(narrower.value.candidates[0]?.match?.snippet).toContain(query);
+      expect(narrower.value.candidates[0]?.match?.snippet).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+      expect(Buffer.byteLength(JSON.stringify(narrower))).toBeLessThanOrEqual(narrowerBytes);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
 
 function jsonl(value: unknown): string {
   return `${JSON.stringify(value)}\n`;

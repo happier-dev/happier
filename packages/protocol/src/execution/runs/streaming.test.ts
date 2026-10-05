@@ -1,13 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ExecutionRunTurnStreamStartRequestSchema,
   ExecutionRunTurnStreamStartV2RequestSchema,
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
   ExecutionRunUserTranscriptCommitRequestSchema,
-} from './index.js';
+} from '../../index.js';
 
 describe('execution run streaming schemas', () => {
+  it('accepts omitted latency policy and validates the existing speech preference range', () => {
+    const request = { runId: 'run-1', message: 'hello' };
+    expect(ExecutionRunTurnStreamStartRequestSchema.parse(request).speechSegmentTargetChars).toBeUndefined();
+    for (const speechSegmentTargetChars of [32, 120, 2000]) {
+      expect(ExecutionRunTurnStreamStartRequestSchema.parse({ ...request, speechSegmentTargetChars })
+        .speechSegmentTargetChars).toBe(speechSegmentTargetChars);
+    }
+    for (const speechSegmentTargetChars of [null, '120', 31, 2001, 120.5]) {
+      expect(ExecutionRunTurnStreamStartRequestSchema.safeParse({ ...request, speechSegmentTargetChars }).success).toBe(false);
+    }
+  });
   it('parses start response', () => {
     const parsed = ExecutionRunTurnStreamStartResponseSchema.parse({ streamId: 'stream-1' });
     expect(parsed.streamId).toBe('stream-1');

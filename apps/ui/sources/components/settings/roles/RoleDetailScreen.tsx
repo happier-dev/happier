@@ -17,7 +17,8 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -132,9 +133,8 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
             testID: 'settings.roles.detail.reset',
             onSelect: async () => { await reportFailure(await roleActions.resetOverride(entry.roleId)); },
         }] : []),
-        // Only the owner manages sharing (grant writes are owner-only), so a role shared with the
-        // reader — even to edit — has no Share. A user role's id is its Artifact id.
-        ...(ownRole && entry.source === 'user' && entry.revision ? [{
+        // A user/shared role's id is its Artifact id; the sheet owns grant permissions.
+        ...((entry.source === 'user' || entry.source === 'shared') && entry.roleId ? [{
             id: 'share',
             title: t('roles.settings.share'),
             testID: 'settings.roles.detail.share',
@@ -142,10 +142,12 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
                 kind: 'role.v1',
                 artifactId: entry.roleId,
                 name: role.name,
+                subtitle: `${engine.label} · ${t(role.runsAs.kind === 'session' ? 'roles.settings.runsAsSession' : 'roles.settings.runsAsBackgroundRun')}`,
                 linkPath: roleRoute(entry.roleId),
                 onSendCopy: () => { void sendRoleCopy(role); },
             }),
-        }, {
+        }] : []),
+        ...(ownRole && entry.source === 'user' && entry.revision ? [{
             id: 'delete',
             title: t('roles.settings.deleteRole'),
             destructive: true,
@@ -162,7 +164,7 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
                 }
             },
         }] : []),
-    ], [entry.override, entry.revision, entry.roleId, ownRole, role, router]);
+    ], [engine.label, entry.override, entry.revision, entry.roleId, entry.source, ownRole, role, router]);
 
     const meta: PageHeaderMetaFact[] = [
         { key: 'source', text: describeSource(entry) },
@@ -175,7 +177,7 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
             <PageHeader
                 title={role.name}
                 meta={meta}
-                leading={headerEngine.icon ? <PageHeaderMarkTile>{headerEngine.icon}</PageHeaderMarkTile> : undefined}
+                leading={headerEngine.icon ? <PageHeaderMarkSlot>{headerEngine.icon}</PageHeaderMarkSlot> : undefined}
                 actions={menuActions.length > 0 ? <PageHeaderMenu actions={menuActions} testID="settings.roles.detail.menu" /> : undefined}
                 alwaysShowTitle
             />

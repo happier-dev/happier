@@ -27,7 +27,8 @@ async function presentPluginContributedActionOpen(
         }
         if (signal?.aborted) return { kind: 'stale', reason: 'host_retired' };
         if (opened.kind === 'form') {
-            presentActionInputForm({ form: opened.form, signal });
+            presentActionInputForm({ form: opened.form, signal, pickerContext: opened.form.pickerContext,
+                actionId: opened.form.action.qualifiedActionId });
             return opened;
         }
         if (showUnavailableFeedback && (

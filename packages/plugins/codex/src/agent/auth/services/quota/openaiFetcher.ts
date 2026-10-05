@@ -104,7 +104,7 @@ function defaultRuntimeFetch(): Pick<HttpService, 'request'> {
       const response = await fetch(request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body as BodyInit | undefined,
+        body: request.body as RequestInit['body'],
         signal: options.signal,
         redirect: request.redirect,
       });

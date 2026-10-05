@@ -284,8 +284,11 @@ describe("registerSocketRpcHandlers", () => {
         expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
     });
-    it("admits UI browser automation only from the authenticated exact Machine", async () => {
-        const method = `machine-1:${uiBrowserAutomationDispatchMethod({ browserSessionId: 'visible-session', viewId: 'visible-view' })}`;
+    it.each([
+        uiBrowserAutomationDispatchMethod({ browserSessionId: 'visible-session', viewId: 'visible-view' }),
+        RPC_METHODS.UI_ACTION_EXECUTE,
+    ])("admits UI Action continuation %s only from the authenticated exact Machine", async (rpcMethod) => {
+        const method = `machine-1:${rpcMethod}`;
         const effect = vi.fn(async () => 'encrypted-page-result');
         const target = { id: 'ui-view', data: { clientType: 'user-scoped' }, timeout: () => ({ emitWithAck: effect }) };
         const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
@@ -409,7 +412,7 @@ describe("registerSocketRpcHandlers", () => {
         const { io } = createTargetRoutingIo({});
         registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io, ephemeralRunnerAdmission: admission });
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:permission" });
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ type: "register", error: "Forbidden" }));
         const denied = vi.fn();
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method: "sess_1:permission", params: {} }, denied);
         expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
@@ -853,10 +856,10 @@ describe("registerSocketRpcHandlers", () => {
         expect(join).toHaveBeenCalledWith(`rpc:user-1:runner-machine:${RPC_METHODS.READ_FILE}`);
         expect(join).toHaveBeenCalledWith(`rpc:user-1:runner-machine:${RPC_METHODS.STOP_SESSION}`);
         expect(join).toHaveBeenCalledWith(`rpc:user-1:runner-machine:${RPC_METHODS.DAEMON_TERMINAL_ENSURE}`);
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
     });
 
     it("does not admit a Runner Machine into an RPC room after its materialized principal becomes stale", async () => {
@@ -891,10 +894,10 @@ describe("registerSocketRpcHandlers", () => {
         });
 
         expect(join).not.toHaveBeenCalled();
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
     });
 
     it.each([
@@ -1175,10 +1178,10 @@ describe("registerSocketRpcHandlers", () => {
         await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
 
         expect(userJoin).not.toHaveBeenCalled();
-        expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
         expect(callback).toHaveBeenCalledWith({
             ok: false,
             error: "Forbidden",
@@ -1222,10 +1225,10 @@ describe("registerSocketRpcHandlers", () => {
         await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
 
         expect(userJoin).not.toHaveBeenCalled();
-        expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
         expect(callback).toHaveBeenCalledWith({
             ok: false,
             error: "Forbidden",
@@ -1246,10 +1249,10 @@ describe("registerSocketRpcHandlers", () => {
         });
         await triggerSocketHandler(unverifiedMachineSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
         expect(unverifiedMachineJoin).not.toHaveBeenCalled();
-        expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
 
         const machineJoin = vi.fn().mockResolvedValue(undefined);
         const machineSocket = createFakeSocket({
@@ -1292,10 +1295,10 @@ describe("registerSocketRpcHandlers", () => {
         await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
 
         expect(userJoin).not.toHaveBeenCalled();
-        expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
         expect(callback).toHaveBeenCalledWith({
             ok: false,
             error: "Forbidden",
@@ -1317,10 +1320,10 @@ describe("registerSocketRpcHandlers", () => {
 
         await triggerSocketHandler(unverifiedMachineSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
         expect(unverifiedMachineJoin).not.toHaveBeenCalled();
-        expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
 
         const machineJoin = vi.fn().mockResolvedValue(undefined);
         const machineSocket = createFakeSocket({
@@ -1369,10 +1372,12 @@ describe("registerSocketRpcHandlers", () => {
             select: { revokedAt: true, replacedByMachineId: true },
         }));
         expect(join).not.toHaveBeenCalled();
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Machine replaced",
-        });
+            method: "machine-old:spawn-happy-session",
+            retryable: true,
+        }));
     });
 
     it("allows the exact machine daemon to register the machine-owned session spawn RPC", async () => {
@@ -1454,10 +1459,34 @@ describe("registerSocketRpcHandlers", () => {
         });
 
         expect(join).not.toHaveBeenCalled();
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
+        }));
+    });
+
+    it.each([
+        ["daemon.session.log.tail", true],
+        [RPC_METHODS.SESSION_LOG_TAIL, false],
+    ])("admits machine log registration %s only in its canonical scope", async (rpcMethod, allowed) => {
+        const join = vi.fn().mockResolvedValue(undefined);
+        const socket = createFakeSocket({
+            id: "machine-1-socket",
+            data: { clientType: "machine-scoped", machineId: "machine-1" },
+            join,
+            leave: vi.fn().mockResolvedValue(undefined),
         });
+        const { io } = createRoomAwareIo();
+        registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io });
+        const method = `machine-1:${rpcMethod}`;
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method });
+        if (allowed) {
+            expect(join).toHaveBeenCalledWith(`rpc:user-1:${method}`);
+            expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTERED, { method });
+        } else {
+            expect(join).not.toHaveBeenCalled();
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ type: "register", error: "Forbidden" }));
+        }
     });
 
     it("keeps unprefixed daemon RPC registration available to a machine-scoped socket", async () => {
@@ -1513,10 +1542,10 @@ describe("registerSocketRpcHandlers", () => {
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:execution.run.stream.start" });
 
         expect(join).not.toHaveBeenCalled();
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
     });
 
     it.each(["session.unlisted", "transcript.unlisted"])("rejects unlisted Session RPC %s at registration before it can become dispatchable", async (unlistedMethod) => {
@@ -1542,6 +1571,8 @@ describe("registerSocketRpcHandlers", () => {
         expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
             type: "register",
             error: "RPC method not available",
+            method: `sess_1:${unlistedMethod}`,
+            retryable: false,
         });
     });
 
@@ -1879,10 +1910,10 @@ describe("registerSocketRpcHandlers", () => {
             },
         }));
         expect(join).not.toHaveBeenCalled();
-        expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
-        });
+        }));
     });
 
     it("forwards calls through room discovery and excludes the caller socket", async () => {
@@ -2734,7 +2765,7 @@ describe("registerSocketRpcHandlers", () => {
         expect(rpcMetricsMocks.recordRpcUnregistration).toHaveBeenCalledWith("sess_1:execution.run.stream.start");
     });
 
-    it("notifies the owning machine socket when a user socket registers, unregisters, or disconnects a machine-scoped RPC handler", async () => {
+    it.each([RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'ui.actions.contributed.execute', 'ui.actions.execute.v1'])("notifies the owning machine socket for %s registration, unregistration, or disconnect", async (rpcMethod) => {
         const { io, addToRoom, createRoomAwareSocket, emitToRoom } = createRoomAwareIo();
         const uiSocket = createRoomAwareSocket({
             id: "ui-socket",
@@ -2755,7 +2786,7 @@ describe("registerSocketRpcHandlers", () => {
         addToRoom("machine:machine-1:user-1", daemonSocket);
         addToRoom("machine:machine-2:user-1", otherMachineSocket);
         addToRoom("machine:machine-1:user-2", otherAccountMachineSocket);
-        const method = `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`;
+        const method = `machine-1:${rpcMethod}`;
 
         registerSocketRpcHandlers({ userId: "user-1", socket: uiSocket as any, io });
         registerSocketRpcHandlers({ userId: "user-1", socket: daemonSocket as any, io });
@@ -2781,7 +2812,7 @@ describe("registerSocketRpcHandlers", () => {
         expect(daemonSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
     });
 
-    it("hydrates a reconnecting machine socket from existing machine-scoped RPC registrations", async () => {
+    it.each([RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'ui.actions.contributed.execute', 'ui.actions.execute.v1'])("hydrates a reconnecting machine socket from existing %s registrations", async (rpcMethod) => {
         const { io, addToRoom, createRoomAwareSocket } = createRoomAwareIo();
         const uiSocket = createRoomAwareSocket({
             id: "ui-socket",
@@ -2791,7 +2822,7 @@ describe("registerSocketRpcHandlers", () => {
             id: "daemon-reconnect-socket",
             data: { clientType: "machine-scoped", machineId: "machine-1" },
         });
-        const method = `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`;
+        const method = `machine-1:${rpcMethod}`;
         addToRoom("user:user-1", uiSocket);
         addToRoom("machine:machine-1:user-1", daemonSocket);
         registerSocketRpcHandlers({ userId: "user-1", socket: uiSocket as any, io });

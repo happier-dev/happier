@@ -17,6 +17,7 @@ export type {
   PluginUiDetailsPanePresentation,
   PluginUiPresentationHost,
   PluginUiSessionPartPresentation,
+  PluginUiWidgetAreaPresentation,
 } from '../presentationHost/context.js';
 export {
   PluginHostApiProvider,

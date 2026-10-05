@@ -842,19 +842,21 @@ describe('definePlugin', () => {
         });
     });
 
-    it('projects widget placements through both explicit views and surface authoring', () => {
+    it('projects neutral widget inputs through both explicit views and surface authoring', () => {
+        const inputs = { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true }] };
+        const inputSchema = { type: 'object' as const, properties: { session: { type: 'object' as const } }, required: ['session'], additionalProperties: false };
         const plugin = definePlugin({
             id: 'com.acme.widget-placements',
             version: '1.0.0',
             ui: {
-                views: [{ id: 'shared', container: 'widget', target: { kind: 'session' }, renderer: 'native', placements: ['board', 'companion'] }],
+                views: [{ id: 'shared', container: 'widget', target: { kind: 'session' }, renderer: 'native', inputs, inputSchema, sessionInputPath: 'session' }],
                 renderers: [{ id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Shared' } }],
-                surfaces: [{ id: 'glance', placement: 'widget', target: { kind: 'session' }, placements: ['companion'], renderer: { kind: 'declarative', root: { kind: 'text', text: 'Glance' } } }],
+                surfaces: [{ id: 'glance', placement: 'widget', target: { kind: 'session' }, inputs, inputSchema, sessionInputPath: 'session', renderer: { kind: 'declarative', root: { kind: 'text', text: 'Glance' } } }],
             },
         });
         expect(plugin.manifest.contributes.ui?.views).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'shared', placements: ['board', 'companion'] }),
-            expect.objectContaining({ id: 'glance', placements: ['companion'] }),
+            expect.objectContaining({ id: 'shared', inputs, sessionInputPath: 'session' }),
+            expect.objectContaining({ id: 'glance', inputs, sessionInputPath: 'session' }),
         ]));
     });
 

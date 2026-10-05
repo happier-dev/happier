@@ -91,37 +91,37 @@ function resolveAccountCollectionContributionRegistryKey(
     return buildQualifiedPluginContributionKey(identity);
 }
 
-type ResolvedComposerContribution = Readonly<{
+type ResolvedQualifiedContribution = Readonly<{
     pluginId: string;
     identity: Readonly<{ pluginId: string; localId: string }>;
     definition: Readonly<{ id: string }>;
 }>;
 
-function resolveComposerContributionRegistryKey(
-    contribution: ResolvedComposerContribution,
+function resolveQualifiedContributionRegistryKey(
+    contribution: ResolvedQualifiedContribution,
 ): string {
     const { definition, identity, pluginId } = contribution;
     if (
         identity.pluginId !== pluginId
         || identity.localId !== definition.id
     ) {
-        throw new Error(`Composer contribution identity is inconsistent for '${pluginId}/${definition.id}'`);
+        throw new Error(`Contribution identity is inconsistent for '${pluginId}/${definition.id}'`);
     }
     return buildQualifiedPluginContributionKey(identity);
 }
 
-function freezeComposerContributions<T extends ResolvedComposerContribution>(
+function freezeQualifiedContributions<T extends ResolvedQualifiedContribution>(
     contributions: readonly T[],
 ): readonly T[] {
     const seen = new Set<string>();
     const sorted = [...contributions].sort((left, right) => (
-        resolveComposerContributionRegistryKey(left)
-            .localeCompare(resolveComposerContributionRegistryKey(right))
+        resolveQualifiedContributionRegistryKey(left)
+            .localeCompare(resolveQualifiedContributionRegistryKey(right))
     ));
     for (const contribution of sorted) {
-        const key = resolveComposerContributionRegistryKey(contribution);
+        const key = resolveQualifiedContributionRegistryKey(contribution);
         if (seen.has(key)) {
-            throw new Error(`Duplicate Composer contribution '${key}'`);
+            throw new Error(`Duplicate contribution '${key}'`);
         }
         seen.add(key);
     }
@@ -169,19 +169,19 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     assertUniquePluginUiBindings('destination', [...uiViewsV2, ...uiSettingsPagesV2]);
     assertUniquePluginUiBindings('renderer', uiRenderersV2);
     const uiTranslationsV2 = Object.freeze([...(inputs.uiTranslationsV2 ?? [])].sort(compareUiTranslationsV2Contributes));
-    const composerReferences: readonly ResolvedComposerReferenceContribution[] = freezeComposerContributions(
+    const composerReferences: readonly ResolvedComposerReferenceContribution[] = freezeQualifiedContributions(
         inputs.composerReferences ?? [],
     );
-    const searchProviders: readonly ResolvedSearchProviderContribution[] = freezeComposerContributions(
+    const searchProviders: readonly ResolvedSearchProviderContribution[] = freezeQualifiedContributions(
         inputs.searchProviders ?? [],
     );
-    const composerAttachments: readonly ResolvedComposerAttachmentContribution[] = freezeComposerContributions(
+    const composerAttachments: readonly ResolvedComposerAttachmentContribution[] = freezeQualifiedContributions(
         inputs.composerAttachments ?? [],
     );
-    const composerControls: readonly ResolvedComposerControlContribution[] = freezeComposerContributions(
+    const composerControls: readonly ResolvedComposerControlContribution[] = freezeQualifiedContributions(
         inputs.composerControls ?? [],
     );
-    const composerRegions: readonly ResolvedComposerRegionContribution[] = freezeComposerContributions(
+    const composerRegions: readonly ResolvedComposerRegionContribution[] = freezeQualifiedContributions(
         inputs.composerRegions ?? [],
     );
     const inputAgents = inputs.agents ?? [];
@@ -242,6 +242,10 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
     const workflows = Object.freeze([...(inputs.workflows ?? [])].sort((left, right) =>
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
+    const inputTypes = Object.freeze([...(inputs.inputTypes ?? [])].sort((left, right) =>
+        buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
+    const dragSources = freezeQualifiedContributions(inputs.dragSources ?? []);
+    const dropTargets = freezeQualifiedContributions(inputs.dropTargets ?? []);
     const voiceProviders = Object.freeze([...(inputs.voiceProviders ?? [])].sort((left, right) => (
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
     )));
@@ -519,6 +523,9 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         voiceModelPacks,
         roles,
         workflows,
+        inputTypes,
+        dragSources,
+        dropTargets,
         voiceProviders,
         accountCollections,
         pluginContributionPoints,
@@ -1032,6 +1039,9 @@ export function createMergedContributionRegistry(
         voiceModelPacks: Object.freeze([...(builtIn.voiceModelPacks ?? []), ...(plugin.voiceModelPacks ?? [])]),
         roles: Object.freeze([...(builtIn.roles ?? []), ...(plugin.roles ?? [])]),
         workflows: Object.freeze([...(builtIn.workflows ?? []), ...(plugin.workflows ?? [])]),
+        inputTypes: Object.freeze([...(builtIn.inputTypes ?? []), ...(plugin.inputTypes ?? [])]),
+        dragSources: Object.freeze([...(builtIn.dragSources ?? []), ...(plugin.dragSources ?? [])]),
+        dropTargets: Object.freeze([...(builtIn.dropTargets ?? []), ...(plugin.dropTargets ?? [])]),
         voiceProviders: Object.freeze([...(builtIn.voiceProviders ?? []), ...(plugin.voiceProviders ?? [])]),
         accountCollections: Object.freeze([...(builtIn.accountCollections ?? []), ...(plugin.accountCollections ?? [])]),
         pluginContributionPoints: Object.freeze([

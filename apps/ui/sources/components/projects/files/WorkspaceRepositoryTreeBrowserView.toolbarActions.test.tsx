@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createModalModuleMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createCapturingLegendListMock, createModalModuleMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,8 +14,9 @@ const promptSpy = vi.fn(async (..._args: any[]) => null as any);
 const alertSpy = vi.fn((..._args: any[]) => {});
 const workspaceWriteFileSpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
 const workspaceCreateDirectorySpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
-const clearWorkspaceFileSearchCacheSpy = vi.fn();
-const searchWorkspaceFilesSpy = vi.fn(async (..._args: any[]) => [] as any[]);
+const machineWorkspaceFileListSpy = vi.fn(async (_machineId: string, _input: unknown, _options: unknown) => ({
+    ok: true as const, paths: ['src/needle.ts'], truncated: false,
+}));
 const clearWorkspaceRepositoryDirectoryEntriesSpy = vi.fn();
 const startUploadsSpy = vi.fn(async (..._args: any[]) => ({ ok: true } as const));
 let latestTransferOptions: any = null;
@@ -23,6 +24,19 @@ let latestTransferOptions: any = null;
 const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder');
 const onOpenFileSpy = vi.fn();
 const onOpenFilePinnedSpy = vi.fn();
+let serverId = '';
+let secondServerId = '';
+
+// Secure credential storage is the boundary; the real query owner resolves its Home binding.
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({
+        importOriginal,
+        tokenStorage: { getCredentialsForServerUrl: async () => ({
+            token: 'header.eyJzdWIiOiJhY2NvdW50In0=.signature',
+        }) },
+    });
+});
 
 const latestWorkspaceRepositoryTreeListProps = vi.hoisted(() => ({
     current: null as any,
@@ -146,11 +160,8 @@ vi.mock('@/sync/ops/workspaceFileSystem', () => ({
     workspaceCreateDirectory: (...args: any[]) => workspaceCreateDirectorySpy(...args),
 }));
 
-vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
-    workspaceFileSearchCache: {
-        clearCache: (workspaceCacheKey: string) => clearWorkspaceFileSearchCacheSpy(workspaceCacheKey),
-    },
-    searchWorkspaceFiles: (...args: any[]) => searchWorkspaceFilesSpy(...args),
+vi.mock('@/sync/ops/machineWorkspaceFileList', () => ({
+    machineWorkspaceFileList: (machineId: string, input: unknown, options: unknown) => machineWorkspaceFileListSpy(machineId, input, options),
 }));
 
 vi.mock('@/sync/domains/workspaces/files/workspaceRepositoryDirectory', () => ({
@@ -199,12 +210,16 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     },
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
-    SearchResultsList: () => React.createElement('SearchResultsList'),
-}));
+// Virtualization is a third-party boundary; keep the result rows and query owner real.
+vi.mock('@legendapp/list/react-native', () => createCapturingLegendListMock({ renderItems: true }).module);
 
 describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        serverId = (await upsertServerProfile({ serverUrl: 'https://toolbar-server.example.test' })).id;
+        secondServerId = (await upsertServerProfile({ serverUrl: 'https://toolbar-server-b.example.test' })).id;
+        const { workspaceFileSearchCache } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
+        workspaceFileSearchCache.clearAll();
         promptSpy.mockReset();
         alertSpy.mockClear();
         workspaceWriteFileSpy.mockClear();
@@ -214,8 +229,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         onOpenFileSpy.mockClear();
         onOpenFilePinnedSpy.mockClear();
         storageSpies.setWorkspaceRepositoryTreeExpandedPaths.mockClear();
-        clearWorkspaceFileSearchCacheSpy.mockClear();
-        searchWorkspaceFilesSpy.mockClear();
+        machineWorkspaceFileListSpy.mockClear();
         clearWorkspaceRepositoryDirectoryEntriesSpy.mockClear();
         startUploadsSpy.mockClear();
         latestTransferOptions = null;
@@ -238,7 +252,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
         return await renderScreen(
             <WorkspaceRepositoryTreeBrowserView
-                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                scope={{ serverId, machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={onOpenFileSpy}
                 onOpenFilePinned={onOpenFilePinnedSpy}
                 {...overrides}
@@ -260,7 +274,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
      */
     it('addresses the file search at the server the workspace is on', async () => {
         const screen = await renderView({
-            scope: { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' },
+            scope: { serverId: secondServerId, machineId: 'm1', rootPath: '/repo' },
             searchQuery: 'needle',
         });
 
@@ -269,11 +283,12 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
             await settle();
         });
 
-        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
-        expect(searchWorkspaceFilesSpy.mock.calls[0]?.[0]).toMatchObject({
-            scope: { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' },
-            query: 'needle',
-        });
+        expect(machineWorkspaceFileListSpy).toHaveBeenCalledTimes(1);
+        expect(machineWorkspaceFileListSpy.mock.calls[0]).toEqual([
+            'm1', expect.objectContaining({ rootPath: '/repo' }),
+            expect.objectContaining({ serverId: secondServerId, signal: expect.any(AbortSignal) }),
+        ]);
+        expect(screen.getTextContent()).toContain('needle.ts');
         expect(screen).toBeTruthy();
     });
 
@@ -298,7 +313,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
             return (
                 <WorkspaceRepositoryTreeBrowserView
                     // Deliberately a fresh object literal on every render.
-                    scope={{ serverId: 'server-b', machineId: 'm1', rootPath: '/repo' }}
+                    scope={{ serverId: secondServerId, machineId: 'm1', rootPath: '/repo' }}
                     searchQuery="needle"
                     onOpenFile={onOpenFileSpy}
                     onOpenFilePinned={onOpenFilePinnedSpy}
@@ -311,7 +326,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
             await new Promise((resolve) => setTimeout(resolve, 250));
             await settle();
         });
-        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
+        expect(machineWorkspaceFileListSpy).toHaveBeenCalledTimes(1);
 
         // Three more host renders, three more fresh-but-equal scope literals.
         for (let i = 0; i < 3; i++) {
@@ -325,7 +340,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
             await settle();
         });
 
-        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
+        expect(machineWorkspaceFileListSpy).toHaveBeenCalledTimes(1);
     });
 
     const menu = (screen: Awaited<ReturnType<typeof renderView>>, testID: string) => screen.findByTestId(testID);
@@ -383,7 +398,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         });
 
         expect(workspaceWriteFileSpy).toHaveBeenCalledWith(
-            { machineId: 'm1', rootPath: '/repo', serverId: 'server' },
+            { machineId: 'm1', rootPath: '/repo', serverId },
             'src/new-file.ts',
             '',
             null,
@@ -402,17 +417,21 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         });
 
         expect(workspaceCreateDirectorySpy).toHaveBeenCalledWith(
-            { machineId: 'm1', rootPath: '/repo', serverId: 'server' },
+            { machineId: 'm1', rootPath: '/repo', serverId },
             'src/new-folder',
         );
     });
 
     it('wires workspace uploads through the canonical workspace transfer hook and refreshes after upload success', async () => {
         const screen = await renderView();
+        const { searchWorkspaceFiles } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
+        const search = { scope: { serverId, machineId: 'm1', rootPath: '/repo' }, query: 'needle' };
+        await searchWorkspaceFiles(search);
+        expect(machineWorkspaceFileListSpy).toHaveBeenCalledTimes(1);
 
         expect(menuItem(screen, 'repository-tree-create-menu', 'repository-tree-upload-files')).toBeTruthy();
         expect(latestTransferOptions?.workspaceScope).toEqual({
-            serverId: 'server',
+            serverId,
             machineId: 'm1',
             rootPath: '/repo',
         });
@@ -423,15 +442,10 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
             await settle();
         });
 
-        // The search cache is cleared BY SCOPE (it derives the key itself) while the directory
-        // cache is still key-addressed. Both must name the same entry the tree filled, so the
-        // key asserted below is the one `buildWorkspaceCacheKey` produces for that same scope.
-        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith({
-            serverId: 'server',
-            machineId: 'm1',
-            rootPath: '/repo',
-        });
-        expect(clearWorkspaceRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
+        // The next read must reach transport again after the upload invalidates this workspace.
+        await searchWorkspaceFiles(search);
+        expect(machineWorkspaceFileListSpy).toHaveBeenCalledTimes(2);
+        expect(clearWorkspaceRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ workspaceCacheKey: `${serverId}:m1:/repo` });
         expect(workspaceScmControllerState.refresh).toHaveBeenCalled();
     });
 

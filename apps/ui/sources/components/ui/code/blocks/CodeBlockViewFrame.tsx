@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useHappierCodeBlockBehavior } from '@happier-dev/plugin-ui/presentation';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 export type CodeBlockViewFrameProps = Readonly<{
     code: string;
@@ -114,7 +115,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
         <View
             style={[
                 styles.container,
-                { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default },
+                { backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.inset, 'content', true), borderColor: theme.colors.border.default },
                 containerStyle,
             ]}
         >

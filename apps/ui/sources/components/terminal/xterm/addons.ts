@@ -1,7 +1,15 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { Terminal } from '@xterm/xterm';
+import { createXtermFindEngine, type XtermFindColors } from './findEngine';
+
+export function loadXtermSearchAddon(term: Terminal, colors: XtermFindColors) {
+    const addon = new SearchAddon();
+    term.loadAddon(addon);
+    return createXtermFindEngine(term, addon, colors);
+}
 
 export function createXtermFitAddon(): FitAddon {
     return new FitAddon();

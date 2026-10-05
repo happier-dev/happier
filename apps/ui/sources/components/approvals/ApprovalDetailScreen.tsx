@@ -54,6 +54,7 @@ import { readApprovalSessionEndpointLabels, readApprovalTargetEndpointLabels } f
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
+  getApprovalDecisionErrorMessage,
   isApprovalReplayRouteUnavailable,
   resolveApprovalReplayRoute,
   useApprovalDecisionHandler,
@@ -427,7 +428,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{
             // The original conflict remains authoritative and is still shown below.
           }
         }
-        const message = isVersionConflict ? err.message : t('approvals.decisionError');
+        const message = isVersionConflict ? err.message : getApprovalDecisionErrorMessage(err);
         Modal.alert(t('common.error'), message);
       } finally {
         decisionInFlightRef.current = false;

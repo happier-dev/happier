@@ -5,6 +5,7 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 import type { ScmWorkingSnapshot, Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { readMountedSessionRealtimeScmConsumerScopes } from '@/sync/runtime/sessionRealtimeScmConsumers';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 
 const initialStorageState = storage.getState();

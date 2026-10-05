@@ -104,7 +104,7 @@ export type ClaudeScreenState = Readonly<{
   */
   composerContent: string | null;
   composerCursorRelation: 'at_content_start' | 'inside_or_after_content' | null;
-  modeMarker: ClaudeTuiModeMarker;
+  modeMarker: ClaudeTuiModeMarker | null;
   visibleModel: string | null;
   visibleEffort: string | null;
 }>;
@@ -465,13 +465,15 @@ function readComposerState(
   };
 }
 
-function resolveModeMarker(text: string): ClaudeTuiModeMarker {
-  // Order matters only for disambiguation; markers are mutually exclusive in practice.
-  if (ACCEPT_EDITS_MARKER.test(text)) return 'acceptEdits';
-  if (PLAN_MODE_MARKER.test(text)) return 'plan';
-  if (BYPASS_MARKER.test(text)) return 'bypassPermissions';
-  if (AUTO_MODE_MARKER.test(text)) return 'auto';
-  return 'default';
+function resolveModeMarker(footer: string): ClaudeTuiModeMarker | null {
+  // Only the current footer proves the active mode. Transcript echoes and clipped
+  // footers must not turn an unknown mode into default (2.1.289, short tmux panes).
+  if (ACCEPT_EDITS_MARKER.test(footer) || /(?:^|\n)\s*⏵⏵\s+accept edits\b/i.test(footer)) return 'acceptEdits';
+  if (PLAN_MODE_MARKER.test(footer) || /(?:^|\n)\s*⏸\s+plan\b/i.test(footer)) return 'plan';
+  if (BYPASS_MARKER.test(footer) || /(?:^|\n)\s*⏵⏵\s+bypass permissions\b/i.test(footer)) return 'bypassPermissions';
+  if (AUTO_MODE_MARKER.test(footer) || /(?:^|\n)\s*⏵⏵\s+auto\b/i.test(footer)) return 'auto';
+  if (/(?:^|\n)\s*⏸\s+manual\b/i.test(footer) || /\? for shortcuts\b/i.test(footer)) return 'default';
+  return null;
 }
 
 function resolveVisibleModel(text: string): string | null {
@@ -730,9 +732,10 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
   const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
   // A notice above the current composer belongs to transcript history, not the active footer.
-  const usageLimitWaitVisible = USAGE_LIMIT_WAIT_FOOTER.test(lastComposerMatch
+  const currentFooter = lastComposerMatch
     ? text.slice(lastComposerMatch.index + lastComposerMatch[0].length)
-    : visibleTail);
+    : visibleTail;
+  const usageLimitWaitVisible = USAGE_LIMIT_WAIT_FOOTER.test(currentFooter);
 
   const switchModelDialogVisible = SWITCH_MODEL_DIALOG.test(text);
   const usageLimitDialogVisible = usageLimitSemanticMatch && visibleDialogSelection !== null;
@@ -800,13 +803,13 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     || SELECTION_CURSOR_ROW.test(text)
     || (SELECTION_LIST_HINT.test(text) && !hasComposer);
 
-  const modeMarker = resolveModeMarker(text);
+  const modeMarker = resolveModeMarker(currentFooter);
   const latestEffort = resolveLatestEffortConfirmation(text);
 
   const inputBoxInteractive =
     !generating
     && !anyDialog
-    && (hasComposer || WORK_PROMPT.test(tailLines(text, 10)) || modeMarker !== 'default');
+    && (hasComposer || WORK_PROMPT.test(tailLines(text, 10)) || (modeMarker !== null && modeMarker !== 'default'));
   const selectionListVisible = rewindSelectionVisible || SELECTION_CURSOR_ROW.test(text) || (SELECTION_LIST_HINT.test(text) && !hasComposer);
 
   return {

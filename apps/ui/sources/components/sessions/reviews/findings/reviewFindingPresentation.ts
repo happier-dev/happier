@@ -16,6 +16,22 @@ export function isHighReviewSeverity(severity: ReviewFinding['severity']): boole
     return severity === 'blocker' || severity === 'high';
 }
 
+/**
+ * The colour role of a severity where a finding sits beside code (Walkthrough lab WT5): severity colour
+ * appears only on findings and their chips, never on explanation, comments or reviewed marks.
+ */
+export type ReviewSeverityTone = 'danger' | 'warning' | 'accent' | 'quiet';
+
+export function reviewSeverityTone(severity: ReviewFinding['severity']): ReviewSeverityTone {
+    switch (severity) {
+        case 'blocker':
+        case 'high': return 'danger';
+        case 'medium': return 'warning';
+        case 'low': return 'accent';
+        case 'nit': return 'quiet';
+    }
+}
+
 export function reviewSeverityLabel(severity: ReviewFinding['severity']): string {
     switch (severity) {
         case 'blocker': return t('runPage.review.severity.blocker');
@@ -35,6 +51,15 @@ export function formatReviewFindingLocation(finding: ReviewFinding): string | nu
     return finding.filePath;
 }
 
+export function formatReviewFindingThreadQuote(finding: ReviewFinding): string {
+    const location = formatReviewFindingLocation(finding);
+    return `${reviewSeverityLabel(finding.severity)} · ${finding.title}${location ? ` · ${location}` : ''}`;
+}
+
+export function formatReviewFindingThreadUpdate(reviewerLabel: string, previous: ReviewFinding, updated: ReviewFinding): string {
+    return t('runPage.review.reviewerUpdated', { reviewer: reviewerLabel }) + (updated.severity !== previous.severity ? `: ${reviewSeverityLabel(previous.severity)} → ${reviewSeverityLabel(updated.severity)}` : '');
+}
+
 export function sortReviewFindingsBySeverity(findings: readonly ReviewFinding[]): ReviewFinding[] {
     return findings
         .map((finding, index) => ({ finding, index }))
@@ -43,6 +68,12 @@ export function sortReviewFindingsBySeverity(findings: readonly ReviewFinding[])
             || left.index - right.index
         ))
         .map(({ finding }) => finding);
+}
+
+export function reviewSeverityCounts(findings: readonly ReviewFinding[]) {
+    const counts = new Map<ReviewFinding['severity'], number>();
+    for (const finding of sortReviewFindingsBySeverity(findings)) counts.set(finding.severity, (counts.get(finding.severity) ?? 0) + 1);
+    return [...counts].map(([severity, count]) => ({ severity, count, label: t('reviewWalkthrough.severityCount', { count, severity: reviewSeverityLabel(severity).toLowerCase() }) }));
 }
 
 /**

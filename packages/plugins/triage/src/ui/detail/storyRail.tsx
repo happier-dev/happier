@@ -17,9 +17,11 @@ import {
 } from '@happier-dev/plugin-ui';
 import type { SessionPendingPermissionV1, SessionPermissionAnswerV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
+import { HAPPIER_WORK_STATUS_SEMANTIC_TONE } from '@happier-dev/plugin-ui/presentation';
 
 import { describeTriageAgentStatusV1 } from './agentState.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
+import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 
 /** How many of the agent's findings the step lists before counting the rest. */
 const SHOWN_FINDINGS = 3;
@@ -39,6 +41,7 @@ export function TriageAgentStep(props: Readonly<{
   hasMore: boolean;
   pageState?: 'idle' | 'loading' | 'failed';
   onLoadMore?: () => void;
+  onSelectSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
   /** The live read of `sessions[0]`, owned by the detail so the card and step share one watch. */
   live: SessionStateReadV1;
   /** This entry, as the Reviews read names it. */
@@ -52,16 +55,21 @@ export function TriageAgentStep(props: Readonly<{
   const text = usePluginTranslation();
   const linkedSessionIds = React.useMemo(() => props.sessions.map((session) => session.sessionId), [props.sessions]);
   const findings = useReviewCommentProposalsForEntry({ linkedSessionIds, entry: props.reviewEntry });
+  const opener = useLinkedSessionOpen();
   if (props.sessions.length === 0) return null;
   const status = props.live.state === null ? null : describeTriageAgentStatusV1(props.live.state);
   const where = props.live.state?.workspace;
   const whereLabel = where?.worktreeName ?? where?.projectName;
   const shown = findings.proposals.slice(0, SHOWN_FINDINGS);
+  // Reviews are read in linked-Session scope. Scoped rows may omit that optional
+  // field; in that case use the story's current linked Session destination.
+  const omittedFinding = findings.proposals[SHOWN_FINDINGS];
+  const findingsSessionId = omittedFinding?.sessionId ?? props.sessions[0]?.sessionId;
   const title = text('plugins.triage.surface.detail.story.agent', 'Agent work');
   const content = (
     <>
       {status === null ? null : (
-        <Status tone={status.tone} labelKey={status.labelKey} label={status.label} pulsing={status.live} />
+        <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} labelKey={status.labelKey} label={status.label} pulsing={status.live} />
       )}
       {shown.length === 0 ? null : (
         <Stack gap="xsmall">
@@ -74,6 +82,19 @@ export function TriageAgentStep(props: Readonly<{
           {shown.map((finding) => (
             <Text key={finding.id} variant="caption" value={finding.body} />
           ))}
+          {omittedFinding === undefined || findingsSessionId === undefined ? null : (
+            <Button
+              titleKey="plugins.triage.surface.detail.agent.seeAll"
+              title="See all"
+              variant="plain"
+              busy={opener.busySessionId !== null}
+              onPress={() => { void opener.open(findingsSessionId); }}
+            />
+          )}
+          {opener.failedSessionId === null ? null : (
+            <Status tone="danger" labelKey="plugins.triage.surface.detail.sessionOpenFailed"
+              label="This Session could not be opened." />
+          )}
         </Stack>
       )}
     </>
@@ -103,6 +124,7 @@ export function TriageAgentStep(props: Readonly<{
         sessions={props.sessions}
         hasMore={props.hasMore}
         labelled={false}
+        onSelect={props.onSelectSession}
         {...(props.pageState === undefined ? {} : { pageState: props.pageState })}
         {...(props.onLoadMore === undefined ? {} : { onLoadMore: props.onLoadMore })}
       />

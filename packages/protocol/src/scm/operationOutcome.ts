@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ScmOperationErrorCodeSchema, type ScmOperationErrorCode } from './operationError.js';
 import { ScmOperationStateSchema } from './operationState.js';
+import type { ScmCommitPublication } from './commitPublication.js';
 
 export const ScmOperationRepositoryStateSchema = z.object({
   headOid: z.string().optional(),
@@ -67,10 +68,32 @@ export function normalizeScmOperationOutcome(response: Readonly<{
   errorCode?: ScmOperationErrorCode;
   error?: string;
   commitSha?: string;
+  publication?: ScmCommitPublication;
 }>): ScmOperationOutcome {
+  // Publication is the writer's observed fact; success/diagnostics cannot turn uncertainty into retry authority.
+  if (response.publication?.state === 'unknown') {
+    return createScmOperationUnknownOutcome(response.publication.candidateOid
+      ? { kind: 'commit', commitSha: response.publication.candidateOid }
+      : { kind: 'repository_status' });
+  }
+  if (response.publication?.state === 'published' && response.outcome) {
+    const commitSha = response.publication.candidateOid ?? response.commitSha;
+    if (!commitSha) return createScmOperationUnknownOutcome({ kind: 'repository_status' });
+    const effect = { kind: 'commit' as const, commitSha };
+    if (response.outcome.kind === 'succeeded' || response.outcome.kind === 'effect_applied_with_warning') return { ...response.outcome, effect };
+    return {
+      v: 1, kind: 'effect_applied_with_warning', effect,
+      errorCode: response.errorCode ?? ('errorCode' in response.outcome ? response.outcome.errorCode : undefined) ?? 'COMMAND_FAILED',
+      nextActions: [{ kind: response.publication.indexReconciliation === 'failed' ? 'reconcile_index' : 'refresh' }],
+      ...(response.outcome.message ? { message: response.outcome.message } : {}),
+    };
+  }
   if (response.outcome) return response.outcome;
   const common = { v: 1 as const, nextActions: [], ...(response.error ? { message: response.error } : {}) };
-  const effect = response.commitSha ? { kind: 'commit' as const, commitSha: response.commitSha } : undefined;
+  const commitSha = response.publication?.state === 'published' ? response.publication.candidateOid ?? response.commitSha
+    : response.publication?.state === 'not_published' ? undefined : response.commitSha;
+  const effect = commitSha ? { kind: 'commit' as const, commitSha } : undefined;
+  if (response.publication?.state === 'published' && !effect) return createScmOperationUnknownOutcome({ kind: 'repository_status' });
   if (response.success) return { ...common, kind: 'succeeded', ...(effect ? { effect } : {}) };
   const errorCode = response.errorCode ?? 'COMMAND_FAILED';
   if (effect) return { ...common, kind: 'effect_applied_with_warning', effect, errorCode };
@@ -80,6 +103,10 @@ export function normalizeScmOperationOutcome(response: Readonly<{
     case 'REMOTE_NON_FAST_FORWARD':
     case 'REMOTE_FF_ONLY_REQUIRED': return { ...common, kind: 'needs_input', errorCode, nextActions: [{ kind: 'choose_reconcile' }] };
     case 'COMMIT_REQUIRED': return { ...common, kind: 'needs_input', errorCode };
+    case 'COMMIT_HOOK_CONTENT_CHANGED': return { ...common, kind: 'needs_input', errorCode };
+    case 'COMMIT_HEAD_CHANGED':
+    case 'COMMIT_STAGING_CONFLICT':
+    case 'SCM_SOURCE_CHANGED': return { ...common, kind: 'needs_input', errorCode, nextActions: [{ kind: 'refresh' }] };
     default: return { ...common, kind: 'failed', errorCode };
   }
 }

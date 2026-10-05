@@ -148,3 +148,41 @@ register a parallel execution-run lifecycle.
 An execution-run-only custom Agent has no Session runner locator. Use the
 explicit finite Run seam only for Agents whose work is inherently bounded and
 does not have an interactive Session runtime.
+
+## Turn results and Workflow completion (development source)
+
+An input turn finishing is distinct from its retained Run finishing. For
+Session-derived interactive Runs, the host correlates the exact accepted input
+turn; completing that turn does not terminalize the Run. A bounded execution-only
+runtime still publishes exactly one terminal Run event under the contract above.
+See [retained interaction](/development/architecture/runtime/execution-runs#turn-completion-and-run-completion-differ)
+for the host's admission and observation boundary.
+
+Workflow Agent steps pass their frozen text, JSON, or decision result contract
+to that host path. The shared result codec parses raw JSON text once, validates
+already decoded values directly, and reports typed failures with schema paths.
+Plugins supply native output and correlation evidence; they do not decide that
+a Workflow invocation has committed its result or completed human review.
+
+For host Actions that declare execution-run completion, the Workflow owner
+retains the immediate response and launched Run identities, awaits their exact
+terminal observations, and validates the declared terminal result. Losing the
+invoke response leaves the outcome uncertain; observation recovery does not
+invoke the Action again.
+
+Qualified plugin Action schema preparation is implemented: the exact execution
+machine's merged catalog selects the current occurrence, and the daemon reads
+that contribution's input and output schemas on demand. Missing or stale
+contributions and missing output schemas fail preparation. This establishes
+the schema path, not blanket support for every qualified Action as a Workflow
+leaf or an execution-run completion declaration. Use the canonical
+[Action contribution contract](/plugins/api/actions-tools-commands) for invocation.
+
+These are current 0.3 development contracts, not release or loaded-runtime
+certification.
+
+## Related
+
+- [Execution Run architecture](/development/architecture/runtime/execution-runs)
+- [Actions, tools, and commands](/plugins/api/actions-tools-commands)
+- [Automations and Workflows](/extras/automations)

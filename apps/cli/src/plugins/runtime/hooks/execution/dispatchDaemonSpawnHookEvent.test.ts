@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, vi } from 'vitest';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
@@ -135,6 +136,7 @@ function createSpawnHookRuntimeRegistry(params: Readonly<{
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: async () => [],
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => Object.freeze([]),
     retireConsumers: () => {},
     dispose: params.dispose ?? (async () => {}),

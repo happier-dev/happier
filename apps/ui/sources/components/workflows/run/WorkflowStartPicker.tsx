@@ -85,7 +85,7 @@ export function WorkflowStartPicker(props: Readonly<{
                 props.onRequestClose();
             }} onRequestClose={props.onRequestClose} />
         {library.failure ? <RoundButton size="small" display="inverted" title={t('common.retry')} onPress={library.retry} /> : null}
-        {library.hasMore ? <RoundButton size="small" display="inverted" title={t('common.loadMore')}
+        {library.hasMore ? <RoundButton size="small" display="inverted" title={t('workflows.destination.loadMoreWorkflows')}
             loading={library.loadingMore} onPress={library.loadMore} /> : null}
     </View>;
 }

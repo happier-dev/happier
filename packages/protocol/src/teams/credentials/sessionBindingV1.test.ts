@@ -83,6 +83,14 @@ describe('Session team credential binding contract', () => {
     }).success).toBe(false);
     expect(SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse({
       ...patch,
+      activitySummaryV1: {
+        pendingPermissionRequestCount: 1,
+        pendingUserActionRequestCount: 0,
+        pendingRequestNewestCreatedAt: 100,
+      },
+    }).success).toBe(false);
+    expect(SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse({
+      ...patch,
       sessionExpectation: { kind: 'inactive_model_intent' },
     }).success).toBe(true);
     expect(SessionTeamCredentialBindingMetadataPatchV1Schema.parse({

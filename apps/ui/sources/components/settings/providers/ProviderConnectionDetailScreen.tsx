@@ -27,7 +27,8 @@ import { ProviderFieldRow } from '@/components/settings/providers/authoring/Prov
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
@@ -848,9 +849,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     />
                 ) : undefined}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <ProviderIcon icon={connection.icon} size={24} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
                 meta={[
                     ...(presentation.subtitle ? [{ key: 'provider', text: presentation.subtitle }] : []),

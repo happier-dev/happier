@@ -19,6 +19,7 @@ import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRe
 
 const state = vi.hoisted(() => ({
   config: { billingMode: 'byo', agentId: '', tts: {} } as Record<string, unknown>,
+  schemaVersion: 2,
   settingsVersion: 4,
   conflict: null as null | 'unrelated' | 'provider',
   mutationAttempts: 0,
@@ -57,7 +58,7 @@ vi.mock('@/components/appShell/plugins/appShellQuestionInteractions', async (imp
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props),
+  Item: (props: any) => React.createElement('Item', props, props.rightElement),
 }));
 vi.mock('@/components/ui/text/Text', () => ({
   Text: (props: any) => React.createElement('Text', props, props.children),
@@ -87,7 +88,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         voice: {
           providerId: state.selectedProviderId,
           providers: {
-            [PROVIDER_ID]: { schemaVersion: 2, config: state.config },
+            [PROVIDER_ID]: { schemaVersion: state.schemaVersion, config: state.config },
           },
         },
         ...(state.accountSettings ?? {}),
@@ -150,7 +151,7 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
         voiceSettingsV1: {
           providerId: PROVIDER_ID,
           providers: {
-            [PROVIDER_ID]: { schemaVersion: 2, config: state.config },
+            [PROVIDER_ID]: { schemaVersion: state.schemaVersion, config: state.config },
           },
         },
       });
@@ -199,9 +200,28 @@ const owner = {
 };
 
 describe('VoiceProviderSettingsActions', () => {
+  it('offers one inline operation chosen from the contributed agent state', async () => {
+    const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');
+    const contribution = VoiceProviderContributionSchema.parse(PLUGIN_MANIFEST.contributes.voiceProviders?.[0]);
+    const actions = contribution.settings?.actions ?? [];
+    const agentAction = { settingId: 'agentId', createActionId: 'create-agent', updateActionId: 'update-agent',
+      titleKey: 'agent', missingStateKey: 'missing', configuredStateKey: 'configured' };
+    let tree!: renderer.ReactTestRenderer;
+    const render = (agentId: string) => <VoiceProviderSettingsActions providerId={PROVIDER_ID} owner={owner}
+      actions={actions} config={{ ...state.config, agentId }} agentAction={agentAction}
+      placement={{ kind: 'afterField', fieldId: 'agentId' }} />;
+    await act(async () => { tree = renderer.create(render('')); });
+    const buttons = () => [...new Set(tree.root.findAll((node) => typeof node.props.testID === 'string'
+      && node.props.testID.startsWith('voice-settings-action-')).map((node) => node.props.testID))];
+    expect(buttons()).toEqual(['voice-settings-action-create-agent']);
+    await act(async () => { tree.update(render('existing-agent')); });
+    expect(buttons()).toEqual(['voice-settings-action-update-agent']);
+    await act(async () => { tree.unmount(); });
+  });
   beforeEach(() => {
     state.config = { billingMode: 'byo', agentId: '', tts: {} };
     state.settingsVersion = 4;
+    state.schemaVersion = 2;
     state.conflict = null;
     state.mutationAttempts = 0;
     state.outcomeUnknown = false;
@@ -224,6 +244,62 @@ describe('VoiceProviderSettingsActions', () => {
       occurrenceId: 'voice-occurrence-a',
       settingsActions: Object.freeze({ execute: spies.execute }),
     });
+  });
+
+  it('admits an agent-requested operation only after real confirmation and reports the applied patch', async () => {
+    const { invokeVoiceProviderSettingsAction } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
+    const pending = invokeVoiceProviderSettingsAction({ providerId: PROVIDER_ID, owner, declaration: action });
+    await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+    expect(state.mutationApplied).toBe(false);
+    expect(spies.execute).not.toHaveBeenCalled();
+    spies.modalConfigs[0].props.onConfirm();
+    expect(await pending).toEqual({ status: 'completed' });
+    expect(state.config.agentId).toBe('agent-created');
+  });
+
+  it('leaves the provider and settings untouched when the human declines an agent operation', async () => {
+    const { invokeVoiceProviderSettingsAction } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
+    const pending = invokeVoiceProviderSettingsAction({ providerId: PROVIDER_ID, owner, declaration: action });
+    await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+    spies.modalConfigs[0].props.onCancel();
+    expect(await pending).toMatchObject({ status: 'cancelled' });
+    expect(state.mutationApplied).toBe(false);
+    expect(spies.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not expose plugin-supplied failure text through an operation result', async () => {
+    spies.execute.mockRejectedValueOnce({ code: 'private_provider_payload', message: 'private_provider_payload' });
+    const { invokeVoiceProviderSettingsAction } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
+    const pending = invokeVoiceProviderSettingsAction({ providerId: PROVIDER_ID, owner, declaration: action });
+    await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+    spies.modalConfigs[0].props.onConfirm();
+    expect(await pending).toEqual({ status: 'unavailable', reason: 'internal_error' });
+    expect(state.mutationApplied).toBe(false);
+  });
+
+  it('retains a future provider envelope instead of invoking against defaults', async () => {
+    state.schemaVersion = 99;
+    const original = state.config;
+    const { invokeVoiceProviderSettingsAction } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
+    const pending = invokeVoiceProviderSettingsAction({ providerId: PROVIDER_ID, owner, declaration: action });
+    await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+    spies.modalConfigs[0].props.onConfirm();
+    expect(await pending).toMatchObject({ status: 'unavailable', reason: 'voice_provider_settings_invalid' });
+    expect(state.config).toBe(original);
+    expect(state.mutationApplied).toBe(false);
+    expect(spies.execute).not.toHaveBeenCalled();
+  });
+
+  it('retires the captured Action Account before confirmation can invoke a new current Account', async () => {
+    let current = true;
+    const { invokeVoiceProviderSettingsAction } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
+    const pending = invokeVoiceProviderSettingsAction({ providerId: PROVIDER_ID, owner, declaration: action, isCurrent: () => current });
+    await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+    current = false;
+    spies.modalConfigs[0].props.onConfirm();
+    expect(await pending).toMatchObject({ status: 'unavailable' });
+    expect(state.mutationApplied).toBe(false);
+    expect(spies.execute).not.toHaveBeenCalled();
   });
 
   it('uses the producer occurrence as the transient requester identity and changes it on replacement', async () => {

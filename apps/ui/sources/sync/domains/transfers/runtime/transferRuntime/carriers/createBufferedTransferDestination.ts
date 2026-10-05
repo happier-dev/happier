@@ -18,6 +18,7 @@ export function createBufferedTransferDestination(maxBytes: number): Readonly<{
         cleanup: () => Promise<void>;
     };
     toBase64: () => string;
+    toBytes: () => Uint8Array;
     reset: () => void;
 }> {
     let bufferedBytes = 0;
@@ -43,6 +44,7 @@ export function createBufferedTransferDestination(maxBytes: number): Readonly<{
             },
         },
         toBase64: () => encodeBase64(mergeTransferChunks(chunks), 'base64'),
+        toBytes: () => mergeTransferChunks(chunks),
         reset,
     };
 }

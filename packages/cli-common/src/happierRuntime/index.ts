@@ -1,8 +1,10 @@
 export { discoverHappierInstallations } from './installations/discoverHappierInstallations.js';
 export { resolvePreferredHappierCliInstallation } from './installations/resolvePreferredHappierCliInstallation.js';
-export { discoverHappierServices } from './services/discoverHappierServices.js';
+export { discoverHappierServices, isDaemonStartSyncCommand, readWindowsScheduledTaskWrapperPath } from './services/discoverHappierServices.js';
 export {
   daemonServiceMatchesInstallTarget,
+  happierHomeDirsMatch,
+  normalizeHomeDir,
   resolveDaemonServiceInstallConflictPlan,
 } from './daemonInstallConflict.js';
 export type {

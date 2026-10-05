@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { encodeBase64 } from '../crypto/base64.js';
 import { SessionStoredMessageContentSchema } from '../sessions/messages/sessionStoredMessageContent.js';
+import { ArtifactBlobReadResponseV1Schema } from '../artifacts/artifactBinaryV1.js';
 
 /** Closed authority-bearing HTTP objects; no fragment secret is a transport field. */
 export const StoredContentPublicShareSubjectV1Schema = z.object({
@@ -55,6 +56,7 @@ export const StoredContentPublicShareReadResponseV1Schema = z.object({
     z.object({
       kind: z.literal('artifact'), header: z.string(), body: z.string(),
       headerVersion: z.number().int().positive(), bodyVersion: z.number().int().positive(),
+      blob: ArtifactBlobReadResponseV1Schema.optional(),
     }).strict(),
     z.object({
       kind: z.literal('session'), metadata: z.string().nullable(), metadataVersion: z.number().int().nonnegative(),

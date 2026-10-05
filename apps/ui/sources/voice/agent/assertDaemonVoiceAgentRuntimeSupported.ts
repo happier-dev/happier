@@ -11,7 +11,7 @@ function formatDaemonVoiceAgentUnavailableMessage(decision: FeatureDecision): st
       return 'voice_agent_daemon_backend_unavailable: enable the Experimental Features > Execution Runs toggle before starting local voice.';
     }
     if (decision.diagnostics.includes('dependency:voice:disabled')) {
-      return 'voice_agent_daemon_backend_unavailable: enable the Experimental Features > Voice toggle before starting local voice.';
+      return 'voice_agent_daemon_backend_unavailable: enable Settings > Features > Voice before starting local voice.';
     }
   }
   return 'voice_agent_daemon_backend_unavailable';

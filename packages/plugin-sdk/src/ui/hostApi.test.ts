@@ -105,8 +105,12 @@ describe('PluginUiHostApi initial public contract', () => {
             .toMatchTypeOf<PluginTargetedContributionSelectionV1>();
         expectTypeOf<PluginUiSelectActionInputRequestV1>()
             .toMatchTypeOf<SelectActionInputRequest>();
+        expectTypeOf<SelectActionInputRequest>()
+            .toMatchTypeOf<PluginUiSelectActionInputRequestV1>();
         expectTypeOf<PluginUiSelectActionInputResultV1>()
             .toMatchTypeOf<SelectActionInputResult>();
+        expectTypeOf<Extract<SelectActionInputResult, { kind: 'executionRunLaunch' }>>()
+            .toEqualTypeOf<Extract<PluginUiSelectActionInputResultV1, { kind: 'executionRunLaunch' }>>();
     });
 
     it('publishes only closed current-UI enrichment through the mount-bound host API', () => {

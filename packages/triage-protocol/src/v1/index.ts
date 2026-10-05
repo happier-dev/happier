@@ -71,6 +71,28 @@ export { TriagePullRequestStatusResultV1Schema } from './pullRequestStatus.js';
 export type { TriagePullRequestStatusResultV1, TriagePullRequestStatusV1 } from './pullRequestStatus.js';
 
 export {
+    TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_ID_V1,
+    TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1,
+    TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_REF_V1,
+    TRIAGE_SET_FIX_PULL_REQUEST_ACTION_ID_V1,
+    TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
+    TRIAGE_SET_FIX_PULL_REQUEST_ACTION_REF_V1,
+    TriageFixPullRequestV1Schema,
+    TriageReadFixPullRequestsInputV1Schema,
+    TriageReadFixPullRequestsResultV1Schema,
+    TriageSetFixPullRequestInputV1Schema,
+    TriageSetFixPullRequestResultV1Schema,
+} from './fixPullRequests.js';
+export type {
+    TriageFixPullRequestV1,
+    TriageFixPullRequestStatusV1,
+    TriageReadFixPullRequestsInputV1,
+    TriageReadFixPullRequestsResultV1,
+    TriageSetFixPullRequestInputV1,
+    TriageSetFixPullRequestResultV1,
+} from './fixPullRequests.js';
+
+export {
     admitTriageSourceDescriptorV1,
     TriageSourceDescriptorV1Schema,
     TriageSourceDetailTabV1Schema,

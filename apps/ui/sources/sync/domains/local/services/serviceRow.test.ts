@@ -28,6 +28,7 @@ function openableTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): Loca
     return {
         id: 'inventory:entry-a',
         source: 'inventory_entry',
+        sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-a' },
         machineId: 'machine-a',
         sessionId: 'session-a',
         title: 'Vite',
@@ -61,6 +62,25 @@ function packageTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): Local
 }
 
 describe('buildLocalServiceRows', () => {
+    it('does not join an unrelated listener solely from a launcher display id', () => {
+        const rows = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [openableTarget({ sourceClass: undefined })], sessionId: 'session-a', scope: 'workspace' });
+        expect(rows[0]?.listeningListenerKey).toBeUndefined();
+        const projected = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [openableTarget({
+            id: 'opaque-target', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-a' },
+        })], sessionId: 'session-a', scope: 'workspace' });
+        expect(projected[0]?.listeningListenerKey).toBeDefined();
+    });
+    it('does not report an available package launcher as a running listener without source-class metadata', () => {
+        const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [packageTarget({ state: 'available', actions: ['start'] })], sessionId: 'session-a', scope: 'workspace' });
+        expect(rows[0]?.status).toBe('stopped');
+        expect(selectLocalServiceRunningCount(rows)).toBe(0);
+    });
+
+    it('carries the detected service identity and address instead of exposing its raw process command', () => {
+        const rows = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [openableTarget()], sessionId: 'session-a', scope: 'workspace' });
+        expect(rows[0]?.serviceLabel).toBe('Vite');
+        expect(rows[0]?.addressLabel).toBe('localhost:5173');
+    });
     it('offers a package script as a new-terminal intent, never Local services Start', () => {
         const target = packageTarget({ sourceClass: { kind: 'package_script', runTargetId: 'web:dev', packageName: 'web', scriptName: 'dev', cwd: '/repo/web' } });
         const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: 'session-a', scope: 'workspace' });
@@ -181,7 +201,7 @@ describe('buildLocalServiceRows', () => {
     it('places non-session workspace services in the workspace band', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow({ id: 'entry-b' })],
-            launchTargets: [openableTarget({ id: 'inventory:entry-b', sessionId: 'session-other' })],
+            launchTargets: [openableTarget({ id: 'inventory:entry-b', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-b' }, sessionId: 'session-other' })],
             sessionId: 'session-a',
             scope: 'workspace',
         });
@@ -223,9 +243,9 @@ describe('buildLocalServiceRows', () => {
             inventoryRows: [inventoryRow({ id: 'mine' }), inventoryRow({ id: 'other', port: 8080 })],
             launchTargets: [
                 packageTarget({ id: 'package:docs', title: 'docs', state: 'available', unavailableReason: undefined, actions: ['start'] }),
-                openableTarget({ id: 'inventory:mine', sessionId: 'session-a' }),
-                openableTarget({ id: 'inventory:stopped', sessionId: 'session-a', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] }),
-                openableTarget({ id: 'inventory:other', sessionId: 'session-b' }),
+                openableTarget({ id: 'inventory:mine', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'mine' }, sessionId: 'session-a' }),
+                openableTarget({ id: 'inventory:stopped', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'stopped' }, sessionId: 'session-a', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] }),
+                openableTarget({ id: 'inventory:other', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'other' }, sessionId: 'session-b' }),
             ],
             sessionId: 'session-a',
             scope: 'machine',
@@ -259,7 +279,7 @@ describe('buildLocalServiceRows', () => {
 
     function boundTarget(id: string, title: string): LocalServiceLaunchTarget {
         // The daemon's subtitle is the entry's address label; the title falls back to it.
-        return openableTarget({ id: `inventory:${id}`, title, subtitle: undefined, sessionId: undefined });
+        return openableTarget({ id: `inventory:${id}`, sourceClass: { kind: 'inventory_entry', inventoryEntryId: id }, title, subtitle: undefined, sessionId: undefined });
     }
 
     it('shows one row per port however many addresses it is bound to (::, 0.0.0.0, 127.0.0.1)', () => {
@@ -344,8 +364,8 @@ describe('buildLocalServiceRows', () => {
             launchTargets: [
                 boundTarget('live', 'App'),
                 { ...boundTarget('stale', 'Old app'), state: 'stale' },
-                openableTarget({ id: 'preview:app', source: 'registered_preview' }),
-                openableTarget({ id: 'managed:app', source: 'managed_service' }),
+                openableTarget({ id: 'preview:app', source: 'registered_preview', sourceClass: { kind: 'registered_preview', previewId: 'app' } }),
+                openableTarget({ id: 'managed:app', source: 'managed_service', sourceClass: undefined }),
                 packageTarget({ state: 'available', actions: ['start'] }),
             ],
             sessionId: 'session-a', scope: 'workspace',
@@ -379,7 +399,7 @@ describe('buildLocalServiceRows', () => {
     it('does not trust an editable preview icon kind as daemon ownership evidence', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [],
-            launchTargets: [openableTarget({ id: 'preview:user', source: 'registered_preview', kind: 'happier' })],
+            launchTargets: [openableTarget({ id: 'preview:user', source: 'registered_preview', sourceClass: { kind: 'registered_preview', previewId: 'user' }, kind: 'happier' })],
             sessionId: 'session-a', scope: 'workspace',
         });
         expect(rows[0]).toMatchObject({ internal: false, primaryAction: { kind: 'open' } });
@@ -391,7 +411,7 @@ describe('buildLocalServiceRows', () => {
             inventoryRows: [],
             launchTargets: [
                 packageTarget({ id: 'package:refused' }),
-                openableTarget({ id: 'inventory:ssh', title: 'localhost:22', state: 'unavailable', unavailableReason: 'preview_registration_unavailable', actions: [] }),
+                openableTarget({ id: 'inventory:ssh', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'ssh' }, title: 'localhost:22', state: 'unavailable', unavailableReason: 'preview_registration_unavailable', actions: [] }),
                 packageTarget({ id: 'package:docs', title: 'docs', state: 'available', unavailableReason: undefined, actions: ['start'] }),
             ],
             sessionId: 'session-a',

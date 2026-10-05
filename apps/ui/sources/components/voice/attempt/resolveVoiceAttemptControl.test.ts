@@ -24,6 +24,34 @@ const base = {
  * same answer. This projection only routes it.
  */
 describe('resolveVoiceAttemptControl', () => {
+    it('keeps a dismissible failure reachable even without a recovery action', () => {
+        expect(resolveVoiceAttemptControl({
+            ...base, status: 'error', surfaceState: 'error', sessionId: 'failed-session',
+            startAdmitted: false, canDismissFailedAttempt: true,
+        })).toMatchObject({ availability: 'recoverable', primaryAction: null, canDismissFailedAttempt: true });
+        expect(resolveVoiceAttemptControl({
+            ...base, status: 'connected', canStop: true, canDismissFailedAttempt: true,
+        }).canDismissFailedAttempt).toBe(false);
+    });
+    it('projects shared session work and attention independently of listening media', () => {
+        const listening = { ...base, status: 'connected' as const, surfaceState: 'listening' as const, canStop: true };
+        expect(resolveVoiceAttemptControl({ ...listening, sessionStatus: { state: 'thinking', statusText: 'Working' } }))
+            .toMatchObject({ statusCell: 'working', primaryAction: 'end' });
+        expect(resolveVoiceAttemptControl({ ...listening, sessionStatus: { state: 'permission_required', statusText: 'Needs you' } }))
+            .toMatchObject({ statusCell: 'needs_you', primaryAction: 'end' });
+        expect(resolveVoiceAttemptControl({ ...base, sessionStatus: { state: 'thinking', statusText: 'Working' } }))
+            .toMatchObject({ statusCell: null });
+    });
+    it('projects a still mic at rest and distinct eclipse/recovery/live poses without changing End authority', () => {
+        expect(resolveVoiceAttemptControl(base)).toMatchObject({ markPose: 'mic', statusCell: null });
+        expect(resolveVoiceAttemptControl({ ...base, status: 'connecting', surfaceState: 'connecting', canStop: true }))
+            .toMatchObject({ markPose: 'shadow', primaryAction: 'end' });
+        expect(resolveVoiceAttemptControl({ ...base, status: 'connected', surfaceState: 'thinking', canStop: true, sessionId: 'session-1' }))
+            .toMatchObject({ markPose: 'light', statusCell: 'thinking', primaryAction: 'end' });
+        expect(resolveVoiceAttemptControl({ ...base, status: 'error', surfaceState: 'permission_required', hasRecovery: true, startAdmitted: false }))
+            .toMatchObject({ markPose: 'blocked', primaryAction: 'recover' });
+    });
+
     it.each([
         { status: 'connected' as const, sessionId: 'session-1', canCommitInput: true, expected: true },
         { status: 'connected' as const, sessionId: 'session-1', canCommitInput: false, expected: false },
@@ -84,6 +112,28 @@ describe('resolveVoiceAttemptControl', () => {
             startAdmitted: false,
             hasRecovery: false,
         })).toMatchObject({ availability: 'unavailable', canStart: false });
+    });
+
+    /**
+     * Voice is discoverable before it works: an idle Voice that is switched on but cannot start yet
+     * (nothing set up, or a provider that cannot run here) still shows its rest mic, and the mic's
+     * one action is to open Voice setup. Only a live attempt that can do nothing stays unavailable.
+     */
+    it('offers setup, not nothing, for an idle Voice that cannot start yet', () => {
+        expect(resolveVoiceAttemptControl({
+            ...base,
+            startAdmitted: false,
+            hasRecovery: false,
+            setupOffered: true,
+        })).toMatchObject({ availability: 'setup', primaryAction: 'setup', canStart: false, markPose: 'mic' });
+        // A recovery the user can act on still wins over generic setup.
+        expect(resolveVoiceAttemptControl({ ...base, startAdmitted: false, hasRecovery: true, setupOffered: true }))
+            .toMatchObject({ availability: 'recoverable', primaryAction: 'recover' });
+        // A live attempt with nothing to do is not a rest mic.
+        expect(resolveVoiceAttemptControl({
+            ...base, status: 'error', surfaceState: 'error', tone: 'error', sessionId: 'session-1',
+            startAdmitted: false, hasRecovery: false, setupOffered: true,
+        })).toMatchObject({ availability: 'unavailable', primaryAction: null });
     });
 
     /**

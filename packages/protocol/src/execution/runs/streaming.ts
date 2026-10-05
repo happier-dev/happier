@@ -15,6 +15,8 @@ export const ExecutionRunTurnStreamStartRequestSchema = z.object({
   message: z.string().min(1),
   displayMessage: z.string().min(1).optional(),
   resume: z.boolean().optional(),
+  /** Voice latency preference; provider request-size limits remain separate. */
+  speechSegmentTargetChars: z.number().int().min(32).max(2000).optional(),
 }).passthrough();
 export type ExecutionRunTurnStreamStartRequest = z.infer<typeof ExecutionRunTurnStreamStartRequestSchema>;
 

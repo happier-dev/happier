@@ -7680,6 +7680,196 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "comparisonSource": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "checkpointReceiptId": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "evidenceMode": {
+                      "anyOf": [
+                        {
+                          "const": "checkpoint"
+                        },
+                        {
+                          "const": "agent_reported"
+                        },
+                        {
+                          "const": "reconciled"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "const": "turnCheckpoint"
+                    },
+                    "sessionId": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "session"
+                    },
+                    "sessionId": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sessionId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "workingTree"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "base": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "head": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "branch"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "head",
+                    "base"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "commit": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "commit"
+                    },
+                    "parent": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "commit"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "pullRequest"
+                    },
+                    "locator": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "baseOid": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "headOid": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "number": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "providerId": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "repository": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "sourceAction": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "action": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "localId": {
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 256,
+                                  "minLength": 3,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "type": "object"
+                            },
+                            "input": {}
+                          },
+                          "required": [
+                            "action"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "providerId",
+                        "repository",
+                        "number"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "locator"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
             "engineIds": {
               "items": {
                 "minLength": 1,
@@ -7692,6 +7882,15 @@
             "instructions": {
               "minLength": 1,
               "type": "string"
+            },
+            "launchSelection": {},
+            "narrator": {},
+            "outputs": {
+              "items": {
+                "const": "walkthrough"
+              },
+              "minItems": 1,
+              "type": "array"
             },
             "review": {
               "additionalProperties": false,
@@ -13976,6 +14175,196 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "comparisonSource": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "checkpointReceiptId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "evidenceMode": {
+                                  "anyOf": [
+                                    {
+                                      "const": "checkpoint"
+                                    },
+                                    {
+                                      "const": "agent_reported"
+                                    },
+                                    {
+                                      "const": "reconciled"
+                                    }
+                                  ]
+                                },
+                                "kind": {
+                                  "const": "turnCheckpoint"
+                                },
+                                "sessionId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "session"
+                                },
+                                "sessionId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sessionId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "workingTree"
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "base": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "head": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "branch"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "head",
+                                "base"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "commit": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "commit"
+                                },
+                                "parent": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "commit"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "pullRequest"
+                                },
+                                "locator": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "baseOid": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "headOid": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "number": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "providerId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "repository": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "sourceAction": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "action": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "localId": {
+                                              "maxLength": 256,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                                              "type": "string"
+                                            },
+                                            "pluginId": {
+                                              "maxLength": 256,
+                                              "minLength": 3,
+                                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "pluginId",
+                                            "localId"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "input": {}
+                                      },
+                                      "required": [
+                                        "action"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "repository",
+                                    "number"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "locator"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
                         "kind": {
                           "const": "present"
                         },
@@ -20252,6 +20641,7 @@
             "plugins.triage.surface.column.reason": "Why it’s here",
             "plugins.triage.surface.column.signal": "Signal",
             "plugins.triage.surface.column.where": "Where",
+            "plugins.triage.surface.comparisonUnavailable": "This source cannot open a comparison for this pull request.",
             "plugins.triage.surface.detail.accountError.description": "Happier could not reach your account, so this entry's details are unavailable right now.",
             "plugins.triage.surface.detail.accountError.title": "Your account could not be read",
             "plugins.triage.surface.detail.agent.action": "Needs your attention",
@@ -20410,8 +20800,11 @@
             "plugins.triage.surface.refreshing": "Refreshing",
             "plugins.triage.surface.reviewChooser.empty": "No review engine is available for this session.",
             "plugins.triage.surface.reviewChooser.engines": "Review engines",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Findings only",
             "plugins.triage.surface.reviewChooser.listFailed": "The available review engines could not be read.",
             "plugins.triage.surface.reviewChooser.loading": "Reading available review engines…",
+            "plugins.triage.surface.reviewChooser.narrator": "Narrator",
+            "plugins.triage.surface.reviewChooser.noNarrator": "No available engine can write a walkthrough. Choose findings only to start this review.",
             "plugins.triage.surface.reviewChooser.open": "Open session",
             "plugins.triage.surface.reviewChooser.openFailed": "The linked session could not be opened.",
             "plugins.triage.surface.reviewChooser.opening": "Opening the session…",
@@ -20421,6 +20814,7 @@
             "plugins.triage.surface.reviewChooser.start": "Start review",
             "plugins.triage.surface.reviewChooser.starting": "Starting the review…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier could not confirm whether the review started. It will not be started a second time.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Also write a walkthrough",
             "plugins.triage.surface.routeTooLong.description": "Opening it would make this page’s shareable location longer than it can carry, so nothing was changed.",
             "plugins.triage.surface.routeTooLong.title": "That entry could not be opened",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier refused the location change, so the last settled view was restored. Try again.",
@@ -20525,6 +20919,7 @@
             "plugins.triage.surface.waiting.recent": "These sources were read a moment ago.",
             "plugins.triage.surface.waiting.retryAt": "Try again at",
             "plugins.triage.surface.waiting.source": "A source asked us to wait before reading it again.",
+            "plugins.triage.surface.walkthrough": "Walk through",
             "plugins.triage.surface.window.complete": "complete",
             "plugins.triage.surface.window.loaded": "{count} loaded",
             "plugins.triage.surface.window.more": "{names} may have more",
@@ -20720,6 +21115,7 @@
             "plugins.triage.surface.column.reason": "Warum es hier ist",
             "plugins.triage.surface.column.signal": "Signal",
             "plugins.triage.surface.column.where": "Wo",
+            "plugins.triage.surface.comparisonUnavailable": "Diese Quelle kann keinen Vergleich für diesen Pull Request öffnen.",
             "plugins.triage.surface.detail.accountError.description": "Happier konnte dein Konto nicht erreichen. Die Details dieses Eintrags sind daher gerade nicht verfügbar.",
             "plugins.triage.surface.detail.accountError.title": "Dein Konto konnte nicht gelesen werden",
             "plugins.triage.surface.detail.agent.action": "Braucht deine Aufmerksamkeit",
@@ -20878,8 +21274,11 @@
             "plugins.triage.surface.refreshing": "Wird aktualisiert",
             "plugins.triage.surface.reviewChooser.empty": "Für diese Session ist keine Review-Engine verfügbar.",
             "plugins.triage.surface.reviewChooser.engines": "Review-Engines",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Nur Befunde",
             "plugins.triage.surface.reviewChooser.listFailed": "Die verfügbaren Review-Engines konnten nicht gelesen werden.",
             "plugins.triage.surface.reviewChooser.loading": "Verfügbare Review-Engines werden gelesen…",
+            "plugins.triage.surface.reviewChooser.narrator": "Erklärendes Modell",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Keine verfügbare Engine kann eine Erklärung schreiben. Starte das Review nur mit Befunden.",
             "plugins.triage.surface.reviewChooser.open": "Session öffnen",
             "plugins.triage.surface.reviewChooser.openFailed": "Die verknüpfte Session konnte nicht geöffnet werden.",
             "plugins.triage.surface.reviewChooser.opening": "Session wird geöffnet…",
@@ -20889,6 +21288,7 @@
             "plugins.triage.surface.reviewChooser.start": "Review starten",
             "plugins.triage.surface.reviewChooser.starting": "Review wird gestartet…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier konnte nicht bestätigen, ob das Review gestartet wurde. Es wird nicht ein zweites Mal gestartet.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Auch eine Erklärung schreiben",
             "plugins.triage.surface.routeTooLong.description": "Beim Öffnen würde die teilbare Adresse dieser Seite zu lang. Daher wurde nichts geändert.",
             "plugins.triage.surface.routeTooLong.title": "Dieser Eintrag konnte nicht geöffnet werden",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier hat die Ortsänderung abgelehnt. Daher wurde die zuletzt bestätigte Ansicht wiederhergestellt. Versuche es erneut.",
@@ -20993,6 +21393,7 @@
             "plugins.triage.surface.waiting.recent": "Diese Quellen wurden gerade gelesen.",
             "plugins.triage.surface.waiting.retryAt": "Erneut versuchen um",
             "plugins.triage.surface.waiting.source": "Eine Quelle hat darum gebeten, vor dem erneuten Lesen zu warten.",
+            "plugins.triage.surface.walkthrough": "Änderungen erklären",
             "plugins.triage.surface.window.complete": "vollständig",
             "plugins.triage.surface.window.loaded": "{count} geladen",
             "plugins.triage.surface.window.more": "{names} hat möglicherweise mehr",
@@ -21188,6 +21589,7 @@
             "plugins.triage.surface.column.reason": "Почему здесь",
             "plugins.triage.surface.column.signal": "Сигнал",
             "plugins.triage.surface.column.where": "Где",
+            "plugins.triage.surface.comparisonUnavailable": "Этот источник не может открыть сравнение для этого пул-реквеста.",
             "plugins.triage.surface.detail.accountError.description": "Happier не может достучаться до вашего аккаунта, поэтому детали этой записи недоступны в настоящее время.",
             "plugins.triage.surface.detail.accountError.title": "Ваш аккаунт не может быть прочитан",
             "plugins.triage.surface.detail.agent.action": "Нужно ваше внимание",
@@ -21346,8 +21748,11 @@
             "plugins.triage.surface.refreshing": "Обновление",
             "plugins.triage.surface.reviewChooser.empty": "Для этой сессии нет доступных средств проверки.",
             "plugins.triage.surface.reviewChooser.engines": "Средства проверки кода",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Только замечания",
             "plugins.triage.surface.reviewChooser.listFailed": "Не удалось прочитать доступные средства проверки.",
             "plugins.triage.surface.reviewChooser.loading": "Чтение доступных средств проверки…",
+            "plugins.triage.surface.reviewChooser.narrator": "Автор объяснения",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Ни один доступный движок не может написать объяснение. Начните проверку только с замечаниями.",
             "plugins.triage.surface.reviewChooser.open": "Открыть сессию",
             "plugins.triage.surface.reviewChooser.openFailed": "Не удалось открыть связанную сессию.",
             "plugins.triage.surface.reviewChooser.opening": "Открытие сессии…",
@@ -21357,6 +21762,7 @@
             "plugins.triage.surface.reviewChooser.start": "Начать проверку",
             "plugins.triage.surface.reviewChooser.starting": "Запуск проверки…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier не смог подтвердить запуск проверки и не будет запускать её повторно.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Также написать объяснение",
             "plugins.triage.surface.routeTooLong.description": "При открытии общий адрес страницы стал бы слишком длинным, поэтому ничего не изменилось.",
             "plugins.triage.surface.routeTooLong.title": "Не удалось открыть эту запись",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier отклонил изменение адреса, поэтому восстановлен последний подтверждённый вид. Повторите попытку.",
@@ -21461,6 +21867,7 @@
             "plugins.triage.surface.waiting.recent": "Эти источники были прочитаны только что.",
             "plugins.triage.surface.waiting.retryAt": "Повторите попытку в",
             "plugins.triage.surface.waiting.source": "Источник попросил подождать перед повторным чтением.",
+            "plugins.triage.surface.walkthrough": "Объяснить изменения",
             "plugins.triage.surface.window.complete": "полностью",
             "plugins.triage.surface.window.loaded": "Загружено: {count}",
             "plugins.triage.surface.window.more": "У {names} может быть больше",
@@ -21656,6 +22063,7 @@
             "plugins.triage.surface.column.reason": "Dlaczego tu jest",
             "plugins.triage.surface.column.signal": "Sygnał",
             "plugins.triage.surface.column.where": "Gdzie",
+            "plugins.triage.surface.comparisonUnavailable": "To źródło nie może otworzyć porównania dla tego pull requestu.",
             "plugins.triage.surface.detail.accountError.description": "Happier nie mógł dojść do Twojego konta, więc szczegółów tego wpisu nie ma obecnie.",
             "plugins.triage.surface.detail.accountError.title": "Nie udało się odczytać Twojego konta",
             "plugins.triage.surface.detail.agent.action": "Wymaga twojej uwagi",
@@ -21814,8 +22222,11 @@
             "plugins.triage.surface.refreshing": "Odświeżanie",
             "plugins.triage.surface.reviewChooser.empty": "Dla tej sesji nie jest dostępny żaden silnik przeglądu.",
             "plugins.triage.surface.reviewChooser.engines": "Silniki przeglądu",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Tylko uwagi",
             "plugins.triage.surface.reviewChooser.listFailed": "Nie udało się odczytać dostępnych silników przeglądu.",
             "plugins.triage.surface.reviewChooser.loading": "Odczytywanie dostępnych silników przeglądu…",
+            "plugins.triage.surface.reviewChooser.narrator": "Autor objaśnienia",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Żaden dostępny silnik nie może napisać objaśnienia. Wybierz same uwagi, aby rozpocząć przegląd.",
             "plugins.triage.surface.reviewChooser.open": "Otwórz sesję",
             "plugins.triage.surface.reviewChooser.openFailed": "Nie udało się otworzyć powiązanej sesji.",
             "plugins.triage.surface.reviewChooser.opening": "Otwieranie sesji…",
@@ -21825,6 +22236,7 @@
             "plugins.triage.surface.reviewChooser.start": "Rozpocznij przegląd",
             "plugins.triage.surface.reviewChooser.starting": "Uruchamianie przeglądu…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier nie mógł potwierdzić rozpoczęcia przeglądu i nie uruchomi go ponownie.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Napisz też objaśnienie",
             "plugins.triage.surface.routeTooLong.description": "Otwarcie go przekroczyłoby limit udostępnianego adresu tej strony, więc nic nie zmieniono.",
             "plugins.triage.surface.routeTooLong.title": "Nie udało się otworzyć tego wpisu",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier odrzucił zmianę lokalizacji, więc przywrócono ostatni zatwierdzony widok. Spróbuj ponownie.",
@@ -21929,6 +22341,7 @@
             "plugins.triage.surface.waiting.recent": "Te źródła zostały odczytane przed chwilą.",
             "plugins.triage.surface.waiting.retryAt": "Spróbuj ponownie o",
             "plugins.triage.surface.waiting.source": "Źródło poprosiło o odczekanie przed ponownym odczytem.",
+            "plugins.triage.surface.walkthrough": "Wyjaśnij zmiany",
             "plugins.triage.surface.window.complete": "komplet",
             "plugins.triage.surface.window.loaded": "Wczytano: {count}",
             "plugins.triage.surface.window.more": "{names} może mieć więcej",
@@ -22124,6 +22537,7 @@
             "plugins.triage.surface.column.reason": "Por qué está aquí",
             "plugins.triage.surface.column.signal": "Señal",
             "plugins.triage.surface.column.where": "Dónde",
+            "plugins.triage.surface.comparisonUnavailable": "Esta fuente no puede abrir una comparación de esta solicitud de cambios.",
             "plugins.triage.surface.detail.accountError.description": "Happier no pudo alcanzar tu cuenta, por lo que los detalles de esta entrada no están disponibles en este momento.",
             "plugins.triage.surface.detail.accountError.title": "No se pudo leer tu cuenta",
             "plugins.triage.surface.detail.agent.action": "Necesita tu atención",
@@ -22282,8 +22696,11 @@
             "plugins.triage.surface.refreshing": "Refrescando",
             "plugins.triage.surface.reviewChooser.empty": "No hay ningún motor de revisión disponible para esta sesión.",
             "plugins.triage.surface.reviewChooser.engines": "Motores de revisión",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Solo hallazgos",
             "plugins.triage.surface.reviewChooser.listFailed": "No se pudieron leer los motores de revisión disponibles.",
             "plugins.triage.surface.reviewChooser.loading": "Leyendo los motores de revisión disponibles…",
+            "plugins.triage.surface.reviewChooser.narrator": "Narrador",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Ningún motor disponible puede escribir una explicación. Elige solo hallazgos para iniciar la revisión.",
             "plugins.triage.surface.reviewChooser.open": "Abrir sesión",
             "plugins.triage.surface.reviewChooser.openFailed": "No se pudo abrir la sesión vinculada.",
             "plugins.triage.surface.reviewChooser.opening": "Abriendo la sesión…",
@@ -22293,6 +22710,7 @@
             "plugins.triage.surface.reviewChooser.start": "Iniciar revisión",
             "plugins.triage.surface.reviewChooser.starting": "Iniciando la revisión…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier no pudo confirmar si comenzó la revisión y no la iniciará por segunda vez.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Escribir también una explicación",
             "plugins.triage.surface.routeTooLong.description": "Al abrirla, la dirección compartible de esta página superaría su límite, así que no se cambió nada.",
             "plugins.triage.surface.routeTooLong.title": "No se pudo abrir esta entrada",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier rechazó el cambio de ubicación, así que se restauró la última vista confirmada. Inténtalo de nuevo.",
@@ -22397,6 +22815,7 @@
             "plugins.triage.surface.waiting.recent": "Estas fuentes se leyeron hace un momento.",
             "plugins.triage.surface.waiting.retryAt": "Inténtalo de nuevo a las",
             "plugins.triage.surface.waiting.source": "Una fuente pidió esperar antes de volver a leerla.",
+            "plugins.triage.surface.walkthrough": "Explicar los cambios",
             "plugins.triage.surface.window.complete": "completo",
             "plugins.triage.surface.window.loaded": "{count} cargados",
             "plugins.triage.surface.window.more": "{names} puede tener más",
@@ -22592,6 +23011,7 @@
             "plugins.triage.surface.column.reason": "Pourquoi c’est ici",
             "plugins.triage.surface.column.signal": "Signal",
             "plugins.triage.surface.column.where": "Où",
+            "plugins.triage.surface.comparisonUnavailable": "Cette source ne peut pas ouvrir de comparaison pour cette pull request.",
             "plugins.triage.surface.detail.accountError.description": "Happier ne peut pas atteindre votre compte, donc les détails de cette entrée ne sont pas disponibles pour le moment.",
             "plugins.triage.surface.detail.accountError.title": "Votre compte ne peut pas être lu",
             "plugins.triage.surface.detail.agent.action": "A besoin de ton attention",
@@ -22750,8 +23170,11 @@
             "plugins.triage.surface.refreshing": "Mise à jour",
             "plugins.triage.surface.reviewChooser.empty": "Aucun moteur de revue n’est disponible pour cette session.",
             "plugins.triage.surface.reviewChooser.engines": "Moteurs de revue",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Constats uniquement",
             "plugins.triage.surface.reviewChooser.listFailed": "Les moteurs de revue disponibles n’ont pas pu être lus.",
             "plugins.triage.surface.reviewChooser.loading": "Lecture des moteurs de revue disponibles…",
+            "plugins.triage.surface.reviewChooser.narrator": "Narrateur",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Aucun moteur disponible ne peut rédiger une explication. Choisissez les constats uniquement pour lancer la revue.",
             "plugins.triage.surface.reviewChooser.open": "Ouvrir la session",
             "plugins.triage.surface.reviewChooser.openFailed": "La session liée n’a pas pu être ouverte.",
             "plugins.triage.surface.reviewChooser.opening": "Ouverture de la session…",
@@ -22761,6 +23184,7 @@
             "plugins.triage.surface.reviewChooser.start": "Démarrer la revue",
             "plugins.triage.surface.reviewChooser.starting": "Démarrage de la revue…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier n’a pas pu confirmer le démarrage de la revue et ne la relancera pas.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Rédiger aussi une explication",
             "plugins.triage.surface.routeTooLong.description": "Son ouverture dépasserait la longueur permise pour l’adresse partageable de cette page ; rien n’a donc été modifié.",
             "plugins.triage.surface.routeTooLong.title": "Impossible d’ouvrir cette entrée",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier a refusé le changement d’emplacement. La dernière vue confirmée a donc été restaurée. Réessayez.",
@@ -22865,6 +23289,7 @@
             "plugins.triage.surface.waiting.recent": "Ces sources viennent d’être lues.",
             "plugins.triage.surface.waiting.retryAt": "Réessayez à",
             "plugins.triage.surface.waiting.source": "Une source a demandé d’attendre avant de la relire.",
+            "plugins.triage.surface.walkthrough": "Expliquer les changements",
             "plugins.triage.surface.window.complete": "complet",
             "plugins.triage.surface.window.loaded": "{count} chargés",
             "plugins.triage.surface.window.more": "{names} peut en avoir plus",
@@ -23060,6 +23485,7 @@
             "plugins.triage.surface.column.reason": "Perché è qui",
             "plugins.triage.surface.column.signal": "Segnale",
             "plugins.triage.surface.column.where": "Dove",
+            "plugins.triage.surface.comparisonUnavailable": "Questa fonte non può aprire un confronto per questa pull request.",
             "plugins.triage.surface.detail.accountError.description": "Happier non può raggiungere il tuo account, quindi le dettagli di questa voce non sono disponibili ora.",
             "plugins.triage.surface.detail.accountError.title": "Impossibile leggere il tuo account",
             "plugins.triage.surface.detail.agent.action": "Serve la tua attenzione",
@@ -23218,8 +23644,11 @@
             "plugins.triage.surface.refreshing": "Aggiornamento in corso",
             "plugins.triage.surface.reviewChooser.empty": "Nessun motore di revisione è disponibile per questa sessione.",
             "plugins.triage.surface.reviewChooser.engines": "Motori di revisione",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Solo risultati",
             "plugins.triage.surface.reviewChooser.listFailed": "Impossibile leggere i motori di revisione disponibili.",
             "plugins.triage.surface.reviewChooser.loading": "Lettura dei motori di revisione disponibili…",
+            "plugins.triage.surface.reviewChooser.narrator": "Narratore",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Nessun motore disponibile può scrivere una spiegazione. Scegli solo i risultati per avviare la revisione.",
             "plugins.triage.surface.reviewChooser.open": "Apri sessione",
             "plugins.triage.surface.reviewChooser.openFailed": "Impossibile aprire la sessione collegata.",
             "plugins.triage.surface.reviewChooser.opening": "Apertura della sessione…",
@@ -23229,6 +23658,7 @@
             "plugins.triage.surface.reviewChooser.start": "Avvia revisione",
             "plugins.triage.surface.reviewChooser.starting": "Avvio della revisione…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier non ha potuto confermare l’avvio della revisione e non la avvierà una seconda volta.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Scrivi anche una spiegazione",
             "plugins.triage.surface.routeTooLong.description": "Aprendola, l’indirizzo condivisibile della pagina supererebbe il limite, quindi non è cambiato nulla.",
             "plugins.triage.surface.routeTooLong.title": "Impossibile aprire questa voce",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier ha rifiutato la modifica della posizione, quindi è stata ripristinata l’ultima vista confermata. Riprova.",
@@ -23333,6 +23763,7 @@
             "plugins.triage.surface.waiting.recent": "Queste origini sono state lette un momento fa.",
             "plugins.triage.surface.waiting.retryAt": "Riprova alle",
             "plugins.triage.surface.waiting.source": "Un’origine ha chiesto di attendere prima di rileggerla.",
+            "plugins.triage.surface.walkthrough": "Spiega le modifiche",
             "plugins.triage.surface.window.complete": "completo",
             "plugins.triage.surface.window.loaded": "{count} caricati",
             "plugins.triage.surface.window.more": "{names} potrebbe averne altri",
@@ -23528,6 +23959,7 @@
             "plugins.triage.surface.column.reason": "Por que está aqui",
             "plugins.triage.surface.column.signal": "Sinal",
             "plugins.triage.surface.column.where": "Onde",
+            "plugins.triage.surface.comparisonUnavailable": "Esta fonte não pode abrir uma comparação para este pull request.",
             "plugins.triage.surface.detail.accountError.description": "Happier não conseguiu alcançar sua conta, então os detalhes desta entrada estão indisponíveis por enquanto.",
             "plugins.triage.surface.detail.accountError.title": "Sua conta não pode ser lida",
             "plugins.triage.surface.detail.agent.action": "Precisa da sua atenção",
@@ -23686,8 +24118,11 @@
             "plugins.triage.surface.refreshing": "Atualizando",
             "plugins.triage.surface.reviewChooser.empty": "Não há motores de revisão disponíveis para esta sessão.",
             "plugins.triage.surface.reviewChooser.engines": "Motores de revisão",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Apenas observações",
             "plugins.triage.surface.reviewChooser.listFailed": "Não foi possível ler os motores de revisão disponíveis.",
             "plugins.triage.surface.reviewChooser.loading": "A ler os motores de revisão disponíveis…",
+            "plugins.triage.surface.reviewChooser.narrator": "Narrador",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Nenhum mecanismo disponível pode escrever uma explicação. Escolha apenas observações para iniciar a revisão.",
             "plugins.triage.surface.reviewChooser.open": "Abrir sessão",
             "plugins.triage.surface.reviewChooser.openFailed": "Não foi possível abrir a sessão associada.",
             "plugins.triage.surface.reviewChooser.opening": "A abrir a sessão…",
@@ -23697,6 +24132,7 @@
             "plugins.triage.surface.reviewChooser.start": "Iniciar revisão",
             "plugins.triage.surface.reviewChooser.starting": "A iniciar a revisão…",
             "plugins.triage.surface.reviewChooser.unknown": "O Happier não conseguiu confirmar se a revisão começou e não a iniciará novamente.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Escrever também uma explicação",
             "plugins.triage.surface.routeTooLong.description": "A abertura excederia o limite do endereço compartilhável desta página, por isso nada foi alterado.",
             "plugins.triage.surface.routeTooLong.title": "Não foi possível abrir esta entrada",
             "plugins.triage.surface.routeWriteFailed.rejected": "O Happier recusou a alteração da localização, por isso a última vista confirmada foi restaurada. Tenta novamente.",
@@ -23801,6 +24237,7 @@
             "plugins.triage.surface.waiting.recent": "Estas origens foram lidas há pouco.",
             "plugins.triage.surface.waiting.retryAt": "Tente novamente às",
             "plugins.triage.surface.waiting.source": "Uma origem pediu para aguardar antes de ser lida novamente.",
+            "plugins.triage.surface.walkthrough": "Explicar as alterações",
             "plugins.triage.surface.window.complete": "completo",
             "plugins.triage.surface.window.loaded": "{count} carregados",
             "plugins.triage.surface.window.more": "{names} pode ter mais",
@@ -23996,6 +24433,7 @@
             "plugins.triage.surface.column.reason": "Per què és aquí",
             "plugins.triage.surface.column.signal": "Senyal",
             "plugins.triage.surface.column.where": "On",
+            "plugins.triage.surface.comparisonUnavailable": "Aquesta font no pot obrir una comparació per a aquesta sol·licitud de canvis.",
             "plugins.triage.surface.detail.accountError.description": "Happier no pot arribar al seu compte, així que els detalls d'aquesta entrada no estan disponibles ara mateix.",
             "plugins.triage.surface.detail.accountError.title": "No es pot llegir el seu compte",
             "plugins.triage.surface.detail.agent.action": "Necessita la teva atenció",
@@ -24154,8 +24592,11 @@
             "plugins.triage.surface.refreshing": "S'està actualitzant",
             "plugins.triage.surface.reviewChooser.empty": "No hi ha cap motor de revisió disponible per a aquesta sessió.",
             "plugins.triage.surface.reviewChooser.engines": "Motors de revisió",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "Només troballes",
             "plugins.triage.surface.reviewChooser.listFailed": "No s’han pogut llegir els motors de revisió disponibles.",
             "plugins.triage.surface.reviewChooser.loading": "S’estan llegint els motors de revisió disponibles…",
+            "plugins.triage.surface.reviewChooser.narrator": "Narrador",
+            "plugins.triage.surface.reviewChooser.noNarrator": "Cap motor disponible pot escriure una explicació. Tria només troballes per iniciar la revisió.",
             "plugins.triage.surface.reviewChooser.open": "Obre la sessió",
             "plugins.triage.surface.reviewChooser.openFailed": "No s’ha pogut obrir la sessió enllaçada.",
             "plugins.triage.surface.reviewChooser.opening": "S’està obrint la sessió…",
@@ -24165,6 +24606,7 @@
             "plugins.triage.surface.reviewChooser.start": "Inicia la revisió",
             "plugins.triage.surface.reviewChooser.starting": "S’està iniciant la revisió…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier no ha pogut confirmar si la revisió ha començat i no la tornarà a iniciar.",
+            "plugins.triage.surface.reviewChooser.walkthrough": "Escriu també una explicació",
             "plugins.triage.surface.routeTooLong.description": "En obrir-la, l’adreça compartible de la pàgina superaria el límit, així que no s’ha canviat res.",
             "plugins.triage.surface.routeTooLong.title": "No s’ha pogut obrir aquesta entrada",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier ha rebutjat el canvi d’ubicació, així que s’ha restaurat l’última vista confirmada. Torna-ho a provar.",
@@ -24269,6 +24711,7 @@
             "plugins.triage.surface.waiting.recent": "Aquestes fonts s’han llegit fa un moment.",
             "plugins.triage.surface.waiting.retryAt": "Torna-ho a provar a les",
             "plugins.triage.surface.waiting.source": "Una font ha demanat esperar abans de tornar-la a llegir.",
+            "plugins.triage.surface.walkthrough": "Explica els canvis",
             "plugins.triage.surface.window.complete": "complet",
             "plugins.triage.surface.window.loaded": "{count} carregats",
             "plugins.triage.surface.window.more": "{names} pot tenir-ne més",
@@ -24464,6 +24907,7 @@
             "plugins.triage.surface.column.reason": "为何在此",
             "plugins.triage.surface.column.signal": "信号",
             "plugins.triage.surface.column.where": "位置",
+            "plugins.triage.surface.comparisonUnavailable": "此来源无法打开此拉取请求的对比。",
             "plugins.triage.surface.detail.accountError.description": "Happier无法到达您的账户，因此此条目的详细信息目前不可用。",
             "plugins.triage.surface.detail.accountError.title": "无法读取您的账户",
             "plugins.triage.surface.detail.agent.action": "需要你的关注",
@@ -24622,8 +25066,11 @@
             "plugins.triage.surface.refreshing": "正在刷新",
             "plugins.triage.surface.reviewChooser.empty": "此会话没有可用的审查引擎。",
             "plugins.triage.surface.reviewChooser.engines": "审查引擎",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "仅审查结果",
             "plugins.triage.surface.reviewChooser.listFailed": "无法读取可用的审查引擎。",
             "plugins.triage.surface.reviewChooser.loading": "正在读取可用的审查引擎…",
+            "plugins.triage.surface.reviewChooser.narrator": "讲解者",
+            "plugins.triage.surface.reviewChooser.noNarrator": "没有可用的引擎能够撰写讲解。请选择仅审查结果以开始审查。",
             "plugins.triage.surface.reviewChooser.open": "打开会话",
             "plugins.triage.surface.reviewChooser.openFailed": "无法打开已关联的会话。",
             "plugins.triage.surface.reviewChooser.opening": "正在打开会话…",
@@ -24633,6 +25080,7 @@
             "plugins.triage.surface.reviewChooser.start": "开始审查",
             "plugins.triage.surface.reviewChooser.starting": "正在开始审查…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier 无法确认审查是否已开始，因此不会再次启动。",
+            "plugins.triage.surface.reviewChooser.walkthrough": "同时撰写更改讲解",
             "plugins.triage.surface.routeTooLong.description": "打开后会使此页面的共享地址超出长度限制，因此未进行任何更改。",
             "plugins.triage.surface.routeTooLong.title": "无法打开此条目",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier 拒绝了位置更改，因此已恢复上次确认的视图。请重试。",
@@ -24737,6 +25185,7 @@
             "plugins.triage.surface.waiting.recent": "这些来源刚刚已读取过。",
             "plugins.triage.surface.waiting.retryAt": "可在此时间重试：",
             "plugins.triage.surface.waiting.source": "有来源要求稍候再读取。",
+            "plugins.triage.surface.walkthrough": "讲解更改",
             "plugins.triage.surface.window.complete": "已全部加载",
             "plugins.triage.surface.window.loaded": "已加载 {count} 项",
             "plugins.triage.surface.window.more": "{names} 可能还有更多",
@@ -24932,6 +25381,7 @@
             "plugins.triage.surface.column.reason": "為何在此",
             "plugins.triage.surface.column.signal": "訊號",
             "plugins.triage.surface.column.where": "位置",
+            "plugins.triage.surface.comparisonUnavailable": "此來源無法開啟此提取要求的比較。",
             "plugins.triage.surface.detail.accountError.description": "Happier 无法連接到您的賬戶，因此此項目詳情目前無法使用。",
             "plugins.triage.surface.detail.accountError.title": "您的賬戶無法讀取",
             "plugins.triage.surface.detail.agent.action": "需要你的注意",
@@ -25090,8 +25540,11 @@
             "plugins.triage.surface.refreshing": "整理中",
             "plugins.triage.surface.reviewChooser.empty": "此工作階段沒有可用的審查引擎。",
             "plugins.triage.surface.reviewChooser.engines": "審查引擎",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "僅審查結果",
             "plugins.triage.surface.reviewChooser.listFailed": "無法讀取可用的審查引擎。",
             "plugins.triage.surface.reviewChooser.loading": "正在讀取可用的審查引擎…",
+            "plugins.triage.surface.reviewChooser.narrator": "講解者",
+            "plugins.triage.surface.reviewChooser.noNarrator": "沒有可用的引擎能夠撰寫講解。請選擇僅審查結果以開始審查。",
             "plugins.triage.surface.reviewChooser.open": "開啟工作階段",
             "plugins.triage.surface.reviewChooser.openFailed": "無法開啟已關聯的工作階段。",
             "plugins.triage.surface.reviewChooser.opening": "正在開啟工作階段…",
@@ -25101,6 +25554,7 @@
             "plugins.triage.surface.reviewChooser.start": "開始審查",
             "plugins.triage.surface.reviewChooser.starting": "正在開始審查…",
             "plugins.triage.surface.reviewChooser.unknown": "Happier 無法確認審查是否已開始，因此不會再次啟動。",
+            "plugins.triage.surface.reviewChooser.walkthrough": "同時撰寫變更講解",
             "plugins.triage.surface.routeTooLong.description": "開啟後會使此頁面的共享位址超出長度限制，因此未進行任何變更。",
             "plugins.triage.surface.routeTooLong.title": "無法開啟此項目",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier 拒絕了位置變更，因此已還原上次確認的檢視。請再試一次。",
@@ -25205,6 +25659,7 @@
             "plugins.triage.surface.waiting.recent": "這些來源剛剛已讀取過。",
             "plugins.triage.surface.waiting.retryAt": "可於此時間重試：",
             "plugins.triage.surface.waiting.source": "有來源要求稍候再讀取。",
+            "plugins.triage.surface.walkthrough": "講解變更",
             "plugins.triage.surface.window.complete": "已全部載入",
             "plugins.triage.surface.window.loaded": "已載入 {count} 項",
             "plugins.triage.surface.window.more": "{names} 可能還有更多",
@@ -25400,6 +25855,7 @@
             "plugins.triage.surface.column.reason": "ここにある理由",
             "plugins.triage.surface.column.signal": "シグナル",
             "plugins.triage.surface.column.where": "場所",
+            "plugins.triage.surface.comparisonUnavailable": "このソースでは、このプルリクエストの比較を開けません。",
             "plugins.triage.surface.detail.accountError.description": "Happierはあなたのアカウントに達できませんでしたので、このエントリの詳細は現在利用できません。",
             "plugins.triage.surface.detail.accountError.title": "あなたのアカウントが読み取れませんでした",
             "plugins.triage.surface.detail.agent.action": "対応が必要です",
@@ -25558,8 +26014,11 @@
             "plugins.triage.surface.refreshing": "更新中",
             "plugins.triage.surface.reviewChooser.empty": "このセッションで利用できるレビューエンジンはありません。",
             "plugins.triage.surface.reviewChooser.engines": "レビューエンジン",
+            "plugins.triage.surface.reviewChooser.findingsOnly": "指摘のみ",
             "plugins.triage.surface.reviewChooser.listFailed": "利用可能なレビューエンジンを読み込めませんでした。",
             "plugins.triage.surface.reviewChooser.loading": "利用可能なレビューエンジンを読み込んでいます…",
+            "plugins.triage.surface.reviewChooser.narrator": "解説者",
+            "plugins.triage.surface.reviewChooser.noNarrator": "解説を書けるエンジンがありません。指摘のみを選択してレビューを開始してください。",
             "plugins.triage.surface.reviewChooser.open": "セッションを開く",
             "plugins.triage.surface.reviewChooser.openFailed": "リンク済みセッションを開けませんでした。",
             "plugins.triage.surface.reviewChooser.opening": "セッションを開いています…",
@@ -25569,6 +26028,7 @@
             "plugins.triage.surface.reviewChooser.start": "レビューを開始",
             "plugins.triage.surface.reviewChooser.starting": "レビューを開始しています…",
             "plugins.triage.surface.reviewChooser.unknown": "レビュー開始を確認できなかったため、Happier は二重に開始しません。",
+            "plugins.triage.surface.reviewChooser.walkthrough": "変更の解説も作成",
             "plugins.triage.surface.routeTooLong.description": "開くとこのページの共有用アドレスが上限を超えるため、変更は行われませんでした。",
             "plugins.triage.surface.routeTooLong.title": "この項目を開けませんでした",
             "plugins.triage.surface.routeWriteFailed.rejected": "Happier が場所の変更を拒否したため、最後に確定した表示を復元しました。もう一度お試しください。",
@@ -25673,6 +26133,7 @@
             "plugins.triage.surface.waiting.recent": "これらの取得元はつい先ほど読み取りました。",
             "plugins.triage.surface.waiting.retryAt": "再試行できる時刻：",
             "plugins.triage.surface.waiting.source": "ある取得元から、再読み取りまで待つよう求められています。",
+            "plugins.triage.surface.walkthrough": "変更を解説",
             "plugins.triage.surface.window.complete": "すべて読み込み済み",
             "plugins.triage.surface.window.loaded": "{count} 件読み込み済み",
             "plugins.triage.surface.window.more": "{names} にはさらにある可能性があります",

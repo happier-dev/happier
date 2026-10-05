@@ -100,6 +100,7 @@ describe('createVoiceDictationController', () => {
         const settings = {
             voice: {
                 providerId: 'local_conversation',
+                assistantLanguage: 'es',
                 providers: {
                     local_conversation: {
                         schemaVersion: 1,
@@ -128,7 +129,8 @@ describe('createVoiceDictationController', () => {
             provider: 'recorded_audio',
             settings: expect.objectContaining({
                 voice: expect.objectContaining({
-                    assistantLanguage: 'de-CH',
+                    assistantLanguage: 'es',
+                    dictation: expect.objectContaining({ language: 'de-CH' }),
                     providerId: 'local_conversation',
                     providers: expect.objectContaining({
                         local_conversation: expect.objectContaining({
@@ -147,9 +149,11 @@ describe('createVoiceDictationController', () => {
             text: 'eigenständige Auswahl',
         });
         expect(transcribeRecordedAudio).toHaveBeenCalledWith(expect.objectContaining({
+            capturePurpose: 'dictation',
             settings: expect.objectContaining({
                 voice: expect.objectContaining({
-                    assistantLanguage: 'de-CH',
+                    assistantLanguage: 'es',
+                    dictation: expect.objectContaining({ language: 'de-CH' }),
                 }),
             }),
         }));

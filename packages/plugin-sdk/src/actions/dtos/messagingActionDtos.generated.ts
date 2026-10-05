@@ -38,7 +38,7 @@ export type MessagingActionInputById = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                 };
             };

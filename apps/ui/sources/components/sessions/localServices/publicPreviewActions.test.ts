@@ -83,7 +83,7 @@ describe('local service public preview actions', () => {
             serverId: 'server_1',
         });
 
-        await expect(actions.create(target)).resolves.toEqual(expect.objectContaining({
+        await expect(actions.create({ ...target, kind: 'http' })).resolves.toEqual(expect.objectContaining({
             exposure,
         }));
         expect(runtimeActionExecute).toHaveBeenCalledWith({

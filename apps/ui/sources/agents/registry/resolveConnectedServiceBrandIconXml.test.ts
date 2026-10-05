@@ -31,6 +31,13 @@ describe('resolveConnectedServiceBrandIconXml', () => {
         expect(xml).toContain('viewBox="0 0 16 16"');
     });
 
+    it('uses the Anthropic service mark rather than the Claude agent mark', () => {
+        const anthropic = resolveConnectedServiceBrandIconXml('  ANTHROPIC  ', theme);
+        expect(anthropic).not.toBeNull();
+        expect(anthropic).not.toBe(resolveConnectedServiceBrandIconXml('claude-subscription', theme));
+        expect(anthropic).toContain(theme.colors.text.primary);
+    });
+
     it('is case- and whitespace-insensitive', () => {
         expect(resolveConnectedServiceBrandIconXml('  GitHub  ', theme)).not.toBeNull();
         expect(resolveConnectedServiceBrandIconXml('Claude-Subscription', theme)).not.toBeNull();

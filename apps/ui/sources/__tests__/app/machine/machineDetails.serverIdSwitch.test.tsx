@@ -3,7 +3,9 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createStorageModuleStub, createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -28,6 +30,7 @@ installMachineDetailsCommonModuleMocks({
         return routerMock.module;
     },
     storage: async () => createStorageModuleStub({
+        storage: createStorageStoreMock({ profile: profileDefaults, settings: settingsParse({}) }),
         useSessions: () => [],
         useAllMachines: () => [
             {
@@ -73,7 +76,7 @@ installMachineDetailsCommonModuleMocks({
         }),
         useSetting: () => false,
         useSettingMutable: () => [null, vi.fn()],
-        useSettings: () => ({}),
+        useSettings: () => settingsParse({}),
     }),
 });
 
@@ -151,7 +154,24 @@ vi.mock('@/sync/ops/machines', () => ({
     machineCollectBugReportDiagnostics: machineCollectBugReportDiagnosticsMock,
 }));
 
+// Load after the boundary harness is configured, outside the individual behavior test's timeout.
+const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+
 describe('MachineDetailScreen (serverId param switching)', () => {
+    it('uses the hosted Machine destination scope instead of the unrelated Expo route', async () => {
+        switchSpy.mockClear();
+        await renderScreen(<AppPaneProvider><DestinationInstanceHost tabId="machine-tab"
+            ref={{ kind: 'settings', params: { pageId: 'machines/machine-1', id: 'machine-1', serverId: 'server-c' } }}
+            pathname="/settings/machines/machine-1" focused visible
+            navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+            <MachineDetailScreen />
+        </DestinationInstanceHost></AppPaneProvider>);
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        expect(switchSpy).toHaveBeenCalledWith({ serverId: 'server-c', scope: 'tab' });
+        expect(switchSpy).not.toHaveBeenCalledWith({ serverId: 'server-b', scope: 'tab' });
+    });
     it('switches active server when serverId param is provided and differs from current active server', async () => {
         switchSpy.mockClear();
         refreshMachinesThrottledSpy.mockClear();
@@ -161,12 +181,11 @@ describe('MachineDetailScreen (serverId param switching)', () => {
         const unhandledSpy = vi.fn();
         process.on('unhandledRejection', unhandledSpy);
 
-        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
         refreshMachinesThrottledSpy.mockRejectedValueOnce(new Error('network down'));
 
         try {
-            await renderScreen(React.createElement(MachineDetailScreen));
+            await renderScreen(<AppPaneProvider><MachineDetailScreen /></AppPaneProvider>);
 
             await flushHookEffects({ cycles: 2, turns: 1 });
         } finally {

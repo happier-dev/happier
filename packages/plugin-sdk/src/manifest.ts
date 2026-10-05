@@ -1,5 +1,6 @@
 // Portable declarative grammar is projected by the single Action DTO producer.
 import type { PluginDeclarativeNodeV2 as DtoPluginDeclarativeNodeV2, PluginLocalizedStringV2 as DtoPluginLocalizedStringV2, PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
+import type { PluginDeclarativeDataNodeV1 as DtoPluginDeclarativeDataNodeV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import {
   compilePluginJsonSchema as canonicalCompilePluginJsonSchema,
   createPluginContributionIdentity as canonicalCreatePluginContributionIdentity,
@@ -24,6 +25,8 @@ import type {
   PluginUiViewV2Input,
 } from './ui/publicContract.js';
 import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDtos.generated.js';
+import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
+export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
 
 /** Canonical workflow grammar projected by the Protocol-owned Action DTO producer. */
 export type PluginWorkflowContributionV1 = Readonly<{
@@ -31,6 +34,18 @@ export type PluginWorkflowContributionV1 = Readonly<{
   title: string;
   description?: string;
   definition: WorkflowsActionResultById['workflow.definition.get']['definition'];
+}>;
+
+/** Typed input declarations use the incumbent Resource and UI-view families. */
+export type PluginInputTypeContributionV1 = Readonly<{
+  id: string;
+  title: PluginLocalizedStringV2;
+  semantic: string;
+  valueSchema: PluginJsonSchema;
+  options?: Readonly<{
+    resource: string | Readonly<{ pluginId: string; localId: string }>;
+  }>;
+  picker?: string | Readonly<{ pluginId: string; localId: string }>;
 }>;
 
 /** Observed ACP capability fingerprint used by a system-tool readiness declaration. */
@@ -567,6 +582,9 @@ export interface PluginManifest {
     }>)[];
     /** Read-only definitions available through the host's workflow library. */
     workflows?: readonly PluginWorkflowContributionV1[];
+    inputTypes?: readonly PluginInputTypeContributionV1[];
+    dragSources?: readonly PluginDragSourceContributionV1[];
+    dropTargets?: readonly PluginDropTargetContributionV1[];
     /** Read-only role sources, overridable through the host's Roles settings. */
     roles?: readonly Readonly<{
       id: string;
@@ -706,6 +724,9 @@ export type PluginContributes = Readonly<{
   executionRunProfiles: NonNullable<NonNullable<PluginManifest['contributes']>['executionRunProfiles']>;
   roles: NonNullable<NonNullable<PluginManifest['contributes']>['roles']>;
   workflows: NonNullable<NonNullable<PluginManifest['contributes']>['workflows']>;
+  inputTypes: NonNullable<NonNullable<PluginManifest['contributes']>['inputTypes']>;
+  dragSources: NonNullable<NonNullable<PluginManifest['contributes']>['dragSources']>;
+  dropTargets: NonNullable<NonNullable<PluginManifest['contributes']>['dropTargets']>;
   notifications: NonNullable<NonNullable<PluginManifest['contributes']>['notifications']>;
   notificationChannels: NonNullable<NonNullable<PluginManifest['contributes']>['notificationChannels']>;
   scmHostingProviders: NonNullable<NonNullable<PluginManifest['contributes']>['scmHostingProviders']>;
@@ -888,5 +909,7 @@ export type PluginDeclarativeTargetedSurfaceReferenceV1 = DtoPluginDeclarativeTa
 export type PluginDeclarativeTargetedSurfaceNodeV2 = DtoPluginDeclarativeTargetedSurfaceNodeV2;
 
 export type PluginDeclarativeCollectionListNodeV2 = DtoPluginDeclarativeCollectionListNodeV2;
+
+export type PluginDeclarativeDataNodeV1 = DtoPluginDeclarativeDataNodeV1;
 
 export type PluginDeclarativeNodeV2 = DtoPluginDeclarativeNodeV2;

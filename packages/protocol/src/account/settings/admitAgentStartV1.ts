@@ -82,7 +82,13 @@ export type MaterializedWorkflowLeafV1 = Readonly<{
 export type AgentStartRequestV1 =
   | Readonly<{ kind: 'spawn_new'; facts: AgentStartFactsV1; targetSessionId?: string; roleId?: string }>
   | Readonly<{ kind: 'execution_run'; facts: AgentStartFactsV1; source: 'execution_run' | 'review' | 'subagents_plan' | 'subagents_delegate' | 'voice_agent'; roleId?: string; backendTargets: readonly PersistedBackendTargetRefV2[]; intent: ExecutionRunIntent }>
-  | Readonly<{ kind: 'workflow_run_leaf'; leaf: MaterializedWorkflowLeafV1 }>
+  | (Readonly<{ kind: 'workflow_run_leaf'; targetSessionId?: string }> & (
+    Readonly<{ leaf: MaterializedWorkflowLeafV1; selection?: undefined }>
+    // Host-only Run admission for Action choices bound at invoke time. This
+    // stamps the Run, never approves a child; FIN re-admits each concrete start
+    // through this arm without `selection`, at the Run's frozen depth.
+    | Readonly<{ leaf: Extract<MaterializedWorkflowLeafV1, { kind: 'action' }>; selection: 'deferred' }>
+  ))
   | Readonly<{ kind: 'definition_write'; leaves: readonly MaterializedWorkflowLeafV1[] }>
   | Readonly<{ kind: 'trigger_write'; scope: 'session' | 'workflow'; targetSessionId?: string; leaves: readonly MaterializedWorkflowLeafV1[] }>
   // Role writes consume check 1 only; keeping them here avoids a second subtree policy owner.
@@ -208,6 +214,7 @@ export function admitAgentStartV1(
     targets: readonly PersistedBackendTargetRefV2[],
     materialized?: MaterializedWorkflowLeafV1,
     requestedIntent?: ExecutionRunIntent,
+    deferredSelection = false,
   ): AgentStartAdmissionV1 => {
     const role = roleId === undefined ? undefined : context.roles[roleId];
     if (roleId !== undefined && (!role || !role.enabled)) return refuse({ code: 'role_target_unavailable', roleId });
@@ -255,10 +262,15 @@ export function admitAgentStartV1(
     }
 
     const permissionMode = effectiveFacts.permissionMode ?? baseline.configuration?.permissionMode ?? context.callerPermissionCeiling;
-    const overrides = deriveOverrides(effectiveFacts, baseline);
+    // Unknown choices are checked when bound. Every known choice still passes
+    // the same policy owner now; ordinary starts and authoring remain closed.
+    const knownFacts: AgentStartFactsV1 = deferredSelection
+      ? Object.fromEntries(Object.entries(effectiveFacts).filter(([, value]) => !isUnresolved(value)))
+      : effectiveFacts;
+    const overrides = deriveOverrides(knownFacts, baseline);
     const deniedField = readSessionAgentStartPolicyDeniedField(policy, {
       ...overrides,
-      requiredPermissionMode: permissionMode,
+      requiredPermissionMode: deferredSelection && isUnresolved(permissionMode) ? undefined : permissionMode,
       backendTarget: overrides.backendTarget || effectiveTargets.some((target) => differs(
         buildBackendTargetKeyV2(target),
         baseline.configuration?.agentTarget ? buildBackendTargetKeyV2(baseline.configuration.agentTarget) : undefined,
@@ -269,17 +281,21 @@ export function admitAgentStartV1(
       return refuse({ code: 'policy_denied_field', field: 'roleId' });
     }
     const effectiveTarget = effectiveFacts.agentTarget ?? baseline.configuration?.agentTarget;
-    if (Object.values(effectiveFacts).some(isUnresolved) || !effectiveTarget || isUnresolved(effectiveTarget)) {
+    if (!deferredSelection && (Object.values(effectiveFacts).some(isUnresolved) || !effectiveTarget || isUnresolved(effectiveTarget))) {
       return refuse({ code: 'target_unavailable' });
     }
     const allowedAgentTargetKeys = allowLists.allowedAgentTargetKeys;
-    if (context.initiator !== 'user' && allowedAgentTargetKeys !== null && [effectiveTarget, ...effectiveTargets]
+    const knownTargets = effectiveTarget && !isUnresolved(effectiveTarget) ? [effectiveTarget, ...effectiveTargets] : effectiveTargets;
+    if (context.initiator !== 'user' && allowedAgentTargetKeys !== null && knownTargets
       .some((target) => !allowedAgentTargetKeys.includes(buildBackendTargetKeyV2(target)))) {
       return refuse({ code: 'policy_denied_field', field: 'agentTarget' });
     }
-    if (isUnresolved(permissionMode) || (context.initiator !== 'user' && !assertNonEscalatingPermissionMode({ requestedMode: permissionMode, callerMode: context.callerPermissionCeiling }).ok)) {
+    if (isUnresolved(permissionMode) ? !deferredSelection
+      : context.initiator !== 'user' && !assertNonEscalatingPermissionMode({ requestedMode: permissionMode, callerMode: context.callerPermissionCeiling }).ok) {
       return refuse({ code: 'permission_exceeds_ceiling' });
     }
+    if (deferredSelection) return { ok: true, stamped: { workDepth } };
+    if (!effectiveTarget || isUnresolved(effectiveTarget)) return refuse({ code: 'target_unavailable' });
     const selection = modelRef(effectiveFacts.modelSelection ?? baseline.configuration?.modelSelection);
     const stampedEngine: RoleEngineV1 = engine ?? {
       agentTargetKey: buildBackendTargetKeyV2(effectiveTarget),
@@ -310,12 +326,12 @@ export function admitAgentStartV1(
     return { ok: true, stamped: { workDepth } };
   }
   const admission = request.kind === 'workflow_run_leaf'
-    ? checkSelection(request.leaf.facts, request.leaf.roleId, undefined, [], request.leaf)
+    ? checkSelection(request.leaf.facts, request.leaf.roleId, undefined, [], request.leaf, undefined, request.selection === 'deferred')
     : checkSelection(request.facts, request.roleId, request.kind, request.kind === 'execution_run' ? request.backendTargets : [], undefined, request.kind === 'execution_run' ? request.intent : undefined);
   if (!admission.ok) return admission;
   // A direct Workflow creates a Run before its leaf; an originless caller is
   // already that frozen Run. Keep the Run stamp distinct from leaf admission.
-  const startedWorkDepth = request.kind === 'workflow_run_leaf' && context.caller.kind === 'session'
+  const startedWorkDepth = request.kind === 'workflow_run_leaf' && request.selection !== 'deferred' && context.caller.kind === 'session'
     ? workDepth + 1 : workDepth;
   return context.initiator !== 'user' && startedWorkDepth > context.workDepthLimit ? refuse({ code: 'work_depth_exceeded' }) : admission;
 }

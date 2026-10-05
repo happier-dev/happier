@@ -28,7 +28,7 @@ import type { HappierUiAccessibility, HappierUiEnvironment } from '../environmen
 import { PluginUiDataProviderInternal } from '../data/context.js';
 import type { PluginUiDataClient } from '../data/types.js';
 import { PluginHostApiProviderInternal } from '../hostApi/context.js';
-import type { PluginUiResourceAccountLifetime } from '../hostApi/resourceStore.js';
+import type { PluginUiResourceAccountLifetime, PluginUiResourceStore } from '../hostApi/resourceStore.js';
 import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 import type { ComposerRefV1 } from '../composer/types.js';
 import {
@@ -80,6 +80,7 @@ export type PluginUiProviderProps = Readonly<{
 export type PluginUiProviderInternalProps = PluginUiProviderProps & Readonly<{
   accountLifetime?: PluginUiResourceAccountLifetime | null;
   resourceStoreGeneration?: unknown;
+  resourceStore?: PluginUiResourceStore;
   mountedPluginId?: string;
   composerRef?: ComposerRefV1 | null;
   surfaceActivity?: Readonly<{ active: boolean }>;
@@ -147,6 +148,7 @@ export function PluginUiProviderInternal({
   hostApi,
   accountLifetime,
   resourceStoreGeneration,
+  resourceStore,
   mountedPluginId,
   composerRef,
   surfaceActivity,
@@ -248,6 +250,7 @@ export function PluginUiProviderInternal({
       hostApi={hostApi}
       {...(accountLifetime === undefined ? {} : { accountLifetime })}
       {...(resourceStoreGeneration === undefined ? {} : { resourceStoreGeneration })}
+      {...(resourceStore === undefined ? {} : { resourceStore })}
       {...(mountedPluginId === undefined ? {} : { mountedPluginId })}
       {...(composerRef === undefined ? {} : { composerRef })}
       {...(surfaceActivity === undefined ? {} : { surfaceActivity })}

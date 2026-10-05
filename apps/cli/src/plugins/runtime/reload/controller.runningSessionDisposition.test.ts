@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it } from 'vitest';
 
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
@@ -30,6 +31,7 @@ function createRuntimeRegistry(
         pluginDiagnosticsByPluginId: Object.freeze({}),
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
+        resolveCaptureSource: unexpectedCaptureSourceResolution,
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => undefined,
         retirePluginConsumers: async (pluginIds) => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 const patchSessionMetadataWithRetry = vi.fn();
 const applySettings = vi.fn();
@@ -81,6 +82,7 @@ function createVoiceConversationSession(params: Readonly<{
 
     return {
         id: params.id,
+        serverId: getActiveServerSnapshot().serverId,
         updatedAt: params.updatedAt,
         metadata,
     };
@@ -177,7 +179,14 @@ describe('resetVoiceAgentPersistenceState', () => {
     it('keeps transcript invalidation bound to the Account scope captured before stopping', async () => {
         stateRef.current.settings.voice.providers.local_conversation.config.agent.transcript.persistenceMode = 'persistent';
         const stop = vi.fn(async () => {
-            stateRef.current.settingsScope = { serverId: 'server-b', accountId: 'account-b' };
+            // Publish the next persisted snapshot immutably, as the real storage owner does.
+            stateRef.current = { ...stateRef.current,
+                settingsScope: { serverId: 'server-b', accountId: 'account-b' },
+                sessions: {
+                    sys_bound: createVoiceConversationSession({ id: 'sys_bound', updatedAt: 30,
+                        controlSessionId: '__voice_agent__', runId: 'account-b-run' }),
+                },
+            };
         });
         const { resetVoiceAgentPersistenceState } = await import('./resetVoiceAgentPersistenceState');
 
@@ -187,6 +196,8 @@ describe('resetVoiceAgentPersistenceState', () => {
             expectedSettingsScope: { serverId: 'server-a', accountId: 'account-a' },
             source: 'ui',
         });
+        expect(stateRef.current.sessions.sys_bound.metadata.voiceAgentRunV1).toMatchObject({ runId: 'account-b-run' });
+        expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
     });
 
     it('does not depend on the legacy voice activity compatibility controller', async () => {

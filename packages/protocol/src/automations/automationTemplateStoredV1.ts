@@ -8,7 +8,15 @@ import { AutomationTemplatePayloadV1Schema, type AutomationTemplatePayloadV1 } f
 
 export type AutomationTemplateStoredOpenResultV1 =
   | Readonly<{ ok: true; template: AutomationTemplatePayloadV1 }>
-  | Readonly<{ ok: false; code: 'invalid_template' | 'encryption_mode_mismatch' | 'encryption_material_unavailable' }>;
+  | Readonly<{ ok: false; code: 'invalid_template' | 'encryption_mode_mismatch' | 'encryption_material_unavailable' | 'session_key_required' }>;
+
+export type AutomationTemplateRetainedSessionV1 = Readonly<{
+  /** Resolved by the authenticated Session owner, never from encrypted content or key presence. */
+  sessionId: string;
+  encryptionMode: 'plain' | 'e2ee';
+  /** Genuine predecessor custody, used only to open this retained Session's template. */
+  material?: AccountScopedCryptoMaterial;
+}>;
 
 /** Parses only the persisted framing. It never treats an outer Session id as content authority. */
 export function readAutomationTemplateStoredEnvelopeV1(bytes: string): AutomationTemplateEnvelopeStoredRead | null {
@@ -43,19 +51,41 @@ function openPredecessorTemplateCiphertext(ciphertext: string, material: Account
   return plain ? parseSerializedJsonValue(new TextDecoder().decode(plain)) : null;
 }
 
-/** Account mode comes from its persisted authority, never material or envelope inference. */
-export function openAutomationTemplateStoredV1(params: Readonly<{
-  templateCiphertext: string; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial;
-}>): AutomationTemplateStoredOpenResultV1 {
-  const stored = readAutomationTemplateStoredEnvelopeV1(params.templateCiphertext);
-  if (!stored) return { ok: false, code: 'invalid_template' } as const;
-  const plain = stored.envelope.kind === AUTOMATION_TEMPLATE_PLAIN_V1_KIND;
-  if (plain !== (params.accountMode === 'plain')) return { ok: false, code: 'encryption_mode_mismatch' } as const;
-  if (!plain && !params.material) return { ok: false, code: 'encryption_material_unavailable' } as const;
+function openStored(stored: AutomationTemplateEnvelopeStoredRead, material?: AccountScopedCryptoMaterial): AutomationTemplateStoredOpenResultV1 {
+  if (stored.envelope.kind !== AUTOMATION_TEMPLATE_PLAIN_V1_KIND && !material) return { ok: false, code: 'encryption_material_unavailable' };
   try {
     const payload = stored.envelope.kind === AUTOMATION_TEMPLATE_PLAIN_V1_KIND ? stored.envelope.payload
-      : openPredecessorTemplateCiphertext(stored.envelope.payloadCiphertext, params.material!);
+      : openPredecessorTemplateCiphertext(stored.envelope.payloadCiphertext, material!);
     const template = readAutomationTemplateStoredPayloadV1(stored, payload);
     return template ? { ok: true, template } as const : { ok: false, code: 'invalid_template' } as const;
   } catch { return { ok: false, code: 'invalid_template' } as const; }
+}
+
+/** Account mode comes from its persisted authority. Retained Session custody is a separate explicit branch. */
+export function openAutomationTemplateStoredV1(params: Readonly<{
+  templateCiphertext: string; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial;
+  retainedSession?: AutomationTemplateRetainedSessionV1;
+}>): AutomationTemplateStoredOpenResultV1 {
+  const stored = readAutomationTemplateStoredEnvelopeV1(params.templateCiphertext);
+  if (!stored) return { ok: false, code: 'invalid_template' };
+  const plain = stored.envelope.kind === AUTOMATION_TEMPLATE_PLAIN_V1_KIND;
+  if (!plain && params.accountMode === 'plain' && stored.legacyExistingSessionId) {
+    const session = params.retainedSession;
+    if (!session) return { ok: false, code: 'session_key_required' };
+    if (session.sessionId !== stored.legacyExistingSessionId || session.encryptionMode !== 'e2ee') {
+      return { ok: false, code: 'encryption_mode_mismatch' };
+    }
+    if (!session.material) return { ok: false, code: 'session_key_required' };
+    return openStored(stored, session.material);
+  }
+  if (plain !== (params.accountMode === 'plain')) return { ok: false, code: 'encryption_mode_mismatch' };
+  return openStored(stored, params.material);
+}
+
+/** Only the Account transition owner uses historical ciphertext as a source before rewriting by CAS. */
+export function openAutomationTemplateStoredForMigrationV1(params: Readonly<{
+  templateCiphertext: string; material?: AccountScopedCryptoMaterial;
+}>): AutomationTemplateStoredOpenResultV1 {
+  const stored = readAutomationTemplateStoredEnvelopeV1(params.templateCiphertext);
+  return stored ? openStored(stored, params.material) : { ok: false, code: 'invalid_template' };
 }

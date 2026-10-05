@@ -11,8 +11,10 @@ import { configuration } from '@/configuration';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { waitForTerminalPresentUserPolicyRefresh, type TerminalPresentUserPolicyScope } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { logger } from '@/ui/logger';
-import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol';
+import { getActionSpec, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol';
+import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 import { createDaemonControlAuthGuard } from './controlAuth';
+import { createDaemonControlRequestLifetime } from './controlRequestLifetime';
 import { isCanonicalSpawnSessionId as isCanonicalSessionId } from './sessions/resolveSpawnWebhookResult';
 import type { RecoveredSpawnNonceAdmissionResult } from './spawn/recoveredSpawnNonceAdmission';
 import {
@@ -1198,37 +1200,57 @@ export function createDaemonControlApp({
           error: 'invalid_action_request',
         });
       }
-      const execution = await executeExternalAction({
-        actionId: parsed.data.actionId,
-        envelope: {
-          v: 1,
-          input: parsed.data.input,
-          ...(parsed.data.target ? { target: parsed.data.target } : {}),
-          ...(parsed.data.actionRequestId ? { requestId: parsed.data.actionRequestId } : {}),
-        },
-        principal: {
-          authority: resolveInvocationAuthority({
-            credential: 'terminal', surface: 'cli',
-            terminalPolicy: request.headers[AUTHORITY_CEILING_HEADER_V1] === 'account_automation'
-              ? 'disallowed'
-              : await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope),
-          }),
-        },
-        surface: 'cli',
-        currentMachineId: machineId,
-        currentServerId: externalActionApi.currentServerId,
-        resolveTarget: externalActionApi.resolveTarget,
-        executor: externalActionApi.executor,
-      });
-      if (execution.kind === 'invalid_request') {
-        return await reply.code(400).send({
-          ok: false,
-          errorCode: execution.errorCode,
-          error: execution.errorCode,
+      const lifetime = createDaemonControlRequestLifetime(request, reply);
+      const progress: { phase: 'terminal_policy' | 'execution' } = { phase: 'terminal_policy' };
+      try {
+        return await lifetime.run(async () => {
+          const surface = parsed.data.surface ?? 'cli';
+          const terminalPolicy = surface === 'mcp' || request.headers[AUTHORITY_CEILING_HEADER_V1] === 'account_automation'
+            ? 'disallowed'
+            : await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope);
+          progress.phase = 'execution';
+          const execution = await executeExternalAction({
+            actionId: parsed.data.actionId,
+            envelope: {
+              v: 1,
+              input: parsed.data.input,
+              ...(parsed.data.target ? { target: parsed.data.target } : {}),
+              ...(parsed.data.actionRequestId ? { requestId: parsed.data.actionRequestId } : {}),
+            },
+            principal: {
+              authority: resolveInvocationAuthority({
+                credential: surface === 'mcp' ? 'account' : 'terminal', surface,
+                terminalPolicy,
+              }),
+            },
+            surface,
+            currentMachineId: machineId,
+            currentServerId: externalActionApi.currentServerId,
+            resolveTarget: externalActionApi.resolveTarget,
+            executor: externalActionApi.executor,
+            signal: lifetime.signal,
+          });
+          if (execution.kind === 'invalid_request') {
+            return await reply.code(400).send({
+              ok: false,
+              errorCode: execution.errorCode,
+              error: execution.errorCode,
+            });
+          }
+          if (execution.response.v !== 1) throw new Error('Local signed Action returned an unexpected envelope version');
+          return execution.response.execution;
         });
+      } catch (error) {
+        const { sideEffectClass } = getActionSpec(parsed.data.actionId);
+        const errorCode = classifyActionTransportFailure(error, {
+          mutation: sideEffectClass !== 'none' && sideEffectClass !== 'read',
+          requestIssued: progress.phase === 'execution', cancelled: lifetime.signal.aborted,
+        }) ?? 'internal_error';
+        logger.debug('[CONTROL SERVER] Root Action request ended', { requestId: request.id, actionId: parsed.data.actionId, phase: progress.phase, errorCode });
+        return { ok: false, errorCode, error: errorCode };
+      } finally {
+        lifetime.dispose();
       }
-      if (execution.response.v !== 1) throw new Error('Local signed Action returned an unexpected envelope version');
-      return execution.response.execution;
     });
   }
 
@@ -1299,38 +1321,6 @@ export function createDaemonControlApp({
     return sendConnectedAccountRequestAuthError(reply, 'request_auth_unavailable');
   };
 
-  const createDaemonControlRequestLifetime = (
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ): Readonly<{
-    signal: AbortSignal;
-    dispose: () => void;
-  }> => {
-    const controller = new AbortController();
-    const abort = () => {
-      if (!controller.signal.aborted) {
-        controller.abort(new Error('Daemon control request ended'));
-      }
-    };
-    const abortIfResponseDidNotFinish = () => {
-      if (!reply.raw.writableEnded) {
-        abort();
-      }
-    };
-    request.raw.once('aborted', abort);
-    reply.raw.once('close', abortIfResponseDidNotFinish);
-    if (request.raw.aborted) {
-      abort();
-    }
-    return {
-      signal: controller.signal,
-      dispose: () => {
-        request.raw.removeListener('aborted', abort);
-        reply.raw.removeListener('close', abortIfResponseDidNotFinish);
-      },
-    };
-  };
-
   typed.post(BROWSER_RUNTIME_ACTION_CONTROL_PATH, {
     schema: { body: BrowserRuntimeActionControlRequestSchema },
     preHandler: requireAuth,
@@ -1386,6 +1376,7 @@ export function createDaemonControlApp({
                 terminalPolicy: await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope),
               }),
               actionCaller: { kind: 'host' },
+              ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
             },
           );

@@ -138,6 +138,22 @@ export type TriageLaunchPlacementV1 =
         candidates: readonly TriageLaunchCandidateV1[];
     }>;
 
+/** A linked Session is usable only when the incumbent registry establishes its exact live placement. */
+export function resolveTriageLinkedSessionPlacementV1(input: Readonly<{
+    sessionId: string;
+    serverId?: string;
+    workspace?: Readonly<{ machineId?: string; path?: string }>;
+    projects: readonly TriageProjectCandidateV1[];
+}>): Readonly<{ sessionId: string; serverId: string }> | null {
+    const workspace = input.workspace;
+    if (input.serverId === undefined || workspace?.machineId === undefined || workspace.path === undefined) return null;
+    const reachable = input.projects.some((project) => project.reachable
+        && project.serverId === input.serverId
+        && project.machineId === workspace.machineId
+    );
+    return reachable ? { sessionId: input.sessionId, serverId: input.serverId } : null;
+}
+
 /**
  * Identity equality, component by component, compared EXACTLY.
  *

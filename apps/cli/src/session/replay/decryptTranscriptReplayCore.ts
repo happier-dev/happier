@@ -1,6 +1,7 @@
 import {
   SessionStoredMessageContentSchema,
   SessionSynopsisV1Schema,
+  TranscriptRawRecordV1Schema,
   isAgentThreadTextConversationTurnMeta,
 } from '@happier-dev/protocol';
 
@@ -144,6 +145,10 @@ export function decryptTranscriptReplayCore(params: Readonly<{
 
       const decoded = decodeTranscriptBody(decryptedValue);
       if (!decoded) {
+        // The semantic projection omits empty text, but a schema-admitted text
+        // record is readable. Keep that distinct from an undecodable body.
+        const record = TranscriptRawRecordV1Schema.safeParse(decryptedValue);
+        if (record.success && record.data.content.type === 'text') continue;
         // Declared a text conversation turn, yet its body did not decode: this
         // one IS a hole in the replayed conversation, not an ineligible row.
         unreadableRowCount += 1;

@@ -1,12 +1,20 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { renderScreen } from '@/dev/testkit';
+import { sessionEnvelopeTransportMock } from '@/dev/testkit/mocks/sessionEnvelopeTransport';
 
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { projectWorkflowFlow } from './workflowFlowProjection';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', async () => (await import('@/dev/testkit/mocks/sessionEnvelopeTransport')).sessionEnvelopeTransportMock);
+vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', async () => (await import('@/dev/testkit/mocks/sessionEnvelopeTransport')).sessionEnvelopeTransportMock);
+afterEach(() => {
+    for (const request of Object.values(sessionEnvelopeTransportMock)) expect(request).not.toHaveBeenCalled();
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -83,6 +91,17 @@ describe('WorkflowFlowView accessibility structure', () => {
         expect(node!.props.disabled).not.toBe(true);
         await screen.pressByTestId('flow-node-wait');
         expect(onSelectOccurrence.mock.calls[0]?.[0]).toBe('held-1');
+        await screen.update(React.createElement(WorkflowFlowView, {
+            projection, selectedNodeId: 'wait', selectedInvocationId: 'held-1', onSelectOccurrence,
+            runStates: new Map([['wait', [
+                { nodeId: 'wait', invocationId: 'held-1', lifecycle: 'waiting_for_review' as const, occurrenceLabel: 'Item 1' },
+                { nodeId: 'wait', invocationId: 'held-2', lifecycle: 'waiting_for_review' as const, occurrenceLabel: 'Item 2' },
+            ]]]), testIDPrefix: 'flow',
+        }));
+        expect(screen.findByTestId('flow-node-wait')?.props.disabled).toBe(true);
+        expect(screen.root.findAllByType(HappierPressable).some((node) => node.props.testID === 'flow-node-wait-occurrence-held-2')).toBe(true);
+        await screen.pressByTestIdAsync('flow-node-wait-occurrence-held-2');
+        expect(onSelectOccurrence.mock.calls.at(-1)?.[0]).toBe('held-2');
     });
 
     it('exposes every node as a real list item rather than a bare button under a list', async () => {

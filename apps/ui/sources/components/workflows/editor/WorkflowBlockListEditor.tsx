@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol';
 import { Platform, View } from 'react-native';
 
 import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
@@ -13,6 +14,8 @@ import type {
 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { WorkflowDraftValidation } from '@/sync/domains/workflows/workflowAuthoring';
+import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
+import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import {
     collectWorkflowBlockIds,
     createWorkflowBlock,
@@ -22,6 +25,7 @@ import {
     moveWorkflowBlock,
     removeWorkflowBlock,
     resolvePreviousResultInputForInsertion,
+    setWorkflowStepExecutionField,
     updateWorkflowBlock,
     type WorkflowBlockListRef,
     type WorkflowBlockRemoval,
@@ -38,12 +42,15 @@ import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowGroupEditor } from './WorkflowGroupEditor';
 import { WorkflowLoopEditor } from './WorkflowLoopEditor';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import type { WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { duplicateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import type { WorkflowDocumentPresentation } from './workflowDocumentPresentation';
+import { WorkflowAgentChangeTint } from './WorkflowAgentChangeTint';
 
 export type { WorkflowDocumentPresentation, WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 
@@ -59,6 +66,7 @@ export type { WorkflowDocumentPresentation, WorkflowDocumentStepSlots } from './
 
 export type WorkflowBlockListEditorProps = Readonly<{
     draft: WorkflowEditorDraft;
+    highlightedBlockIds?: readonly string[];
     list: WorkflowBlockListRef;
     blocks: readonly WorkflowBlock[];
     depth: number;
@@ -78,7 +86,8 @@ export type WorkflowBlockListEditorProps = Readonly<{
      * including through its own recursion — and never caches a document itself.
      */
     composerCustody: WorkflowAuthoringComposerCustody;
-    onChange: (next: WorkflowEditorDraft) => void;
+    onChange: (next: WorkflowEditorDraft, label?: string, committed?: boolean) => void;
+    onCommitChange?: () => void;
     onSelect: (blockId: string | null) => void;
     /** Opens Step options for a block, anchored beside the control that asked. */
     onCustomize: (blockId: string, anchorRef: React.RefObject<View | null>) => void;
@@ -95,6 +104,8 @@ export type WorkflowBlockListEditorProps = Readonly<{
      * serves every depth.
      */
     onBlockRemoved?: (removal: WorkflowBlockRemoval) => void;
+    /** Whole-example insertion belongs to the root draft, not a nested block-list scope. */
+    onUseExample?: (example: WorkflowStarterExampleV1) => void;
     /** Names the scope for the Add control's accessible hint. */
     scopeLabel?: string;
     /**
@@ -109,6 +120,8 @@ export type WorkflowBlockListEditorProps = Readonly<{
     revealIssues?: boolean;
     /** Options for an Action step's fields with an `optionsSourceId` (the canonical resolver). */
     resolveActionFieldOptions?: ResolveSessionActionFieldOptions;
+    /** The host's Agent and model catalogs for each step's in-composer engine chip (04 §4.3). */
+    authoringFacts?: SessionAuthoringControlFacts;
     /** This workflow's own reference, which a Run a workflow step cannot call. */
     currentWorkflowRef?: string | null;
     testIDPrefix?: string;
@@ -204,6 +217,13 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
     const buildActions = React.useCallback((block: WorkflowBlock, index: number): readonly WorkflowBlockAction[] => {
         const actions: WorkflowBlockAction[] = [];
         if (!editable) return actions;
+        actions.push({ id: 'duplicate', label: t('common.duplicate'), onSelect: () => {
+            const copy = duplicateWorkflowBlock(draft, block.id);
+            if (copy.blockId === null) return;
+            onChange(copy.draft);
+            onSelect(copy.blockId);
+            if (block.kind === 'step' || block.kind === 'wait') requestPromptFocus?.(copy.blockId);
+        } });
         if (index > 0) {
             actions.push({
                 id: 'moveUp',
@@ -247,7 +267,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                 onSelect(survivor);
                 if (survivor !== null) requestPromptFocus?.(survivor);
                 const removal = removeWorkflowBlock(draft, block.id);
-                onChange(removal.draft);
+                onChange(removal.draft, t('workflows.editor.removedBlock', { block: workflowBlockReferenceLabel(block) }));
                 if (removal.removal !== null) props.onBlockRemoved?.(removal.removal);
             },
         });
@@ -309,11 +329,18 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                     draft,
                                     block.id,
                                     (current) => current.kind === 'step' ? { ...current, document } : current,
-                                ))}
+                                ), t('workflows.editor.history.document'), false)}
+                                onCommitDocument={props.onCommitChange}
                                 onCustomize={(anchorRef) => onCustomize(block.id, anchorRef)}
                                 onChangeInput={(input) => onChange(updateWorkflowBlock(draft, block.id, (current) => (
                                     current.kind === 'step' ? { ...current, input: [...input] } : current
                                 )))}
+                                onChangeExecutionField={(field, value) => onChange(setWorkflowStepExecutionField(draft, block.id, field, value))}
+                                onChangeExecutionFields={(fields) => onChange(updateWorkflowBlock(draft, block.id, current => current.kind === 'step'
+                                    ? { ...current, execution: withWorkflowAuthoringEngineFields(current.execution ?? {}, fields) } : current))}
+                                onChangeEngine={(engine) => onChange(updateWorkflowBlock(draft, block.id, current => current.kind === 'step'
+                                    ? { ...current, execution: withWorkflowAuthoringEngine(current.execution ?? {}, engine) } : current))}
+                                {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
                                 {...(registerPromptRef === undefined ? {} : { registerPromptRef })}
                                 editable={editable}
                                 slots={slots}
@@ -383,6 +410,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                         if (evaluator.kind === 'action') {
                                             return (
                                                 <WorkflowActionBlockEditor
+                                                    composerScope={composerScope}
                                                     block={evaluator}
                                                     draft={draft}
                                                     ordinal={block.body.length + 1}
@@ -419,7 +447,8 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                                 (current) => (current.kind === 'step'
                                                     ? { ...current, document }
                                                     : current),
-                                            ))}
+                                            ), t('workflows.editor.history.document'), false)}
+                                            onCommitDocument={props.onCommitChange}
                                             onCustomize={(anchorRef) => onCustomize(evaluator.id, anchorRef)}
                                             onChangeInput={(input) => onChange(updateWorkflowBlock(
                                                 draft,
@@ -439,6 +468,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
                         {block.kind === 'action' ? (
                             <WorkflowActionBlockEditor
+                                composerScope={composerScope}
                                 block={block}
                                 {...(editable ? {
                                     onOpenOptions: (anchorRef: React.RefObject<View | null>) => onCustomize(block.id, anchorRef),
@@ -562,11 +592,13 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                 })}
                             </Text>
                         ) : null}
+                        {props.highlightedBlockIds?.includes(block.id) ? <WorkflowAgentChangeTint blockId={block.id} /> : null}
                     </View>
                     {/* The gap after a block (not after the last; the end row adds there):
                         the same Add menu, bound to this exact position. */}
                     {editable && index < blocks.length - 1 ? (
                         <WorkflowAddBlockMenu
+                            composerScope={composerScope}
                             variant="inserter"
                             revealed={selectedInList}
                             onAdd={(request) => addBlock(request, block.id)}
@@ -581,7 +613,9 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
             {editable ? (
                 <WorkflowAddBlockMenu
+                    composerScope={composerScope}
                     onAdd={(request) => addBlock(request, blocks[blocks.length - 1]?.id)}
+                    {...(list.kind !== 'root' || props.onUseExample === undefined ? {} : { onUseExample: props.onUseExample })}
                     {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
                     scopeLabel={scopeLabel}
                     testID={`${testIDPrefix}-add-${list.kind}`}

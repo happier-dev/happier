@@ -6,7 +6,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-const { projectSessionTriggerGroups } = await import('./sessionTriggerGroups');
+const { projectSessionTriggerGroups, describeLegacyTriggerSet } = await import('./sessionTriggerGroups');
 
 function inline(blocks: unknown[]) {
     const outcome = normalizeWorkflowIngress({ version: 1, blocks });
@@ -34,6 +34,18 @@ function set(automationId: string, overrides: Record<string, unknown>): Workflow
 }
 
 describe('projectSessionTriggerGroups', () => {
+    it.each([
+        ['session_key_required', 'workflows.triggers.row.sessionKeyRequired'],
+        ['migration_required', 'workflows.triggers.row.templateRecoveryRequired'],
+        ['decryption_failed', 'workflows.triggers.row.templateDecryptionFailed'],
+    ] as const)('presents the typed %s legacy lock without calling it a deleted workflow', (lockedReason, title) => {
+        const presentation = describeLegacyTriggerSet(set('locked', {
+            legacy: { editable: false, reason: 'created_in_0_2', lockedReason },
+            health: 'source_unavailable', triggers: [daily('locked', '0 9 * * *')],
+        }));
+        expect(presentation?.title).toBe(title);
+        expect(presentation?.qualifier).toContain('workflows.triggers.row.legacyCreated');
+    });
     it('keeps PR comments and CI failures grouped by their exact pull request, not just its number', () => {
         const groups = projectSessionTriggerGroups({
             sets: ['one/repo', 'other/repo'].flatMap((repository) => ['prComment', 'ciFailed'].map((kind) =>

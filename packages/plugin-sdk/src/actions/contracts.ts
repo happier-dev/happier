@@ -1,4 +1,4 @@
-import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
+import type { CurrentUiContextSnapshotV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type {
     JsonValue,
@@ -33,8 +33,15 @@ export type PluginActionInvocationSurfaceV2 = PluginActionContributionV2['surfac
 
 /** The bounded UI capability available to client-targeted Action handlers. */
 export type PluginClientActionUi = Readonly<{
+    version: PluginUiHostApi['version'];
+    /** Exact current contributions to this Action's plugin; no UI mount is implied. */
+    context(options?: Parameters<PluginUiHostApi['context']>[0]): Promise<Readonly<{
+        targetedContributions: PluginUiTargetedContributionsV1 | null;
+    }>>;
+    selectActionInput: PluginUiHostApi['selectActionInput'];
     executeAction: PluginUiHostApi['executeAction'];
     openSurface: PluginUiHostApi['openSurface'];
+    openNewSession: PluginUiHostApi['openNewSession'];
 }>;
 
 /**

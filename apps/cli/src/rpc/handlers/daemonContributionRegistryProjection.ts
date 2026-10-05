@@ -69,6 +69,7 @@ import {
     readPluginSettingSecretCustody,
     readPluginActionFailureAuthorPayload,
 } from '@happier-dev/protocol';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     isPluginError,
     PluginError,
@@ -748,14 +749,14 @@ async function resolvePluginExecutionOriginsForProjection(
 }
 
 /**
- * Convert a mounted UI binding into invocation provenance only after the
+ * Convert a mounted UI or client Action binding into invocation provenance only after the
  * daemon has matched every component against its current runtime lease. The
  * wire record is a claim from the client, not caller authority.
  */
 async function deriveMountedPluginInvocationCaller(input: Readonly<{
     request: Readonly<{
         machineId: string;
-        invocationSurface: 'cli' | 'ui' | 'voice';
+        invocationSurface: 'cli' | 'ui' | 'voice' | 'agent' | 'mcp';
         invocation?: DaemonPluginStructuredMessageActionInvocationV1;
     }>;
     registry: ResolvedExecutablePluginRuntimeRegistry;
@@ -1642,7 +1643,7 @@ async function buildProjection(
             generation,
         })
         : undefined;
-    const projection = buildPluginProjectionV2({
+    const baseProjection = buildPluginProjectionV2({
         registry: lease.registry,
         generation,
         installedPackages: await resolveInstalledPackagesForProjection(opts, lease.runtimeRegistry),
@@ -1663,6 +1664,56 @@ async function buildProjection(
         ...(introspectionRuntimeSnapshot ? { introspectionRuntimeSnapshot } : {}),
         ...(buildInputs.locale ? { requestedLocale: buildInputs.locale } : {}),
     });
+    // Automation setup and typed pickers share one physical embedded mount owner.
+    const projectEmbeddedSurface = (
+        contribution: Readonly<{ pluginId: string; localId: string }>,
+        occurrenceId: string,
+        renderer: Parameters<typeof projectDaemonEmbeddedPluginUiRenderer>[0]['renderer'],
+    ) => {
+        const runtimeRegistry = lease.runtimeRegistry;
+        const executionOrigin = pluginExecutionOriginsByPluginId[contribution.pluginId];
+        if (!runtimeRegistry || !executionOrigin) return undefined;
+        const rendered = projectDaemonEmbeddedPluginUiRenderer({
+            registry: lease.registry, projection: baseProjection, pluginUiHostRuntime, modelsByRendererKey,
+            contributor: contribution, occurrenceId, renderer,
+        });
+        if (!rendered) return undefined;
+        try {
+            return Object.freeze({
+                contribution: Object.freeze({ ...contribution }), occurrenceId,
+                projectionGeneration: baseProjection.generation,
+                rendererChain: rendered.rendererChain.map(identity => ({ ...identity })),
+                selectedRenderer: rendered.selectedRenderer,
+                executionOrigin: Object.freeze({
+                    serverIdentityId: executionOrigin.serverIdentityId,
+                    materializationRef: Object.freeze({ ...executionOrigin.materializationRef }),
+                }),
+                resourceCapability: readTargetedSurfaceResourceCapability(runtimeRegistry, contribution.pluginId),
+                contributorTargetedContributions: readMountedTargetedContributionsProjection({
+                    runtimeRegistry, mountedTarget: { pluginId: contribution.pluginId, occurrenceId },
+                }),
+            });
+        } catch {
+            return undefined;
+        }
+    };
+    const inputTypes = baseProjection.familiesById.inputTypes;
+    const projection = inputTypes ? Object.freeze({
+        ...baseProjection,
+        familiesById: Object.freeze({
+            ...baseProjection.familiesById,
+            inputTypes: Object.freeze({ ...inputTypes, entriesById: Object.freeze(Object.fromEntries(
+                Object.entries(inputTypes.entriesById).map(([key, entry]) => {
+                    const picker = entry.definition.picker
+                        ? qualifyPluginContributionReferenceV1(entry.definition.picker, entry.pluginId) : null;
+                    const pickerSurface = picker?.pluginId === entry.pluginId && entry.occurrenceId
+                        ? projectEmbeddedSurface({ pluginId: entry.pluginId, localId: entry.definition.id },
+                            entry.occurrenceId, { renderer: picker.localId }) : undefined;
+                    return [key, Object.freeze({ ...entry, ...(pickerSurface ? { pickerSurface } : {}) })];
+                }),
+            )) }),
+        }),
+    }) : baseProjection;
     const composerSurfaceCatalog = lease.runtimeRegistry
         ? projectDaemonComposerSurfaceCatalog({
             registry: lease.registry,
@@ -1694,49 +1745,8 @@ async function buildProjection(
         if (!currentEntry) return null;
         const renderer = entry.event.automation.source.setupSurface;
         if (!renderer) return currentEntry;
-        const executionOrigin = pluginExecutionOriginsByPluginId[pluginId];
-        if (!executionOrigin) {
-            return Object.freeze({ ...currentEntry, setupSurface: undefined });
-        }
-        const rendered = projectDaemonEmbeddedPluginUiRenderer({
-            registry: lease.registry,
-            projection,
-            pluginUiHostRuntime,
-            modelsByRendererKey,
-            contributor: entry.event.identity,
-            occurrenceId: entry.event.occurrenceId,
-            renderer,
-        });
-        if (!rendered) return Object.freeze({ ...currentEntry, setupSurface: undefined });
-        try {
-            return Object.freeze({
-                ...currentEntry,
-                setupSurface: Object.freeze({
-                    contribution: Object.freeze({ ...entry.event.identity }),
-                    occurrenceId: entry.event.occurrenceId,
-                    projectionGeneration: projection.generation,
-                    rendererChain: rendered.rendererChain.map((identity) => ({ ...identity })),
-                    selectedRenderer: rendered.selectedRenderer,
-                    executionOrigin: Object.freeze({
-                        serverIdentityId: executionOrigin.serverIdentityId,
-                        materializationRef: Object.freeze({ ...executionOrigin.materializationRef }),
-                    }),
-                    resourceCapability: readTargetedSurfaceResourceCapability(
-                        lease.runtimeRegistry!,
-                        pluginId,
-                    ),
-                    contributorTargetedContributions: readMountedTargetedContributionsProjection({
-                        runtimeRegistry: lease.runtimeRegistry!,
-                        mountedTarget: {
-                            pluginId,
-                            occurrenceId: entry.event.occurrenceId,
-                        },
-                    }),
-                }),
-            });
-        } catch {
-            return Object.freeze({ ...currentEntry, setupSurface: undefined });
-        }
+        return Object.freeze({ ...currentEntry,
+            setupSurface: projectEmbeddedSurface(entry.event.identity, entry.event.occurrenceId, renderer) });
     }).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     // Built from typed producers and validated by the owner tests; the
     // client parses the response once at its boundary. The small Event
@@ -2783,9 +2793,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     code: 'plugin_mounted_caller_unavailable',
                 });
             }
-            const selectedActionInputCarrier = invocation?.kind === 'mountedPluginSurface'
-                ? request.data.selectedActionInputCarrier
-                : undefined;
+            const selectedActionInputCarrier = request.data.selectedActionInputCarrier;
             if (selectedActionInputCarrier !== undefined) {
                 const mountedPluginId = mountedCaller.status === 'available'
                     ? mountedCaller.caller.pluginId
@@ -2824,7 +2832,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 try {
                     mountedCallerCurrent = await mountedCaller.isMountedCallerCurrent();
                 } catch {
-                    // A carrier is valid only for the live mounted UI caller
+                    // A carrier is valid only for the live bound UI plugin caller
                     // that selected it. Failure to re-read cannot authorize
                     // even the outer target-management Action.
                 }

@@ -1,4 +1,4 @@
-import type { AutomationSessionLifecycleEvent } from '@happier-dev/protocol';
+import type { AutomationSessionLifecycleEvent, AutomationRunLifecycleTrigger } from '@happier-dev/protocol';
 
 import { getPreferredLanguage, t } from '@/text';
 
@@ -19,7 +19,8 @@ export type TriggerSummarySource =
     }>
     | Readonly<{ kind: 'pluginEvent'; eventRef: Readonly<{ localId: string }>; displayLabel?: string }>
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest?: Readonly<{ repository: string; number: number }> }>
-    | Readonly<{ kind: 'sessionLifecycle'; events: readonly AutomationSessionLifecycleEvent[] }>;
+    | Readonly<{ kind: 'sessionLifecycle'; events: readonly AutomationSessionLifecycleEvent[] }>
+    | Pick<AutomationRunLifecycleTrigger, 'kind' | 'condition'>;
 
 const MINUTE_MS = 60_000;
 
@@ -52,7 +53,8 @@ function formatCron(expression: string): string {
     }
 }
 
-function formatInterval(everyMs: number): string {
+/** "Every hour", "Every 15 minutes": an interval schedule's one wording. */
+export function formatTriggerInterval(everyMs: number): string {
     const minutes = Math.max(1, Math.round(everyMs / MINUTE_MS));
     return minutes % 60 === 0
         ? t('workflows.triggers.summary.everyHours', { count: minutes / 60 })
@@ -77,7 +79,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource): string {
             return trigger.schedule.kind === 'cron' && trigger.schedule.scheduleExpr !== null
                 ? formatCron(trigger.schedule.scheduleExpr)
                 : trigger.schedule.everyMs !== null
-                    ? formatInterval(trigger.schedule.everyMs)
+                    ? formatTriggerInterval(trigger.schedule.everyMs)
                     : t('workflows.triggers.summary.schedule');
         case 'pluginEvent': {
             const label = trigger.displayLabel?.trim();
@@ -85,6 +87,9 @@ export function formatTriggerSummary(trigger: TriggerSummarySource): string {
         }
         case 'sessionLifecycle':
             return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);
+        case 'runLifecycle':
+            return t(trigger.condition === 'terminal'
+                ? 'workflows.triggers.kind.runEnds' : 'workflows.triggers.kind.runNeedsYou');
         case 'prComment':
         case 'ciFailed':
             return t(`workflows.triggers.kind.${trigger.kind}`)

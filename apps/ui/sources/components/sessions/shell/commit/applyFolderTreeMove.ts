@@ -5,7 +5,7 @@ export type ApplyFolderTreeMoveResult = Readonly<{
     next: SessionFoldersV1;
 }>;
 
-export function applyFolderTreeMove(params: Readonly<{
+export async function applyFolderTreeMove(params: Readonly<{
     current: SessionFoldersV1;
     serverId: string;
     folderId: string;
@@ -13,8 +13,8 @@ export function applyFolderTreeMove(params: Readonly<{
     beforeFolderId?: string | null;
     afterFolderId?: string | null;
     now: number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => void;
-}>): ApplyFolderTreeMoveResult {
+    setSessionFoldersV1: (next: SessionFoldersV1) => Promise<void>;
+}>): Promise<ApplyFolderTreeMoveResult> {
     const moved = moveSessionFolder({
         current: params.current,
         serverId: params.serverId,
@@ -27,6 +27,6 @@ export function applyFolderTreeMove(params: Readonly<{
     if (!moved.folder) {
         return { moved: false, next: params.current };
     }
-    params.setSessionFoldersV1(moved.next);
+    await params.setSessionFoldersV1(moved.next);
     return { moved: true, next: moved.next };
 }

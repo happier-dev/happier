@@ -554,7 +554,8 @@ async function tryOpenDirectTunnel(
   }
   return {
     stream: result.stream,
-    routeKind: result.routeKind,
+    // This Voice call requests only the direct route; iroh belongs to tcp_tunnel.
+    routeKind: 'loopback_direct',
     tunnelId: params.tunnelId,
     machineId: params.input.machineTarget.machineId,
     async close() {
@@ -696,7 +697,7 @@ async function tryOpenServerRelayTunnel(
   }
   return {
     stream: result.stream,
-    routeKind: result.routeKind,
+    routeKind: 'server_relay',
     tunnelId: params.tunnelId,
     machineId: params.input.machineTarget.machineId,
     peerApplicationEncryption: {

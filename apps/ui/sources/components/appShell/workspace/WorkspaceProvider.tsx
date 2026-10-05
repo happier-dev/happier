@@ -7,9 +7,10 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { getActiveUnsavedChangesGuard, runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { hrefForDestinationRef, resolveDestinationRefFromHref, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
+import { resolveDestinationRefFromHref, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationAdapter, type WorkspaceOpenOptions } from './workspaceNavigationAdapter';
 import { createWorkspaceBrowserTransport } from './workspaceBrowserTransport';
+import type { WorkspaceNavigationEntry } from './workspaceNavigationHistory';
 import { useWorkspaceState } from './useWorkspaceState';
 import { useWorkspaceTabSync } from './useWorkspaceTabSync';
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue, type WorkspacePhoneControls } from './WorkspaceNavigationContext';
@@ -18,9 +19,10 @@ import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCan
 import { createWorkspaceActionAdapter, workspaceActionFailure, type WorkspaceActionOutcome } from './workspaceActions';
 import { registerMountedWorkspaceAction } from './workspaceActionRuntime';
 import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from './workspaceDestinationPolicy';
-import { createWorkspaceEmptyTab, type WorkspaceState } from './workspaceState';
+import type { WorkspaceState } from './workspaceState';
 import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
+import { retainsWorkspaceDestinationOnMobileWeb } from './workspaceRoutes';
 
 function runNavigation(navigate: () => void): void {
     const result = runGuardedNavigation(navigate);
@@ -31,8 +33,8 @@ function runNavigation(navigate: () => void): void {
 export function WorkspaceProvider(props: Readonly<{
     enabled: boolean;
     /**
-     * A phone: the owner keeps (and syncs) the tab set, but the phone's stack keeps navigation — no URL
-     * projection, no Actions, and only explicit opens ever become synced tabs.
+     * A phone keeps its own stack transport over the same tab and Action owner.
+     * Only explicit opens become synced tabs.
      */
     phone?: boolean;
     catalog: readonly CompactAppDestination[];
@@ -54,13 +56,19 @@ export function WorkspaceProvider(props: Readonly<{
         return `${pathname}${query.size ? `?${query}` : ''}`;
     }, [params, pathname]);
     const phone = props.phone === true && !props.enabled;
+    // Registered mobile-web destinations retain the desktop tree; native phones use Expo's stack.
+    const routeDestination = resolveDestinationRefFromHref(props.catalog, routeHref);
+    const hostsMobileWeb = phone && Platform.OS === 'web' && routeDestination !== null
+        && retainsWorkspaceDestinationOnMobileWeb(routeDestination.kind);
+    const hostsRoute = props.enabled || hostsMobileWeb;
+    const phoneTransport = phone && !hostsMobileWeb;
     const phoneTabHref = phone ? resolvePhoneWorkspaceTabHref(props.catalog, routeHref) : null;
     const [initialTab] = React.useState(() => {
-        // A phone's first screen is only its preview: nothing reaches the synced set without an explicit open.
-        const href = phone ? phoneTabHref : routeHref;
+        // Initial URL admission is a local preview, not membership in the shared intentional tab set.
+        const href = phoneTransport ? phoneTabHref : routeHref;
         return {
             id: randomUUID(), target: (href ? resolveDestinationRefFromHref(props.catalog, href) : null) ?? { kind: 'newTab', params: {} },
-            pinned: false, preview: phone,
+            pinned: false, preview: true,
         };
     });
     const admissionCatalog = React.useRef(props.catalog);
@@ -70,26 +78,35 @@ export function WorkspaceProvider(props: Readonly<{
     const localOwner = useWorkspaceState({ initialTab, admitState });
     const owner = useWorkspaceTabSync({ local: localOwner, catalog: props.catalog, enabled: props.enabled || phone });
     const [historyVersion, changed] = React.useReducer((value: number) => value + 1, 0);
-    const latest = React.useRef({ owner, router, catalog: props.catalog, enabled: props.enabled, scopeKey, phoneTabHref });
-    latest.current = { owner, router, catalog: props.catalog, enabled: props.enabled, scopeKey, phoneTabHref };
+    const latest = React.useRef({ owner, router, catalog: props.catalog, enabled: props.enabled, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref });
+    latest.current = { owner, router, catalog: props.catalog, enabled: props.enabled, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref };
     const projectedHref = React.useRef<string | null>(null);
     const backSteps = React.useRef(new Map<string, () => boolean>());
     const canvasControlsRef = React.useRef<SplitCanvasHostControls | null>(null);
+    const isCurrentUiOwner = React.useCallback(() => latest.current.scopeKey === scopeKey
+        && latest.current.phoneTransport === phoneTransport && (latest.current.phone || latest.current.enabled)
+        && latest.current.owner.isReady, [phoneTransport, scopeKey]);
+    const runUiNavigation = React.useCallback((operation: () => void) => {
+        if (!isCurrentUiOwner()) return;
+        runNavigation(() => { if (isCurrentUiOwner()) operation(); });
+    }, [isCurrentUiOwner]);
     const guardTraversal = React.useCallback((direction: -1 | 1, proceed: () => void) => {
-        runNavigation(() => {
+        runUiNavigation(() => {
             const state = latest.current.owner.getState();
             const tabId = state.groups[state.focusedGroupId].activeTabId;
             if (direction === -1 && backSteps.current.get(tabId)?.()) return;
             proceed();
         });
-    }, []);
+    }, [runUiNavigation]);
     const runtime = React.useMemo(() => {
-        const mirror = (href: string) => {
-            projectedHref.current = href;
-            latest.current.router.replace(href as never);
+        const mirror = (href: string, entry?: WorkspaceNavigationEntry) => {
+            const projected = phoneTransport && entry?.target.kind === 'newTab' ? '/' : href;
+            projectedHref.current = projected;
+            if (phoneTransport && latest.current.phoneTabHref === null && projected !== '/') latest.current.router.push(projected as never);
+            else latest.current.router.replace(projected as never);
         };
-        // A phone (mobile web included) keeps its own history; the workspace never writes browser state there.
-        const browser = !phone && Platform.OS === 'web' && typeof window !== 'undefined'
+        // Registered hosted web destinations keep their transport across width changes.
+        const browser = !phoneTransport && Platform.OS === 'web' && typeof window !== 'undefined'
             ? createWorkspaceBrowserTransport({
                 history: window.history,
                 getHref: () => `${window.location.pathname}${window.location.search}${window.location.hash}`,
@@ -107,6 +124,7 @@ export function WorkspaceProvider(props: Readonly<{
         const adapter = createWorkspaceNavigationAdapter({
             getState: () => latest.current.owner.getState(),
             getCatalog: () => latest.current.catalog,
+            getScope: () => latest.current.scope,
             dispatch: (action) => {
                 const owner = latest.current.owner;
                 if (mounted.initialized) owner.dispatch(action);
@@ -114,21 +132,23 @@ export function WorkspaceProvider(props: Readonly<{
             },
             transport: browser ?? { commit: mirror },
             createId: randomUUID, onChange: changed,
+            ...(phoneTransport ? { resolveOpenHref: (href: string) => resolvePhoneWorkspaceTabHref(latest.current.catalog, href) } : {}),
         });
         const mounted = { adapter, browser, initialized: false };
         return mounted;
-    }, [guardTraversal, scopeKey, phone]);
-    const eligible = resolveDestinationRefFromHref(props.catalog, routeHref) !== null;
+    }, [guardTraversal, scopeKey, phoneTransport]);
+    const eligible = routeDestination !== null;
 
     React.useEffect(() => {
-        if (!props.enabled || !owner.isReady || !eligible || !runtime.initialized) return;
+        if (!(props.enabled || phone) || !owner.isReady || (!phone && (!eligible || !runtime.initialized))) return;
         let current = true;
         const execute = createWorkspaceActionAdapter({
             getState: () => latest.current.owner.getState(), navigation: runtime.adapter,
             readCanvas: () => canvasControlsRef.current, createId: randomUUID,
+            phone,
         });
         const retire = registerMountedWorkspaceAction(async (request) => {
-            const isCurrent = () => current && latest.current.scopeKey === scopeKey && latest.current.enabled && latest.current.owner.isReady;
+            const isCurrent = () => current && isCurrentUiOwner();
             if (!isCurrent()) return workspaceActionFailure('workspace_unavailable');
             if (request.signal?.aborted) return workspaceActionFailure('action_cancelled');
             const navigates = request.actionId === 'workspace.tabs.open' || request.actionId === 'workspace.tabs.activate'
@@ -138,6 +158,7 @@ export function WorkspaceProvider(props: Readonly<{
             if (!navigates) return execute(request.actionId, request.input);
             let outcome: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
             await runGuardedNavigation(() => {
+                if (phone && isCurrent() && !request.signal?.aborted) runtime.initialized = true;
                 outcome = !isCurrent() ? workspaceActionFailure('workspace_unavailable')
                     : request.signal?.aborted ? workspaceActionFailure('action_cancelled')
                         : execute(request.actionId, request.input);
@@ -145,40 +166,52 @@ export function WorkspaceProvider(props: Readonly<{
             return outcome;
         });
         return () => { current = false; retire(); };
-    }, [eligible, owner.isReady, props.enabled, runtime, scopeKey]);
+    }, [eligible, isCurrentUiOwner, owner.isReady, phone, props.enabled, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
-        if (!props.enabled || !owner.isReady || !eligible) return;
+        if (!hostsRoute || !owner.isReady || !eligible) return;
         if (!runtime.initialized) {
             runtime.adapter.initialize(routeHref);
             runtime.initialized = true;
         } else if (projectedHref.current !== routeHref) runtime.adapter.acceptUrl(routeHref);
-    }, [eligible, owner.isReady, props.enabled, routeHref, runtime]);
+    }, [eligible, owner.isReady, hostsRoute, routeHref, runtime]);
 
     React.useEffect(() => {
-        if (!props.enabled || !owner.isReady || !runtime.browser || typeof window === 'undefined') return;
+        if (!hostsRoute || !owner.isReady || !runtime.browser || typeof window === 'undefined') return;
         const onPop = (event: PopStateEvent) => {
             if (runtime.browser?.acceptPopState(event.state)) event.stopImmediatePropagation();
         };
         // Expo's linking listener is a URL mirror, never a competing workspace history reader.
         window.addEventListener('popstate', onPop, true);
         return () => window.removeEventListener('popstate', onPop, true);
-    }, [owner.isReady, props.enabled, runtime]);
+    }, [owner.isReady, hostsRoute, runtime]);
 
     // The phone records what is on screen as its one preview (or the tab it already is). It never
-    // projects a URL: tab switches move the phone's stack, and only explicit opens become synced tabs.
+    // writes browser history: tab switches move the phone's stack, and only explicit opens become synced tabs.
     React.useLayoutEffect(() => {
-        if (!phone || !owner.isReady) return;
+        if (!phoneTransport || !owner.isReady) return;
         if (phoneTabHref) runtime.adapter.acceptUrl(phoneTabHref);
         if (phoneTabHref || eligible) runtime.initialized = true;
-    }, [eligible, owner.isReady, phone, phoneTabHref, runtime]);
+    }, [eligible, owner.isReady, phoneTransport, phoneTabHref, runtime]);
+    const activateTab = React.useCallback((groupId: string, tabId: string) => {
+        if (!isCurrentUiOwner()) return;
+        const state = latest.current.owner.getState();
+        // Pointer/focus events inside a leaf re-assert its active tab. They are
+        // not departures and must not ask to discard that tab's unsaved work.
+        // Off-tab phone screens still need to project the retained tab back onto the stack.
+        if (state.focusedGroupId === groupId && state.groups[groupId]?.activeTabId === tabId
+            && (!phoneTransport || latest.current.phoneTabHref !== null)) return;
+        runUiNavigation(() => {
+            runtime.initialized = true;
+            runtime.adapter.activateTab(groupId, tabId);
+        });
+    }, [isCurrentUiOwner, phoneTransport, runUiNavigation, runtime]);
     const phoneOnTab = phoneTabHref !== null;
     const phoneControls = React.useMemo<WorkspacePhoneControls | null>(() => {
         if (!phone || !owner.isReady) return null;
-        // A tab switch replaces the screen, so Back still leads to the list; from a main tab it pushes.
-        const show = (href: string) => runNavigation(() => {
-            if (latest.current.phoneTabHref !== null) latest.current.router.replace(href as never);
-            else latest.current.router.push(href as never);
+        const navigate = (operation: () => void) => runUiNavigation(() => {
+            runtime.initialized = true;
+            operation();
         });
         return {
             catalog: props.catalog,
@@ -186,33 +219,30 @@ export function WorkspaceProvider(props: Readonly<{
             openHref: (href, mode) => {
                 const tabHref = resolvePhoneWorkspaceTabHref(latest.current.catalog, href);
                 if (!tabHref) return false;
-                runtime.initialized = true;
-                if (!runtime.adapter.openHref(tabHref, { mode }, false)) return false;
-                show(href);
+                navigate(() => { runtime.adapter.openHref(tabHref, { mode }); });
                 return true;
             },
             activateTab: (tabId) => {
-                const tab = latest.current.owner.getState().tabs[tabId];
-                const href = tab ? hrefForDestinationRef(latest.current.catalog, tab.target) : null;
-                if (href) {
-                    runtime.initialized = true;
-                    show(href);
-                }
-            },
-            closeTab: (tabId) => {
                 const state = latest.current.owner.getState();
                 const group = Object.values(state.groups).find((item) => item.tabIds.includes(tabId));
-                if (group) latest.current.owner.dispatch({ type: 'closeTab', groupId: group.id, tabId, newTab: createWorkspaceEmptyTab(randomUUID()) });
+                if (group) activateTab(group.id, tabId);
+            },
+            closeTab: (tabId) => {
+                navigate(() => {
+                    const state = latest.current.owner.getState();
+                    const group = Object.values(state.groups).find((item) => item.tabIds.includes(tabId));
+                    if (group) runtime.adapter.closeTab(group.id, tabId);
+                });
             },
         };
-    }, [owner.isReady, phone, phoneOnTab, props.catalog, runtime]);
+    }, [activateTab, owner.isReady, phone, phoneOnTab, props.catalog, runUiNavigation, runtime]);
 
     const openHref = React.useCallback((href: string, options?: WorkspaceOpenOptions) => {
-        if (!latest.current.enabled || !latest.current.owner.isReady
+        if (!isCurrentUiOwner() || !latest.current.hostsRoute
             || !resolveDestinationRefFromHref(latest.current.catalog, href)) return false;
-        runNavigation(() => { runtime.adapter.openHref(href, options); });
+        runUiNavigation(() => { runtime.adapter.openHref(href, options); });
         return true;
-    }, [runtime]);
+    }, [isCurrentUiOwner, runUiNavigation, runtime]);
     const tabNavigations = React.useMemo(() => new Map<string, DestinationNavigation>(), [runtime]);
     const navigationForTab = React.useCallback((tabId: string): DestinationNavigation => {
         const existing = tabNavigations.get(tabId);
@@ -220,52 +250,76 @@ export function WorkspaceProvider(props: Readonly<{
         const navigate = (href: Parameters<typeof router.push>[0], replace: boolean) => {
             const resolved = resolveHref(href);
             if (!openHref(resolved, { tabId, replace })) {
-                runNavigation(() => replace ? latest.current.router.replace(href) : latest.current.router.push(href));
+                runUiNavigation(() => replace ? latest.current.router.replace(href) : latest.current.router.push(href));
             }
         };
         const navigation: DestinationNavigation = {
             push: (href) => navigate(href, false),
+            pushRetainingCurrent: (href) => {
+                if (!isCurrentUiOwner()) return;
+                const resolved = resolveHref(href);
+                if (!resolveDestinationRefFromHref(latest.current.catalog, resolved)) return;
+                const state = latest.current.owner.getState();
+                const group = Object.values(state.groups).find(candidate => candidate.tabIds.includes(tabId));
+                if (!group) return;
+                // No departure guard: the editor keeps its identity, local state and dirty baseline.
+                // Promotion prevents a later preview open from retiring that retained draft.
+                runtime.adapter.dispatch({ type: 'promoteTab', tabId });
+                runtime.adapter.openHref(resolved, { mode: 'newTab', groupId: group.id });
+            },
             replace: (href) => navigate(href, true),
             back: () => {
+                if (!isCurrentUiOwner()) return;
                 if (runtime.browser) runtime.adapter.step(-1);
                 else guardTraversal(-1, () => runtime.adapter.step(-1));
             },
             canGoBack: () => runtime.adapter.canGoBack,
-            setParams: (values) => runtime.adapter.setParams(tabId, values),
+            setParams: (values) => { if (isCurrentUiOwner()) runtime.adapter.setParams(tabId, values); },
         };
         tabNavigations.set(tabId, navigation);
         return navigation;
-    }, [guardTraversal, openHref, runtime, tabNavigations]);
+    }, [guardTraversal, isCurrentUiOwner, openHref, runUiNavigation, runtime, tabNavigations]);
     const navigation = React.useMemo<WorkspaceNavigationContextValue>(() => ({
-        active: props.enabled && owner.isReady && eligible && runtime.initialized,
+        active: hostsRoute && owner.isReady && eligible && runtime.initialized,
         phone: phoneControls,
         state: owner.state,
+        catalog: props.catalog,
         sharedTabs: owner.sharedTabs,
         tabSyncStatus: owner.tabSyncStatus,
         handoffSource: owner.handoffSource,
         canvasControlsRef,
         canGoBack: runtime.adapter.canGoBack, canGoForward: runtime.adapter.canGoForward,
         openHref, navigationForTab,
+        findOpenHref: href => isCurrentUiOwner() ? runtime.adapter.findOpenHref(href) : null,
         registerBackStep: (tabId, consume) => {
             backSteps.current.set(tabId, consume);
             return () => { if (backSteps.current.get(tabId) === consume) backSteps.current.delete(tabId); };
         },
-        activateTab: (groupId, tabId) => runNavigation(() => runtime.adapter.activateTab(groupId, tabId)),
-        closeTab: (groupId, tabId) => runNavigation(() => runtime.adapter.closeTab(groupId, tabId)),
+        activateTab,
+        closeTab: (groupId, tabId) => runUiNavigation(() => runtime.adapter.closeTab(groupId, tabId)),
+        closeTabs: (groupId, tabIds) => runUiNavigation(() => runtime.adapter.closeTabs(groupId, tabIds)),
         dispatch: (action) => {
-            if (action.type === 'focusGroup' || action.type === 'activateTab' || action.type === 'openTab'
-                || action.type === 'moveTab' || action.type === 'splitTab' || action.type === 'reopenTab') runNavigation(() => runtime.adapter.dispatch(action));
+            if (!isCurrentUiOwner()) return;
+            if (action.type === 'activateTab') {
+                activateTab(action.groupId, action.tabId);
+                return;
+            }
+            if (action.type === 'focusGroup' && latest.current.owner.getState().focusedGroupId === action.groupId) return;
+            if (action.type === 'focusGroup' || action.type === 'openTab'
+                || action.type === 'moveTab' || action.type === 'splitTab' || action.type === 'reopenTab') runUiNavigation(() => runtime.adapter.dispatch(action));
             else runtime.adapter.dispatch(action);
         },
         back: () => {
+            if (!isCurrentUiOwner()) return;
             if (runtime.browser) runtime.adapter.step(-1);
             else guardTraversal(-1, () => runtime.adapter.step(-1));
         },
         forward: () => {
+            if (!isCurrentUiOwner()) return;
             if (runtime.browser) runtime.adapter.step(1);
             else guardTraversal(1, () => runtime.adapter.step(1));
         },
-    }), [eligible, guardTraversal, historyVersion, navigationForTab, openHref, phoneControls, owner.isReady, owner.state, owner.sharedTabs, owner.tabSyncStatus, owner.handoffSource, props.enabled, runtime]);
+    }), [activateTab, eligible, guardTraversal, historyVersion, hostsRoute, isCurrentUiOwner, navigationForTab, openHref, phoneControls, owner.isReady, owner.state, owner.sharedTabs, owner.tabSyncStatus, owner.handoffSource, runUiNavigation, runtime]);
     useWorkspaceKeyboardShortcuts(navigation.active, () => latest.current.owner.getState());
     return <WorkspaceNavigationContext.Provider value={navigation}>{typeof props.children === 'function' ? props.children(navigation) : props.children}</WorkspaceNavigationContext.Provider>;
 }

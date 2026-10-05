@@ -21,6 +21,7 @@ type DetailsPaneSlotFrame = Readonly<{
 
 /** The pane's body: changes whenever the detail re-renders, read only by the pane's own leaf. */
 type DetailsPaneSlotBody = Readonly<{
+    headingRef?: PluginUiDetailsPanePresentation['headingRef'];
     actions?: React.ReactNode;
     children?: React.ReactNode;
 }>;
@@ -58,7 +59,8 @@ function createDetailsPaneSlotStore(): DetailsPaneSlotStore {
         frameListeners.forEach((listener) => listener());
     };
     const setBody = (next: DetailsPaneSlotBody | null) => {
-        if (body === next || (body !== null && next !== null && body.children === next.children && body.actions === next.actions)) return;
+        if (body === next || (body !== null && next !== null && body.children === next.children
+            && body.actions === next.actions && body.headingRef === next.headingRef)) return;
         body = next;
         bodyListeners.forEach((listener) => listener());
     };
@@ -75,7 +77,7 @@ function createDetailsPaneSlotStore(): DetailsPaneSlotStore {
                 ...(input.subtitle === undefined ? {} : { subtitle: input.subtitle }),
                 ...(input.testID === undefined ? {} : { testID: input.testID }),
             });
-            setBody({ actions: input.actions, children: input.children });
+            setBody({ actions: input.actions, children: input.children, headingRef: input.headingRef });
         },
         retract(retiring) {
             if (owner !== retiring) return;
@@ -128,6 +130,7 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
                     title={props.frame.title}
                     subtitle={props.frame.subtitle}
                     actions={body?.actions}
+                    headingRef={body?.headingRef}
                     onClose={props.store.close}
                 />
             ) : null}

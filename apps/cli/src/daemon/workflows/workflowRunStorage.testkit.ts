@@ -10,6 +10,7 @@ import {
 
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
+import { WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows';
 
 /**
  * In-memory stand-in for the server's opaque Workflow Run storage owner.
@@ -57,6 +58,7 @@ export type WorkflowRunStorageTestkitOperation = Parameters<WorkflowAccountRunAc
 
 export type WorkflowRunStorageTestkit = Readonly<{
   execute: (operation: WorkflowRunStorageTestkitOperation, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
+  observeChanges: (runId: string, onChange: () => void, onError: (error: unknown) => void) => Readonly<{ dispose(): Promise<void> }>;
   /** Every operation the daemon or Action host sent, in order. */
   calls: readonly WorkflowRunStorageTestkitOperation[];
   operations: () => readonly string[];
@@ -120,6 +122,8 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
   const pageSize = params.invocationPageSize ?? Number.MAX_SAFE_INTEGER;
   const calls: WorkflowRunStorageTestkitOperation[] = [];
   const rows = new Map<string, StoredRow>();
+  const changeObservers = new Set<() => void>();
+  const publishChange = () => { for (const observer of changeObservers) observer(); };
 
   let acceptedEnvelope: string | null = params.acceptedEnvelope ?? null;
   let checkpointEnvelope: string | null = null;
@@ -129,7 +133,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
   let custodyState: WorkflowRunSummaryV1['workflowCustodyState'] = 'pending';
   let originDeliveryAckRevision = params.originDeliveryAckRevision ?? null;
   let waitAttempts = 0;
-  const keyCensus = params.keyCensus ?? createPlainWorkflowRunKeyCensusFixture(params);
+  let keyCensus = params.keyCensus ?? createPlainWorkflowRunKeyCensusFixture(params);
 
   const requiresAttention = () => state === 'interrupted'
     || (TERMINAL_RUN_STATES.some(value => value === state) && custodyState === 'pending')
@@ -209,6 +213,10 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         const disposition = acceptedEnvelope === null ? 'created' : 'existing';
         if (acceptedEnvelope === null) {
           acceptedEnvelope = String(operation.acceptedEnvelope);
+          const ownerKey = WorkflowRunRecipientKeyEnvelopesV1Schema.parse(operation.recipientKeyEnvelopes ?? [])
+            .find((item) => item.recipientAccountId === keyCensus.ownerAccountId);
+          if (ownerKey) keyCensus = { ...keyCensus, dataEncryptionKey: ownerKey.encryptedDataKey,
+            callerDataEncryptionKey: ownerKey.encryptedDataKey };
           revision += 1;
         }
         return { disposition, acceptedEnvelope, run: summary() };
@@ -335,6 +343,23 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         if (attentionBefore !== requiresAttention()) revision += 1;
         return { ...index, parentRevision: revision };
       }
+      case 'invocations.complete_review': {
+        const row = rows.get(String(operation.invocationId));
+        if (!row) throw notFound();
+        if (row.index.lifecycle !== 'waiting_for_review' || row.index.attempt !== operation.invocationAttempt
+          || row.index.contentRevision !== operation.expectedContentRevision || custodyState !== 'pending') {
+          throw storageError('currentness_conflict');
+        }
+        revision += 1;
+        if (state === 'waiting_for_review') state = 'queued';
+        const updated = { index: { ...row.index,
+          lifecycle: operation.mode === 'use_result' ? 'completed' as const : 'waiting_for_review' as const,
+          contentRevision: (BigInt(row.index.contentRevision) + 1n).toString() },
+          contentEnvelope: String(operation.contentEnvelope) };
+        rows.set(row.index.id, updated);
+        return { run: summary(), invocation: updated,
+          disposition: operation.mode === 'use_result' ? 'completed' : 'generation_requested' };
+      }
       case 'transition': {
         expectRevision();
         for (const item of (operation.invocationTransitions ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>) {
@@ -384,17 +409,17 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
           waitAttempts += 1;
           await params.onBeforeWait?.(waitAttempts);
           if (TERMINAL_RUN_STATES.some((candidate) => candidate === state)) {
-            return { observation: 'terminal', run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
+            return { observation: 'terminal', matchedCondition: 'terminal', run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
           }
-          if (state === 'paused') return { observation: 'paused', run: summary() };
+          if (state === 'paused') return { observation: 'paused', matchedCondition: 'paused', run: summary() };
           if (state === 'interrupted') {
-            return { observation: 'needs_attention', run: summary() };
+            return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
           }
           if ([...rows.values()].some((row) => ATTENTION_LIFECYCLES.some((candidate) => candidate === row.index.lifecycle))) {
-            return { observation: 'needs_attention', run: summary() };
+            return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
           }
           if (operation.afterRevision !== undefined && revision !== operation.afterRevision) {
-            return { observation: 'changed', run: summary() };
+            return { observation: 'changed', matchedCondition: 'change', run: summary() };
           }
           if (params.onBeforeWait === undefined) return { observation: 'timeout', run: summary() };
         }
@@ -405,7 +430,16 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
   };
 
   return {
-    execute,
+    execute: async (operation) => {
+      const result = await execute(operation);
+      if (!['get', 'run-key.census', 'invocations.list', 'invocations.current', 'invocations.get', 'wait', 'delivery.pull'].includes(String(operation.operation))) publishChange();
+      return result;
+    },
+    observeChanges: (observedRunId, onChange) => {
+      if (observedRunId !== params.runId) throw notFound();
+      changeObservers.add(onChange);
+      return { dispose: async () => { changeObservers.delete(onChange); } };
+    },
     calls,
     operations: () => calls.map((call) => String(call.operation)),
     run: summary,
@@ -417,13 +451,14 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
     requestControl: (next) => {
       revision += 1;
       if (next !== 'cancel_requested') state = next;
-      if (next !== 'cancelled' && next !== 'cancel_requested') return;
+      if (next !== 'cancelled' && next !== 'cancel_requested') { publishChange(); return; }
       for (const row of [...rows.values()]) {
         if (!CANCELLABLE_LIFECYCLES.some((candidate) => candidate === row.index.lifecycle)) continue;
         rows.set(row.index.id, { ...row, index: { ...row.index,
           lifecycle: row.index.lifecycle === 'waiting_for_review' ? 'cancelled' : 'cancel_requested',
           contentRevision: (BigInt(row.index.contentRevision) + 1n).toString() } });
       }
+      publishChange();
     },
   };
 }

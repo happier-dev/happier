@@ -6,6 +6,22 @@ import {
   registerSensitiveDiagnosticValues,
 } from './redaction.js';
 
+it('redacts issued public-link fragments in diagnostic text and serialized Action results', () => {
+  for (const input of [
+    'issued https://public.example/s/lookup#k=FRAGMENT_SENTINEL',
+    JSON.stringify({ result: { url: 'https://public.example/s/lookup?ref=agent#k=FRAGMENT_SENTINEL' } }),
+  ]) {
+    expect(redactBugReportSensitiveText(input)).not.toContain('FRAGMENT_SENTINEL');
+    expect(redactBugReportSensitiveText(input)).not.toContain('/s/lookup');
+  }
+});
+
+it('redacts private HTML fragment content in diagnostic text and serialized Action results', () => {
+  for (const input of ['preview https://isolated.example/a/document#d=PRIVATE_HTML_SENTINEL', JSON.stringify({ previewUrl: 'https://isolated.example/a/document?ref=agent#d=PRIVATE_HTML_SENTINEL' })]) {
+    expect(redactBugReportSensitiveText(input)).not.toContain('PRIVATE_HTML_SENTINEL');
+  }
+});
+
 describe('runtime diagnostic sensitive-value leases', () => {
   it('redacts exact non-token-shaped values only while a lease is active', () => {
     const value = 'provider-key-with-spaces and punctuation !';

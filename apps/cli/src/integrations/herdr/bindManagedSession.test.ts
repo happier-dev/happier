@@ -66,6 +66,70 @@ describe('bindManagedHerdrSession', () => {
     }
   });
 
+  it.each([
+    { heldPhase: 'report', endSession: false },
+    { heldPhase: 'release', endSession: false },
+    { heldPhase: 'release', endSession: true },
+  ] as const)('preserves reporter lifetime with predecessor $heldPhase pending and session closed=$endSession', async ({ heldPhase, endSession }) => {
+    let terminal: NonNullable<ReturnType<typeof createTestMetadata>['terminal']> = {
+      mode: 'herdr',
+      herdr: { sessionName: 'work', socketPath: '/tmp/herdr.sock', terminalId: 'term_42' },
+    };
+    const session = Object.assign(createLifecycleSession(), {
+      getMetadataSnapshot: () => createTestMetadata({ terminal }),
+    });
+    let finishHeldRequest!: () => void;
+    const heldRequest = new Promise<void>((resolve) => { finishHeldRequest = resolve; });
+    let reports = 0;
+    let releaseStarted = false;
+    let releaseCompleted = false;
+    let reported = false;
+    // Herdr transport is the external boundary. Its delayed completion must
+    // not let predecessor cleanup erase the replacement's agent/resume state.
+    const params = {
+      session,
+      client: {
+        findPane: async () => ({ paneId: 'w1:p2', terminalId: 'term_42', workspaceId: 'w1', tabId: 'w1:t1' }),
+        request: async (method: string) => {
+          if (method === 'pane.report_agent') {
+            reports += 1;
+            reported = true;
+            if (heldPhase === 'report' && reports === 1) await heldRequest;
+          } else if (method === 'pane.release_agent') {
+            releaseStarted = true;
+            if (heldPhase === 'release') await heldRequest;
+            reported = false;
+            releaseCompleted = true;
+          }
+          return {};
+        },
+      },
+      terminalId: 'term_42', agent: 'codex', sessionId: 'session-rebound',
+    };
+    try {
+      bindManagedHerdrSession(params);
+      await vi.waitFor(() => expect(reports).toBe(1));
+      terminal = { ...terminal, controlServiceabilityV1: { v: 1, attachmentId: 'old-attachment',
+        state: 'unknown', observedAt: 1, retired: true, reason: 'attachment_retired' } };
+      session.emit('metadata-updated');
+      if (heldPhase === 'release') await vi.waitFor(() => expect(releaseStarted).toBe(true));
+      terminal = { ...terminal, controlServiceabilityV1: { v: 1, attachmentId: 'new-attachment',
+        state: 'unknown', observedAt: 2 } };
+      bindManagedHerdrSession(params);
+      if (endSession) session.emit('local-closed');
+      finishHeldRequest();
+      await vi.waitFor(() => {
+        expect(releaseCompleted).toBe(true);
+        if (!endSession) expect(reports).toBe(2);
+        expect(reported).toBe(!endSession);
+      });
+      if (endSession) expect(session.listenerCount('local-presence')).toBe(0);
+    } finally {
+      finishHeldRequest();
+      session.emit('local-closed');
+    }
+  });
+
   it('uses the installed release-channel command for Herdr cold restore', () => {
     expect(createHerdrResumeArgv('session-123', 'stable')).toEqual(['happier', '--runtime-context', expect.any(String), 'resume', 'session-123']);
     expect(createHerdrResumeArgv('session-123', 'preview')).toEqual(['hprev', '--runtime-context', expect.any(String), 'resume', 'session-123']);

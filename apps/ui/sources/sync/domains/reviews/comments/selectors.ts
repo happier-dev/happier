@@ -21,6 +21,7 @@ function commentFilePath(comment: ReviewCommentV1): string | null {
 function commentAuthorId(comment: ReviewCommentV1): string {
     if (comment.author.kind === 'plugin') return comment.author.pluginId;
     if (comment.author.kind === 'agent') return comment.author.agentId;
+    if (comment.author.kind === 'workflow') return comment.author.runId;
     return comment.author.userId;
 }
 

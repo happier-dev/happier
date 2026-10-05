@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_ROLES_V1, renderSessionRoleBlockV1 } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
@@ -31,6 +31,13 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
         if (actionId === 'roles.list') return { ok: true, result: { items: shared.items } };
         return { ok: true, result: {} };
     },
+}));
+
+// The applied connection is the runtime boundary; the real account lifetime and store stay active.
+vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>()),
+    getAppliedActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://roles.test', generation: 0 }),
+    isAppliedActiveServerRuntimeAvailable: () => true,
 }));
 
 // The modal host is the presentation boundary: the test captures what the page asked it to show.
@@ -77,6 +84,9 @@ const ownRole = {
 
 const { RoleDetailScreen } = await import('./RoleDetailScreen');
 const { invalidateRoleCatalog } = await import('@/components/roles/catalog/useRoleCatalog');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+let previousStorageState = storage.getState();
 
 async function renderRole(roleId: string) {
     const screen = await renderScreen(<RoleDetailScreen target={{ kind: 'role', roleId }} />);
@@ -91,6 +101,8 @@ function writes() {
 
 describe('Settings › Roles detail', () => {
     beforeEach(() => {
+        previousStorageState = storage.getState();
+        storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-1' } });
         shared.calls = [];
         shared.shown = [];
         shared.savedFiles = [];
@@ -102,6 +114,11 @@ describe('Settings › Roles detail', () => {
         ];
         shared.rolesV1 = { overrides: { orchestrator: { roleId: 'orchestrator', secondOpinion: 'encouraged' } } };
         invalidateRoleCatalog();
+    });
+
+    afterEach(() => {
+        retireActiveServerAccountScopeLifetime();
+        storage.setState(previousStorageState);
     });
 
     it('saves a built-in change as the reader\'s override, keeping the fields already overridden', async () => {
@@ -149,19 +166,43 @@ describe('Settings › Roles detail', () => {
         return menus[0]?.props.actions ?? [];
     }
 
-    it('offers Reset only for an overridden role, Share and Delete only for the reader\'s own', async () => {
+    it('offers Share for role Artifacts while keeping Reset and Delete scoped to their existing permissions', async () => {
         const ids = (screen: Awaited<ReturnType<typeof renderRole>>) => menuActions(screen).map((action) => action.id);
         const { roleId: _ownId, ...ownDocument } = ownRole;
         shared.items.push(
             { roleId: 'shared-editor', role: { ...ownDocument, name: 'Shared editor' }, revision: { headerVersion: 1, bodyVersion: 1 }, shared: true, viewOnly: false, migratedFromV0_2: false },
             { roleId: 'shared-viewer', role: { ...ownDocument, name: 'Shared viewer' }, revision: { headerVersion: 1, bodyVersion: 1 }, shared: true, viewOnly: true, migratedFromV0_2: false },
+            { roleId: 'plugin:example/scout', role: { ...ownDocument, name: 'Plugin scout' }, shared: false, viewOnly: false, migratedFromV0_2: false },
         );
         invalidateRoleCatalog();
         expect(ids(await renderRole('orchestrator'))).toEqual(['reset']);
         expect(ids(await renderRole('ui-builder'))).toEqual(['share', 'delete']);
-        // Only the owner manages sharing: a role shared with the reader, even to edit, has no Share.
-        expect(ids(await renderRole('shared-editor'))).toEqual([]);
-        expect(ids(await renderRole('shared-viewer'))).toEqual([]);
+        expect(ids(await renderRole('shared-editor'))).toEqual(['share']);
+        expect(ids(await renderRole('shared-viewer'))).toEqual(['share']);
+        expect(ids(await renderRole('plugin:example/scout'))).toEqual([]);
+    });
+
+    it.each([
+        { access: 'Admin', roleId: 'shared-admin', viewOnly: false },
+        { access: 'Can edit', roleId: 'shared-editor', viewOnly: false },
+        { access: 'Can use', roleId: 'shared-viewer', viewOnly: true },
+    ])('opens the canonical role share sheet for a recipient with $access', async ({ roleId, viewOnly }) => {
+        const { roleId: _ownId, ...role } = ownRole;
+        // roles.list projects Admin and Can edit alike; the sheet reads the grant level itself.
+        shared.items.push({ roleId, role, shared: true, viewOnly, migratedFromV0_2: false });
+        invalidateRoleCatalog();
+        const screen = await renderRole(roleId);
+        const share = menuActions(screen).find((action) => action.id === 'share');
+        expect(share).toBeDefined();
+        await share!.onSelect();
+        expect(shared.shown).toEqual([expect.objectContaining({
+            chrome: expect.objectContaining({ testID: 'document-share-modal' }),
+            props: expect.objectContaining({
+                kind: 'role.v1', artifactId: roleId, linkPath: `/settings/roles/${roleId}`,
+                onSendCopy: expect.any(Function),
+            }),
+        })]);
+        expect(writes()).toEqual([]);
     });
 
     it('shares the reader\'s own role through the one document share sheet, as its role Artifact', async () => {

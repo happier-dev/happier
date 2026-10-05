@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceCard, SURFACE_CARD_PADDING_PX } from '@/components/ui/cards/SurfaceCard';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
@@ -67,6 +68,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     factsLine: {
         ...Typography.tabular(),
+        fontSize: 12,
+        lineHeight: 17,
+        color: theme.colors.text.secondary,
+    },
+    identity: {
+        ...Typography.default('bold'),
+        fontSize: 16,
         color: theme.colors.text.secondary,
     },
     reasonText: {
@@ -105,9 +113,8 @@ const STATUS_LABEL_KEYS: Readonly<Record<ServiceRowStatus, TranslationKey>> = {
  * The row's address, as a URL.
  *
  * An IPv6 literal must be bracketed or the result is not a URL at all — `http://::1:5173` has no
- * meaningful port. The daemon's own `presentation.addressLabel` is the better source, but
- * `ServiceRow` does not carry that field yet (recorded for the row-model owner); until it does,
- * this at least stops emitting a malformed address for every IPv6-bound service.
+ * meaningful port. The projected address label is preferred for display; this URL-shaped value
+ * remains the copy action's source and the fallback when no display label is available.
  */
 function formatRowAddress(row: ServiceRow): string | null {
     if (!row.host) return null;
@@ -128,24 +135,25 @@ function ServiceRowTitle(props: Readonly<{
 }>): React.ReactElement {
     const styles = stylesheet;
     const statusLabel = t(STATUS_LABEL_KEYS[props.row.status]);
+    const ready = props.row.scope === 'suggestion' && props.row.status === 'stopped';
     return (
         <View style={styles.titleRow}>
             <Text style={styles.title} numberOfLines={1}>{props.row.title}</Text>
             {/* Unnamed: the status is the word beside it, so it is announced once. */}
-            <ServiceStatusDot
+            {!ready ? <ServiceStatusDot
                 status={props.row.status}
                 animationEnabled={props.animationEnabled}
                 testID={`${props.testID}-dot`}
-            />
-            <Text testID={`${props.testID}-status-${props.row.status}`} style={styles.statusLabel} numberOfLines={1}>
+            /> : null}
+            {!ready ? <Text testID={`${props.testID}-status-${props.row.status}`} style={styles.statusLabel} numberOfLines={1}>
                 {statusLabel}
-            </Text>
+            </Text> : null}
         </View>
     );
 }
 
 /**
- * The row's supporting facts on one line — where it answers, who started it, what runs it — plus
+ * The row's supporting facts — where it answers, what owns it, what runs it — plus
  * the launcher's reason when the row cannot be acted on. The address is text here; copying it is
  * the expansion's job, so a collapsed row carries no controls of its own.
  */
@@ -158,15 +166,15 @@ function ServiceRowFacts(props: Readonly<{
     const reason = row.reasonCode
         ? resolveReasonCopy({ reasonCode: row.reasonCode, kind: 'localServiceLauncher' })
         : null;
-    const address = formatRowAddress(row) ?? row.portLabel;
-    const facts = [
-        address,
-        row.scope === 'thisSession' ? t('localServices.session.thisSessionTitle') : t(row.sourceLabel),
-        row.processLabel ?? row.workspaceLabel,
-    ].filter((part): part is string => Boolean(part)).join(' · ');
+    const address = row.addressLabel ?? formatRowAddress(row)?.replace(/^https?:\/\//, '').replace(/^127\.0\.0\.1(?=:)/, 'localhost') ?? row.portLabel;
+    const script = row.primaryAction?.kind === 'run_script';
+    const facts = (script
+        ? [row.processLabel, t('localServices.actions.runScriptA11y')]
+        : [address, row.serviceLabel ?? row.processLabel, row.scope === 'thisSession' ? t('localServices.session.thisSessionTitle') : t(row.sourceLabel)]
+    ).filter((part): part is string => Boolean(part)).join(' · ');
     return (
         <View style={styles.facts}>
-            <Text testID={`${props.testID}-meta`} style={styles.factsLine} numberOfLines={1} ellipsizeMode="middle">
+            <Text testID={`${props.testID}-meta`} style={styles.factsLine}>
                 {facts}
             </Text>
             {reason ? (
@@ -363,12 +371,16 @@ export function ServiceRowView(props: Readonly<{
 
     const title = <ServiceRowTitle row={row} animationEnabled={props.animationEnabled} testID={props.testID} />;
     const subtitle = <ServiceRowFacts row={row} testID={props.testID} />;
+    const identity = row.target.source === 'package_script'
+        ? <Icon name="terminal" size={18} />
+        : <Text testID={`${props.testID}-identity`} style={styles.identity}>{(row.serviceLabel ?? row.title).slice(0, 1).toLocaleUpperCase()}</Text>;
     // One tap: a running row's signature action sits on the row itself, like ▶ on a row that can be
     // started (services lab O, H-UX F-8). Pressing the row still grows it into what you do less often.
     const openControl = canOpen ? (
         <IconButton
             testID={`${props.testID}-open`}
             iconName="arrow-square-out"
+            variant="plain"
             accessibilityLabel={t('localServices.actions.openA11y', { service: row.title })}
             tooltip={t('common.open')}
             minimumInteractiveTargetSize={minimumTargetSize}
@@ -380,6 +392,7 @@ export function ServiceRowView(props: Readonly<{
         <IconButton
             testID={`${props.testID}-start`}
             iconName="play"
+            variant="plain"
             accessibilityLabel={startLabel}
             tooltip={startLabel}
             minimumInteractiveTargetSize={minimumTargetSize}
@@ -394,6 +407,7 @@ export function ServiceRowView(props: Readonly<{
                 <Item
                     testID={`${props.testID}-item`}
                     title={title}
+                    icon={identity}
                     subtitle={subtitle}
                     subtitleLines={2}
                     mode="info"
@@ -417,6 +431,7 @@ export function ServiceRowView(props: Readonly<{
                         {...headerProps}
                         testID={`${props.testID}-item`}
                         title={title}
+                        icon={identity}
                         subtitle={subtitle}
                         subtitleLines={2}
                         loading={pending}

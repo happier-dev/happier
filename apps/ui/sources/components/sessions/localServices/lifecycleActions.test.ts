@@ -11,10 +11,28 @@ import {
     buildDetectedLocalServiceTerminateRequest,
     createLocalServiceActionRequestId,
     useDetectedLocalServiceForgetAction,
+    useDetectedLocalServiceTerminateAction,
 } from './lifecycleActions';
 
 describe('local service lifecycle action helpers', () => {
     afterEach(() => { standardCleanup(); retirePresentationNotice(); });
+
+    it('refuses to derive executable inventory authority from a display id', async () => {
+        const requests: Parameters<RuntimeActionExecute>[0][] = [];
+        const runtimeActionExecute: RuntimeActionExecute = async request => { requests.push(request); return {}; };
+        let terminate: ReturnType<typeof useDetectedLocalServiceTerminateAction>;
+        function Harness() {
+            terminate = useDetectedLocalServiceTerminateAction({ runtimeActionExecute, machineId: 'machine-a' });
+            return React.createElement('View');
+        }
+        await renderScreen(React.createElement(Harness));
+        const target: LocalServiceLaunchTarget = { id: 'inventory:wrong-entry', source: 'inventory_entry', title: 'Web',
+            machineId: 'machine-a', confidence: 'high', state: 'available', actions: ['terminate_detected'] };
+        await act(async () => { await terminate?.(target); });
+        expect(requests).toEqual([]);
+        await act(async () => { await terminate?.({ ...target, sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'real-entry' } }); });
+        expect(requests[0]).toMatchObject({ input: { target: { inventoryEntryId: 'real-entry' } } });
+    });
 
     it('offers Undo after a successful Forget and keeps its exact remote target after the row unmounts', async () => {
         const requests: Parameters<RuntimeActionExecute>[0][] = [];
@@ -32,6 +50,7 @@ describe('local service lifecycle action helpers', () => {
         const screen = await renderScreen(React.createElement(Harness));
         const target: LocalServiceLaunchTarget = {
             id: 'inventory:entry-a', source: 'inventory_entry', title: 'Web',
+            sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-a' },
             machineId: 'machine-a', confidence: 'high', state: 'available', actions: [],
         };
         await act(async () => { await forget?.(target); });
@@ -65,6 +84,7 @@ describe('local service lifecycle action helpers', () => {
         await renderScreen(React.createElement(Harness));
         await act(async () => {
             await forget?.({ id: 'inventory:entry-a', source: 'inventory_entry', title: 'Web',
+                sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-a' },
                 machineId: 'machine-a', confidence: 'high', state: 'available', actions: [] });
         });
         const notice = readPresentationNotice();

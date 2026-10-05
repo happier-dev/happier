@@ -19,6 +19,12 @@ The core rule is:
 - external files are optional imports, installs, and exports
 - Happier tracks explicit links so it can detect drift instead of silently overwriting files
 
+<Callout type="info">
+  The composer prompt picker, favourites, **Sent before**, **Save as prompt**
+  and individual message-action switches below describe the **Happier 0.3
+  development channel**. They are not yet part of a released stable version.
+</Callout>
+
 ## The library
 
 Open **Settings → Prompts & Skills** to manage your reusable content.
@@ -45,6 +51,78 @@ Each prompt can have:
 - markdown content
 - an optional folder
 - optional tags
+
+In the 0.3 development channel, a prompt can also be a favourite. Favouriting
+keeps the same document, folder, tags and markdown; it adds that prompt to
+the picker's **Favourites** group.
+
+### Insert a prompt from the composer
+
+Open **Prompts** using the library icon at the composer's top-right, to the
+left of dictation when dictation is available. The icon also works with voice
+off, in Session, new-session and Home composers. You can also type `/` and
+choose the last **Prompts…** row.
+
+With a hardware keyboard and composer focus, <kbd>Ctrl</kbd>+<kbd>R</kbd>
+opens the picker on macOS web and supported desktop/native clients. It is
+literal Control, not Command. Windows/Linux browsers keep Ctrl+R for reload;
+use the icon or `/` → **Prompts…** there. You can change bindings under
+[Keyboard shortcuts](/apps/keyboard-shortcuts).
+
+The picker groups **Favourites**, **Library** and **Sent before**. Library
+shows each prompt once, with its slash shortcuts alongside it. Choose a row
+to insert it at the current selection, or replace the `/` token that opened
+the picker. Enter inserts; <kbd>⌘</kbd>+<kbd>Enter</kbd>
+(<kbd>Ctrl</kbd>+<kbd>Enter</kbd> elsewhere) inserts and sends when the
+composer can send. When a prompt has an empty `$ARGUMENTS` placeholder,
+insertion selects its first argument position so you can fill it in.
+Use the favourite control on a library prompt to keep it close at hand.
+
+**Sent before** searches decrypted user messages from known sessions in the
+current account on the device. Search older history on demand, with progress
+and **Stop**. Loaded results are not the complete account history: global
+coverage stays partial because archived/shared inventory completeness cannot
+be established. Your Up-arrow history navigation is unchanged. Session-only
+shortcuts are available in an addressed session, but not in new-session or
+Home composers.
+
+Hide the library icon under **Settings → Composer** if you prefer the other
+entry points.
+
+### Save a sent message as a prompt
+
+Choose **Save as prompt** under a sent user message with readable text.
+On phone, long-press the message and choose the same action. Name the prompt;
+the favourite option starts on. Expand the optional slash-shortcut field to
+give it a token such as `/review`. **Save** creates a library prompt with the
+message's text, and the optional shortcut inserts that prompt. **Cancel**
+stores nothing. Attachment-only messages have no Save as prompt action.
+
+### Choose which message actions appear
+
+In **Settings → Transcript → Message actions**, switch individual committed
+message actions on or off, including **Save as prompt**. A switched-off action
+is absent from both the row and its menus. Pending-message recovery controls
+remain available. If you switch Pin off, existing pin indicators still let
+you unpin those messages.
+
+### Actions for prompts
+
+The [generated Actions catalog](/plugins/api/host-actions) owns exact inputs,
+outputs and supported surfaces. In this development channel,
+`prompt_doc.create` creates a prompt, `prompt_doc.favorite.set` changes its
+favourite state, and `prompts.library.list` reads library metadata through the
+shared library operations. `prompt_doc.get` reads content; invocation list
+and resolve Actions use the same shortcut availability rules as the composer.
+Creation through an Agent follows the Action's approval policy.
+
+`ui.prompts.picker.open` opens an eligible mounted composer's picker; it does
+not read prompt text or create a prompt. It is a client display Action and is
+discoverable to Agents, without an agent-to-client delivery path yet. It is
+not exposed as an MCP tool. Likewise, `ui.find` and `session.pending.next`
+control mounted-client presentation/navigation, rather than unattended
+search. Agent/MCP calls without a reachable client adapter return unavailable
+instead of reporting success.
 
 ### Skills
 
@@ -163,7 +241,7 @@ Use profile additions for:
 
 ## External assets
 
-Open **Settings → Prompts & Skills → External Assets** when you want to inspect or manage prompt-related files that live on a real machine.
+Open **Settings → Prompts & Skills → External assets** when you want to inspect or manage prompt-related files that live on a real machine.
 
 This screen is machine-aware and, for project-scoped assets, workspace-aware.
 
@@ -354,8 +432,9 @@ If you or another tool edits an exported asset on disk, Happier treats that as a
 
 If you need supporting files, use a skill bundle rather than a plain prompt.
 
-## Related docs
+## Related
 
+- [Search and Find](/organize/search)
 - [Profiles](/agents/profiles)
 - [Permissions](/sessions/permissions)
 - [Friends](/accounts/friends)

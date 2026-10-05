@@ -180,7 +180,7 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
     {
         filePath: 'sources/voice/runtime/execution/voiceWelcomePolicy.ts',
         requiredImports: [
-            '@/voice/binding/voiceConversationBindingPersistence',
+            '@/voice/agent/voiceAgentRunState',
         ],
         forbiddenImports: [
             'readPersistedVoiceConversationRuntimeHandoff',
@@ -411,7 +411,7 @@ describe('voice canonical owner imports', () => {
             const source = await readFile(expectation.filePath, 'utf8');
 
             for (const requiredImport of expectation.requiredImports ?? []) {
-                expect(source).toContain(requiredImport);
+                expect(source, expectation.filePath).toContain(requiredImport);
             }
 
             for (const forbiddenImport of expectation.forbiddenImports) {

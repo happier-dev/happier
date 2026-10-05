@@ -93,10 +93,11 @@ console plan §3.5):
   policies or fall back to the public bucket; missing or unsafe private storage
   leaves private operations unavailable.
 - The local files backend defaults to the existing private-files directory,
-  separate from the public file root. Operators must keep custom private paths
-  outside the public root; enforcement of custom-root separation is still an
-  open binary-development validation gate. Neither backend issues a public URL
-  for these bytes.
+  separate from the public file root. Its development guard resolves both roots
+  and refuses private IO when either contains the other, including symlinked
+  overlaps. The regression GREEN remains blocked by an unrelated Action-catalog
+  collection error; this is source behavior, not deployment certification.
+  Neither backend issues a public URL for these bytes.
 
 **Optional browser-hosted plugin Artifacts**
 - `HAPPIER_PLUGIN_UI_ARTIFACT_BROWSER_ORIGIN`: opt in to browser Artifact delivery with a dedicated HTTPS origin. Leave it unset to keep browser Artifact hosting unavailable; desktop/native Artifact delivery is independent.

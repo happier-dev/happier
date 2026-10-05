@@ -46,6 +46,122 @@ function createSnapshotPublisher(initial: VoiceSessionSnapshot): Readonly<{
 }
 
 describe('voice session lifecycle edge contracts', () => {
+    it.each([
+        { status: 'error', rejectCleanup: false, replaceDuringCleanup: false },
+        { status: 'disconnected', rejectCleanup: false, replaceDuringCleanup: false },
+        { status: 'error', rejectCleanup: true, replaceDuringCleanup: false },
+        { status: 'disconnected', rejectCleanup: false, replaceDuringCleanup: true },
+    ] as const)('dismisses terminal $status (cleanup rejected: $rejectCleanup, replaced: $replaceDuringCleanup) without losing recovery', async ({ status, rejectCleanup, replaceDuringCleanup }) => {
+        const { getVoiceSessionEndedAttempt, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+        const snapshots = createSnapshotPublisher({
+            adapterId: OPENAI_PROVIDER_ID, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false,
+        });
+        let mediaHeld = false;
+        let cleanupRejected = rejectCleanup;
+        let releaseCleanup!: () => void;
+        const cleanup = replaceDuringCleanup ? new Promise<void>((resolve) => { releaseCleanup = resolve; }) : Promise.resolve();
+        const start = vi.fn(async ({ sessionId }: Readonly<{ sessionId: string }>) => {
+            mediaHeld = true;
+            snapshots.publish({ adapterId: OPENAI_PROVIDER_ID, sessionId, status: 'connected', mode: 'listening', canStop: true });
+        });
+        // The provider boundary may retain media and its terminal error until Stop; lifecycle owns cleanup.
+        const adapter: VoiceAdapterController = {
+            id: OPENAI_PROVIDER_ID, engineKind: 'realtime', start,
+            stop: async () => {
+                if (cleanupRejected) {
+                    cleanupRejected = false;
+                    throw new Error('media_cleanup_failed');
+                }
+                await cleanup;
+                mediaHeld = false;
+            },
+            toggle: async () => {}, interrupt: async () => {}, setMuted: async () => {}, sendContextUpdate: () => {},
+            getSnapshot: snapshots.getSnapshot, subscribe: snapshots.subscribe,
+        };
+        const captureAdmission = createVoiceCaptureAdmissionController();
+        const releaseConnectivity = vi.fn();
+        const controller = createVoiceSessionLifecycleController({
+            captureAdmission, acquireConnectivityLease: () => releaseConnectivity,
+            getRegistry: () => ({ get: () => adapter, list: () => [adapter] }),
+        });
+        const unsubscribe = controller.subscribe(() => setVoiceSessionSnapshot(controller.getSnapshot()));
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            await controller.toggle({ serverId: 'home-a', sessionId: 'voice-session' });
+            const failure: VoiceSessionSnapshot = {
+                adapterId: adapter.id, sessionId: 'voice-session', status, mode: 'idle', canStop: false,
+                errorCode: 'network_error', errorRecoveryAction: 'retry', errorPresentation: 'error',
+            };
+            snapshots.publish(failure);
+            expect(getVoiceSessionEndedAttempt()).toBeNull();
+            await controller.dismissFailedAttempt('another-session');
+            expect(controller.getSnapshot()).toMatchObject(failure);
+            if (rejectCleanup) {
+                await expect(controller.dismissFailedAttempt('voice-session')).rejects.toThrow('media_cleanup_failed');
+                expect(mediaHeld).toBe(true);
+                expect(controller.getSnapshot()).toMatchObject(failure);
+                await controller.retry('another-session');
+                expect(start).toHaveBeenCalledTimes(2);
+                expect(controller.getSnapshot().status).toBe('connected');
+                return;
+            }
+            const dismissal = controller.dismissFailedAttempt('voice-session');
+            if (replaceDuringCleanup) {
+                const target = { serverId: 'home-b', sessionId: 'new-session' };
+                await controller.toggle(target);
+                snapshots.publish({ ...failure, sessionId: target.sessionId });
+                releaseCleanup();
+                await dismissal;
+                expect(controller.getSnapshot()).toMatchObject({ ...failure, sessionId: target.sessionId });
+                await controller.retry('voice-session');
+                expect(start).toHaveBeenLastCalledWith({ sessionId: target.sessionId, requestedTargetSessionAddress: target });
+                expect(controller.getSnapshot().status).toBe('connected');
+                return;
+            }
+            await dismissal;
+            expect(mediaHeld).toBe(false);
+            expect(releaseConnectivity).toHaveBeenCalled();
+            expect(controller.getSnapshot()).toEqual({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+            expect(getVoiceSessionEndedAttempt()).toBeNull();
+            snapshots.publish({ ...failure });
+            expect(controller.getSnapshot().status).toBe('disconnected');
+            expect(controller.getSnapshot().errorCode).toBeUndefined();
+            await controller.retry('voice-session');
+            expect(start).toHaveBeenCalledTimes(1);
+            const capture = captureAdmission.acquire('dictation');
+            expect(capture.status).toBe('acquired');
+            if (capture.status === 'acquired') capture.lease.release();
+            await controller.toggle({ serverId: 'home-b', sessionId: 'new-session' });
+            expect(controller.getSnapshot().status).toBe('connected');
+        } finally {
+            unsubscribe();
+            await controller.dispose();
+        }
+    });
+
+    it.each(['connecting', 'connected', 'error'] as const)('refuses to dismiss a live %s attempt', async (status) => {
+        const snapshots = createSnapshotPublisher({
+            adapterId: OPENAI_PROVIDER_ID, sessionId: 'voice-session', status, mode: 'listening', canStop: true,
+            ...(status === 'error' ? { errorCode: 'network_error', errorPresentation: 'error' as const } : {}),
+        });
+        let mediaHeld = true;
+        const adapter: VoiceAdapterController = {
+            id: OPENAI_PROVIDER_ID, engineKind: 'realtime', start: async () => {},
+            stop: async () => { mediaHeld = false; },
+            toggle: async () => {}, interrupt: async () => {}, setMuted: async () => {}, sendContextUpdate: () => {},
+            getSnapshot: snapshots.getSnapshot, subscribe: snapshots.subscribe,
+        };
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({ get: () => adapter, list: () => [adapter] }) });
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            await controller.dismissFailedAttempt('voice-session');
+            expect(controller.getSnapshot()).toEqual(snapshots.getSnapshot());
+            expect(mediaHeld).toBe(true);
+        } finally {
+            await controller.dispose();
+        }
+    });
+
     it('retries the exact failed Home binding and honors a later explicit global start', async () => {
         const snapshots = createSnapshotPublisher({
             adapterId: OPENAI_PROVIDER_ID, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false,

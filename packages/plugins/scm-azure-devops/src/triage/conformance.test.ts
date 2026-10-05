@@ -113,7 +113,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       .toEqual(['azure-devops']);
   });
 
-  it('declares each source-native detail plane as a UI-surfaced account-bound read', () => {
+  it('declares each source-native detail plane as an account-bound read on every caller surface', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
     for (const actionId of Object.values(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS)) {
@@ -122,11 +122,9 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       // refused by the host, and the panel would report a contract break the
       // user cannot act on.
       expect(action, `${actionId} must be declared`).toBeDefined();
-      // `ui` only: the mounted detail body reaches them as present-user
-      // authority; the aggregate and other plugin code are refused. The
-      // explicit empty list is the canonical mounted-only placement decision
-      // and is preserved on the wire.
-      expect(action?.surfaces).toEqual(['ui']);
+      // Caller admission is shared; empty placement bindings keep these reads
+      // out of generic discovery without restricting their caller surfaces.
+      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(action?.placementBindings).toEqual([]);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess)

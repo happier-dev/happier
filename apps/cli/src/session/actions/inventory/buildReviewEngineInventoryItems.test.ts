@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountSettingsSchema, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { AccountSettingsSchema, buildBackendTargetKeyV2, PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 
 const registryMocks = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn(),
@@ -32,6 +34,29 @@ describe('buildReviewEngineInventoryItems', () => {
   beforeEach(() => {
     registryMocks.getReloadState.mockReturnValue({ activeRegistry: null });
     registryMocks.isRuntimeRegistryCurrent.mockReturnValue(true);
+  });
+
+  it('projects narration through real admitted Agent declarations without inferring it from engine identity or Session resume', async () => {
+    const project = (id: string, structured: boolean) => projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({
+        id, title: id, primary: 'sessions', runtime: { kind: 'custom' },
+        capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
+          ...(structured ? { structuredOutput: { formats: ['json'] } } : {}) },
+      }),
+    });
+    const capable = project('assistant', true);
+    const findingsOnly = project('codex', false);
+    // Current installed-plugin declarations cross the daemon reload projection boundary.
+    // Admission, qualified identity and catalog projection stay real beneath it.
+    registryMocks.getReloadState.mockReturnValue({ activeRegistry: { contributes: {
+      agentDefinitionsById: new Map([[capable.id, capable], [findingsOnly.id, findingsOnly]]),
+      executionRunProfiles: [], catalogEntriesById: {},
+    } } });
+    expect(await buildReviewEngineInventoryItems({})).toEqual([
+      expect.objectContaining({ engineId: 'acme.review/assistant', capabilities: { structuredNarration: true } }),
+      expect.objectContaining({ engineId: 'acme.review/codex', capabilities: { structuredNarration: false } }),
+    ]);
   });
 
   it('projects review engines from cold manifest Agents and profiles without executable runtimes', async () => {
@@ -135,7 +160,8 @@ describe('buildReviewEngineInventoryItems', () => {
     });
 
     expect(await buildReviewEngineInventoryItems({ accountSettings })).toContainEqual(
-      expect.objectContaining({ engineId: targetKey, value: targetKey, label: 'Review Bot' }),
+      expect.objectContaining({ engineId: targetKey, value: targetKey, label: 'Review Bot',
+        capabilities: { structuredNarration: false } }),
     );
     expect(await buildReviewEngineInventoryItems({
       accountSettings: AccountSettingsSchema.parse({

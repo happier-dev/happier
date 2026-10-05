@@ -6,7 +6,9 @@ export type { ApprovalQueueService } from '../interactions.js';
 export type { ApprovalQueueSnapshot } from '../interactions.js';
 export type { ApprovalRequest } from '../interactions.js';
 export type { ApprovalRequestStatus } from '../interactions.js';
+/** Author-only presentation; widget instance edits use widgets.* Actions instead of raw host intents. */
 export type { CurrentSessionPresentationIntentV1 } from '../interactions.js';
+/** Readable built-in, Board widget and pane references; host-owned widget instances are excluded. */
 export type { SessionCompanionPresentationItem } from '../interactions.js';
 export type { InteractionOptions } from '../interactions.js';
 export type { InteractionSeverity } from '../interactions.js';

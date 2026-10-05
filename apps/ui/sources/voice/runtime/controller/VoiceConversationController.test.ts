@@ -16,6 +16,13 @@ import {
 const logSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/log', () => ({ log: { log: logSpy } }));
 
+// Compose the real transcript/storage graph during collection, before the
+// projection and tool-barrier behavior is measured by the test deadline.
+const {
+  projectCanonicalVoiceTranscriptEvent,
+  readCanonicalVoiceTranscriptSnapshot,
+} = await import('@/voice/transcript/voiceConversationTranscript');
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => { resolve = next; });
@@ -1035,7 +1042,7 @@ describe('VoiceConversationController', () => {
     });
   });
 
-  it('does not publish stopped A terminal state after same-session replacement B connects', async () => {
+  it('settles stopped A before same-session replacement B takes ownership', async () => {
     const staleCleanup = deferred<void>();
     const firstConnection = createConnectionFixture('sdk_handle');
     const secondConnection = createConnectionFixture('websocket_pcm');
@@ -1066,9 +1073,11 @@ describe('VoiceConversationController', () => {
     await vi.waitFor(() => expect(releasePrepared).toHaveBeenCalledTimes(1));
     const liveStart = controller.start({ controlSessionId: 'shared-control-session' });
 
-    await expect(liveStart).resolves.toEqual({ status: 'connected' });
     await Promise.resolve();
+    expect(secondConnection.connect).not.toHaveBeenCalled();
     const stoppedBeforeStaleCleanup = replacementStopSettled;
+    staleCleanup.resolve();
+    await expect(liveStart).resolves.toEqual({ status: 'connected' });
     expect(controller.getOwnedControlSessionId()).toBe('shared-control-session');
     expect(controller.getOwnedAttemptId()).toBe(2);
     expect(firstConnection.connect).toHaveBeenCalledTimes(1);
@@ -1077,7 +1086,6 @@ describe('VoiceConversationController', () => {
     expect(secondConnection.close).not.toHaveBeenCalled();
     expect(machine.transitions.at(-1)).toBe('connected');
 
-    staleCleanup.resolve();
     await replacementStop;
     expect(stoppedBeforeStaleCleanup).toBe(false);
     expect(controller.getOwnedControlSessionId()).toBe('shared-control-session');
@@ -1095,7 +1103,7 @@ describe('VoiceConversationController', () => {
     expect(controller.getOwnedAttemptId()).toBeNull();
   });
 
-  it('does not publish failed A terminal state after same-session replacement B connects', async () => {
+  it('settles failed A before same-session replacement B takes ownership', async () => {
     const staleCleanup = deferred<void>();
     const firstConnection = createConnectionFixture('sdk_handle');
     const secondConnection = createConnectionFixture('websocket_pcm');
@@ -1118,11 +1126,14 @@ describe('VoiceConversationController', () => {
     });
     const staleFailure = controller.fail('provider_connection_failed');
     await vi.waitFor(() => expect(releasePrepared).toHaveBeenCalledTimes(1));
-    await expect(controller.start({ controlSessionId: 'shared-control-session' })).resolves.toEqual({
+    const liveStart = controller.start({ controlSessionId: 'shared-control-session' });
+    await Promise.resolve();
+    expect(secondConnection.connect).not.toHaveBeenCalled();
+    staleCleanup.resolve();
+    await expect(liveStart).resolves.toEqual({
       status: 'connected',
     });
 
-    staleCleanup.resolve();
     await staleFailure;
 
     expect(controller.getOwnedControlSessionId()).toBe('shared-control-session');
@@ -1238,7 +1249,7 @@ describe('VoiceConversationController', () => {
       machine: createMachineFixture().machine,
       createConnection: async () => connection.connection,
       isSelectionCurrent: () => true,
-      onCanonicalEvent: () => {},
+      onCanonicalEvent: async () => {},
     });
     await controller.start({ controlSessionId: 'manual-input' });
     expect(controller.canCommitInput()).toBe(inputCommitRequired);
@@ -1256,6 +1267,93 @@ describe('VoiceConversationController', () => {
     expect(connection.close).not.toHaveBeenCalled();
     await controller.stop();
     expect(controller.canCommitInput()).toBe(false);
+  });
+
+  it.each(['release', 'cancel', 'stale', 'early_release', 'stopped', 'pending_capture', 'reconnected'] as const)('owns one held Manual turn and restores capture (%s)', async (outcome) => {
+    const connection = createConnectionFixture();
+    const replacement = createConnectionFixture();
+    const provider = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+    const clearing = deferred<void>();
+    const opening = deferred<void>();
+    const beganOpening = deferred<void>();
+    let selected = true;
+    let captureOpen = false;
+    const captureChanges: (boolean | null)[] = [];
+    connection.sendControl.mockImplementation(async (event) => {
+      if (event && typeof event === 'object' && !Array.isArray(event) && 'type' in event && event.type === 'input_audio_buffer.clear'
+        && captureChanges.length === 0) throw new Error('held capture must close before clearing prior input');
+      if (outcome === 'early_release' && event && typeof event === 'object' && !Array.isArray(event) && 'type' in event
+        && event.type === 'input_audio_buffer.clear') await clearing.promise;
+    });
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        prepare: async () => ({ kind: 'prepared', session: { config: {}, safeMetadata: null, inputCommitRequired: true } }),
+        encodeTurnControl: provider.encodeTurnControl,
+        encodePostInputCommitControls: provider.encodePostInputCommitControls,
+      }),
+      machine: createMachineFixture().machine,
+      createConnection: async () => connection.close.mock.calls.length > 0 ? replacement.connection : connection.connection,
+      isSelectionCurrent: () => selected,
+      onCanonicalEvent: async () => {},
+      holdCapture: { async setOpen({ open }) {
+        if (open === true && outcome === 'pending_capture') { beganOpening.resolve(); await opening.promise; }
+        captureOpen = open === true;
+        captureChanges.push(open);
+      } },
+    });
+    await controller.start({ controlSessionId: 'held-input' });
+    expect(controller.canHoldToTalk()).toBe(true);
+    const hold = controller.beginHoldToTalk();
+    expect(hold).not.toBeNull();
+    if (outcome === 'early_release') {
+      const release = hold!.release();
+      clearing.resolve();
+      await release;
+      expect(await hold!.ready).toBe(false);
+      expect(captureChanges).not.toContain(true);
+    } else if (outcome === 'pending_capture') {
+      await beganOpening.promise;
+      const release = hold!.release();
+      opening.resolve();
+      await release;
+      expect(await hold!.ready).toBe(false);
+      expect(captureOpen).toBe(false);
+    } else {
+      expect(await hold!.ready).toBe(true);
+      expect(captureOpen).toBe(true);
+      if (outcome === 'stale') selected = false;
+      if (outcome === 'stopped') await controller.stop();
+      if (outcome === 'reconnected') await controller.requestReconnect();
+      if (outcome === 'cancel') await hold!.cancel();
+      else await hold!.release();
+      expect(captureOpen).toBe(false);
+    }
+    await hold!.release();
+    await hold!.cancel();
+    const controls = connection.sendControl.mock.calls.map(([event]) => event);
+    expect(controls.filter((event) => JSON.stringify(event) === JSON.stringify({ type: 'input_audio_buffer.commit' })))
+      .toHaveLength(outcome === 'release' ? 1 : 0);
+    expect(controls.filter((event) => JSON.stringify(event) === JSON.stringify({ type: 'response.create' })))
+      .toHaveLength(outcome === 'release' ? 1 : 0);
+    expect(replacement.sendControl.mock.calls).toEqual([]);
+    if (outcome !== 'stopped' && outcome !== 'reconnected') expect(connection.close).not.toHaveBeenCalled();
+    await controller.stop();
+  });
+
+  it('does not advertise hold from Manual commit alone', async () => {
+    const connection = createConnectionFixture();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({ prepare: async () => ({ kind: 'prepared', session: { config: {}, safeMetadata: null, inputCommitRequired: true } }) }),
+      machine: createMachineFixture().machine,
+      createConnection: async () => connection.connection,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+    });
+    await controller.start({ controlSessionId: 'commit-only' });
+    expect(controller.canCommitInput()).toBe(true);
+    expect(controller.canHoldToTalk()).toBe(false);
+    expect(controller.beginHoldToTalk()).toBeNull();
+    await controller.stop();
   });
 
   it('does not create a response after End Voice retires an in-flight input commit', async () => {
@@ -1710,10 +1808,6 @@ describe('VoiceConversationController', () => {
   });
 
   it('coordinates canonical transcript projection and the all-results tool barrier', async () => {
-    const {
-      projectCanonicalVoiceTranscriptEvent,
-      readCanonicalVoiceTranscriptSnapshot,
-    } = await import('@/voice/transcript/voiceConversationTranscript');
     const connection = createConnectionFixture();
     connection.events.push(
       { kind: 'transcript' },

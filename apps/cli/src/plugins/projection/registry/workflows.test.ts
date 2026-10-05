@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PluginProjectionV2Schema, WorkflowDefinitionV1Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema, WorkflowDefinitionV1Schema, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createWorkflowMaterializationHostV1 } from '@/session/actions/workflowMaterializationHost';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -17,18 +19,84 @@ const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kin
 }] });
 const workflow = { id: 'review', title: 'Review the result', definition };
 
-function loaded(pluginId: string): LoadedPlugin {
+function loaded(pluginId: string, contributes: Record<string, unknown> = { workflows: [workflow] }): LoadedPlugin {
     const root = `/plugins/${pluginId}`;
     return { pluginId, pluginRootPath: root, manifestPath: `${root}/plugin.json`,
         daemonEntryPath: null, devDaemonEntryPath: null,
         sourceSpec: { kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link' },
         manifest: normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Workflows',
-            runtime: { apiVersion: 1 }, contributes: { workflows: [workflow] },
+            runtime: { apiVersion: 1 }, contributes,
         }),
     };
 }
 
 describe('plugin workflows through the canonical projection', () => {
+    it('materializes a plugin-local Action through the projected executing-machine catalog', async () => {
+        const pluginId = 'com.acme.post';
+        const inputSchema = { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: false };
+        const outputSchema = { type: 'object', properties: { posted: { type: 'boolean' } }, required: ['posted'], additionalProperties: false };
+        const authored = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'send', actionId: 'post',
+            input: { message: { kind: 'literal', value: 'Hello' } },
+        }] });
+        const inputs = projectLoadedPluginContributes({ loadResult: { loadedPlugins: [loaded(pluginId, {
+            actions: [{ id: 'post', title: 'Post', scopes: ['machine'], surfaces: ['cli'], execution: { target: 'daemon' },
+                inputSchema, resultSchema: outputSchema, dangerLevel: 'safe' }],
+            workflows: [{ id: 'send', title: 'Send a message', definition: authored }],
+        })], diagnosticsByPluginId: {} }, provenance: 'first_party' });
+        const registry = createResolvedContributionRegistry({ ...inputs,
+            occurrenceIdsByPluginId: { [pluginId]: createPluginRuntimeOccurrenceId(pluginId) },
+        });
+        const projection = buildPluginProjectionV2({ registry, generation: 1 });
+        const source = readPluginWorkflowSources(registry)[0]!;
+        expect(source.definition.blocks[0]).toMatchObject({ actionId: `${pluginId}/post` });
+        expect(projection.actionsById[`${pluginId}/post`]).toMatchObject({ id: 'post',
+            occurrenceId: registry.occurrenceIdsByPluginId?.[pluginId],
+        });
+        const resolve = createWorkflowMaterializationHostV1({
+            credentials: { token: 'plugin-workflow-test', encryption: null },
+            readRoleSelection: async () => ({}), readLaunchProfile: async () => null, readWorkflowDefinition: async () => null,
+            // Only daemon RPC is substituted. Projection, family normalization,
+            // exact-machine contract lookup and accepted-snapshot admission stay real.
+            callMachineAction: async ({ method, machineId, request }) => {
+                expect(machineId).toBe('run-machine');
+                if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection };
+                if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {} };
+                if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+                    expect(request).toMatchObject({ qualifiedActionId: `${pluginId}/post`, expectedOccurrenceId: registry.occurrenceIdsByPluginId?.[pluginId] });
+                    const action = registry.actions.find((entry) => entry.identity?.pluginId === pluginId && entry.identity.localId === 'post')!;
+                    return { ok: true, inputSchema: action.definition.inputSchema, outputSchema: action.definition.outputSchema };
+                }
+                throw new Error(`unexpected_machine_method:${method}`);
+            },
+        });
+        const materialization = await resolve({ machineId: 'run-machine', directory: '/repo' });
+        const accepted = await materializeWorkflowAcceptedSnapshotV1({ ...materialization, definition: source.definition,
+            admission: { kind: 'user' }, context: { source: { kind: 'catalog', ref: source.workflow, version: source.version },
+                inputs: {}, machineId: 'run-machine', executionTarget: { kind: 'session' },
+                workspaceTarget: { project: { machineId: 'run-machine', directory: '/repo', checkoutRootPath: '/repo' } },
+                authorization: { principal: { kind: 'host' } },
+            },
+        });
+        expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ blockId: 'send', actionId: `${pluginId}/post`,
+            actionInput: { message: 'Hello' }, actionContract: { inputSchema, outputSchema },
+        }] } });
+        expect(projection.familiesById.workflows?.entriesById[`${pluginId}/send`]).toMatchObject({
+            definition: { definition: { blocks: [{ actionId: `${pluginId}/post` }] } },
+        });
+        expect(authored.blocks[0]).toMatchObject({ actionId: 'post' });
+    });
+
+    it('refuses semantically invalid workflow contributions before publishing the catalog', () => {
+        const invalid = loaded('com.acme.invalid', { workflows: [{ ...workflow,
+            definition: { ...definition, blocks: [definition.blocks[0], definition.blocks[0]] },
+        }] });
+        expect(() => projectLoadedPluginContributes({ loadResult: { loadedPlugins: [invalid], diagnosticsByPluginId: {} },
+            provenance: 'first_party' })).toThrowError(expect.objectContaining({
+                code: 'plugin_workflow_invalid', pluginId: 'com.acme.invalid', workflowId: 'review',
+                issues: expect.arrayContaining([expect.objectContaining({ code: 'duplicate_id' })]),
+            }));
+    });
+
     it('admits a workflows-only plugin without executable activation and fences its source with the occurrence', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-workflows-'));
         const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({
@@ -50,7 +118,7 @@ describe('plugin workflows through the canonical projection', () => {
 
     it('projects qualified definitions and version only while the source occurrence is current', () => {
         const pluginIds = ['com.acme.review', 'com.acme.other'];
-        const inputs = projectLoadedPluginContributes({ loadResult: { loadedPlugins: pluginIds.map(loaded), diagnosticsByPluginId: {} }, provenance: 'first_party' });
+        const inputs = projectLoadedPluginContributes({ loadResult: { loadedPlugins: pluginIds.map((pluginId) => loaded(pluginId)), diagnosticsByPluginId: {} }, provenance: 'first_party' });
         const registry = createResolvedContributionRegistry({ ...inputs,
             occurrenceIdsByPluginId: Object.fromEntries(pluginIds.map((id) => [id, createPluginRuntimeOccurrenceId(id)])),
         });

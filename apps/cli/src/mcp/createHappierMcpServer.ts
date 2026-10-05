@@ -34,6 +34,7 @@ import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/exec
 import {
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1Schema,
+  AgentStartSessionCallerV1Schema,
   type ActionId,
   type AccountSettings,
   type ActionExecutorDeps,
@@ -87,6 +88,17 @@ function resolveLiveClientActiveTurnPermissionWitness(client: HappyMcpSessionCli
   } catch {
     return null;
   }
+}
+
+function resolveLiveClientTurnWorkDepth(client: HappyMcpSessionClient, expectedTurnId?: string): number | undefined {
+  const witness = resolveLiveClientActiveTurnPermissionWitness(client);
+  if (witness && typeof witness === 'object' && 'turnId' in witness && typeof witness.turnId === 'string') {
+    if (expectedTurnId !== undefined && witness.turnId !== expectedTurnId) return undefined;
+    const depth = client.getHostTurnWorkDepth?.(witness.turnId);
+    if (depth !== undefined) return depth;
+  } else if (expectedTurnId !== undefined) return undefined;
+  return witness && typeof witness === 'object' && 'workDepth' in witness && typeof witness.workDepth === 'number'
+    ? witness.workDepth : undefined;
 }
 
 function resolveLiveClientBackendTarget(client: HappyMcpSessionClient): BackendTargetRefV2 | null {
@@ -354,16 +366,7 @@ export function createHappierMcpServer(
       getCurrentSessionWorkDepth: () => client.getWorkDepth?.(),
       ...(client.getAgentStartRunCaller ? { getAgentStartRunCaller: () => client.getAgentStartRunCaller!() } : {}),
       // U6 owns the exact active SessionTurn facts; read by witness identity, never mutable metadata.
-      getCurrentTurnWorkDepth: (expectedTurnId) => {
-        const witness = resolveLiveClientActiveTurnPermissionWitness(client);
-        if (witness && typeof witness === 'object' && 'turnId' in witness && typeof witness.turnId === 'string') {
-          if (expectedTurnId !== undefined && witness.turnId !== expectedTurnId) return undefined;
-          const depth = client.getHostTurnWorkDepth?.(witness.turnId);
-          if (depth !== undefined) return depth;
-        } else if (expectedTurnId !== undefined) return undefined;
-        return witness && typeof witness === 'object' && 'workDepth' in witness && typeof witness.workDepth === 'number'
-          ? witness.workDepth : undefined;
-      },
+      getCurrentTurnWorkDepth: (expectedTurnId) => resolveLiveClientTurnWorkDepth(client, expectedTurnId),
       serverId,
       ...(serverIdentityId ? { serverIdentityId } : {}),
       serverHttpBaseUrl,
@@ -547,27 +550,42 @@ export function createHappierMcpServer(
 
   const scopedPluginRuntimeRegistryLease = opts?.pluginRuntimeRegistryLease;
   const boundCallerSessionId = client.sessionId.trim();
+  const getInitiatingActionCaller = () => {
+    const caller = AgentStartSessionCallerV1Schema.safeParse({ kind: 'session', sessionId: boundCallerSessionId,
+      starterDepth: client.getWorkDepth?.(), turnDepth: resolveLiveClientTurnWorkDepth(client) });
+    return caller.success ? caller.data : null;
+  };
   const localExecutor = scopedPluginRuntimeRegistryLease
     ? createPluginActionExecutor({
         base: harness.executor,
+        getInitiatingActionCaller,
         ...(boundCallerSessionId ? { startedBy: 'agent' as const } : {}),
-        requestPluginActionExecution: async (request, options) => await executeContributedAction({
-          runtimeRegistry: scopedPluginRuntimeRegistryLease.registry,
-          actionId: request.actionId,
-          input: request.input,
-          actionsSettings: actionSettingsProvider.getActionsSettings(),
-          ...(request.expectedContributorOccurrenceId
-            ? { expectedContributorOccurrenceId: request.expectedContributorOccurrenceId }
-            : {}),
-          context: {
-            surface: request.surface,
-            ...(request.startedBy ? { startedBy: request.startedBy } : {}),
-            ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
-            ...(options?.signal ? { signal: options.signal } : {}),
-          },
-        }),
+        requestPluginActionExecution: async (request, options) => {
+          const initiatingActionCaller = getInitiatingActionCaller();
+          if (!initiatingActionCaller) return { matched: true, result: {
+            ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+          } };
+          return await executeContributedAction({
+            runtimeRegistry: scopedPluginRuntimeRegistryLease.registry,
+            actionId: request.actionId,
+            input: request.input,
+            actionsSettings: actionSettingsProvider.getActionsSettings(),
+            ...(request.expectedContributorOccurrenceId
+              ? { expectedContributorOccurrenceId: request.expectedContributorOccurrenceId }
+              : {}),
+            context: {
+              surface: request.surface,
+              // The client is bound by the Session host; request targets and surfaces do not establish provenance.
+              initiatingActionCaller,
+              ...(request.startedBy ? { startedBy: request.startedBy } : {}),
+              ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+              ...(options?.signal ? { signal: options.signal } : {}),
+            },
+          });
+        },
       })
     : createDaemonPluginActionExecutor({ base: harness.executor,
+        getInitiatingActionCaller,
         ...(boundCallerSessionId ? { startedBy: 'agent' } : {}),
       });
   const executor = createSessionAccountActionExecutor({ base: localExecutor, client });

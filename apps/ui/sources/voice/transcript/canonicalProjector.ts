@@ -94,6 +94,13 @@ export function deriveCanonicalVoiceTranscriptEntryId(params: Readonly<{
   return `voice-realtime:${encodeOpaqueIdentityComponent(params.attemptIdentity)}:${params.role}:${encodeOpaqueIdentityComponent(params.itemId)}`;
 }
 
+/** Retained rows keep their attempt identity in the canonical local id, including escaped Unicode. */
+export function readCanonicalVoiceTranscriptAttemptKey(id: unknown, role: 'user' | 'assistant'): string | null {
+  if (typeof id !== 'string') return null;
+  const match = /^voice-realtime:([^:]+):(user|assistant):(.+)$/.exec(id);
+  return match?.[2] === role ? match[1]! : null;
+}
+
 type CanonicalVoiceTranscriptProjectorDeps = Readonly<{
   maxItems?: number;
   maxDiagnostics?: number;

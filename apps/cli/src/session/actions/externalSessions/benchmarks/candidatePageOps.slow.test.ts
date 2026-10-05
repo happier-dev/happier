@@ -28,6 +28,8 @@ const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
     throw new Error('unavailable');
 };
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+// Packaged process execution is outside these transcript-only fixtures.
+const unavailableInvocationRipgrep = { run: async () => { throw new Error('Packaged ripgrep unavailable in transcript fixture'); } };
 
 describe('MEASURE candidate page operations', () => {
     afterEach(async () => {
@@ -100,6 +102,7 @@ describe('MEASURE candidate page operations', () => {
                 deadlineAtMs: Date.now() + 15_000,
                 managedEndpointRead: unavailableManagedEndpointRead,
                 exec: unavailableInvocationExec,
+                ripgrep: unavailableInvocationRipgrep,
             });
             if (!result.ok) {
                 throw new ExternalSessionProviderFailureError({
@@ -136,6 +139,7 @@ describe('MEASURE candidate page operations', () => {
                     maxSerializedBytes: 262_144,
                     managedEndpointRead: unavailableManagedEndpointRead,
                     exec: unavailableInvocationExec,
+                    ripgrep: unavailableInvocationRipgrep,
                 } as never);
                 if (!result.ok) throw new Error(`resolveLinkIdentity failed: ${result.code}`);
                 return result.value;
@@ -303,6 +307,7 @@ describe('MEASURE candidate page operations', () => {
                     deadlineAtMs: Date.now() + 60_000,
                     managedEndpointRead: unavailableManagedEndpointRead,
                     exec: unavailableInvocationExec,
+                    ripgrep: unavailableInvocationRipgrep,
                 });
                 if (!result.ok) throw new Error(`listCandidates failed: ${result.code}`);
                 const page = result.value as ExternalSessionCandidatesPage;

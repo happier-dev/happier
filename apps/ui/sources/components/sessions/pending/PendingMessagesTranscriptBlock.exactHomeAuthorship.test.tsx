@@ -31,7 +31,7 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
                     message: m,
                     index,
                     isDragging: false,
-                    renderDragHandle: ({ children: handleChildren }: any) => handleChildren,
+                    renderDragHandle: ({ testID, accessibilityLabel }: { testID?: string; accessibilityLabel?: string }) => React.createElement('View', { testID, accessibilityLabel }),
                 }),
             )
             : null;
@@ -192,6 +192,10 @@ describe('pending queue authorship is decided by the exact Home', () => {
             .toBe(t('message.accountActorYou'));
         expect(screen.findByTestId('transcript-account-attribution:d1')?.props.children)
             .toBe(t('message.accountActorYou'));
+        const queue = screen.findByType('PendingMessagesDragReorderList');
+        expect(queue.props.scope).toEqual({ serverId: HOME_B, accountId: 'bob' });
+        expect(queue.props.sessionId).toBe(SHARED_SESSION_ID);
+        expect(queue.props.recipient).toBeNull();
     });
 
     it('keeps the other Home\'s collaborator a named person rather than the viewer', async () => {

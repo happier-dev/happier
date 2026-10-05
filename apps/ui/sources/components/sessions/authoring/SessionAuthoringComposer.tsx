@@ -8,19 +8,10 @@ import {
     type MultiTextInputProps,
     type TextInputState,
 } from '@/components/ui/forms/MultiTextInput';
-import { Modal } from '@/modal';
-import { t } from '@/text';
 import { applyDictationToComposer } from '@/components/sessions/agentInput/applyDictationToComposer';
-import {
-    resolveVoiceDictationFailureTranslationKey,
-    resolveVoiceDictationStartErrorTranslationKey,
-} from '@/voice/dictation/voiceDictationErrorCopy';
-import { useVoiceDictation } from '@/voice/dictation/useVoiceDictation';
+import { useTextInputDictation, type TextInputDictation } from '@/voice/dictation/useTextInputDictation';
 
-export type SessionAuthoringComposerDictation = Readonly<{
-    status: ReturnType<typeof useVoiceDictation>['status'];
-    onPress: () => Promise<void>;
-}>;
+export type SessionAuthoringComposerDictation = TextInputDictation;
 
 export function useSessionAuthoringComposerDictation(input: Readonly<{
     composerRef: ComposerRefV1 | null;
@@ -35,69 +26,20 @@ export function useSessionAuthoringComposerDictation(input: Readonly<{
         () => input.composerRef === null ? '' : composerRefV1Key(input.composerRef),
         [input.composerRef],
     );
-    const authorityRef = React.useRef({
-        key: composerKey,
+    return useTextInputDictation({
+        controlId: composerKey,
         enabled: input.enabled,
         presented: input.presented,
         editable: input.editable,
-    });
-    authorityRef.current = {
-        key: composerKey,
-        enabled: input.enabled,
-        presented: input.presented,
-        editable: input.editable,
-    };
-    React.useEffect(() => () => {
-        if (authorityRef.current.key !== composerKey) return;
-        authorityRef.current = { key: '', enabled: false, presented: false, editable: false };
-    }, [composerKey]);
-    const dictation = useVoiceDictation(
-        composerKey || undefined,
-        input.presented && input.enabled,
-        input.editable,
-        input.transcriptionSessionId,
-    );
-
-    React.useEffect(() => {
-        if (!dictation.failure) return;
-        if (dictation.failure.kind !== 'mic_permission_denied') {
-            Modal.alert(
-                t('common.error'),
-                t(resolveVoiceDictationFailureTranslationKey(dictation.failure.reason)),
-            );
-        }
-        dictation.dismissFailure(dictation.failure.id);
-    }, [dictation.dismissFailure, dictation.failure]);
-
-    const onPress = React.useCallback(async () => {
-        if (!input.enabled || !input.presented || !authorityRef.current.editable || !composerKey) return;
-        const admittedKey = composerKey;
-        try {
-            const result = await dictation.toggle();
-            if (result.kind !== 'completed') return;
-            if (
-                authorityRef.current.key !== admittedKey
-                || !authorityRef.current.enabled
-                || !authorityRef.current.presented
-                || !authorityRef.current.editable
-            ) return;
-            if (!result.text) {
-                Modal.alert(t('voiceAssistant.dictationNoSpeech'));
-                return;
-            }
+        transcriptionSessionId: input.transcriptionSessionId,
+        onTranscription(text) {
             input.stateRef.current = applyDictationToComposer({
                 input: input.inputRef.current,
                 state: input.stateRef.current,
-                text: result.text,
+                text,
             });
-        } catch (error) {
-            if (error instanceof Error && error.message === 'mic_permission_denied') return;
-            const busyTranslationKey = resolveVoiceDictationStartErrorTranslationKey(error);
-            Modal.alert(t('common.error'), t(busyTranslationKey ?? 'errors.dictationFailed'));
-        }
-    }, [composerKey, dictation.toggle, input.editable, input.enabled, input.inputRef, input.presented, input.stateRef]);
-
-    return { status: dictation.status, onPress };
+        },
+    });
 }
 
 export type SessionAuthoringComposerProps = MultiTextInputProps & Readonly<{

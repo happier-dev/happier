@@ -4,6 +4,15 @@ import { pathToFileURL } from 'node:url';
 import { runCommandSuite, type CommandSuiteEntry } from './lib/runCommandSuite.ts';
 import { runYarnCommand } from './lib/runYarnCommand.ts';
 
+const ROOT_TYPE_TEST_COMMAND = {
+  id: 'type-tests',
+  args: [
+    'tsc', '--noEmit',
+    '-p', 'packages/protocol/tsconfig.json',
+    '-p', 'packages/plugins/triage/tsconfig.json',
+  ],
+} as const satisfies CommandSuiteEntry;
+
 export const ROOT_TYPECHECK_COMMANDS = [
   { id: 'build-packages', args: ['-s', 'build:packages'] },
   { id: 'prepare-workspaces', args: ['-s', 'prepare:typecheck:workspaces'] },
@@ -33,10 +42,12 @@ export const ROOT_TYPECHECK_COMMANDS = [
       '--filter=@happier-dev/tests',
     ],
   },
+  ROOT_TYPE_TEST_COMMAND,
 ] as const satisfies readonly CommandSuiteEntry[];
 
 const ROOT_COMPILER_TYPECHECK_COMMANDS: readonly CommandSuiteEntry[] = [
   ...ROOT_TYPECHECK_COMMANDS.slice(0, 2),
+  ROOT_TYPE_TEST_COMMAND,
   ...[
     'packages/plugin-sdk/tsconfig.json',
     'packages/plugin-sdk/tsconfig.tests.json',

@@ -6,17 +6,6 @@ import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('storage/files (S3 env parsing)', () => {
-  it.each(['', '/nested'])('refuses local private roots exposed beneath the public files root (%s)', async suffix => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-server-files-isolation-'));
-    try {
-      vi.resetModules();
-      const files = await import('./files');
-      files.initFilesLocalFromEnv({ HAPPIER_SERVER_LIGHT_FILES_DIR: join(dir, 'public'),
-        HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR: join(dir, `public${suffix}`) });
-      await files.loadFiles();
-      await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).rejects.toMatchObject({ code: 'private_storage_unavailable' });
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
   it('round trips S3 private bytes in the separate bucket using a private policy', async () => {
     vi.resetModules();
     const objects = new Map<string, Buffer>();

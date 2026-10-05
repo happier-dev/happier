@@ -6,8 +6,14 @@ import { resolveEnrichedMarkdownMd4cFlags } from './enrichedMarkdownConstants';
 import {
     normalizeMarkdownLinkUrl,
     openMarkdownLinkUrl,
-    sanitizeEnrichedMarkdownLinkTargets,
+    sanitizeEnrichedMarkdownWithInlineReferences,
 } from './enrichedMarkdownLinkHandling';
+import {
+    MARKDOWN_INLINE_REFERENCE_HREF_PREFIX,
+    readMarkdownInlineReferenceTarget,
+    type MarkdownInlineReference,
+    type MarkdownInlineReferences,
+} from '../markdownInlineReferences';
 import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
@@ -110,7 +116,28 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     suppressLeadingTopMargin?: boolean;
     fillContainer?: boolean;
     agentTexMath: boolean;
+    inlineReferences?: MarkdownInlineReferences;
 }>;
+
+/**
+ * The colours of the inline references in one run. The package draws a link with its own inline style,
+ * so on web one scoped rule per resolved reference paints it; native draws the label in the link colour.
+ */
+function useWebInlineReferenceStyle(scope: string, references: ReadonlyMap<string, MarkdownInlineReference>): void {
+    const css = React.useMemo(() => [...references.entries()].map(([href, reference]) => (
+        `[data-happier-md-refs="${scope}"] a[href="${href.replace(/["\\]/g, (char) => `\\${char}`)}"] {`
+        + ` color: ${reference.foreground} !important; background-color: ${reference.background} !important;`
+        + ' text-decoration: none !important; border-radius: 6px; padding: 1px 6px; font-size: 0.86em; font-weight: 600; white-space: nowrap; }'
+    )).join('\n'), [references, scope]);
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || typeof document === 'undefined' || !css) return undefined;
+        const style = document.createElement('style');
+        style.setAttribute('data-happier-md-refs-style', scope);
+        style.textContent = css;
+        document.head.appendChild(style);
+        return () => { style.remove(); };
+    }, [css, scope]);
+}
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
     const runtimeStatus = useEnrichedMarkdownRuntimeStatus();
@@ -119,20 +146,30 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         textStyle: props.textStyle,
     });
 
+    const inlineReferences = props.inlineReferences;
     const handleLinkPress = React.useCallback((event: { url: string }) => {
+        // A cited reference belongs to its owner; it is never opened as a URL.
+        if (event.url.startsWith(MARKDOWN_INLINE_REFERENCE_HREF_PREFIX)) {
+            const target = inlineReferences ? readMarkdownInlineReferenceTarget(event.url, inlineReferences.scheme) : null;
+            if (target) inlineReferences?.onPress?.(target);
+            return;
+        }
         const normalizedUrl = normalizeMarkdownLinkUrl(event.url);
         if (!normalizedUrl) return;
         if (props.onLinkPress?.(normalizedUrl) === true) return;
         void openMarkdownLinkUrl(normalizedUrl);
-    }, [props.onLinkPress]);
+    }, [inlineReferences, props.onLinkPress]);
     const revealConfig = resolveStreamingTextRevealConfig({
         animated: props.streamingAnimated,
         preset: props.streamingRevealPreset,
     });
-    const sanitizedMarkdown = React.useMemo(
-        () => sanitizeEnrichedMarkdownLinkTargets(props.markdown),
-        [props.markdown],
+    const sanitized = React.useMemo(
+        () => sanitizeEnrichedMarkdownWithInlineReferences(props.markdown, inlineReferences),
+        [inlineReferences, props.markdown],
     );
+    const sanitizedMarkdown = sanitized.markdown;
+    const referenceScope = React.useId();
+    useWebInlineReferenceStyle(referenceScope, sanitized.references);
     const flavor = React.useMemo(
         () => resolveEnrichedMarkdownFlavor(sanitizedMarkdown),
         [sanitizedMarkdown],
@@ -157,6 +194,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
                 'data-testid': props.testID,
                 'data-happier-enriched-markdown-profile': props.profile,
             };
+            if (sanitized.references.size > 0) webProps['data-happier-md-refs'] = referenceScope;
             if (props.streamingAnimated) {
                 // Per-word, not per-block: the package stamps
                 // `data-happier-enriched-markdown-reveal="text"` on the words its reveal
@@ -179,7 +217,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             allowFontScaling: true,
             streamingAnimation: props.streamingAnimated && flavor === 'commonmark',
         };
-    }, [flavor, props.profile, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID]);
+    }, [flavor, props.profile, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID, referenceScope, sanitized.references.size]);
 
     const containerStyle = React.useMemo(() => {
         const baseContainerStyle = props.fillContainer === false

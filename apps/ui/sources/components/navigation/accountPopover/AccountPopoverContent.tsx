@@ -58,7 +58,7 @@ export type AccountPopoverStep = 'root' | 'account' | 'details';
 
 type ConnectionTarget = ReturnType<typeof listServerSelectionTargets>[number];
 type RowRef = React.ElementRef<typeof SelectableRow>;
-type SwitchServer = (serverId: string, scope: 'tab' | 'device') => Promise<'switched' | 'blocked' | unknown>;
+type SwitchServer = (serverId: string, scope: 'tab' | 'device', intent?: 'direct' | 'group') => Promise<'switched' | 'blocked' | unknown>;
 
 /**
  * A1 · Identity & Homes: who you are to the account service, then every Home with one health line
@@ -393,7 +393,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         const routineSwitchScope = resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost());
         if (target.kind === 'server') {
             if (!serverById.has(target.serverId)) return;
-            const result = await switchServer(target.serverId, routineSwitchScope);
+            const result = await switchServer(target.serverId, routineSwitchScope, 'direct');
             if (result === 'blocked') return;
             await setHomeViewSelectionSettings(
                 (current) => ({ ...current, ...buildServerSelectionActiveTargetForServer(target.serverId) }),
@@ -413,7 +413,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         });
         const nextServerId = activation?.serverId ?? '';
         if (nextServerId && !areServerProfileIdentifiersEquivalent(nextServerId, activeServerId)) {
-            const result = await switchServer(nextServerId, routineSwitchScope);
+            const result = await switchServer(nextServerId, routineSwitchScope, 'group');
             if (result === 'blocked') return;
         }
         await setHomeViewSelectionSettings((current) => ({

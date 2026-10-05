@@ -118,10 +118,10 @@ describe('Connected Services Team credential broker source', () => {
       withRegistry: async (read) => await read({ providersByContributionKey: new Map() }),
       custody: {
         acquire,
-        retire: async () => {},
-        retireExternalApiKey: async () => {},
-        revalidateRetainedClaims: async () => {},
-        retireAll: async () => {},
+        retire: async () => true,
+        retireExternalApiKey: async () => true,
+        revalidateRetainedClaims: async () => 0,
+        retireAll: async () => 0,
       },
     });
     expect(await open(request())).toBeNull();

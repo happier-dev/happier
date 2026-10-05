@@ -1,17 +1,23 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ReactTestInstance } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
+import { setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+// Load the real owner during collection, not against the first interaction's timeout.
+import { formatWorkflowValueReference, WorkflowStepDataEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
+import { formatWorkflowLoopSentence } from './WorkflowLoopEditor';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol';
+import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 
 /**
- * Every mutually exclusive choice set in the step data editor — where a row's
- * value comes from, which workflow input it reads, and which step produces it —
- * is one labelled radiogroup: a reader must hear the set it belongs to, each
- * choice as a radio, and which choice is checked, exactly as the canonical
- * Item primitive exposes a radio's state.
+ * Where a binding's value comes from, which workflow input it reads and which step produces it
+ * are each one labelled field select (07 §3 control table): a reader hears the set by its name
+ * and its current value, and every valid choice is offered with the current one selected.
  */
 
 vi.mock('react-native', async () => {
@@ -47,7 +53,6 @@ function stepBlock(id: string, input: WorkflowStep['input']): WorkflowStep {
 }
 
 async function renderEditor(draft: unknown, step: WorkflowStep) {
-    const { WorkflowStepDataEditor } = await import('./WorkflowStepDataEditor');
     return renderScreen(
         <WorkflowStepDataEditor
             draft={draft as Parameters<typeof WorkflowStepDataEditor>['0']['draft']}
@@ -58,54 +63,62 @@ async function renderEditor(draft: unknown, step: WorkflowStep) {
     );
 }
 
-function findRadiogroupAncestor(node: ReactTestInstance): ReactTestInstance | null {
-    let current = node.parent;
-    while (current !== null) {
-        if (current.props?.accessibilityRole === 'radiogroup') return current;
-        current = current.parent;
-    }
-    return null;
+type FieldSelect = Readonly<{
+    props: Readonly<{ items: ReadonlyArray<Readonly<{ id: string; title: string }>>; selectedId: string | null; onSelect: (id: string) => void }>;
+}>;
+
+function fieldSelect(root: ReactTestInstance, testID: string): FieldSelect {
+    const match = root.findAll((node) => node.props?.testID === testID && typeof node.props?.onSelect === 'function')[0];
+    if (match === undefined) throw new Error(`No field select ${testID}`);
+    return match as unknown as FieldSelect;
 }
 
-function radiosWithLabel(root: ReactTestInstance, label: string): ReactTestInstance[] {
-    // Count host elements only: the Pressable mock wraps a host of the same
-    // name, so the composite and host would both match an unscoped search.
-    return root.findAll((node) => (
-        typeof node.type === 'string'
-        && node.props?.accessibilityRole === 'radio'
-        && node.props?.accessibilityLabel === label
-    ));
+function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstance {
+    const match = root.findAll((node) => typeof node.type === 'string' && node.props?.testID === `${testID}-trigger`)[0];
+    if (match === undefined) throw new Error(`No trigger for ${testID}`);
+    return match;
 }
 
-describe('WorkflowStepDataEditor accessibility', () => {
-    it('presents the reference-kind choices as one labelled radiogroup', async () => {
-        const draftModule = await import('@/sync/domains/workflows/workflowEditorDraft');
+describe('WorkflowStepDataEditor field selects', () => {
+    it('reads builtin loop conditions as human reference labels, including typed stop reasons', () => {
+        const definition = getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:keep-going')!.definition;
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'keep-going', name: 'Keep going', definition });
+        const loop = draft.blocks[0]!;
+        const condition = draft.blocks[1]!;
+        if (loop.kind !== 'loop' || condition.kind !== 'if') throw new Error('Invalid builtin fixture');
+        const label = formatWorkflowConditionSentence(draft, condition.when);
+        expect(label).not.toContain('"kind"');
+        expect(label).toContain('workflows.input.stopCondition');
+        expect(formatWorkflowLoopSentence(draft, loop)).toContain('workflows.input.tokensUsed');
+        expect(formatWorkflowValueReference(draft, { kind: 'iteration', field: 'position' })).toBe('workflows.input.iterationField.position');
+        expect(formatWorkflowValueReference(draft, { kind: 'session_context', recentTurns: 1 })).toContain('workflows.input.sessionContext');
+    });
+    it('offers where a value comes from as one labelled select with the current kind selected', async () => {
         const step = stepBlock('step-a', [{ kind: 'literal', value: '' }]);
-        const draft = draftModule.createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] });
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] });
+        const changes: unknown[] = [];
+        const screen = await renderScreen(
+            <WorkflowStepDataEditor
+                draft={draft as Parameters<typeof WorkflowStepDataEditor>['0']['draft']}
+                step={step}
+                onChangeInput={(next) => changes.push(next)}
+                testIDPrefix="editor"
+            />,
+        );
 
-        const screen = await renderEditor(draft, step);
-
-        const selectedChoice = screen.findByTestId('editor-step-step-a-input-0-kind-literal');
-        if (selectedChoice === null) throw new Error('Expected the selected literal choice');
-        expect(selectedChoice.props.accessibilityRole).toBe('radio');
-        expect(selectedChoice.props.accessibilityState).toMatchObject({ checked: true });
-        expect(selectedChoice.props.accessibilityLabel).toBeTruthy();
-        const unselectedChoice = screen.findByTestId('editor-step-step-a-input-0-kind-input');
-        if (unselectedChoice === null) throw new Error('Expected the unselected workflow-input choice');
-        expect(unselectedChoice.props.accessibilityState).toMatchObject({ checked: false });
-        for (const choice of [selectedChoice, unselectedChoice]) {
-            const group = findRadiogroupAncestor(choice);
-            expect(group).not.toBeNull();
-            expect(group?.props.accessibilityLabel).toBeTruthy();
-        }
+        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-kind');
+        expect(select.props.selectedId).toBe('literal');
+        expect(select.props.items.map((item) => item.id)).toEqual(['literal', 'input', 'result', 'workspace']);
+        expect(selectTrigger(screen.root, 'editor-step-step-a-input-0-kind').props.accessibilityLabel)
+            .toBe('workflows.input.valueKindGroup: workflows.condition.valuePlaceholder');
+        await act(async () => { select.props.onSelect('input'); });
+        expect(changes.at(-1)).toEqual([{ kind: 'input', name: 'input' }]);
     });
 
-    it('presents the workflow-input choices as one labelled radiogroup', async () => {
-        const draftModule = await import('@/sync/domains/workflows/workflowEditorDraft');
+    it('offers which workflow input it reads as one select with the current input selected', async () => {
         const step = stepBlock('step-a', [{ kind: 'input', name: 'tone' }]);
-        const { setWorkflowInputs } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
         const draft = setWorkflowInputs(
-            draftModule.createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] }),
+            createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] }),
             [
                 { name: 'topic', valueType: 'string', required: false },
                 { name: 'tone', valueType: 'string', required: false },
@@ -114,26 +127,17 @@ describe('WorkflowStepDataEditor accessibility', () => {
 
         const screen = await renderEditor(draft, step);
 
-        const topicChoices = radiosWithLabel(screen.root, 'topic');
-        const toneChoices = radiosWithLabel(screen.root, 'tone');
-        expect(topicChoices).toHaveLength(1);
-        expect(toneChoices).toHaveLength(1);
-        expect(topicChoices[0]!.props.accessibilityState).toMatchObject({ checked: false });
-        expect(toneChoices[0]!.props.accessibilityState).toMatchObject({ checked: true });
-        const group = findRadiogroupAncestor(toneChoices[0]!);
-        expect(group).not.toBeNull();
-        expect(group?.props.accessibilityLabel).toBeTruthy();
-        // Both choices of the set share one containing group.
-        expect(findRadiogroupAncestor(topicChoices[0]!)).toBe(group);
+        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-input-name');
+        expect(select.props.items.map((item) => item.id)).toEqual(['topic', 'tone']);
+        expect(select.props.selectedId).toBe('tone');
     });
 
-    it('presents the producer choices as one labelled radiogroup', async () => {
-        const draftModule = await import('@/sync/domains/workflows/workflowEditorDraft');
+    it('offers which step produces it as one select naming each step and its scope', async () => {
         const producer = stepBlock('producer-a', []);
         const step = stepBlock('step-a', [
             { kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: [] },
         ]);
-        const draft = draftModule.createWorkflowEditorDraft({
+        const draft = createWorkflowEditorDraft({
             draftId: 'draft-1',
             name: 'Review',
             blocks: [producer, step],
@@ -141,11 +145,10 @@ describe('WorkflowStepDataEditor accessibility', () => {
 
         const screen = await renderEditor(draft, step);
 
-        const producerChoices = radiosWithLabel(screen.root, 'producer-a · workflows.input.scopeCurrent');
-        expect(producerChoices).toHaveLength(1);
-        expect(producerChoices[0]!.props.accessibilityState).toMatchObject({ checked: true });
-        const group = findRadiogroupAncestor(producerChoices[0]!);
-        expect(group).not.toBeNull();
-        expect(group?.props.accessibilityLabel).toBeTruthy();
+        const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-producer');
+        expect(select.props.items).toEqual([
+            expect.objectContaining({ id: 'producer-a:current', title: 'producer-a', subtitle: 'workflows.input.scopeCurrent' }),
+        ]);
+        expect(select.props.selectedId).toBe('producer-a:current');
     });
 });

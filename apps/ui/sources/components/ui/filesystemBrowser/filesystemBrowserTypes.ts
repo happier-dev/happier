@@ -27,6 +27,12 @@ export type FilesystemBrowserListProps = Readonly<{
     listHeaderTestID?: string;
     /** Drawn after the last row, in the same scroll (the Git pane's timeline under its tree). */
     listFooter?: React.ReactElement | null;
+    /**
+     * `scroll` (default): a virtualized list that owns its scroll. `inline`: the rows drawn in place,
+     * inside a scroll someone else owns (a turn card in the transcript), with no list or scroll of
+     * their own. The caller bounds an inline tree by folding folders, never by dropping rows.
+     */
+    presentation?: 'scroll' | 'inline';
     renderRow: (input: FilesystemBrowserRowRenderInput) => React.ReactElement;
     retryRoot: () => void | Promise<void>;
     contentContainerStyle?: StyleProp<ViewStyle>;

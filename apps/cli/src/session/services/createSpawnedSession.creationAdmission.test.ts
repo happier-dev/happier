@@ -7,10 +7,12 @@ import {
   buildSessionSpawnInitialInputLocalIdV1,
   deriveSessionCreationTagV1,
   SessionCreationCorrespondenceV1Schema,
+  SessionInitialTriggerAdmissionV1Schema,
   SPAWN_SESSION_ERROR_CODES,
 } from '@happier-dev/protocol';
 import { createSpawnedSession } from './createSpawnedSession';
 import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from './sessionInputAdmissionIdentity';
+import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 
 // Only HTTP/authentication and exact-machine transport boundaries are replaced;
 // lookup decoding, creation settlement and Message admission remain real.
@@ -85,6 +87,63 @@ describe('canonical Session creation admission', () => {
     await expect(createSpawnedSession(params)).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE });
     expect(spawn).not.toHaveBeenCalled();
     expect(resolveSpawnSessionByNonce).not.toHaveBeenCalled();
+  });
+
+  it('delivers sealed initial triggers to the exact daemon birth owner', async () => {
+    const initialTriggers = [SessionInitialTriggerAdmissionV1Schema.parse({
+      automationId: 'automation-initial', name: 'Prepare workspace', enabled: true,
+      workflowDefinitionId: 'builtin:review-and-converge', assignments: [{ machineId: 'machine-1', enabled: true }],
+      executionRecipe: { v: 2, templateVersion: 0, triggerEvidence: null,
+        workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } } } },
+      triggers: [{ triggerId: 'trigger-initial', trigger: { kind: 'sessionLifecycle', enabled: true,
+        events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
+    })];
+    await expect(createSpawnedSession({ ...params, prepareInitialTriggers: async () => initialTriggers })).resolves.toMatchObject({
+      sessionId: 'session-created', disposition: 'created',
+    });
+    expect(spawn.mock.calls[0]![0]).toMatchObject({ initialTriggers });
+  });
+
+  it('rejoins an existing creation without preparing unavailable changed trigger drafts', async () => {
+    const envelopes = buildSessionMetadataEnvelopeCreateFields({ credentials: params.credentials,
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
+      metadata: { path: '/repo', host: 'host', sessionCreationCorrespondenceV1: sessionCreationCorrespondence } });
+    vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { sessions: [{
+      id: 'session-existing', seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+      metadataLayoutVersion: envelopes.metadataLayoutVersion, metadata: envelopes.sharedMetadata.ciphertext,
+      ownerMetadata: envelopes.ownerMetadata, metadataVersion: 1, encryptionMode: 'plain',
+      agentState: null, agentStateVersion: 0, dataEncryptionKey: null, share: null,
+    }] } });
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
+    const prepareInitialTriggers = vi.fn(async () => {
+      throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+    });
+    await expect(createSpawnedSession({ ...params, prepareInitialTriggers })).resolves.toMatchObject({
+      disposition: 'rejoined', sessionId: 'session-existing',
+    });
+    expect(prepareInitialTriggers).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('refuses a predecessor without current spawn capabilities before any remote birth', async () => {
+    const initialTriggers = [SessionInitialTriggerAdmissionV1Schema.parse({
+      automationId: 'automation-initial', name: 'Prepare workspace', enabled: true,
+      workflowDefinitionId: 'builtin:review-and-converge', assignments: [{ machineId: 'machine-1', enabled: true }],
+      executionRecipe: { v: 2, templateVersion: 0, triggerEvidence: null,
+        workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } } } },
+      triggers: [{ triggerId: 'trigger-initial', trigger: { kind: 'sessionLifecycle', enabled: true,
+        events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
+    })];
+    vi.mocked(axios.get).mockResolvedValue({ status: 404, data: {} });
+    const { directTransport: _directTransport, sessionCreationTag: _tag,
+      sessionCreationCorrespondence: _correspondence, ...remoteParams } = params;
+    await expect(createSpawnedSession({ ...remoteParams, initialTriggers })).rejects.toMatchObject({
+      code: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+    });
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('preserves fresh committed creation with truthful nested input when currentness is unavailable (input=%s)', async (withInput) => {

@@ -11,7 +11,7 @@ export type { Message, UserTextMessage, AgentTextMessage, ToolCallMessage, ModeS
 export type { MessageMeta } from "./messages/messageMetaTypes.js";
 export { MetadataSchema, AgentStateSchema } from "./state/index.js";
 export type { Metadata, AgentState } from "./state/index.js";
-export { listPendingRequests, listPendingRequestLists, derivePendingRequestFlags } from "./pending/index.js";
+export { listPendingRequests, listPendingRequestLists, derivePendingRequestFlags, comparePendingRequestsByAge, selectOldestPendingRequest } from "./pending/index.js";
 export type { PendingRequestFacts, SessionPendingRequest, SessionPendingRequestLists } from "./pending/index.js";
 export { createTranscriptStreamSegmentAssembler, interpretTranscriptStreamSegment } from "./live/index.js";
 export { applyReducedMessages, isSessionMessageRowCurrent, advanceSessionReceivedMessageCurrentness } from "./transcript/index.js";

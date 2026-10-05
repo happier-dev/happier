@@ -6,6 +6,9 @@ import {
   createRuntimeArtifactFingerprint,
 } from './runtime_artifact_identity.mjs';
 import { createRuntimeSnapshotId } from '../runtime/shared/runtime_snapshot_identity.mjs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { inspectWorkspaceQaStalePackages, resolveWorkspaceBuildMode } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 async function resolveDefaultServerSupportArtifactFingerprint(options) {
   const { resolveServerSupportArtifactFingerprint } = await import('./build_server_artifact.mjs');
@@ -17,9 +20,9 @@ async function resolveDefaultDaemonSupportArtifactFingerprint(options) {
   return await resolveDaemonSupportArtifactFingerprint(options);
 }
 
-async function resolveDefaultDaemonWorkspaceSourceFingerprint({ repoDir }) {
+async function resolveDefaultDaemonWorkspaceSourceFingerprint({ repoDir, stalePackages }) {
   const { readDaemonWorkspaceSourceFingerprint } = await import('./build_daemon_artifact.mjs');
-  return readDaemonWorkspaceSourceFingerprint({ repoDir });
+  return readDaemonWorkspaceSourceFingerprint({ repoDir, stalePackages });
 }
 
 export async function resolveRuntimeBuildRequestIdentity({
@@ -41,8 +44,18 @@ export async function resolveRuntimeBuildRequestIdentity({
     providedSourceMetadata ?? collectBuildSourceMetadataImpl({ rootDir, env }),
     collectRuntimeBuildToolchainInputsImpl({ selection, env }),
   ]);
+  const stalePackagesByComponent = {};
+  if (resolveWorkspaceBuildMode({ env }) === 'qa-runtime') {
+    for (const component of ['web', 'server', 'daemon']) {
+      if (!selection.components[component]) continue;
+      const packagePath = join(sourceMetadata.repoDir, 'apps', component === 'web' ? 'ui' : component === 'daemon' ? 'cli' : 'server', 'package.json');
+      if (!existsSync(packagePath)) continue;
+      const host = JSON.parse(readFileSync(packagePath, 'utf8'));
+      stalePackagesByComponent[component] = await inspectWorkspaceQaStalePackages(sourceMetadata.repoDir, [host.name]);
+    }
+  }
   const daemonWorkspaceSourceFingerprint = selection.components.daemon
-    ? await resolveDaemonWorkspaceSourceFingerprintImpl({ repoDir: sourceMetadata.repoDir })
+    ? await resolveDaemonWorkspaceSourceFingerprintImpl({ repoDir: sourceMetadata.repoDir, stalePackages: stalePackagesByComponent.daemon })
     : null;
   const [componentSourceFingerprints, serverSupportArtifactFingerprint, daemonSupportArtifactFingerprint] = await Promise.all([
     collectRuntimeComponentSourceFingerprintsImpl({ selection, sourceMetadata }),
@@ -64,6 +77,7 @@ export async function resolveRuntimeBuildRequestIdentity({
       componentSourceFingerprint: componentSourceFingerprints.web,
       toolchainInputs: toolchainInputsByComponent.web,
       env,
+      stalePackages: stalePackagesByComponent.web,
     });
   }
 
@@ -75,6 +89,7 @@ export async function resolveRuntimeBuildRequestIdentity({
       supportArtifactFingerprint: serverSupportArtifactFingerprint,
       toolchainInputs: toolchainInputsByComponent.server,
       env,
+      stalePackages: stalePackagesByComponent.server,
     });
   }
 
@@ -86,11 +101,13 @@ export async function resolveRuntimeBuildRequestIdentity({
       supportArtifactFingerprint: daemonSupportArtifactFingerprint,
       toolchainInputs: toolchainInputsByComponent.daemon,
       env,
+      stalePackages: stalePackagesByComponent.daemon,
     });
   }
 
   return {
     sourceMetadata,
+    stalePackagesByComponent,
     componentSourceFingerprints,
     daemonWorkspaceSourceFingerprint,
     supportArtifactFingerprints: {

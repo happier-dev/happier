@@ -1623,16 +1623,21 @@ async function readStoredJson<T>(
     key: string,
     label: string,
     validator: (value: unknown) => value is T,
+    storageReadFailure: 'absent' | 'surface' = 'absent',
 ): Promise<T | null> {
     if (Platform.OS === 'web') {
         const storage = resolveWebStorageBackend();
-        if (!storage) return null;
+        if (!storage) {
+            if (storageReadFailure === 'surface') throw new Error('Secure storage unavailable');
+            return null;
+        }
         try {
             const raw = storage.getItem(key);
             if (!raw) return null;
             const parsed = safeParseJson(raw);
             return validator(parsed) ? parsed : null;
         } catch (error) {
+            if (storageReadFailure === 'surface') throw error;
             console.error(`Error getting ${label}:`, error);
             return null;
         }
@@ -1644,6 +1649,7 @@ async function readStoredJson<T>(
         const parsed = safeParseJson(stored);
         return validator(parsed) ? parsed : null;
     } catch (error) {
+        if (storageReadFailure === 'surface') throw error;
         console.error(`Error getting ${label}:`, error);
         return null;
     }
@@ -3345,7 +3351,7 @@ export const TokenStorage = {
 
     async readPendingExternalAuthStateForServerUrl(
         serverUrl: string,
-        options: ServerCredentialLookupOptions = {},
+        options: ServerCredentialReadOptions = {},
     ): Promise<PendingExternalReadState<PendingExternalAuth>> {
         const keys = await getServerScopedKeys(
             PENDING_EXTERNAL_AUTH_KEY,
@@ -3360,6 +3366,7 @@ export const TokenStorage = {
                 key,
                 'pending external auth',
                 isPendingExternalAuthRecord,
+                options.storageReadFailure,
             );
             if (!value) continue;
             return {
@@ -3379,6 +3386,7 @@ export const TokenStorage = {
             getPendingExternalAuthGlobalKey(),
             'pending external auth',
             isPendingExternalAuthRecord,
+            options.storageReadFailure,
         );
         if (
             !global

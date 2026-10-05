@@ -468,41 +468,10 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 // `@shopify/react-native-skia` requires native bindings; stub it for node/Vitest.
-vi.mock('@shopify/react-native-skia', () => ({
-    Canvas: 'Canvas',
-    Circle: 'Circle',
-    Image: 'SkiaImage',
-    Rect: 'Rect',
-    Group: 'Group',
-    LinearGradient: 'LinearGradient',
-    RadialGradient: 'RadialGradient',
-    Path: 'Path',
-    RoundedRect: 'RoundedRect',
-    DiffRect: 'DiffRect',
-    Skia: {
-        Path: {
-            Make: () => ({
-                addRect: () => undefined,
-                addRRect: () => undefined,
-            }),
-        },
-        XYWHRect: () => ({}),
-        RRectXY: () => ({}),
-    },
-    FilterMode: {
-        Nearest: 'nearest',
-        Linear: 'linear',
-    },
-    MipmapMode: {
-        None: 'none',
-        Nearest: 'nearest',
-        Linear: 'linear',
-    },
-    rect: () => ({}),
-    rrect: () => ({}),
-    useImage: (source: unknown) => source == null ? null : `skia-image:${String(source)}`,
-    vec: (x: number, y: number) => ({ x, y }),
-}));
+vi.mock('@shopify/react-native-skia', async () => {
+    const { createReactNativeSkiaMock } = await import('./testkit/mocks/reactNativeSkia');
+    return createReactNativeSkiaMock();
+});
 
 // `react-native-svg` requires native bindings; provide a lightweight host-element
 // mock for node/Vitest so components rendering SVG (gauges/rings) can mount. Any
@@ -557,18 +526,10 @@ vi.mock('@react-navigation/native', () => createReactNavigationNativeMock());
 // `react-native-typography` relies on React Native's platform resolution (e.g. systemWeights.web.js),
 // which Node/Vitest cannot resolve via CJS `require("../helpers/systemWeights")`. Provide a minimal
 // stub so components can render without pulling in platform-specific internals.
-vi.mock('react-native-typography', () => ({
-    iOSUIKit: {
-        title3: {},
-        title3Object: {},
-    },
-    human: {},
-    humanDense: {},
-    humanTall: {},
-    material: {},
-    materialDense: {},
-    materialTall: {},
-}));
+vi.mock('react-native-typography', async () => {
+    const { createReactNativeTypographyMock } = await import('./testkit/mocks/reactNativeTypography');
+    return createReactNativeTypographyMock();
+});
 
 // `expo-constants` reads React Native `NativeModules` and isn't safe to import in Vitest.
 vi.mock('expo-constants', () => ({
@@ -585,21 +546,10 @@ vi.mock('expo-constants', () => ({
 vi.mock('expo-modules-core', async () => await import('./expoModulesCoreStub'));
 
 // `expo-updates` is native-oriented and pulls in platform-specific modules that Node/Vitest can't parse.
-vi.mock('expo-updates', () => ({
-    useUpdates: () => ({
-        currentlyRunning: {},
-        isChecking: false,
-        isDownloading: false,
-        isRestarting: false,
-        isStartupProcedureRunning: false,
-        isUpdateAvailable: false,
-        isUpdatePending: false,
-        restartCount: 0,
-    }),
-    checkForUpdateAsync: async () => ({ isAvailable: false }),
-    fetchUpdateAsync: async () => {},
-    reloadAsync: async () => {},
-}));
+vi.mock('expo-updates', async () => {
+    const { createExpoUpdatesMock } = await import('./testkit/mocks/expoUpdates');
+    return createExpoUpdatesMock();
+});
 
 // `expo-image` uses native view managers; stub it for Vitest.
 vi.mock('expo-image', () => ({

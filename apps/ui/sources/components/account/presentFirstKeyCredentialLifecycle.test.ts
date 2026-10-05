@@ -1,17 +1,20 @@
 import {
+    afterEach,
     beforeEach,
     describe,
     expect,
     it,
     vi,
 } from 'vitest';
+import type { AuthContextType } from '@/auth/context/AuthContext';
+import { getCurrentAuth, setCurrentAuth } from '@/auth/context/currentAuth';
 
 const mocks = vi.hoisted(() => ({
     show: vi.fn(),
     push: vi.fn(),
     abandon: vi.fn(),
     recoverRejectedCredential: vi.fn(),
-    loginWithCredentials: vi.fn(),
+    loginWithCredentials: vi.fn<AuthContextType['loginWithCredentials']>(),
     refreshFromActiveServer: vi.fn(async () => {}),
     setActiveServerAndSwitch: vi.fn(async () => 'switched' as const),
     profiles: [] as ReadonlyArray<Readonly<{
@@ -37,14 +40,16 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
     listServerProfiles: () => mocks.profiles,
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    getCurrentAuth: () => ({
-        loginWithCredentials:
-            mocks.loginWithCredentials,
-        refreshFromActiveServer:
-            mocks.refreshFromActiveServer,
-    }),
-}));
+const authFixture = {
+    isAuthenticated: true,
+    credentials: { token: 'account-token' },
+    credentialAuthorityKind: 'account',
+    login: async () => ({ kind: 'completed' as const }),
+    loginWithCredentials: mocks.loginWithCredentials,
+    logout: async () => ({ kind: 'completed' as const }),
+    refreshFromActiveServer: mocks.refreshFromActiveServer,
+} satisfies AuthContextType;
+let previousAuth: AuthContextType | null;
 
 vi.mock(
     '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth',
@@ -104,12 +109,18 @@ function retainedResult() {
 
 describe('presentFirstKeyCredentialLifecycle', () => {
     beforeEach(() => {
+        previousAuth = getCurrentAuth();
+        setCurrentAuth(authFixture);
         vi.clearAllMocks();
         mocks.profiles = [];
         mocks.recoverRejectedCredential
             .mockResolvedValue({
                 kind: 'not_applicable',
             });
+    });
+
+    afterEach(() => {
+        setCurrentAuth(previousAuth);
     });
 
     it('settles a safe close or host unmount without abandoning custody', async () => {

@@ -1,10 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { ScmComparisonSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { normalizeStrictJsonReviewOutput } from './normalizeStrictJsonReviewOutput';
 
 describe('normalizeStrictJsonReviewOutput', () => {
+  it('publishes only the captured inventory file count, preserving zero and rejecting model counts', () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'captured', source: { kind: 'workingTree' },
+      repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [],
+        files: [{ path: 'a.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+          evidence: { state: 'available', unifiedDiff: '' }, occurrences: [] }] } });
+    const normalize = (intentInput?: unknown) => normalizeStrictJsonReviewOutput({
+      runId: 'review', callId: 'review-call', sidechainId: 'review-sidechain', backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, startedAtMs: 1, finishedAtMs: 2,
+      rawText: JSON.stringify({ summary: 'Reviewed.', findings: [], fileCount: 999 }), intentInput,
+    }).structuredMeta?.payload;
+    expect(normalize({ comparisonId: comparison.id, comparison })).toMatchObject({ fileCount: 1 });
+    expect(normalize({ comparisonId: comparison.id,
+      comparison: { ...comparison, inventory: { ...comparison.inventory, files: [] } } })).toMatchObject({ fileCount: 0 });
+    expect(normalize()).not.toHaveProperty('fileCount');
+    expect(normalize({ comparisonId: 'different', comparison })).not.toHaveProperty('fileCount');
+    expect(normalize({ comparisonId: comparison.id, comparison: { inventory: { files: [1] } } })).not.toHaveProperty('fileCount');
+  });
+
   it('carries retentionPolicy into the structured runRef when provided', () => {
     const backendTarget: BackendTargetRefV1 = { kind: 'builtInAgent', agentId: 'claude' };
     const params = {

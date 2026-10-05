@@ -5,6 +5,7 @@ import {
   readLocalConversationVoiceSettings,
   voiceSettingsDefaults,
   writeLocalConversationVoiceSettings,
+  writeVoiceProviderSettingsConfig,
 } from '@/sync/domains/settings/voiceSettings';
 import {
   saveAndUseAccountVoiceCredential,
@@ -121,7 +122,13 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       secrets: settings.secrets, connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
       platform: 'web', executionMachineId, voiceAgentEnabled: true, localInput: unavailableInput,
       local: resolveVoiceProviderAvailability({ happierVoiceSupported: true, platformOs: 'web', local: unavailableInput }).local,
-    })).toMatchObject({ runtime: 'missing', endpoint: 'ready', credential: 'ready' });
+    })).toMatchObject({
+      runtime: 'missing', endpoint: 'ready', credential: 'ready',
+      speechReadiness: {
+        hear: { status: 'unavailable', code: 'device_stt_unavailable' },
+        speak: { status: 'ready' },
+      },
+    });
   });
   it('requires voice.agent only for Agent-backed Local Voice', () => {
     const direct = createLocalSettings('device', 'device');
@@ -158,11 +165,20 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
   });
 
   it('requires every selected credentialed STT/TTS leaf and accepts selected-machine credentials', () => {
-    const missing = createLocalSettings('happier.voice.google/gemini-stt', 'happier.voice.google/google-cloud-tts');
+    const defaults = createLocalSettings('happier.voice.google/gemini-stt', 'happier.voice.google/google-cloud-tts');
+    const missing = settingsParse({ voice: writeVoiceProviderSettingsConfig(defaults.voice, 'happier.voice.google/google-cloud-tts', {
+      voiceName: 'en-US-Wavenet-D', languageCode: 'en-US', format: 'mp3', speakingRate: 1, pitch: 0,
+    }) });
     expect(project(missing).credential).toBe('missing');
 
     const sttReady = addCredential(missing, 'happier.voice.google/gemini-stt', 'api_key');
     expect(project(sttReady).credential).toBe('missing');
+    expect(project(sttReady)).toMatchObject({
+      speechReadiness: {
+        hear: { role: 'conversation_stt', providerId: 'happier.voice.google/gemini-stt', status: 'ready' },
+        speak: { role: 'conversation_tts', providerId: 'happier.voice.google/google-cloud-tts', code: 'credential_missing' },
+      },
+    });
 
     const bothReady = addCredential(sttReady, 'happier.voice.google/google-cloud-tts', 'api_key');
     expect(project(bothReady).credential).toBe('ready');
@@ -201,6 +217,9 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
 
   it('keeps Device and local inference credential-neutral', () => {
     expect(project(createLocalSettings('device', 'local_neural')).credential).toBe('ready');
+    expect(project(createLocalSettings('device', 'local_neural'))).toMatchObject({
+      speechReadiness: { hear: { status: 'ready' }, speak: null },
+    });
   });
 
   it('applies heavy-audio route readiness only when the selected Local Voice leaves require daemon execution', () => {

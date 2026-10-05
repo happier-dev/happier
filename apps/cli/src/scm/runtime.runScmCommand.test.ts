@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -87,5 +87,121 @@ describe('probeScmExecutableAvailable', () => {
 
     it('reports an installed SCM runtime dependency as available without a repository', async () => {
         await expect(probeScmExecutableAvailable({ bin: 'git', timeoutMs: 5000 })).resolves.toBe(true);
+    });
+});
+
+describe('runScmCommand stdin interaction', () => {
+    it.each([
+        ['main', 'commit'], ['linked', 'commit'], ['detached', 'commit'], ['main', 'abort'],
+    ] as const)('holds Git HEAD/ref locks in %s until the prepared transaction receives %s', async (mode, decision) => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-transaction-'));
+        try {
+            initRepo(workspace);
+            const cwd = mode === 'linked' ? join(workspace, 'linked') : workspace;
+            if (mode === 'linked') execFileSync('git', ['worktree', 'add', '-b', 'linked', cwd], { cwd: workspace, stdio: 'pipe' });
+            if (mode === 'detached') execFileSync('git', ['checkout', '--detach'], { cwd, stdio: 'pipe' });
+            const git = (args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim();
+            const parent = git(['rev-parse', 'HEAD']);
+            const branch = mode === 'detached' ? null : git(['symbolic-ref', 'HEAD']);
+            const headLock = `${resolve(cwd, git(['rev-parse', '--git-path', 'HEAD']))}.lock`;
+            const branchLock = branch ? `${resolve(cwd, git(['rev-parse', '--git-path', branch]))}.lock` : null;
+            const candidate = git(['commit-tree', 'HEAD^{tree}', '-p', parent, '-m', 'candidate']);
+            let prepared = false;
+            const result = await runScmCommand({
+                bin: 'git', cwd, args: ['update-ref', '--stdin'],
+                stdin: `start\nupdate HEAD ${candidate} ${parent}\nprepare\n`,
+                stdinInteraction: {
+                    readyLine: 'prepare: ok',
+                    respond: async () => {
+                        prepared = true;
+                        if (branch) expect(git(['symbolic-ref', 'HEAD'])).toBe(branch);
+                        else expect(() => git(['symbolic-ref', 'HEAD'])).toThrow();
+                        expect(git(['rev-parse', 'HEAD'])).toBe(parent);
+                        expect(existsSync(headLock)).toBe(true);
+                        if (branchLock) expect(existsSync(branchLock)).toBe(true);
+                        expect(() => git(['symbolic-ref', 'HEAD', 'refs/heads/other'])).toThrow();
+                        expect(() => git(['update-ref', branch ?? 'HEAD', candidate, parent])).toThrow();
+                        return `${decision}\n`;
+                    },
+                },
+            });
+            expect(prepared).toBe(true);
+            expect(result.success).toBe(true);
+            expect(result.stdout).toContain(`${decision}: ok`);
+            expect(git(['rev-parse', 'HEAD'])).toBe(decision === 'commit' ? candidate : parent);
+            expect(existsSync(headLock)).toBe(false);
+            if (branchLock) expect(existsSync(branchLock)).toBe(false);
+        } finally {
+            rmSync(workspace, { recursive: true, force: true });
+        }
+    });
+
+    it('releases a prepared Git transaction when the response callback rejects', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-transaction-error-'));
+        try {
+            initRepo(workspace);
+            const parent = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim();
+            const result = await runScmCommand({
+                bin: 'git', cwd: workspace, args: ['update-ref', '--stdin'],
+                stdin: `start\nupdate HEAD ${parent} ${parent}\nprepare\n`,
+                stdinInteraction: { readyLine: 'prepare: ok', respond: () => { throw new Error('HEAD identity refused'); } },
+            });
+            expect(result.success).toBe(false);
+            expect(result.stderr).toContain('HEAD identity refused');
+            expect(existsSync(join(workspace, '.git', 'HEAD.lock'))).toBe(false);
+            expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim()).toBe(parent);
+        } finally {
+            rmSync(workspace, { recursive: true, force: true });
+        }
+    });
+
+    it('never calls the response callback when Git rejects preparation', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-transaction-refusal-'));
+        try {
+            initRepo(workspace);
+            let called = false;
+            const result = await runScmCommand({
+                bin: 'git', cwd: workspace, args: ['update-ref', '--stdin'],
+                stdin: 'start\nupdate HEAD 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000\nprepare\n',
+                stdinInteraction: { readyLine: 'prepare: ok', respond: () => { called = true; return 'commit\n'; } },
+            });
+            expect(result.success).toBe(false);
+            expect(called).toBe(false);
+            expect(existsSync(join(workspace, '.git', 'HEAD.lock'))).toBe(false);
+        } finally {
+            rmSync(workspace, { recursive: true, force: true });
+        }
+    });
+
+    it.each(['timeout', 'cancel'] as const)('releases prepared native locks after %s while the response is pending', async (reason) => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-transaction-interrupted-'));
+        try {
+            initRepo(workspace);
+            const parent = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim();
+            const controller = new AbortController();
+            let prepared = false;
+            const result = await runScmCommand({
+                bin: 'git', cwd: workspace, args: ['update-ref', '--stdin'],
+                stdin: `start\nupdate HEAD ${parent} ${parent}\nprepare\n`,
+                timeoutMs: 1000,
+                signal: controller.signal,
+                stdinInteraction: {
+                    readyLine: 'prepare: ok',
+                    respond: () => {
+                        prepared = true;
+                        expect(existsSync(join(workspace, '.git', 'HEAD.lock'))).toBe(true);
+                        if (reason === 'cancel') controller.abort();
+                        return new Promise<string>(() => {});
+                    },
+                },
+            });
+            expect(prepared).toBe(true);
+            expect(result.success).toBe(false);
+            if (reason === 'timeout') expect(result.timedOut).toBe(true);
+            expect(existsSync(join(workspace, '.git', 'HEAD.lock'))).toBe(false);
+            expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim()).toBe(parent);
+        } finally {
+            rmSync(workspace, { recursive: true, force: true });
+        }
     });
 });

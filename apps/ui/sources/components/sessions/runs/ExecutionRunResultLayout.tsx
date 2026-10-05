@@ -70,6 +70,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
     },
+    footActionsWrap: {
+        flexWrap: 'wrap',
+    },
     footActionsNarrow: {
         justifyContent: 'flex-end',
     },
@@ -92,13 +95,15 @@ export function ExecutionRunResultLayout(props: Readonly<{
     /** Page only: what closes the scrolling body (the Run's steps disclosure). */
     after?: React.ReactNode;
     /** A quiet present-tense note at the foot's start ("1 fix selected"). */
-    footNote?: string | null;
+    footNote?: React.ReactNode;
     /** Page only: a second, quieter line under the note; the note then reads as the tray's title. */
     footDetail?: string | null;
     /** The foot's actions: at most one primary, then its quiet companions. */
     footActions?: React.ReactNode;
     /** Page only: what sits under the foot, pinned with it (the result's own follow-up field). */
     dock?: React.ReactNode;
+    /** Message only: one line under the actions saying what the next action will do. */
+    footHint?: React.ReactNode;
 }>) {
     const styles = stylesheet;
     const [narrow, setNarrow] = React.useState(false);
@@ -115,7 +120,8 @@ export function ExecutionRunResultLayout(props: Readonly<{
                 {hasFoot ? (
                     <View style={styles.messageFoot}>
                         {props.footNote ? <Text style={styles.footNote}>{props.footNote}</Text> : null}
-                        {props.footActions ? <View style={styles.footActions}>{props.footActions}</View> : null}
+                        {props.footActions ? <View style={[styles.footActions, styles.footActionsWrap]}>{props.footActions}</View> : null}
+                        {props.footHint ?? null}
                     </View>
                 ) : null}
             </View>

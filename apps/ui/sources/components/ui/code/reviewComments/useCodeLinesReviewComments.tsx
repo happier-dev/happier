@@ -4,53 +4,15 @@ import { View } from 'react-native';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { t } from '@/text';
 import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import {
-    computeLineContentHash,
-    findLineIndexByContentHash,
-    type LineContentHash,
-} from '@/utils/text/lineContentHash';
 
 import {
     buildReviewCommentDraftFromCodeLine,
     buildReviewCommentDraftFromCodeLineRange,
-    formatReviewCommentCodeLineContent,
+    resolveReviewCommentRangeSide,
 } from './buildReviewCommentDraftFromCodeLine';
+import { resolveCodeLineAnchor } from './resolveCodeLineAnchor';
 import { ReviewCommentInlineComposer } from './ReviewCommentInlineComposer';
 import { ReviewCommentSavedDrafts } from './ReviewCommentSavedDrafts';
-
-function anchorKeyForDraft(draft: ReviewCommentDraft): string {
-    if (draft.anchor.kind === 'fileLine') {
-        return `file:${draft.filePath}:L${draft.anchor.startLine}`;
-    }
-    if (draft.anchor.kind === 'diffLine') {
-        return `diff:${draft.filePath}:${draft.anchor.side}:${draft.anchor.startLine}:${draft.anchor.oldLine ?? 'n'}:${draft.anchor.newLine ?? 'n'}`;
-    }
-    if (draft.anchor.kind === 'line') {
-        return `normalized:${draft.filePath}:${draft.source}:${draft.anchor.side ?? 'file'}:${draft.anchor.line}`;
-    }
-    return `normalized:${draft.filePath}:${draft.source}:${draft.anchor.side ?? 'file'}:${draft.anchor.endLine}`;
-}
-
-function lineHashForDraftAnchor(draft: ReviewCommentDraft): LineContentHash | null {
-    if (draft.anchor.kind === 'range') return draft.anchor.endLineHash ?? null;
-    return draft.anchor.lineHash ?? null;
-}
-
-function anchorKeyForLine(params: { filePath: string; source: ReviewCommentSource; line: CodeLine }): string {
-    if (params.source === 'file') {
-        const startLine = typeof params.line.newLine === 'number' && params.line.newLine > 0 ? params.line.newLine : (params.line.sourceIndex + 1);
-        return `file:${params.filePath}:L${startLine}`;
-    }
-    const side = params.line.kind === 'remove' ? 'before' : 'after';
-    return `diff:${params.filePath}:${side}:${params.line.sourceIndex + 1}:${params.line.oldLine ?? 'n'}:${params.line.newLine ?? 'n'}`;
-}
-
-function isLineCandidateForDraft(params: { source: ReviewCommentSource; draft: ReviewCommentDraft; line: CodeLine }): boolean {
-    if (params.draft.source !== params.source) return false;
-    if (params.source !== 'diff' || params.draft.anchor.kind !== 'diffLine') return true;
-    const side = params.line.kind === 'remove' ? 'before' : 'after';
-    return side === params.draft.anchor.side;
-}
 
 function buildDraftsByResolvedLineId(params: Readonly<{
     filePath: string;
@@ -58,61 +20,11 @@ function buildDraftsByResolvedLineId(params: Readonly<{
     lines: readonly CodeLine[];
     drafts: readonly ReviewCommentDraft[];
 }>): Map<string, ReviewCommentDraft[]> {
-    const lineIdByAnchorKey = new Map<string, string>();
-    const lineById = new Map<string, CodeLine>();
-    for (const line of params.lines) {
-        lineIdByAnchorKey.set(anchorKeyForLine({
-            filePath: params.filePath,
-            source: params.source,
-            line,
-        }), line.id);
-        const normalizedLine = params.source === 'file'
-            ? (typeof line.newLine === 'number' && line.newLine > 0 ? line.newLine : line.sourceIndex + 1)
-            : line.kind === 'remove'
-                ? (typeof line.oldLine === 'number' && line.oldLine > 0 ? line.oldLine : line.sourceIndex + 1)
-                : (typeof line.newLine === 'number' && line.newLine > 0 ? line.newLine : line.sourceIndex + 1);
-        const normalizedSide = params.source === 'file' ? 'file' : line.kind === 'remove' ? 'before' : 'after';
-        lineIdByAnchorKey.set(`normalized:${params.filePath}:${params.source}:${normalizedSide}:${normalizedLine}`, line.id);
-        lineById.set(line.id, line);
-    }
-
     const map = new Map<string, ReviewCommentDraft[]>();
     for (const draft of params.drafts) {
         if (draft.filePath !== params.filePath || draft.source !== params.source) continue;
-
-        let lineId: string | null = null;
-        const exactLineId = lineIdByAnchorKey.get(anchorKeyForDraft(draft)) ?? null;
-        if (exactLineId) {
-            const exactLine = lineById.get(exactLineId);
-            const lineHash = lineHashForDraftAnchor(draft);
-            const exactLineMatchesHash = !lineHash || (
-                exactLine
-                && computeLineContentHash(formatReviewCommentCodeLineContent({
-                    source: params.source,
-                    line: exactLine,
-                })) === lineHash
-            );
-            if (exactLineMatchesHash) {
-                lineId = exactLineId;
-            }
-        }
-        const lineHash = lineHashForDraftAnchor(draft);
-        if (!lineId && lineHash) {
-            const index = findLineIndexByContentHash({
-                lines: params.lines,
-                lineHash,
-                isCandidate: (line) => isLineCandidateForDraft({
-                    source: params.source,
-                    draft,
-                    line,
-                }),
-                getLineContent: (line) => formatReviewCommentCodeLineContent({
-                    source: params.source,
-                    line,
-                }),
-            });
-            lineId = index >= 0 ? params.lines[index]?.id ?? null : null;
-        }
+        const resolution = resolveCodeLineAnchor({ filePath: params.filePath, source: params.source, lines: params.lines, anchor: draft.anchor });
+        const lineId = resolution.lines[resolution.lines.length - 1]?.id;
         if (!lineId) continue;
 
         const existing = map.get(lineId);
@@ -182,6 +94,10 @@ export function useCodeLinesReviewComments(params: {
     const onPressAddCommentRange = React.useCallback((rangeLines: readonly CodeLine[]) => {
         if (!enabled) return;
         const filtered = rangeLines.filter((line) => !line.renderIsHeaderLine);
+        if (resolveReviewCommentRangeSide(source, filtered) === null) {
+            onError?.(t('files.selectionFailed'));
+            return;
+        }
         const endLine = filtered[filtered.length - 1];
         if (!endLine) return;
 
@@ -190,7 +106,7 @@ export function useCodeLinesReviewComments(params: {
         setActiveCommentRangeLines(filtered);
         setActiveEditingDraftId(existingDraft?.id ?? null);
         setCommentBody(existingDraft?.body ?? '');
-    }, [draftsByLineId, enabled]);
+    }, [draftsByLineId, enabled, onError, source]);
 
     const startEditingDraft = React.useCallback((line: CodeLine, draft: ReviewCommentDraft) => {
         if (!enabled) return;
@@ -221,6 +137,7 @@ export function useCodeLinesReviewComments(params: {
                         drafts={drafts}
                         onEditDraft={(draft) => startEditingDraft(line, draft)}
                         onDeleteDraft={onDeleteDraft}
+                        onUpdateDraft={onUpsertDraft}
                         style={{ marginLeft: 0, marginRight: 8, marginTop: 6, gap: 6 }}
                         testID={`review-comment-saved-drafts:${line.id}`}
                     />
@@ -269,7 +186,10 @@ export function useCodeLinesReviewComments(params: {
                                     contextRadius,
                                     existing: existing ? { id: existing.id, createdAt: existing.createdAt } : null,
                                 });
-                            onUpsertDraft?.(draft);
+                            onUpsertDraft?.({
+                                ...draft,
+                                ...(existing?.includeInPrompt !== undefined ? { includeInPrompt: existing.includeInPrompt } : {}),
+                            });
                             setActiveCommentLineId(null);
                             setActiveCommentRangeLines(null);
                             setActiveEditingDraftId(null);

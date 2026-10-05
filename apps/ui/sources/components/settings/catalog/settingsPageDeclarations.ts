@@ -66,9 +66,13 @@ import {
     VOICE_CONVERSATIONS_SETTINGS,
     VOICE_DICTATION_SETTINGS,
     VOICE_PRIVACY_SETTINGS,
+    projectVoiceSettingsPageDeclarations,
 } from '@/voice/settings/voiceSettingsDeclarations';
 
 import type { SettingsPageDeclaration } from './settingDeclarations';
+import { getVoiceContributedSettingsDeclarations, voiceSettingsDeclarationRegistry } from '@/voice/settings/voiceContributedSettingsDeclarations';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 /**
  * Every page that declares its settings for search. A page joins by adding its declaration here;
@@ -146,3 +150,9 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     VOICE_PRIVACY_SETTINGS,
     VOICE_ADVANCED_SETTINGS,
 ];
+
+/** Static host declarations plus fields from the one currently admitted Voice registry. */
+export function getSettingsPageDeclarations(localize?: PluginLocalizedTextResolver, settings?: Pick<Settings, 'voice'>): readonly SettingsPageDeclaration[] {
+    const host = settings ? projectVoiceSettingsPageDeclarations(SETTINGS_PAGE_DECLARATIONS, settings.voice, voiceSettingsDeclarationRegistry) : SETTINGS_PAGE_DECLARATIONS;
+    return [...host, ...getVoiceContributedSettingsDeclarations(undefined, localize)];
+}

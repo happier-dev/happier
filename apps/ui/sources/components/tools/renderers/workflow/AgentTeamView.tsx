@@ -8,7 +8,8 @@ import {
     AgentTeamSendMessageResultV2Schema,
 } from '@happier-dev/protocol';
 
-import { StructuredToolCard } from '@/components/tools/renderers/core/StructuredToolCard';
+import { StructuredToolCard, projectStructuredToolCardDisplayText } from '@/components/tools/renderers/core/StructuredToolCard';
+import type { ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import type { ToolViewProps } from '@/components/tools/renderers/core/_registry';
 import {
     appendStructuredToolFact,
@@ -86,7 +87,13 @@ function extractStructuredSections(tool: ToolViewProps['tool']): Readonly<{
     };
 }
 
-export const AgentTeamView = React.memo<ToolViewProps>(({ tool }) => {
+export const projectAgentTeamDisplayText: ToolDisplayTextProjector = (tool) => {
+    const sections = extractStructuredSections(tool);
+    if (sections.inputFacts.length === 0 && sections.resultFacts.length === 0 && sections.rawInput === null && sections.rawResult === null) return [];
+    return projectStructuredToolCardDisplayText({ title: formatStructuredToolTitle(tool.name), ...sections });
+};
+
+export const AgentTeamView = React.memo<ToolViewProps>(({ tool, messageId }) => {
     const { inputFacts, resultFacts, rawInput, rawResult } = extractStructuredSections(tool);
     const hasInput = inputFacts.length > 0 || rawInput !== null;
     const hasResult = resultFacts.length > 0 || rawResult !== null;
@@ -95,6 +102,7 @@ export const AgentTeamView = React.memo<ToolViewProps>(({ tool }) => {
     return (
         <StructuredToolCard
             title={formatStructuredToolTitle(tool.name)}
+            messageId={messageId}
             inputFacts={inputFacts}
             resultFacts={resultFacts}
             rawInput={rawInput}

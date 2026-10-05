@@ -8,7 +8,7 @@ const activeServerId = getActiveServerSnapshot().serverId;
 
 const appendVoiceConversationNoteText = vi.fn();
 
-const state: any = {
+let state: any = {
   settings: {
     voice: {
       privacy: {
@@ -94,8 +94,13 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
 
   it('redacts file paths inside session-summary labels when file path sharing is disabled', async () => {
     state.settings.voice.privacy.shareFilePaths = false;
-    state.sessions.s1.metadata.summary.text = 'Editing /Users/alice/SecretRepo/src/a.ts';
-    state.sessions.s2.metadata.summary.text = 'Reviewing /Users/alice/SecretRepo/src/b.ts';
+    state.sessions = {
+      ...state.sessions,
+      s1: { id: 's1', metadata: { summary: { text: 'Editing /Users/alice/SecretRepo/src/a.ts' } } },
+      s2: { id: 's2', metadata: { summary: { text: 'Reviewing /Users/alice/SecretRepo/src/b.ts' } } },
+    };
+    // The canonical testkit reader, like Zustand, admits a new snapshot identity.
+    state = { ...state };
     const { appendVoiceTargetSessionSwitchNote } = await import('./appendVoiceTargetSessionSwitchNote');
 
     appendVoiceTargetSessionSwitchNote({

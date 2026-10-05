@@ -53,6 +53,24 @@ An existing same-concept split-brain in the touched corridor must be consolidate
 
 Before adding dual writers, parallel persisted formats, rollout modes, operator flags, socket-drain protocols, or a mandatory client floor, compare their lifetime cost with the actual user behavior required. If preserving old-client/new-server behavior for a major change would require substantial machinery, stop and obtain an explicit developer/product decision among: operation-scoped degradation, a documented client update requirement, or the heavier compatibility transition. An agent must not silently choose either forced upgrades or heavy compatibility machinery. This exception is for genuinely incompatible, high-cost transitions; routine server changes must remain compatible and must not manufacture client-update requirements.
 
+### Live-stream relay diagnostics (development)
+
+`capabilities.machines.liveStream.serverRouted` is an optional read projection.
+Current relay policy caps are optional positive integers: `{}` means the Home
+has configured no explicit limits, while `caps: null` means relay policy is
+unavailable. Malformed diagnostics normalize at the Protocol capability owner
+to `caps: null` and `disabledReason: 'relay_caps_missing'`; they cannot invalidate
+Home identity or unrelated feature gates. Relay operations still require their
+canonical feature and grant admission, and invalid caps never become an
+uncapped policy. Authorization and stream wire schemas remain strict about
+their known fields.
+
+The inspected `../0.2` predecessor at
+`4651997217a36250e203643f2bd002dbf7a93321` has no live-stream capability producer
+or reader. Omission retains the existing disabled default. The earlier 0.3
+required-cap reader was development-only; update managed server and daemon
+support together rather than inventing policy limits to satisfy stale output.
+
 ### SCM status snapshot transport (development)
 
 The current machine `scm.status.snapshot` RPC omits neutral per-entry facts:
@@ -104,6 +122,20 @@ new key or negotiation. It does not prevent request replay. Plain-mode accounts
 and reserved server-origin methods keep their existing contracts. See
 [encryption.md](encryption.md#encrypted-socket-rpc-routing-v03-development).
 
+### Machine Session-log diagnostics (v0.3 development)
+
+Machine diagnostics register and call `daemon.session.log.tail`; `session.log.tail`
+is Session-only. The Machine operation retains its explicit log path, response and
+path-safety rules. The existing `bugreport.getLogTail` has a different diagnostics
+allow-list and response contract and is unchanged.
+
+The standing one-way 0.2 → 0.3 ruling requires all components to update together,
+with no rollback or 0.2/0.3 cross-component support. Only 0.2-created data must
+remain usable. A released 0.2 UI or daemon using Machine-prefixed `session.log.tail`
+against a 0.3 server is outside that boundary, so the server retains strict scope
+enforcement without a legacy registration or routing exception. This rename changes
+no persisted data, log contents or historical log reader.
+
 ### Saved agent-start policy (development)
 
 `sessionAgentSpawnPolicyV1` retains the strict 0.2 V1 field set, including
@@ -144,6 +176,30 @@ runtime admits that combination. It does not establish that a particular 0.2
 binary is eligible for 0.3 updates. Remove the guard only when no supported
 eligible binary can lack the SDK; delivering native modules still requires a
 native app build.
+
+### Voice presence settings (development)
+
+The device-local `voicePresenceContainer` chooses `top_bar`, `island`, or `orb`.
+Missing or malformed values resolve through the existing local-settings parser to
+the responsive default: Island on phones, Top bar otherwise. Container selection
+does not change the admitted attempt, microphone, transcript, or Account-scoped
+conversation settings.
+
+The inspected clean `../0.2` Voice and local-settings owners at
+`388915739e64655b454e0bee8198833a54e6eabc` retain Account `voice.ui.surfaceLocation`
+(`sidebar`, `session`, `auto`) but have neither of the old orb booleans. Current
+ingress still accepts that Account field; it is not the new placement authority.
+The replaced `voiceOrbEnabled` and `voiceOrbExpanded` were 0.3-only choices, so
+their removal does not create a predecessor-data migration or a second writer.
+
+Private owner Voice bindings retain optional nullable `targetServerId` alongside
+`targetSessionId`, matching the current Home-qualified Voice binding writer.
+The strict owner envelope preserves that field; the shared projection does not
+disclose the binding. The inspected current `../0.2`
+`voice/sessionBinding/voiceConversationBindingMetadata.ts` writer omits the
+field, and those bindings remain readable through the same current owner.
+No new caller authority, persisted format, or old-component rollback path is
+introduced.
 
 ### Native voice word segmentation (development)
 
@@ -196,6 +252,23 @@ writes retain their Account encryption and strict owner envelope. Its terminal
 schema composes the same canonical known fields with the existing closed,
 bounded policy rather than keeping a separate host enum or an unknown-field bag.
 The pinned historical terminal reader fixture validates only the flat seam.
+
+### Terminal workspace and RPC attribution (development)
+
+Ensure and Restart use the same terminal launch request schema, including optional
+`sessionId` attribution. Current session controllers send it for either operation;
+Restart can also retain the previous PTY's attribution when a caller omits it. The
+request field supplies attribution after daemon state loss without introducing
+durable terminal identity. Session-restricted RPC owners reject a different Session.
+
+The inspected clean `../0.2` terminal RPC and Protocol owners at
+`388915739e64655b454e0bee8198833a54e6eabc` accept extra launch-request fields but do
+not consume this attribution. Current callers therefore remain accepted there,
+without promising Other sessions discovery on that older daemon. The same
+predecessor's Details and URL owners create only `terminal:embedded` with a
+`{ kind: 'terminal' }` resource. The current workspace reader seeds that member
+when predecessor workspace state is absent; an unresolved current instance is
+unavailable rather than a request to create another shell.
 
 ### Terminal-host account settings (development)
 
@@ -423,6 +496,16 @@ retention.
 
 ### Session access projection normalization (development)
 
+Retained 0.2 public Session links keep their legacy token and wrapped-key
+derivation. Flat layout-0 metadata is not recipient-safe: anonymous reads return
+typed `metadata_privacy_upgrade_required`, never the raw flat metadata. On the
+owner's initial 0.3 visit, authenticated owner-only discovery includes pending
+shared Sessions outside the active list, and the existing currentness-checked
+metadata tuple writer upgrades them. The same link then reads the recipient-safe
+projection. The pending viewer asks the owner to open Happier; it does not treat
+the privacy refusal as revocation or silently weaken the projection. This is a
+retained-data upgrade direction, not a new old-server fallback or rollback claim.
+
 Current Session readers treat a valid strict `effectiveAccess.v = 1` projection as
 the sole access presentation authority. A present but malformed current projection
 is unavailable and cannot fall through to released owner/direct inference. Only
@@ -548,8 +631,35 @@ Protocol-owned `automationTemplatePayloadV1`/`automationTemplateStoredV1` codec
 in the daemon, Account trigger projection and UI read adapters. Explicit plain
 and encrypted V1 envelopes, including the predecessor outer Session-id
 consistency check and template-only raw-secretbox recovery, remain readable;
-the Account host checks persisted Account mode before opening content. Generic
-Account crypto does not gain an untagged-ciphertext fallback.
+the Account host checks persisted Account mode before opening content. On a plain
+Account the only encrypted execution exception is the explicit predecessor
+existing-Session template, bound to an authenticated retained E2EE Session whose
+envelope the device can open. The server validates that exact same-Account Session
+binding, not arbitrary ciphertext. A keyless reader projects a locked legacy row
+with deletion available. Generic Account crypto does not gain an
+untagged-ciphertext fallback.
+
+The Account transition converter owns explicit per-row recovery of predecessor
+templates targeting a plain Session or no Session. It uses genuine historical
+material, writes canonical plain content through `templateVersion` CAS, and does
+not repeat an already-plain write. A failed decrypt stays locked; a CAS conflict
+requires a fresh read. Templates bound to retained E2EE Sessions are not rewritten,
+and their historical material remains in existing device custody until no longer
+needed or explicitly discarded. These are development-source upgrade guarantees,
+not evidence that the loaded runtime or a release has been certified.
+
+Retirement also retains material for returned encrypted trigger definitions and
+opaque predecessor Run summaries. The 0.2 transition did not convert Run summaries;
+current inventory can return their explicit `legacySummaryCiphertext` representation
+even on a plain Account. Recovery does not reinterpret or rewrite that history.
+
+The existing V3 PATCH mutation remains closed. Its recovery-only
+`templateCiphertext` input is mutually exclusive with `executionRecipe` and is a
+direct cut of the undeployed 0.3 request, not an ignorable extension promised to
+an older server. The current CRUD owner requires the stored predecessor source,
+plain Account mode, unchanged target and revision CAS; ordinary recipe writers
+cannot use it to downgrade current content. No reverse 0.3-to-0.2 write or rollback
+adapter is introduced.
 
 The trigger projection carries `legacy: { editable: false, reason: 'created_in_0_2', placements }`
 alongside the retained prompt, target and schedules. The read-only `placements`
@@ -559,8 +669,15 @@ including zero or multiple assignments; those rows do not invent a single
 target without a single assignment, the Session owner resolves its actual
 machine; unavailable Session authority leaves that target unavailable rather
 than choosing an arbitrary assignment. Reading does not migrate a row.
-The UI identifies these rows as created in Happier 0.2, not deleted workflows,
-and keeps them read-only. Trigger removal needs no conversion; toggling does.
+The UI identifies these rows as created in Happier 0.2, not deleted workflows.
+Opening the Account trigger popover changes nothing. A reviewed edit uses the
+shared trigger form and `workflow.trigger.update`, discloses the Happier 0.3-or-later
+execution boundary before Done, and retains the draft when conversion is refused.
+Each schedule in a plural set is addressed by its own trigger id; a manual row
+keeps the existing Automation Run now and never gains an invented schedule.
+Trigger removal needs no conversion; a legacy toggle requires explicit review.
+Enabling an individual trigger in a disabled set is one revision-checked
+reconciliation: only that trigger becomes effective, not its disabled siblings.
 Conversion uses the existing inline representability owner
 and one Automation revision-CAS write, with no Artifact creation. Until Channels
 supplies an authoritative Account-scoped association/absence observation,
@@ -569,6 +686,13 @@ conversion refuses `legacy_conversion_unsupported` with
 Unrepresentable settings also refuse without rewriting execution bytes.
 Conversion writes the current Workflow recipe for the current daemon. This is
 development-source behavior, not released or live-QA evidence.
+
+The retired `/automations/[id]` and `/automations/edit?id=` routes only resolve
+the existing direct Automation read, then open the bound workflow's trigger
+section or the Account trigger popover in Workflows. A deleted row lands in
+Workflows with a not-available line; a transport failure keeps Retry rather than
+claiming deletion. The full parallel Automation editor is removed, not the
+retained template codec or historical data.
 
 Current development trigger-set projections use the Automation's `templateVersion`
 as their revision. Trigger authoring writes advance it in the owner's transaction,
@@ -632,6 +756,27 @@ one-shot recipe is not an adapter for obsolete copied Workflow definitions.
 Retained 0.2 flat-template prompts stay literal, including brace text, when run
 or explicitly converted to a Workflow; native current one-shot input-token rules
 do not reinterpret or restrict those historical prompts.
+
+Explicit conversion in 0.3 development requires the Channels binding-read owner
+to establish that the exact Automation has no retained binding. Disabled and
+deleting bindings still count; unavailable, corrupt or mismatched observations
+never become absence. Existing-Session conversion also requires that Session's
+current Agent identity and project, with its Machine matching the retained
+assignment. The shared trigger owner writes the inline recipe through the existing
+Automation revision CAS; unsupported templates remain unchanged with a typed
+`legacy_conversion_unsupported` reason.
+
+Predecessor recovery follows the Account-transition and retained-Session paths
+described above. The 0.2 transition to plain could leave Automation ciphertext
+whose outer template requires genuine historical Account material; its embedded
+Session key does not decrypt that outer template. Plain/no-Session-target rows
+can be explicitly recovered to canonical plain content through the existing
+converter and `templateVersion` CAS. Templates bound to retained E2EE Sessions
+stay encrypted and execute through that Session's authenticated envelope on a
+key-holding device or daemon. A keyless reader stays locked with deletion
+available. Historical material stays in existing custody; discarding it is an
+explicit user action, not a generic reader fallback or recreated Account key.
+These implemented development paths do not certify a loaded runtime or release.
 
 The current development trigger context replaces the earlier copied-definition
 payload in place. It seals workspace, execution target, constant inputs, optional

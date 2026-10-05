@@ -1,25 +1,12 @@
 import * as React from 'react';
 
+import { isEditableKeyboardTarget } from '@/components/ui/keyboard/isEditableKeyboardTarget';
+
 export type StoryDeckKeyboardShortcutsProps = Readonly<{
     onAdvance: () => void;
     onBack?: () => void;
     onDismiss?: () => void;
 }>;
-
-function isEditableKeyboardTarget(target: unknown): boolean {
-    if (!target || typeof target !== 'object') return false;
-    const element = target as {
-        tagName?: unknown;
-        isContentEditable?: boolean;
-        closest?: (selector: string) => unknown;
-    };
-    const tagName = String(element.tagName ?? '').toLowerCase();
-    return tagName === 'input'
-        || tagName === 'textarea'
-        || tagName === 'select'
-        || element.isContentEditable === true
-        || element.closest?.('[contenteditable="true"], [data-keyboard-shortcuts-owned="true"]') != null;
-}
 
 /**
  * Web-only keyboard handler:

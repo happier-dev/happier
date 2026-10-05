@@ -1,8 +1,8 @@
-import { isBackendTargetDisabledByAccountSettings, type AccountSettings } from '@happier-dev/protocol';
+import { isBackendTargetDisabledByAccountSettings, type AccountSettings, type ReviewEngineCapabilities } from '@happier-dev/protocol';
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
-import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { readAgentExecutionRunCapabilities, readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type {
   ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
@@ -15,6 +15,7 @@ export type ActionReviewEngineInventoryItem = Readonly<{
   label: string;
   enabled: boolean;
   backendId: string;
+  capabilities: ReviewEngineCapabilities;
   description?: string;
 }>;
 
@@ -121,6 +122,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
         ...(description ? { description } : {}),
         enabled: !isBackendTargetDisabledByAccountSettings(accountSettings, { kind: 'backend', backendId: agent.id }),
         backendId: agent.id,
+        capabilities: { structuredNarration: readAgentStructuredOutputCapabilities(agent.richDefinition?.definition)?.formats.includes('json') === true },
       }];
     });
   const configuredItems = (await buildConfiguredAcpBackendInventoryItems(accountSettings))
@@ -131,6 +133,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
       label: item.label,
       enabled: item.enabled,
       backendId: item.backendId,
+      capabilities: { structuredNarration: false },
       ...(item.description ? { description: item.description } : {}),
     }));
   const items = [...agentItems, ...configuredItems]

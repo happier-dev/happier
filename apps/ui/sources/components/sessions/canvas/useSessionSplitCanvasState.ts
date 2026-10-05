@@ -1,142 +1,68 @@
 import * as React from 'react';
-
-import { useSplitCanvasPersistence } from '@/components/appShell/splitCanvas/hooks/useSplitCanvasPersistence';
-import type { SplitCanvasAction } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
+import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { useIsDataReady, useSettingMutable } from '@/sync/domains/state/storage';
-import {
-    readPersistedSessionSplitCanvasSnapshot,
-    shouldPersistSessionSplitCanvasSnapshot,
-    writePersistedSessionSplitCanvasSnapshot,
-    type SessionSplitCanvasLeafPayload,
-} from '@/sync/domains/session/sessionSplitCanvasPersistence';
+import { createSessionSplitCanvasPersistenceSnapshot, readPersistedSessionSplitCanvasSnapshot, shouldPersistSessionSplitCanvasSnapshot, writePersistedSessionSplitCanvasSnapshot } from '@/sync/domains/session/sessionSplitCanvasPersistence';
 import type { SessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
 import { resolveSessionSplitCanvasScopeKey } from '@/sync/domains/session/sessionSplitCanvasScope';
-import {
-    reconcileSessionSplitCanvasRouteAnchor,
-    reduceSessionSplitCanvasState,
-    resolveSessionSplitCanvasState,
-    runSessionSplitCanvasCommand,
-    type SessionSplitCanvasState,
-} from './sessionSplitCanvasState';
+import { reconcileSessionSplitCanvasRouteAnchor, reduceSessionSplitCanvasState, resolveSessionSplitCanvasState, type SessionCanvasSplitMeasurement, type SessionSplitCanvasAction, type SessionSplitCanvasState } from './sessionSplitCanvasState';
 
 export type { SessionSplitCanvasState } from './sessionSplitCanvasState';
-
-function areJsonEqual(left: unknown, right: unknown): boolean {
-    return JSON.stringify(left) === JSON.stringify(right);
-}
-
 export function useSessionSplitCanvasState(input: Readonly<{
     routeSessionId: string;
-    scope: SessionSplitCanvasScope | null;
-}>): Readonly<{
-    state: SessionSplitCanvasState;
-    dispatch: (action: SplitCanvasAction<SessionSplitCanvasLeafPayload>) => void;
-    openSessionInSplit: (input: Readonly<{
-        sessionId: string;
-        direction: 'right' | 'down';
-    }>) => void;
-    focusSession: (sessionId: string) => void;
-}> {
-    const [sessionSplitCanvasLayoutsV1, setSessionSplitCanvasLayoutsV1] = useSettingMutable('sessionSplitCanvasLayoutsV1');
+    scope: SessionSplitCanvasScope;
+    entityScope: EntityDragScopeV1;
+}>) {
+    const [layouts, setLayouts] = useSettingMutable('sessionSplitCanvasLayoutsV1');
     const isDataReady = useIsDataReady();
-    const scopeKey = React.useMemo(() => resolveSessionSplitCanvasScopeKey(input.scope), [input.scope]);
+    const scopeKey = resolveSessionSplitCanvasScopeKey(input.scope)!;
     const persistedSnapshot = React.useMemo(() => readPersistedSessionSplitCanvasSnapshot({
-        settings: { sessionSplitCanvasLayoutsV1 },
-        scopeKey,
-    }), [scopeKey, sessionSplitCanvasLayoutsV1]);
-    const resolvedState = React.useMemo(() => resolveSessionSplitCanvasState({
-        sessionId: input.routeSessionId,
-        persistedSnapshot,
-    }), [input.routeSessionId, persistedSnapshot]);
-    const [state, setState] = React.useState<SessionSplitCanvasState>(resolvedState);
-    const restoreIdentity = React.useMemo(() => JSON.stringify({
-        scopeKey,
-        persistedSnapshot,
-    }), [persistedSnapshot, scopeKey]);
-    const lastRestoreIdentityRef = React.useRef<string | null>(null);
-    const previousRouteSessionIdRef = React.useRef(input.routeSessionId);
-    const [persistenceReadyIdentity, setPersistenceReadyIdentity] = React.useState<string | null>(null);
-
+        settings: { sessionSplitCanvasLayoutsV1: layouts }, scopeKey,
+    }), [layouts, scopeKey]);
+    const initial = React.useMemo(() => resolveSessionSplitCanvasState({
+        sessionId: input.routeSessionId, scope: input.entityScope, persistedSnapshot,
+    }), [input.routeSessionId, input.entityScope.serverId, input.entityScope.accountId, persistedSnapshot]);
+    const [state, setState] = React.useState(initial);
+    const stateRef = React.useRef(state);
+    const latest = React.useRef({ input, layouts, isDataReady, scopeKey, setLayouts });
+    latest.current = { input, layouts, isDataReady, scopeKey, setLayouts };
+    const restoreRef = React.useRef(persistedSnapshot);
+    const routeRef = React.useRef(input.routeSessionId);
     React.useEffect(() => {
-        if (lastRestoreIdentityRef.current === restoreIdentity) {
-            return;
-        }
-        lastRestoreIdentityRef.current = restoreIdentity;
-        setState((current) => (areJsonEqual(current, resolvedState) ? current : resolvedState));
-    }, [resolvedState, restoreIdentity]);
-
-    React.useEffect(() => {
-        const previousRouteSessionId = previousRouteSessionIdRef.current;
-        previousRouteSessionIdRef.current = input.routeSessionId;
-        setState((current) => reconcileSessionSplitCanvasRouteAnchor(current, input.routeSessionId, {
-            previousRouteSessionId,
-        }));
-    }, [input.routeSessionId]);
-
-    React.useEffect(() => {
-        if (!scopeKey || !isDataReady) {
-            return;
-        }
-        if (persistenceReadyIdentity === restoreIdentity) {
-            return;
-        }
-        if (!areJsonEqual(state, resolvedState)) {
-            return;
-        }
-        setPersistenceReadyIdentity(restoreIdentity);
-    }, [isDataReady, persistenceReadyIdentity, resolvedState, restoreIdentity, scopeKey, state]);
-
-    const dispatch = React.useCallback((action: SplitCanvasAction<SessionSplitCanvasLeafPayload>) => {
-        setState((current) => reduceSessionSplitCanvasState(current, action, {
-            routeSessionId: input.routeSessionId,
-        }));
-    }, [input.routeSessionId]);
-
-    const openSessionInSplit = React.useCallback((command: Readonly<{
-        sessionId: string;
-        direction: 'right' | 'down';
-    }>) => {
-        setState((current) => runSessionSplitCanvasCommand(current, {
-            type: 'openSessionInSplit',
-            sessionId: command.sessionId,
-            direction: command.direction,
-        }));
-    }, []);
-
-    const focusSession = React.useCallback((sessionId: string) => {
-        setState((current) => runSessionSplitCanvasCommand(current, {
-            type: 'focusSession',
-            sessionId,
-        }));
-    }, []);
-
-    useSplitCanvasPersistence<SessionSplitCanvasLeafPayload>({
-        state,
-        enabled: Boolean(scopeKey) && isDataReady && persistenceReadyIdentity === restoreIdentity,
-        onPersist: React.useCallback((snapshot) => {
-            if (!scopeKey) {
-                return;
-            }
-            const persisted = sessionSplitCanvasLayoutsV1?.[scopeKey] ?? null;
-            if (!shouldPersistSessionSplitCanvasSnapshot({
-                persisted,
-                snapshot,
-                routeSessionId: input.routeSessionId,
-            })) {
-                return;
-            }
-            setSessionSplitCanvasLayoutsV1(writePersistedSessionSplitCanvasSnapshot({
-                settings: { sessionSplitCanvasLayoutsV1 },
-                scopeKey,
-                snapshot,
+        if (restoreRef.current === persistedSnapshot) return;
+        restoreRef.current = persistedSnapshot;
+        const current = stateRef.current;
+        if (JSON.stringify(createSessionSplitCanvasPersistenceSnapshot(current)) === JSON.stringify(createSessionSplitCanvasPersistenceSnapshot(initial))) return;
+        stateRef.current = initial;
+        setState(initial);
+    }, [initial, persistedSnapshot]);
+    const getState = React.useCallback(() => stateRef.current, []);
+    const commitState = React.useCallback((next: SessionSplitCanvasState): SessionSplitCanvasState => {
+        const current = stateRef.current;
+        const context = latest.current;
+        if (!context.isDataReady || current.scope.serverId !== context.input.entityScope.serverId
+            || current.scope.accountId !== context.input.entityScope.accountId) return current;
+        if (next === current) return current;
+        stateRef.current = next;
+        setState(next);
+        const snapshot = createSessionSplitCanvasPersistenceSnapshot(next);
+        if (shouldPersistSessionSplitCanvasSnapshot({ persisted: context.layouts[context.scopeKey], snapshot, routeSessionId: context.input.routeSessionId })) {
+            context.setLayouts(writePersistedSessionSplitCanvasSnapshot({
+                settings: { sessionSplitCanvasLayoutsV1: context.layouts }, scopeKey: context.scopeKey, snapshot,
             }).sessionSplitCanvasLayoutsV1);
-        }, [scopeKey, sessionSplitCanvasLayoutsV1, setSessionSplitCanvasLayoutsV1]),
-    });
-
-    return {
-        state,
-        dispatch,
-        openSessionInSplit,
-        focusSession,
-    };
+        }
+        return next;
+    }, []);
+    const dispatch = React.useCallback((action: SessionSplitCanvasAction): SessionSplitCanvasState => commitState(
+        reduceSessionSplitCanvasState(stateRef.current, action, { routeSessionId: latest.current.input.routeSessionId }),
+    ), [commitState]);
+    React.useEffect(() => {
+        if (!isDataReady || routeRef.current === input.routeSessionId) return;
+        routeRef.current = input.routeSessionId;
+        commitState(reconcileSessionSplitCanvasRouteAnchor(stateRef.current, input.routeSessionId));
+    }, [input.routeSessionId, isDataReady, commitState]);
+    const focusSession = React.useCallback((sessionId: string) => { dispatch({ type: 'focusSession', sessionId }); }, [dispatch]);
+    const openSessionInSplit = React.useCallback((command: Readonly<{
+        sessionId: string; direction: 'right' | 'down'; measurement?: SessionCanvasSplitMeasurement;
+    }>) => { dispatch({ type: 'openSessionInSplit', ...command }); }, [dispatch]);
+    return { state, getState, dispatch, focusSession, openSessionInSplit };
 }

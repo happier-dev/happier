@@ -814,7 +814,7 @@ test('generated Action projection is declaration-neutral and retains its public 
   assert.doesNotMatch(source, /\bsurfaceBindings\??:/u);
 });
 
-test('generated Action DTO signatures use the canonical SDK JSON declarations', () => {
+test('generated Action DTO signatures use the canonical SDK public declarations', () => {
   const { outputs } = actionTypeMapGenerator.projectActionDtoDeclarations();
   const family = outputs.get('packages/plugin-sdk/src/actions/dtos/automationEventsActionDtos.generated.ts');
   assert.match(family, /import type \{ JsonValue, PluginJsonValueV2 \} from '\.\.\/\.\.\/identity\.js';/u);
@@ -823,6 +823,11 @@ test('generated Action DTO signatures use the canonical SDK JSON declarations', 
   }
   assert.ok(!outputs.has('packages/plugin-sdk/src/actions/dtos/strictJsonValue.generated.ts'));
   assert.ok(!outputs.has('packages/plugin-sdk/src/actions/dtos/jsonSchema.generated.ts'));
+  const scmFamily = outputs.get('packages/plugin-sdk/src/actions/dtos/scmDiffSummaryActionDtos.generated.ts');
+  assert.match(scmFamily, /import type \{ ScmComparisonSource \} from '\.\.\/\.\.\/scm\/projections\.js';/u);
+  for (const output of outputs.values()) {
+    assert.doesNotMatch(output, /export type ScmComparisonSource\s*=/u);
+  }
 });
 
 test('generated Plugin Action projection does not publish the host Action census', () => {

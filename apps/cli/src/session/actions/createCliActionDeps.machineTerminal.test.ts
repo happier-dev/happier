@@ -11,6 +11,23 @@ import { createCliActionDeps } from './createCliActionDeps';
 
 describe('CLI machine terminal Action', () => {
   beforeEach(() => boundary.callMachineRpc.mockReset());
+  it('searches workspace content through the exact machine transport with cancellation', async () => {
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
+      sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
+    const signal = new AbortController().signal;
+    const page = { ok: true, files: [], hasMore: false, coverage: 'complete' };
+    boundary.callMachineRpc.mockResolvedValueOnce(page);
+    expect(await executor.execute('workspace.files.search', { machineId: 'machine', rootPath: '/project', query: 'needle' },
+      { surface: 'cli', serverId: 'home', signal })).toEqual({ ok: true, result: page });
+    expect(boundary.callMachineRpc).toHaveBeenLastCalledWith(expect.objectContaining({
+      machineId: 'machine', method: RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH,
+      request: { rootPath: '/project', query: 'needle' }, signal,
+    }));
+    expect(await executor.execute('workspace.files.search', { machineId: 'machine', rootPath: '/project', query: 'needle' },
+      { surface: 'cli', serverId: 'other' })).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+    expect(boundary.callMachineRpc).toHaveBeenCalledTimes(1);
+  });
   it('lists through the authenticated exact-machine transport and rejects unavailable credentials', async () => {
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials, sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));

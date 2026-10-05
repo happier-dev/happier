@@ -8,6 +8,7 @@ afterAll(() => { dispose?.(); });
 export async function loadSyncSingletonForTests(): Promise<void> {
     dispose?.();
     dispose = undefined;
+    await import('@/sync/syncEngine');
     const bridge = await loadVitestModuleForNodeRequire(
         new URL('../../../sync/sync.ts', import.meta.url),
         () => import('@/sync/sync'),

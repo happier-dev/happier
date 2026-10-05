@@ -4,7 +4,7 @@ import { useAgentInstallJob } from '@/agents/machineAgents/installJobs/useAgentI
 import { useAgentSignIn } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { useMachineAgent } from '@/agents/machineAgents/useMachineAgents';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';

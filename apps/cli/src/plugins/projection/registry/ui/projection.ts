@@ -45,7 +45,7 @@ import {
     collectResolvedGeneratedReactNativeCollectionMigrationArtifactOwners,
     findGeneratedHostedWebArtifactEntry,
     collectResolvedGeneratedReactNativeArtifactOwners,
-    findResolvedGeneratedReactNativeClientContributionArtifactOwner,
+    collectResolvedGeneratedReactNativeClientContributionArtifactOwners,
     findGeneratedReactNativeArtifactEntry,
 } from './generatedUiArtifactOwners';
 import type { StablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';
@@ -606,17 +606,9 @@ function projectGeneratedReactNativeBundles(
     hostRuntimeContext?: ReactNativeBundleProjectionHostRuntimeContext,
 ): ReadonlySet<string> {
     const ownedContributionKeys = new Set<string>();
-    const clientActionOwners = (registry.actions ?? []).flatMap((action) => {
-        if (!action.pluginId || !action.identity) return [];
-        const owner = findResolvedGeneratedReactNativeClientContributionArtifactOwner({
-            registry,
-            action: action.identity,
-        });
-        return owner ? [owner] : [];
-    });
     for (const owner of [
         ...collectResolvedGeneratedReactNativeArtifactOwners(registry),
-        ...clientActionOwners,
+        ...collectResolvedGeneratedReactNativeClientContributionArtifactOwners(registry),
         ...collectResolvedGeneratedReactNativeCollectionMigrationArtifactOwners(registry),
     ]) {
         const pluginId = owner.pluginId;
@@ -1169,20 +1161,41 @@ function projectGeneratedUiViews(
             binding: selectedBinding,
             renderer: effectiveCandidate.projectedRenderer.rendererRef,
             display,
+            ...(selectedBinding.kind === 'inline' && selectedBinding.role === 'widget'
+                && 'resources' in view.definition && view.definition.resources !== undefined
+                ? { resources: view.definition.resources } : {}),
             ...(selectedBinding.kind === 'inline'
                 && selectedBinding.role === 'widget'
-                && 'placements' in view.definition
-                && view.definition.placements !== undefined
-                ? { placements: view.definition.placements }
+                && 'inputs' in view.definition
+                && view.definition.inputs !== undefined
+                ? { inputs: view.definition.inputs }
                 : {}),
             ...(selectedBinding.kind === 'inline'
                 && selectedBinding.role === 'widget'
-                && selectedBinding.targetKind === 'app'
+                && 'inputSchema' in view.definition
+                && view.definition.inputSchema !== undefined
+                ? { inputSchema: view.definition.inputSchema }
+                : {}),
+            ...(selectedBinding.kind === 'inline'
+                && selectedBinding.role === 'widget'
+                && 'connectedAccountPurposeBindings' in view.definition
+                && view.definition.connectedAccountPurposeBindings !== undefined
+                ? { connectedAccountPurposeBindings: view.definition.connectedAccountPurposeBindings }
+                : {}),
+            ...(selectedBinding.kind === 'inline'
+                && selectedBinding.role === 'widget'
+                && 'sessionInputPath' in view.definition
+                && view.definition.sessionInputPath !== undefined
+                ? { sessionInputPath: view.definition.sessionInputPath }
+                : {}),
+            ...(selectedBinding.kind === 'inline'
+                && selectedBinding.role === 'widget'
                 ? { home: 'home' in view.definition && view.definition.home !== undefined
                     ? view.definition.home
                     : Object.freeze({ default: 'available' as const }) }
                 : {}),
             ...(column ? { column } : {}),
+            ...('widgetAreas' in view.definition && view.definition.widgetAreas ? { widgetAreas: view.definition.widgetAreas } : {}),
             actions: Object.freeze([]),
             ...(headerActions.length === 0 ? {} : { headerActions }),
             ...(rightSidebar ? { rightSidebar } : {}),

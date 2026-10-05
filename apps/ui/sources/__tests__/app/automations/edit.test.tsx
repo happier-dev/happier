@@ -1,61 +1,114 @@
-import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AutomationDefinitionListItemSchema } from '@happier-dev/protocol';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
+import { AutomationApiError } from '@/sync/api/automations/apiAutomations';
 
-const routeParams = vi.hoisted(() => ({
-    value: {} as Record<string, string | undefined>,
+const route = vi.hoisted(() => ({ params: {} as Record<string, string> }));
+// Sync's authenticated direct-definition request is the network façade; keep route/state logic real.
+const read = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/sync', () => ({ sync: { refreshAutomationDefinitionDetail: read } }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
+    .createExpoRouterMock({ params: () => route.params }).module);
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
+    getAppliedActiveServerSnapshot: () => ({ serverId: storage.getState().profileScope?.serverId }),
+    isAppliedActiveServerRuntimeAvailable: () => true,
 }));
-const latestHostProps = vi.hoisted(() => ({ value: null as any }));
 
-vi.mock('expo-router', () => ({
-    Stack: { Screen: (props: any) => React.createElement('StackScreen', props) },
-    useLocalSearchParams: () => routeParams.value,
-}));
-vi.mock('@/components/automations/gating/AutomationsGate', () => ({
-    AutomationsGate: (props: any) => React.createElement(React.Fragment, null, props.children),
-}));
-vi.mock('@/components/automations/screens/AutomationEditorHostScreen', () => ({
-    AutomationEditorHostScreen: (props: any) => {
-        latestHostProps.value = props;
-        return React.createElement('AutomationEditorHostScreen', props);
-    },
-}));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+let previous = storage.getState();
+beforeEach(() => {
+    previous = storage.getState();
+    route.params = {};
+    read.mockReset();
+    storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+});
+afterEach(() => { standardCleanup(); storage.setState(previous); });
 
-describe('Automation edit route', () => {
-    beforeEach(() => {
-        routeParams.value = {};
-        latestHostProps.value = null;
+function automation(workflowDefinitionId: string | null = null) {
+    return createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
+        id: 'automation-42', name: 'Daily standup', enabled: true, description: null,
+        triggers: [], targetType: 'newSession', existingSessionId: null, templateVersion: 1,
+        workflowDefinitionId, assignments: [], lastRunAt: null, createdAt: 1, updatedAt: 1,
+    }));
+}
+async function mount(kind: 'edit' | 'detail' = 'edit') {
+    const body = kind === 'edit' ? (await import('@/app/(app)/automations/edit')).AutomationEditRoute
+        : (await import('@/app/(app)/automations/[id]')).AutomationDetailRoute;
+    return renderScreen(React.createElement(body));
+}
+function href(screen: Awaited<ReturnType<typeof mount>>) {
+    return screen.findAll((node) => String(node.type) === 'Redirect')[0]?.props.href;
+}
+
+describe('retired Automation routes', () => {
+    it('redirects an empty edit link even when the old Automation feature is unavailable', async () => {
+        expect(href(await mount())).toBe('/workflows');
+        expect(read).not.toHaveBeenCalled();
     });
-
-    it('mounts the one plural editor host for the exact Automation identity', async () => {
-        routeParams.value = { id: ' automation-42 ' };
-        await renderScreen(React.createElement((await import('@/app/(app)/automations/edit')).default));
-
-        expect(latestHostProps.value).toEqual({
-            automationId: 'automation-42',
-            exactTurnPrefill: null,
-        });
+    it.each(['edit', 'detail'] as const)('resolves %s to its bound workflow and reveals the trigger section', async (kind) => {
+        route.params = { id: ' automation-42 ' };
+        const workflowId = '11111111-1111-4111-8111-111111111111';
+        read.mockResolvedValue(automation(workflowId));
+        expect(href(await mount(kind))).toEqual({ pathname: '/workflows/[id]', params: { id: workflowId, intent: 'schedule' } });
     });
-
-    it('passes only a complete typed exact-turn prefill to the shared host', async () => {
-        routeParams.value = {
-            id: 'automation-42',
-            sourceSessionId: 'source-session',
-            sourceTurnId: 'turn-7',
-            sourceServerId: 'server-1',
-        };
-        await renderScreen(React.createElement((await import('@/app/(app)/automations/edit')).default));
-
-        expect(latestHostProps.value).toEqual({
-            automationId: 'automation-42',
-            exactTurnPrefill: {
-                sourceSessionId: 'source-session',
-                sourceTurnId: 'turn-7',
-                sourceServerId: 'server-1',
-                events: ['parentTurnCompleted'],
-            },
-        });
+    it('opens a legacy trigger without a conversion or a second editor', async () => {
+        route.params = { id: 'automation-42' };
+        read.mockResolvedValue(automation());
+        expect(href(await mount())).toEqual({ pathname: '/workflows', params: { trigger: 'automation-42' } });
+    });
+    it('opens a session-scoped set in that session rather than the Account column', async () => {
+        route.params = { id: 'automation-42' };
+        read.mockResolvedValue({ ...automation(), scopeSessionId: 'session-1' });
+        expect(href(await mount())).toEqual({ pathname: '/session/[id]/triggers', params: { id: 'session-1', serverId: 'server-a' } });
+    });
+    it('lands a deleted Automation in Workflows with the not-available line', async () => {
+        route.params = { id: 'automation-42' };
+        read.mockRejectedValue(new AutomationApiError({ status: 404, code: 'automation_not_found' }));
+        expect(href(await mount())).toEqual({ pathname: '/workflows', params: { automationUnavailable: '1' } });
+    });
+    it('keeps a stable loading shell and never redirects from a retired Account', async () => {
+        route.params = { id: 'automation-42' };
+        let finish: ((value: ReturnType<typeof automation>) => void) | undefined;
+        read.mockImplementation(() => new Promise<ReturnType<typeof automation>>((resolve) => { finish = resolve; }));
+        const screen = await mount();
+        expect(screen.findByTestId('retired-automation-read')).not.toBeNull();
+        expect(href(screen)).toBeUndefined();
+        const first = finish;
+        await act(async () => { storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-b' } }); });
+        const oldWorkflowId = '22222222-2222-4222-8222-222222222222';
+        await act(async () => { first?.(automation(oldWorkflowId)); });
+        expect(href(screen)).toBeUndefined();
+        await act(async () => { finish?.(automation()); });
+        expect(href(screen)).not.toEqual({ pathname: '/workflows/[id]', params: { id: oldWorkflowId, intent: 'schedule' } });
+    });
+    it('keeps a transport failure visible with Retry instead of claiming the Automation was deleted', async () => {
+        route.params = { id: 'automation-42' };
+        read.mockRejectedValueOnce(new Error('offline'));
+        const screen = await mount();
+        expect(href(screen)).toBeUndefined();
+        expect(screen.findByTestId('retired-automation-read-retry')).not.toBeNull();
+        read.mockResolvedValue(automation());
+        await screen.pressByTestIdAsync('retired-automation-read-retry');
+        expect(href(screen)).toEqual({ pathname: '/workflows', params: { trigger: 'automation-42' } });
+    });
+    it('shows the prescribed not-available line at the Workflows destination', async () => {
+        route.params = { automationUnavailable: '1' };
+        const { WorkflowsRoute } = await import('@/app/(app)/workflows');
+        const screen = await renderScreen(<WorkflowsRoute />);
+        expect(screen.findByTestId('retired-automation-unavailable')).not.toBeNull();
+    });
+    it('keeps exact-turn identity on a retired create link for the session trigger owner to validate', async () => {
+        route.params = { sourceSessionId: 'session-1', sourceTurnId: 'turn-9', sourceServerId: 'server-a', sessionLifecycleEvents: 'parentTurnCompleted' };
+        const { RetiredAutomationCreateRoute } = await import('@/app/(app)/automations/new');
+        const screen = await renderScreen(<RetiredAutomationCreateRoute />);
+        expect(href(screen)).toEqual({ pathname: '/session/[id]/triggers', params: {
+            id: 'session-1', serverId: 'server-a', sourceSessionId: 'session-1', sourceTurnId: 'turn-9',
+            sourceServerId: 'server-a', sessionLifecycleEvents: 'parentTurnCompleted',
+        } });
     });
 });

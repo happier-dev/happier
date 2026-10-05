@@ -10,6 +10,7 @@ import type {
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiMountedActionReferenceV1Schema, type PluginUiMountedActionReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -42,9 +43,8 @@ import { createPluginSurfaceHostApiError } from './createPluginSurfaceHostApi';
  * currentness before opening the dialog, a surface that retired while the user
  * was still deciding still received a boolean settlement (§3.5, r0.9).
  *
- * Neither bypasses ActionSpec present-user policy: an action's intrinsic
- * confirmation stays with the Action executor, and these methods carry no
- * approval semantics.
+ * Ordinary confirmations are unconditional. An Action-bound confirmation for
+ * a direct UI write consumes the same host-resolved Action policy as dispatch.
  */
 const NOTIFY_SEVERITIES: readonly PresentationNoticeSeverity[] = Object.freeze([
     'info',
@@ -111,6 +111,7 @@ export type CreatePluginSurfaceFeedbackHandlersInput = Readonly<{
     interactionRequester?: InteractionTransientRequesterV1;
     /** Host-owned currentness: a retired mount must not reach the user. */
     isCurrent?: () => boolean;
+    resolveActionApproval?: (reference: PluginUiMountedActionReferenceV1) => boolean | null;
 }>;
 
 export type PluginSurfaceFeedbackHandlers = Readonly<{
@@ -249,6 +250,15 @@ export function createPluginSurfaceFeedbackHandlers(
         if (!message) return invalidPayload('plugin_surface_confirm_message_invalid');
         if (!isCurrent()) return staleSurface();
         const title = readTitle(payload);
+        if (payload?.action !== undefined) {
+            const action = PluginUiMountedActionReferenceV1Schema.safeParse(payload.action);
+            if (!action.success) return invalidPayload('plugin_surface_confirm_action_invalid');
+            const required = input.resolveActionApproval?.(action.data);
+            if (required === undefined || required === null) {
+                return createPluginSurfaceHostApiError('unavailable', ['plugin_surface_confirm_action_unavailable']);
+            }
+            if (!required) return { confirmed: true };
+        }
         if (!interactions) {
             return createPluginSurfaceHostApiError(
                 'unavailable',

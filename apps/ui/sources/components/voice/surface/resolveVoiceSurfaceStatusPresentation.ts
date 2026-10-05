@@ -9,6 +9,8 @@ export type VoiceSurfaceStatusTone = 'neutral' | 'pending' | 'active' | 'error';
 
 export type VoiceSurfaceStatusPresentation = Readonly<{
   tone: VoiceSurfaceStatusTone;
+  /** Compact presence text; the full label remains the accessibility/description source. */
+  wordKey?: 'voiceAssistant.microphoneBlocked';
   labelKey:
     | 'voiceAssistant.label'
     | 'voiceAssistant.connecting'
@@ -46,7 +48,7 @@ export function resolveVoiceSurfaceStatusPresentation(
     case 'speaking':
       return { tone: 'active', labelKey: 'voiceAssistant.speaking' };
     case 'permission_required':
-      return { tone: 'error', labelKey: 'voiceAssistant.microphonePermissionRequired' };
+      return { tone: 'error', labelKey: 'voiceAssistant.microphonePermissionRequired', wordKey: 'voiceAssistant.microphoneBlocked' };
     case 'interrupted':
       return { tone: 'pending', labelKey: 'voiceAssistant.interrupted' };
     case 'error':

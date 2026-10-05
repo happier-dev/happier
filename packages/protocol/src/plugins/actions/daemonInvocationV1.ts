@@ -7,11 +7,12 @@ import { PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { ComposerRefV1Schema, type ComposerRefV1 } from '../ui/composer.js';
 import { PluginUiSelectedActionInputCarrierV1Schema } from '../ui/selectedActionInput.js';
+import { PluginUiRuntimeOccurrenceIdV1Schema } from '../ui/targetedContributions.js';
 import { asProtocolZod } from './internalProtocolZodAdapter.js';
 
 const PluginContributionLocalIdSchema = asProtocolZod(CanonicalPluginContributionLocalIdSchema);
 const PluginIdWireSchema = asProtocolZod(PluginIdSchema);
-const PluginRuntimeOccurrenceIdSchema = z.string().trim().min(1).max(512);
+const PluginRuntimeOccurrenceIdSchema = asProtocolZod(PluginUiRuntimeOccurrenceIdV1Schema);
 
 /**
  * The mounted UI host's observed binding. This is not a caller credential: the
@@ -83,7 +84,7 @@ function composerRefSessionId(ref: ComposerRefV1): string | null {
 }
 
 const PluginActionDaemonInvocationV1Shape = {
-  executionSurface: z.enum(['cli', 'ui', 'voice']),
+  executionSurface: z.enum(['cli', 'ui', 'voice', 'agent', 'mcp']),
   expectedContributorOccurrenceId: PluginRuntimeOccurrenceIdSchema,
   selectedActionInputCarrier: PluginUiSelectedActionInputCarrierV1Schema.optional(),
   invocation: DaemonPluginStructuredMessageActionInvocationV1Schema.optional(),
@@ -100,28 +101,37 @@ type PluginActionDaemonDispatchValidationInput = z.infer<
   sessionId?: string;
 }>;
 
+function isAutomatedClientActionInvocation(request: PluginActionDaemonDispatchValidationInput): boolean {
+  return request.invocation?.kind === 'clientPluginAction'
+    && (request.executionSurface === 'agent' || request.executionSurface === 'mcp' || request.executionSurface === 'cli');
+}
+
 function validatePluginActionDaemonDispatch(
   request: PluginActionDaemonDispatchValidationInput,
   context: z.RefinementCtx,
 ): void {
-  if (request.invocation !== undefined && request.executionSurface !== 'ui') {
+  const automatedClientAction = isAutomatedClientActionInvocation(request);
+  if (request.invocation !== undefined && request.executionSurface !== 'ui' && !automatedClientAction) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['invocation'],
-      message: 'An Action invocation provenance carrier is valid only for the UI execution surface.',
+      message: 'An Action provenance carrier requires a UI origin or an automated client Action binding.',
     });
   }
   if (
     request.selectedActionInputCarrier !== undefined
     && (
-      request.executionSurface !== 'ui'
-      || request.invocation?.kind !== 'mountedPluginSurface'
+      (request.executionSurface !== 'ui' && !automatedClientAction)
+      || (
+        request.invocation?.kind !== 'mountedPluginSurface'
+        && request.invocation?.kind !== 'clientPluginAction'
+      )
     )
   ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['selectedActionInputCarrier'],
-      message: 'A selected Action settlement is valid only for a bound UI mount.',
+      message: 'A selected Action settlement is valid only for a bound UI plugin caller.',
     });
   }
   if (request.invocation?.kind === 'hostPresentedComposer') {
@@ -191,17 +201,22 @@ export const DaemonPluginStructuredMessageActionExecuteRequestSchema = z.object(
    * The present user's settled confirmation, given in the invoking UI before
    * this request was sent. It is the only current-intent carrier for a `ui` or
    * `voice` invocation: the daemon admits it without a durable approval
-   * artifact. Absent means the UI asked nobody, so a daemon that requires a
-   * present-user decision refuses rather than executing.
+   * artifact. A bound client Action may retain an automated execution surface
+   * after that same present user settled its confirmation. Absent means the UI
+   * asked nobody, so a daemon that requires a present-user decision refuses
+   * rather than executing.
    */
   presentUserIntent: z.literal('confirmed').optional(),
 }).strict().superRefine((request, context) => {
   validatePluginActionDaemonDispatch(request, context);
-  if (request.presentUserIntent !== undefined && request.executionSurface === 'cli') {
+  if (request.presentUserIntent !== undefined
+    && request.executionSurface !== 'ui'
+    && request.executionSurface !== 'voice'
+    && !isAutomatedClientActionInvocation(request)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['presentUserIntent'],
-      message: 'A present-user intent is valid only for the UI or Voice execution surface.',
+      message: 'A present-user intent requires a UI or Voice origin or a bound client Action.',
     });
   }
 });

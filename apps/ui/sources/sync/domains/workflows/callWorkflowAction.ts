@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -65,9 +66,11 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     }
     if (!result.ok) {
+        const failure = WorkflowActionFailureV1Schema.safeParse(result);
         throw new WorkflowActionError({
             message: result.error || params.fallbackMessage || 'Workflow request failed',
             rawCode: result.errorCode || null,
+            ...(failure.success ? { failure: failure.data } : {}),
         });
     }
     return params.parseResult(result.result);

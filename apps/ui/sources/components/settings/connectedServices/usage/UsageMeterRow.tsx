@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { t } from '@/text';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '../account/accountBlockFormatters';
 
@@ -75,7 +76,8 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     const remaining = known ? Math.max(0, Math.min(100, Math.round(props.remainingPct!))) : null;
     // Healthy is quiet: colour is reserved for a window that needs attention.
     const barTone: MeterTone = props.tone === 'success' ? 'neutral' : props.tone;
-    const size = props.size ?? 'default';
+    const [width, setWidth] = React.useState<number | null>(null);
+    const size = props.size === 'wide' && width !== null && width < PAGE_LIST_METRICS.rowStackBelowWidthPx ? 'default' : props.size ?? 'default';
     const left = remaining !== null
         ? ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remaining({ percent: `${remaining}%` })
         : null;
@@ -135,7 +137,10 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
         ? USAGE_METER_METRICS.cardResetWidthPx
         : size === 'wide' ? USAGE_METER_METRICS.wideResetWidthPx : USAGE_METER_METRICS.resetWidthPx;
     return (
-        <View testID={props.testID} style={styles.row} accessible accessibilityLabel={accessibilityLabel}>
+        <View testID={props.testID} style={styles.row} onLayout={(event) => {
+            const next = event.nativeEvent.layout.width;
+            if (Number.isFinite(next) && next > 0) setWidth(next);
+        }} accessible accessibilityLabel={accessibilityLabel}>
             <Text style={[styles.label, { width: labelWidth }]} numberOfLines={1}>{props.label}</Text>
             {bar}
             {props.loading ? (

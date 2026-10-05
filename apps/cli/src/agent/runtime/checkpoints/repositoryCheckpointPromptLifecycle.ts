@@ -7,6 +7,7 @@ import type { PromptLoopCheckpointLifecycle } from '@/agent/runtime/runPermissio
 import type { ScmBackendContext } from '@/scm/types';
 import { buildRepositoryCheckpointRefs, projectRepositoryCheckpointTurnChangeSet } from '@/scm/checkpoints';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
+import { retainRepositoryCheckpointInitialEvidence, retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
 import type {
     RepositoryCheckpointAttributionScope,
     RepositoryCheckpointDiffBaseRefSource,
@@ -167,7 +168,9 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     provider: ACPProvider;
     protocol: ToolNormalizationProtocol;
     attributionRegistry?: WorktreeAttributionRegistry;
+    sessionIsNew?: boolean;
 }>): PromptLoopCheckpointLifecycle {
+    const initialSessionId = params.session.sessionId;
     const bindingsByMessageId = new Map<string, ActiveCheckpointBinding>();
     const attributionRegistry = params.attributionRegistry ?? defaultWorktreeAttributionRegistry;
 
@@ -211,6 +214,13 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             startRef: input.startRef,
             finalRef: input.finalRef,
         });
+        if (input.binding.repoRoot) {
+            try {
+                await retainRepositoryCheckpointTurnEvidence({ cwd: input.binding.repoRoot, scopeId: input.binding.scopeId, turnChangeSet: checkpointOnlyTurnChangeSet });
+            } catch (error) {
+                logger.debug('Repository turn checkpoint retention unavailable (non-fatal)', error);
+            }
+        }
         await emitCheckpointTurnChangeSet({
             session: params.session,
             provider: params.provider,
@@ -246,6 +256,13 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 context: binding.context,
                 checkpointRef: messageStart,
             });
+            try {
+                await retainRepositoryCheckpointInitialEvidence({ cwd: binding.repoRoot ?? params.runtimeDirectory,
+                    scopeId: binding.scopeId, checkpointRef: messageStart, captured,
+                    sessionIsNew: params.sessionIsNew === true && params.session.sessionId === initialSessionId });
+            } catch (error) {
+                logger.debug('Repository initial checkpoint retention unavailable (non-fatal)', error);
+            }
             if (!captured.success) {
                 bindingsByMessageId.set(messageId, {
                     ...binding,

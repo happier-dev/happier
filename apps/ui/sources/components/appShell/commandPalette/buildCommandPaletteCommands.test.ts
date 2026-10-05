@@ -52,6 +52,20 @@ function commandTitles(cmds: readonly Command[]): string[] {
   return cmds.map((c) => c.title);
 }
 
+it('exposes the text-in-files entry through the command catalog used by UI Actions', async () => {
+    const openTextInFiles = vi.fn();
+    const commands = buildCommandPaletteCommands({
+        sessionsById: {}, isDev: false, activeSessionId: null,
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {}, openTextInFiles },
+        actions: { execute: async () => ({ ok: true, result: {} }) }, alert: () => {},
+    });
+    const command = commands.find((entry) => entry.id === 'search.textInFiles');
+    expect(command).toBeDefined();
+    await command!.action();
+    expect(openTextInFiles).toHaveBeenCalled();
+});
+
 function buildSettingsWithExecutionRunsEnabled() {
   return {
     experiments: true,
@@ -180,6 +194,54 @@ function buildCommandsWithPluginActions(input: Readonly<{
 }
 
 describe('buildCommandPaletteCommands', () => {
+  it('offers gated workflow creation commands through their canonical authoring openers', async () => {
+    const openNewWorkflow = vi.fn();
+    const openWorkflowAgentAuthoring = vi.fn();
+    const input: Parameters<typeof buildCommandPaletteCommands>[0] = {
+      sessionsById: {}, isDev: false, activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, workflowsEnabled: true },
+      nav: { push: vi.fn(), openNewSession: vi.fn(), navigateToSession: vi.fn(), openNewWorkflow, openWorkflowAgentAuthoring },
+      actions: { execute: vi.fn() }, alert: vi.fn(),
+    };
+    const commands = buildCommandPaletteCommands(input);
+    const create = commands.find((command) => command.id === 'workflow.new');
+    const agent = commands.find((command) => command.id === 'workflow.createWithAgent');
+    expect(create).toBeDefined();
+    expect(agent).toBeDefined();
+    await create?.action();
+    await agent?.action();
+    expect(openNewWorkflow).toHaveBeenCalledOnce();
+    expect(openWorkflowAgentAuthoring).toHaveBeenCalledOnce();
+    expect(buildCommandPaletteCommands({ ...input, features: { ...input.features, workflowsEnabled: false } })
+      .some((command) => command.id.startsWith('workflow.'))).toBe(false);
+  });
+  it('opens session and pending walkthroughs in the active Session Home without starting analysis', async () => {
+    const push = vi.fn();
+    const execute = vi.fn();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {}, isDev: false, activeSessionId: 'session-walk', activeSessionServerId: 'server-walk',
+      features: { executionRunsEnabled: true, voiceEnabled: false },
+      nav: { push, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute }, alert: async () => {},
+    });
+    const session = commands.find((command) => command.id === 'walkthrough:session');
+    const pending = commands.find((command) => command.id === 'walkthrough:workingTree');
+    expect(session).toBeDefined();
+    expect(pending).toBeDefined();
+    await session?.action();
+    await pending?.action();
+    expect(push.mock.calls.map(([href]) => new URL(href, 'https://happier.test').searchParams.get('comparison'))).toEqual(['session', 'workingTree']);
+    for (const [href] of push.mock.calls) {
+      const url = new URL(href, 'https://happier.test');
+      expect(url.pathname).toContain('session-walk');
+      expect(url.searchParams.get('serverId')).toBe('server-walk');
+      expect(url.searchParams.get('details')).toBe('scmReview');
+      expect(url.searchParams.get('view')).toBe('walkthrough');
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('offers phone pairing without navigating away from the current page', async () => {
     const openHomePairingModal = vi.fn();
     const push = vi.fn();
@@ -651,6 +713,55 @@ describe('buildCommandPaletteCommands', () => {
     expect(startReview).toBeTruthy();
     await startReview!.action();
     expect(createSessionActionDraftSpy).toHaveBeenCalled();
+  });
+
+  it('offers Voice controls through Actions and captures the current attempt when invoked', async () => {
+    const calls: Array<{ actionId: string; input: unknown }> = [];
+    mockedState = { settings: {} };
+    let attemptId = 'old-attempt';
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {}, isDev: false, activeSessionId: 'navigated-session', activeSessionServerId: 'home-b',
+      features: { executionRunsEnabled: false, voiceEnabled: true },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute: async (actionId, input) => {
+        calls.push({ actionId, input });
+        return { ok: true, result: { status: 'completed', voice: {
+          attemptId, adapterId: 'local_conversation', sessionId: 'voice-control', status: 'connected', mode: 'listening',
+          target: { kind: 'session', sessionAddress: { serverId: 'home-a', sessionId: 'captured-session' } },
+          conversationSessionAddress: { serverId: 'home-a', sessionId: 'voice-control' },
+          targetSessionAddress: { serverId: 'home-a', sessionId: 'captured-session' },
+          canStart: false, canStop: true, canMute: true, canCommitInput: true, canHoldToTalk: true,
+          muted: true, canDismissFailedAttempt: false, canDismissEnded: false, recoveryAction: null, availability: 'ready',
+        } } };
+      } }, alert: () => {},
+    });
+    const end = commands.find((command) => command.actionSpecId === 'ui.voice_global.end');
+    expect(end).toBeDefined();
+    // The palette can stay open while navigation and the actual Voice attempt change.
+    attemptId = 'replacement-attempt';
+    await end?.action();
+    expect(calls).toEqual([
+      { actionId: 'ui.voice_global.get', input: {} },
+      { actionId: 'ui.voice_global.end', input: { expectedAttempt: 'replacement-attempt' } },
+    ]);
+    expect(commands.some((command) => command.actionSpecId === 'ui.voice_global.start')).toBe(true);
+    expect(commands.some((command) => command.actionSpecId === 'ui.voice_global.set_muted')).toBe(true);
+    expect(commands.some((command) => command.actionSpecId === 'ui.voice_global.brief.request')).toBe(true);
+  });
+
+  it('discovers Voice executable settings at their declared anchored controls', async () => {
+    const pushes: string[] = [];
+    mockedState = { settings: {} };
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {}, isDev: false, activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: true },
+      nav: { push: path => pushes.push(path), openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute: async () => ({ ok: true }) }, alert: () => {},
+    });
+    const install = commands.find(command => command.id === 'setting-operation:voiceAdvanced.installSpeechModel');
+    expect(install).toBeDefined();
+    await install?.action();
+    expect(pushes[0]).toContain('voiceAdvanced.installSpeechModel');
   });
 
   it('shows an alert when a session-scoped ActionSpec command is used without an active session', async () => {

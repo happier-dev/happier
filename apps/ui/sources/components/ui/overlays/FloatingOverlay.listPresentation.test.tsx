@@ -46,14 +46,17 @@ vi.mock('react-native-unistyles', async () => {
     };
 });
 
-vi.mock('react-native-reanimated', () => {
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const boundary = createReanimatedModuleMock();
     const AnimatedView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('AnimatedView', props, props.children);
     const AnimatedScrollView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('AnimatedScrollView', props, props.children);
     return {
-        __esModule: true,
+        ...boundary,
         default: {
+            ...boundary.default,
             View: AnimatedView,
             ScrollView: AnimatedScrollView,
         },

@@ -3,12 +3,14 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { SelectionList } from '@/components/ui/selectionList';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { createDefaultDynamicSectionCache } from '@/components/ui/selectionList/selectionListDynamicSectionCache';
 import { resolvePublicShareApplicationBaseUrl } from '@/components/sessions/sharing/publicShareApplicationUrl';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { buildShareSheetSelectionStep, shareSheetStepId } from './buildShareSheetSelectionStep';
+import { buildShareSheetSelectionStep, ShareHelp, ShareHandoffIcon, shareSheetStepId } from './buildShareSheetSelectionStep';
 import type {
     ShareDirectoryKind,
     ShareGrantRowModel,
@@ -18,7 +20,14 @@ import type {
     ShareSheetPresentation,
 } from './shareSheetTypes';
 
-const styles = StyleSheet.create({ full: { flex: 1, minHeight: 0 }, compact: { minHeight: 0 } });
+const styles = StyleSheet.create(theme => ({
+    full: { flex: 1, minHeight: 0 }, compact: { minHeight: 0 },
+    footer: { paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, paddingVertical: PAGE_LIST_METRICS.groupHeadingGapPx,
+        borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.subtle,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: PAGE_LIST_METRICS.groupHeadingGapPx },
+    handoffs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', flexShrink: 1, gap: PAGE_LIST_METRICS.groupHeadingGapPx },
+    action: { flexGrow: 0 },
+}));
 const noop = () => {};
 
 export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
@@ -91,10 +100,24 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             listAccessibilityLabel={adapter.title} testID={`${testID}:list`}
             inputTestID={idPrefix ? `${testID}:${adapter.namespace}-search` : `${adapter.namespace}-search`}
             autoFocusInputOnWeb={presentation === 'compact'} autoFocusInputOnNative={false}
+            bodyFooter={presentation === 'full' && !directoryKind ? <ShareHelp adapter={adapter} testID={`${idPrefix}${adapter.namespace}-help`} /> : undefined}
             fillAvailableSpace={presentation === 'full'} heightBehavior={presentation === 'compact' ? 'stabilizedContentHeight' : 'content'}
             pagination={source ? { hasMore: source.hasMore, loadingMore: source.loadingMore, requestKey: source.cursor,
                 error: source.error?.message, onEndReached: () => actions.loadMore(source.kind), onRetry: () => actions.retryDirectory(source.kind),
                 loadingLabel: t('common.loading'), moreLabel: t('shareSheet.browseAll'), retryLabel: t('common.retry'),
                 endReachedLabel: t('shareSheet.allLoaded') } : undefined} />
+        {presentation === 'full' && (copyLink || adapter.sendCopy || onRequestClose) ? <View style={styles.footer}>
+            <View style={styles.handoffs}>
+                {copyLink ? <RoundButton size="small" display="inverted" style={styles.action}
+                    testID={`${idPrefix}${adapter.namespace}-copy-link`}
+                    title={t(copyLink.copied ? 'shareSheet.linkCopied' : 'shareSheet.copyLink')}
+                    leading={<ShareHandoffIcon name="link" />} onPress={copyLink.onCopy} /> : null}
+                {adapter.sendCopy ? <RoundButton size="small" display="inverted" style={styles.action}
+                    testID={`${idPrefix}${adapter.namespace}-send-copy`} title={t('shareSheet.sendCopy')}
+                    leading={<ShareHandoffIcon name="copy" />} onPress={adapter.sendCopy} /> : null}
+            </View>
+            {onRequestClose ? <RoundButton size="small" style={styles.action} testID={`${idPrefix}${adapter.namespace}-done`}
+                title={t('common.done')} onPress={onRequestClose} /> : null}
+        </View> : null}
     </View>;
 }

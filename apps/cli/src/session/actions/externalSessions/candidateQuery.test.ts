@@ -55,6 +55,8 @@ const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
         throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
     };
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+// Packaged process execution is outside these transcript-only fixtures.
+const unavailableInvocationRipgrep = { run: async () => { throw new Error('Packaged ripgrep unavailable in transcript fixture'); } };
 
 type MutableCandidate = {
     remoteSessionId: string;
@@ -147,6 +149,24 @@ async function readUntilPublished(
 }
 
 describe('External Sessions candidate query owner', () => {
+    it('publishes content hits without writing a metadata candidate index, including an empty query', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-content-query-'));
+        roots.push(root);
+        const match = { snippet: 'decoded body', sourceItemId: 'item-1', messageIndex: 2 };
+        const page = await executeExternalSessionCandidateQuery({
+            activeServerDir: root,
+            agentIdentity: { pluginId: 'fixture', localId: 'fixture-agent' },
+            source: { kind: 'fixture' },
+            searchTarget: 'content',
+            limit: 10,
+            listCandidates: async (request) => {
+                expect(request.searchTarget).toBe('content');
+                return { candidates: [{ remoteSessionId: 'remote', updatedAtMs: 1, match }], nextCursor: null, contentCoverage: 'partial' };
+            },
+        });
+        expect(page).toMatchObject({ candidates: [{ match }], contentCoverage: 'partial' });
+        expect(await countCandidateIndexFiles(root)).toBe(0);
+    });
     afterEach(async () => {
         vi.unstubAllEnvs();
         await Promise.all(roots.splice(0).map(async (root) => {
@@ -2330,6 +2350,7 @@ describe('External Sessions candidate query owner', () => {
                 deadlineAtMs: Date.now() + 15_000,
                 managedEndpointRead: unavailableManagedEndpointRead,
                 exec: unavailableInvocationExec,
+                ripgrep: unavailableInvocationRipgrep,
             });
             if (!result.ok) {
                 throw new ExternalSessionProviderFailureError({

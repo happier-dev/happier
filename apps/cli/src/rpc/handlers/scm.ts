@@ -16,8 +16,6 @@ import type {
     ScmChangeDiscardResponse,
     ScmCommitBackoutRequest,
     ScmCommitBackoutResponse,
-    ScmCommitUndoLastRequest,
-    ScmCommitUndoLastResponse,
     ScmCommitCreateRequest,
     ScmCommitCreateResponse,
     ScmDiffCommitRequest,
@@ -81,7 +79,7 @@ import type {
     ScmWorktreeRemoveRequest,
     ScmWorktreeRemoveResponse,
 } from '@happier-dev/protocol';
-import type { ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
+import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES, ScmLogListRequestSchema } from '@happier-dev/protocol';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -91,15 +89,23 @@ import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
     executeScmActionOperation,
 } from '@/scm/actions/executeScmActionOperation';
-import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import type { RpcActionExecutor } from './_actionDispatchAdapter';
+import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
+import { readStoredCredentials } from '@/persistence';
 
 const scmRpcOperationSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
-    deps?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; registry?: ScmBackendRegistry }>,
+    deps?: Readonly<{
+        accessPolicy?: FilesystemAccessPolicy;
+        registry?: ScmBackendRegistry;
+        machineId?: string;
+        actionExecutor?: RpcActionExecutor;
+    }>,
 ): void {
     const scmRpcHandlerManager: RpcHandlerRegistrar = {
         registerHandler<TRequest = any, TResponse = any>(
@@ -125,6 +131,33 @@ export function registerScmHandlers(
             return scmRpcOperationSignalStorage.getStore();
         },
     } as const;
+    registerActionSpecRpcHandlers({
+        rpcHandlerManager: scmRpcHandlerManager,
+        actionIds: ['scm.diffSummary.capture', 'scm.diffSummary.generate',
+            'scm.diffSummary.result.list', 'scm.diffSummary.result.clear',
+            'scm.diffSummary.result.read', 'scm.diffSummary.result.edit',
+            'scm.diffSummary.result.undo', 'scm.diffSummary.result.delete',
+            'scm.diffSummary.refine', 'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss',
+            'scm.diffSummary.commitPlan.accept', 'scm.diffSummary.commitPlan.stop',
+            'scm.diffSummary.commitPlan.includeHookChanges', 'scm.diffSummary.commitPlan.cancel',
+            'scm.diffSummary.commitPlan.recover', 'scm.commit.resolveOutcome',
+            'scm.diffSummary.reviewed.mark', 'scm.diffSummary.reviewed.unmark'],
+        ...(deps?.machineId ? { targetMachineId: deps.machineId } : {}),
+        ...(deps?.actionExecutor ? { actionExecutor: deps.actionExecutor } : {}),
+        resolveActionExecutor: async () => {
+            const credentials = await readStoredCredentials().catch(() => null);
+            if (!credentials) return {
+                execute: async () => ({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' }),
+            };
+            const { createCliActionExecutorFromCredentials } = await import('@/session/actions/createCliActionExecutorFromCredentials');
+            return createCliActionExecutorFromCredentials({
+                credentials,
+                scmFilesystemAccessPolicy: deps?.accessPolicy ?? resolveFilesystemAccessPolicy(),
+                readCredentials: async () => await readStoredCredentials().catch(() => null),
+                sessionLogAccess: { workingDirectory, accessPolicy: deps?.accessPolicy ?? resolveFilesystemAccessPolicy() },
+            });
+        },
+    });
     const statusSnapshotInFlight = new Map<string, Promise<ScmStatusSnapshotTransportResponse>>();
     const statusSnapshotCache = new Map<string, { value: ScmStatusSnapshotTransportResponse; expiresAtMs: number }>();
     let statusSnapshotCacheGeneration = 0;

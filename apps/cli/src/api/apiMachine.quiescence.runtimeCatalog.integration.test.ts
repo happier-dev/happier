@@ -8,7 +8,8 @@ import type { DaemonState, Machine, MachineMetadata } from './types';
 
 import { ApiMachineClient } from './apiMachine';
 import { encodeBase64, encrypt } from './encryption';
-import { AccountProfileResponseSchema, decodePlainMachineStoredContent, FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol';
+import { AccountProfileResponseSchema, decodePlainMachineStoredContent, FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, RPC_METHODS } from '@happier-dev/protocol';
+import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const ioMock = vi.hoisted(() => vi.fn());
@@ -130,6 +131,35 @@ describe('ApiMachineClient daemon quiescence admission', () => {
         expect(daemonStateHandler).not.toHaveBeenCalled();
         expect(backoffMock).not.toHaveBeenCalled();
         expect(socket.emitWithAck).not.toHaveBeenCalled();
+    });
+
+    it('settles an issued UI Action as unknown when its last answering handler disappears', async () => {
+        let markIssued!: () => void;
+        const issued = new Promise<void>((resolve) => { markIssued = resolve; });
+        const socket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: () => {
+                markIssued();
+                return new Promise<unknown>(() => {});
+            },
+        });
+        const client = new ApiMachineClient('token', createPlainMachine());
+        Reflect.set(client, 'socket', socket);
+        const advertisedMethods: unknown = Reflect.get(client, 'connectedClientRpcMethods');
+        if (!(advertisedMethods instanceof Set)) throw new Error('Missing machine RPC advertisement fixture');
+        advertisedMethods.add(`machine-plain-1:${RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE}`);
+        const execute = createClientActionMachineRpcExecutor(() => client);
+        let outcome: Awaited<ReturnType<typeof execute>> | undefined;
+        const pending = execute({
+            v: 1, action: { pluginId: 'acme.client', localId: 'run' }, input: {},
+            surface: 'agent', expectedContributorOccurrenceId: 'acme.client:1',
+        }, {}).then((result) => { outcome = result; return result; });
+        await issued;
+        socket.trigger(SOCKET_RPC_EVENTS.UNREGISTERED, { method: `machine-plain-1:${RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE}` });
+        await vi.waitFor(() => expect(outcome).toMatchObject({ ok: false, errorCode: 'plugin_action_outcome_unknown' }));
+        expect(await pending).not.toHaveProperty('actionHandlerInvocation');
+        expect(socket.timeout).not.toHaveBeenCalled();
+        expect(socket.getHandlers(SOCKET_RPC_EVENTS.UNREGISTERED)).toHaveLength(0);
     });
 
     it('reports unchanged metadata without emitting an update', async () => {

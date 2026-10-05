@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { measureInWindow } from '@/components/ui/popover/measure';
 
 /**
  * Which widget bodies a scrolling host builds: the one near-viewport rule shared by the Session
@@ -28,8 +29,14 @@ export function resolveNearViewportWindow(input: Readonly<{
     windowTopOffset: number;
     viewportHeight: number;
     quantum: number;
+    /** Retained presentation uses the visible window instead of widget prebuild overscan. */
+    overscan?: boolean;
 }>): NearViewportWindow | null {
     if (input.viewportHeight <= 0) return null;
+    if (input.overscan === false) return {
+        top: input.windowTopOffset,
+        bottom: input.windowTopOffset + input.viewportHeight,
+    };
     return {
         top: input.windowTopOffset - input.viewportHeight,
         bottom: input.windowTopOffset + Math.max(1, input.quantum) + (input.viewportHeight * 2),
@@ -56,32 +63,64 @@ export type NearViewportTracker = Readonly<{
     onLayout: (event: LayoutChangeEvent) => void;
     subscribe: (listener: () => void) => () => void;
     getWindow: () => NearViewportWindow | null;
+    /** Native/DOM measurements share window coordinates; their delta is content-relative. */
+    measureSpan: (node: unknown) => Promise<NearViewportSpan | null>;
+    invalidateLayout: () => void;
+    getLayoutRevision: () => number;
+    onContentSizeChange: (width: number, height: number) => void;
 }>;
 
 export function createNearViewportTracker(input: Readonly<{
     quantum: number;
     /** The platform window height, standing in until the scroll view reports its own. */
     initialViewportHeight: number;
+    overscan?: boolean;
+    /** Canvas horizontal scrolling uses the same window/eligibility policy along its second axis. */
+    axis?: 'x' | 'y';
+    /** The existing scrolling host's inner content node, not a grid cell or viewport. */
+    readContentNode?: () => unknown;
 }>): NearViewportTracker {
     let windowTopOffset = 0;
     let viewportHeight = input.initialViewportHeight;
-    let window = resolveNearViewportWindow({ windowTopOffset, viewportHeight, quantum: input.quantum });
+    let window = resolveNearViewportWindow({ windowTopOffset, viewportHeight, quantum: input.quantum, overscan: input.overscan });
     const listeners = new Set<() => void>();
+    let layoutRevision = 0;
+    let contentWidth = 0;
+    let contentHeight = 0;
+    const invalidateLayout = () => {
+        layoutRevision++;
+        for (const listener of [...listeners]) listener();
+    };
     const update = (nextTop: number, nextHeight: number) => {
         if (nextTop === windowTopOffset && nextHeight === viewportHeight) return;
         windowTopOffset = nextTop;
         viewportHeight = nextHeight;
-        window = resolveNearViewportWindow({ windowTopOffset, viewportHeight, quantum: input.quantum });
+        window = resolveNearViewportWindow({ windowTopOffset, viewportHeight, quantum: input.quantum, overscan: input.overscan });
         for (const listener of [...listeners]) listener();
     };
     return {
-        onScroll: (event) => update(quantizeScrollOffset(event.nativeEvent.contentOffset.y, input.quantum), viewportHeight),
-        onLayout: (event) => update(windowTopOffset, event.nativeEvent.layout.height),
+        onScroll: (event) => update(quantizeScrollOffset(event.nativeEvent.contentOffset[input.axis ?? 'y'], input.quantum), viewportHeight),
+        onLayout: (event) => update(windowTopOffset, input.axis === 'x' ? event.nativeEvent.layout.width : event.nativeEvent.layout.height),
         subscribe: (listener) => {
             listeners.add(listener);
             return () => { listeners.delete(listener); };
         },
         getWindow: () => window,
+        getLayoutRevision: () => layoutRevision,
+        invalidateLayout,
+        onContentSizeChange: (width, height) => {
+            if (width === contentWidth && height === contentHeight) return;
+            contentWidth = width; contentHeight = height;
+            invalidateLayout();
+        },
+        measureSpan: async node => {
+            const contentNode = input.readContentNode?.();
+            if (!node || !contentNode) return null;
+            const [rect, content] = await Promise.all([measureInWindow(node), measureInWindow(contentNode)]);
+            if (!rect || !content || input.readContentNode?.() !== contentNode) return null;
+            return input.axis === 'x' ? { top: rect.x - content.x, height: rect.width }
+                : { top: rect.y - content.y, height: rect.height };
+        },
     };
 }
 

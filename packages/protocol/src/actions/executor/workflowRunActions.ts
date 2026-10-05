@@ -23,6 +23,7 @@ import {
   sealWorkflowProgressStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1,
   validateWorkflowDefinition,
+  matchesWorkflowAcceptedDefinitionV1,
   type WorkflowActionIdV1,
   type WorkflowAuthoredInputV1,
   type WorkflowDefinitionV1,
@@ -65,6 +66,9 @@ import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import type { WorkflowRunActionOwner } from './workflowAccountActions.js';
 import { admitActionAgentStartV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPluginSourceV1.js';
+import { resolveInputTypeOptions, validateInputTypeValue } from '../../inputs/inputTypeRuntime.js';
+import type { InputOption } from '../../inputs/inputFields.js';
+import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
 
 export type WorkflowAccountRunEncryption = AvailableAutomationAccountEncryptionV1;
 
@@ -487,6 +491,7 @@ export type WorkflowAccountRunActionDeps = Readonly<{
   resolveEncryption: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1>;
   normalizeAbsolutePath: (directory: string) => string | null;
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
+  inputTypeDeps?: Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>;
   resolveMaterializationContext?: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, target: Readonly<{
     machineId: string;
     directory: string;
@@ -683,7 +688,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         : inputSource.kind === 'inline'
         ? existing.accepted.source.kind === 'inline'
           && normalizedInline !== undefined
-          && sameStrictJsonValue(existing.accepted.authoredDefinition, normalizedInline)
+          && matchesWorkflowAcceptedDefinitionV1(existing.accepted.authoredDefinition, normalizedInline)
         : inputSource.kind === 'catalog'
           ? existing.accepted.source.kind === 'catalog' && existing.accepted.source.ref === inputSource.workflow
           : existing.accepted.source.kind === 'saved'
@@ -795,6 +800,29 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         ...(args.context.signal ? { signal: args.context.signal } : {}),
       }),
     } };
+    const resolvedInputs = resolveInputs(definition, input.inputs);
+    for (const field of definition.inputs ?? []) {
+      if (!field.inputType || resolvedInputs[field.name] === undefined) continue;
+      const type = await deps.inputTypeDeps?.resolveInputType?.(field.inputType, args.context);
+      if (!type || type.identity.pluginId !== field.inputType.pluginId || type.identity.localId !== field.inputType.localId) throw workflowError('input_type_unavailable');
+      let options: readonly InputOption[] | undefined;
+      if (type.definition.options) {
+        const result = await resolveInputTypeOptions({ deps: deps.inputTypeDeps ?? {}, ctx: args.context, identity: field.inputType,
+          ...(originSessionId ? { sessionId: originSessionId } : {}),
+          readFailure: result => {
+            const parsed = ActionExecuteFailureSchema.safeParse(result);
+            return parsed.success ? parsed.data : null;
+          },
+        });
+        if (!result.ok) throw workflowError(result.errorCode ?? 'input_type_options_unavailable');
+        options = result.result;
+      }
+      const validation = validateInputTypeValue(type, resolvedInputs[field.name], options);
+      if (validation.status !== 'valid') throw workflowError(validation.reasonCode);
+      args.context.signal?.throwIfAborted();
+      const current = await deps.inputTypeDeps?.resolveInputType?.(field.inputType, args.context);
+      if (!current || current.occurrenceId !== type.occurrenceId) throw workflowError('input_type_retired');
+    }
     if (!replaySource && !deps.prepareWorkspace) throw workflowError('target_unavailable');
     const preparedWorkspace = replaySource ? { ok: true as const, workspaceTarget: replaySource.accepted.workspaceTarget }
       : await deps.prepareWorkspace!({ projectTarget, definition });
@@ -818,7 +846,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       } } : { kind: 'user' },
       context: {
       actionCaller: args.context.actionCaller ?? { kind: 'host' },
-      ...(metadata ? { metadata } : {}), source, inputs: resolveInputs(definition, input.inputs), machineId: projectTarget.machineId,
+      ...(metadata ? { metadata } : {}), source, inputs: resolvedInputs, machineId: projectTarget.machineId,
       executionTarget,
       workspaceTarget: preparedWorkspace.workspaceTarget,
       origin: { kind: 'direct', ...(originSessionId ? { originSessionId } : {}) },
@@ -1894,6 +1922,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     } else if (args.input.mode === 'use_result') {
       const value = args.input.value === undefined ? prior.progress.result : args.input.value;
       requireValidValue(value);
+      if (args.input.followUp?.kind === 'run_started') {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw workflowError('invalid_input');
+        const plan = record(value);
+        if (typeof plan.document !== 'string' || plan.proposal === undefined) throw workflowError('invalid_input');
+        const child = await openAccepted(args.input.followUp.runId, signal);
+        if (!matchesWorkflowAcceptedDefinitionV1(child.accepted.authoredDefinition, plan.proposal,
+            ingressContext ? { context: ingressContext } : {})) throw workflowError('invalid_input');
+      }
       progress = WorkflowProgressEnvelopeV1Schema.parse({ ...prior.progress, ...(value === undefined ? {} : { result: value }),
         review: { ...prior.progress.review, ...(args.input.value === undefined ? {} : { resultSource: { kind: 'human', accountId: callerAccountId } }),
           decision: { kind: 'use_result', requestedFromContentRevision: input.expectedContentRevision, ...(args.input.followUp ? { followUp: args.input.followUp } : {}) } } });
@@ -2123,7 +2159,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       );
       return WorkflowActionOutputSchemasV1[args.actionId].parse({
         run: snapshot.run,
+        callerAccess: { canEdit: snapshot.keyCensus.access !== 'view' },
         definition: accepted.definition,
+        authoredDefinition: accepted.authoredDefinition,
         acceptedContext: projectAcceptedContext(accepted),
         checkpoint,
         ...(result === undefined ? {} : { result }),
@@ -2244,7 +2282,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.invocations.list') {
       try {
-        return WorkflowActionOutputSchemasV1[args.actionId].parse(await deps.storage.execute({ operation: 'invocations.list', ...args.input, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, args.context.signal ? { signal: args.context.signal } : {}));
+        const page = record(await deps.storage.execute({ operation: 'invocations.list', ...args.input, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, args.context.signal ? { signal: args.context.signal } : {}));
+        return WorkflowActionOutputSchemasV1[args.actionId].parse({
+          invocations: page.invocations,
+          parentRevision: page.parentRevision,
+          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        });
       } catch (error) {
         translateStorageError(error);
       }

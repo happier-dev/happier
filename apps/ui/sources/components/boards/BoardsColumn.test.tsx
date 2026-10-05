@@ -1,0 +1,96 @@
+import * as React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, buildWorkBoardArtifactHeaderV1, createWorkBoardV1, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createPlainAccountEncryptionCurrentnessFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getStorage } from '@/sync/domains/state/storage';
+import { BoardsColumn } from './BoardsColumn';
+
+// Native and navigation adapters are external boundaries; the Board store and collection stay real.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ pathname: '/boards/alpha' }).module;
+});
+// The applied connection is a network/environment boundary. Keep Account lifetime and readers real,
+// as in workflowLibraryReads.test.tsx, while declaring this HTTP fixture's Home connected.
+vi.mock('@/sync/runtime/orchestration/connectionManager', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>();
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    return { ...actual, getAppliedActiveServerSnapshot: () => getActiveServerSnapshot(), isAppliedActiveServerRuntimeAvailable: () => true };
+});
+
+const boards = [createWorkBoardV1({ id: 'alpha', name: 'Alpha release' }), createWorkBoardV1({ id: 'beta', name: 'Beta work' })];
+const artifacts = boards.map(board => ({
+    id: board.id, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+}));
+let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
+let credentials: AuthCredentials | null = null;
+let previousStorageState = getStorage().getState();
+
+describe('BoardsColumn collection search', () => {
+    beforeEach(async () => {
+        previousStorageState = getStorage().getState();
+        home = await serveActionHomes({
+            homes: [{ key: 'boards', serverUrl: 'https://boards-column.test', accountId: 'owner' }],
+            route: request => {
+                if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (request.path === '/v1/artifacts') return Response.json(artifacts);
+                const artifact = artifacts.find(row => request.path === `/v1/artifacts/${row.id}`);
+                return artifact ? Response.json(artifact) : undefined;
+            },
+        });
+        // The HTTP helper selects a browser tab; this node renderer has no sessionStorage.
+        // Establish the same real device selection that workflowLibraryReads' fixture uses.
+        const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+        await setActiveServer({ serverId: home.homes.boards!.id, scope: 'device' });
+        credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.boards!.serverUrl);
+        const scope = { serverId: home.homes.boards!.id, accountId: 'owner' };
+        getStorage().setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        standardCleanup();
+        vi.useRealTimers();
+        home?.dispose();
+        home = null;
+        retireActiveServerAccountScopeLifetime();
+        invalidateAccountEncryptionModeCache();
+        getStorage().setState(previousStorageState);
+        vi.restoreAllMocks();
+    });
+
+    it('filters real acknowledged Board names while keeping one stable creation row', async () => {
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn /></InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
+        expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
+        expect(screen.findHostByTestId('boards-column:search')).not.toBeNull();
+
+        screen.changeTextByTestId('boards-column:search', '  ALPHA  ');
+        await flushHookEffects();
+        expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
+        expect(screen.findHostByTestId('boards-column:board:beta')).toBeNull();
+        expect(screen.findHostByTestId('boards-column:new-row')).not.toBeNull();
+        expect(screen.findHostByTestId('boards-column:new')).toBeNull();
+
+        screen.changeTextByTestId('boards-column:search', 'not a board');
+        await flushHookEffects();
+        expect(screen.findHostByTestId('boards-column:board:alpha')).toBeNull();
+        expect(screen.findHostByTestId('boards-column:new-row')).not.toBeNull();
+        screen.changeTextByTestId('boards-column:search', '');
+        await flushHookEffects();
+        expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
+    });
+});

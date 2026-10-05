@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { installPanelCommonModuleMocks } from './panelTestHelpers';
 
 
@@ -106,6 +108,33 @@ describe('MultiPaneHost docked pane animation', () => {
         await vi.advanceTimersByTimeAsync(250);
 
         expect(capturedAnimatedValues.slice(0, 2).map((value) => value.__value)).toEqual([1, 1]);
+    });
+
+    it('shows current open-pane content and callbacks while retaining the last content only for closing', async () => {
+        vi.useFakeTimers();
+        const { MultiPaneHost } = await import('./MultiPaneHost');
+        const previous = vi.fn();
+        const current = vi.fn();
+        const paneProps = {
+            main: <Main />, rightPane: null,
+            layout: { kind: 'twoPane', right: 'hidden', details: 'docked' } as const,
+            rightDockWidthPx: 360, detailsDockWidthPx: 520,
+            onCloseRight: () => {}, onCloseDetails: () => {},
+            onCommitRightDockWidthPx: () => {}, onCommitDetailsDockWidthPx: () => {},
+        };
+        const screen = await renderScreen(<MultiPaneHost {...paneProps}
+            detailsPane={React.createElement('Pressable', { testID: 'current-pane-action', onPress: previous }, 'Previous value')} />);
+        await screen.update(<MultiPaneHost {...paneProps}
+            detailsPane={React.createElement('Pressable', { testID: 'current-pane-action', onPress: current }, 'Current value')} />);
+        expect(screen.getTextContent()).toContain('Current value');
+        expect(screen.getTextContent()).not.toContain('Previous value');
+        await screen.pressByTestIdAsync('current-pane-action');
+        expect(current).toHaveBeenCalledOnce();
+        expect(previous).not.toHaveBeenCalled();
+        await screen.update(<MultiPaneHost {...paneProps} detailsPane={null} />);
+        expect(screen.getTextContent()).toContain('Current value');
+        await act(async () => { await vi.advanceTimersByTimeAsync(motionTokens.durationMs.base); });
+        expect(screen.findByTestId('current-pane-action')).toBeNull();
     });
 
     it('starts docked bottom pane animation from hidden progress and animates its dock height', async () => {

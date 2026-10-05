@@ -321,6 +321,11 @@ describe('PostHog plugin manifest', () => {
             .toEqual(sources.operations.listInstances.declaration.surfaces);
         expect(actions.get(POSTHOG_ACTION_IDS.get)?.surfaces, 'posthog/get')
             .toEqual(sources.operations.get.declaration.surfaces);
+        for (const id of [POSTHOG_ACTION_IDS.issueEvents, POSTHOG_ACTION_IDS.issueActivity,
+            POSTHOG_ACTION_IDS.codeVariables, POSTHOG_ACTION_IDS.nativeOverview]) {
+            expect(actions.get(id)?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
+            expect(actions.get(id)?.dangerLevel, id).toBe('safe');
+        }
         // And the mounted-only list is exact.
         expect(
             PLUGIN_MANIFEST.contributes.actions

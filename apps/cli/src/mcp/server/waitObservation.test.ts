@@ -14,13 +14,15 @@ it('MCP cancellation reaches the same observation Action without cancelling work
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only', retentionPolicy: 'ephemeral',
       runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'failed' } } }),
     waitForTerminal: async () => { throw new Error('Already terminal'); },
-  }) } as unknown as ActionExecutorDeps);
+  }) } satisfies Pick<ActionExecutorDeps, 'executionRunWait'> as unknown as ActionExecutorDeps);
   const bridge = createActionToolExecutorBridge({ surface: 'mcp', executor: {
     execute: (id, input, context) => owner.execute(id, input, { ...context, serverId: 'home' }),
   } });
   let handler: ((args: unknown, extra?: unknown) => Promise<unknown>) | undefined;
   registerHappierMcpBuiltInTools({ registerTool: (name, _meta, registered) => { if (name === 'wait') handler = registered; } }, {
-    sessionId: 'session', surface: 'mcp', deps: { ...bridge, changeTitle: async () => { throw new Error('Unrelated tool'); } },
+    sessionId: 'session', surface: 'mcp', deps: { ...bridge,
+      resolveActionOptions: args => bridge.resolveActionOptions(args, 'session'),
+      changeTitle: async () => { throw new Error('Unrelated tool'); } },
   });
   expect(handler).toBeDefined();
   const result = z.object({ content: z.array(z.object({ type: z.literal('text'), text: z.string() })) }).parse(await handler!({

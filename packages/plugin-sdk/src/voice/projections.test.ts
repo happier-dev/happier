@@ -185,6 +185,7 @@ const APPROVED_ROOT_VOICE_PROJECTION_EXPORTS = [
     'VoiceSettingReadinessDeclaration',
     'VoiceSettingsActionContext',
     'classifyVoiceProviderHttpFailure',
+    'resolveVoiceProviderLanguagePreference',
 ] as const;
 
 const VOICE_COMPOSITION_EXPORTS = [

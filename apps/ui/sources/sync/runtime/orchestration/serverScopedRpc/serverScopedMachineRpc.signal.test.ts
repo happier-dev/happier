@@ -105,6 +105,7 @@ describe('machineRpcWithServerScope signal', () => {
         expect(error).toMatchObject({ name: 'AbortError', code: 'MACHINE_RPC_ABORTED' });
         expect(readRpcRequestDisposition(error)).toBe('notSent');
         expect(boundary.socket.emitWithAck).not.toHaveBeenCalled();
+        expect(boundary.socket.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CANCEL, expect.anything());
         expect(runtimeFetchSpy).not.toHaveBeenCalled();
     });
 

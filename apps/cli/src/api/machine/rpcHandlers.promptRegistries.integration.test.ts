@@ -9,7 +9,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
-} from '@/machines/transfer/transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';

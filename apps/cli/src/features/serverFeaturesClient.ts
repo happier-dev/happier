@@ -30,7 +30,7 @@ export type FetchServerFeaturesSnapshotParams = Readonly<{
   }>) => Readonly<Record<string, string>> | null;
 }>;
 
-const REQUEST_ATTEMPT_TIMEOUT_MS = 60_000;
+export const SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS = 60_000;
 const READY_TTL_MS = 10 * 60_000;
 const TRANSIENT_TTL_MS = 5_000;
 const RESPONSE_ERROR_TTL_MS = 30_000;
@@ -76,7 +76,7 @@ function writePublicSnapshot(key: string, snapshot: CliServerFeaturesSnapshot): 
 async function requestServerFeaturesSnapshot(
   params: FetchServerFeaturesSnapshotParams,
 ): Promise<CliServerFeaturesSnapshot> {
-  const timeoutMs = params.timeoutMs ?? REQUEST_ATTEMPT_TIMEOUT_MS;
+  const timeoutMs = params.timeoutMs ?? SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS;
   const token = params.token?.trim();
   const projection = params.projection ?? (token ? 'authenticated' : 'public');
   const authenticatedPath = '/v1/features/authenticated';
@@ -181,7 +181,7 @@ function waitForSharedPublicSnapshot(
 function getOrStartPublicRequest(key: string): Promise<CliServerFeaturesSnapshot> {
   let request = publicInFlight.get(key);
   if (!request) {
-    request = requestServerFeaturesSnapshot({ serverUrl: key, timeoutMs: REQUEST_ATTEMPT_TIMEOUT_MS })
+    request = requestServerFeaturesSnapshot({ serverUrl: key, timeoutMs: SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS })
       .then((snapshot) => writePublicSnapshot(key, snapshot))
       .finally(() => publicInFlight.delete(key));
     publicInFlight.set(key, request);

@@ -228,7 +228,7 @@ describe('sync.sendMessage wake-after-send', () => {
         };
         await activatePendingQueueScope(activeScope);
         // These direct Sync tests bypass restore; bind its applied transport and Account.
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
         Reflect.set(sync, 'serverID', activeScope.accountId);
         resetServerFeaturesClientForTests();

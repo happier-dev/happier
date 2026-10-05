@@ -1,3 +1,5 @@
+import { afterAll, beforeEach as beforeAccountCase, afterEach as afterAccountCase } from 'vitest';
+import { installLocalVoiceAccountHarness, localVoiceHomeId, warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,8 +78,14 @@ async function waitForCreatedAudioPlayer() {
 let localVoiceEngine: Awaited<ReturnType<typeof loadLocalVoiceEngineWithCompatState>>;
 let useVoiceTargetStore: typeof import('@/voice/runtime/voiceTargetStore').useVoiceTargetStore;
 
+const accountHarness = await installLocalVoiceAccountHarness();
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
+
 describe('local voice engine agent behavior', () => {
     registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
+    beforeAccountCase(() => accountHarness.setup());
+    afterAccountCase(() => accountHarness.dispose());
 
     beforeEach(async () => {
         warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockReset();
@@ -164,7 +172,7 @@ describe('local voice engine agent behavior', () => {
             },
             machineListByServerId: {
                 ...storage.getState().machineListByServerId,
-                'server-a': [readyMachine],
+                [localVoiceHomeId]: [readyMachine],
             },
         });
 
@@ -1070,7 +1078,12 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn('s1');
         await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
 
-        expect(daemonVoiceAgentStartTurnStream).toHaveBeenCalledTimes(1);
+        expect(daemonVoiceAgentStartTurnStream, JSON.stringify({
+            runtime: getLocalVoiceState(),
+            settings: storage.getState().settings.voice.providers.local_conversation.config.streaming,
+            start: daemonVoiceAgentStart.mock.calls,
+            send: daemonVoiceAgentSendTurn.mock.calls,
+        })).toHaveBeenCalledTimes(1);
         expect(daemonVoiceAgentSendTurn).not.toHaveBeenCalled();
         expect(getLocalVoiceState()).toMatchObject({
             status: 'idle',
@@ -1482,7 +1495,6 @@ describe('local voice engine agent behavior', () => {
         expect(activeServerId).not.toBe('');
         storage.__setState({
             ...storage.getState(),
-            profileScope: { serverId: activeServerId, accountId: 'account-a' },
             settings: {
                 ...storage.getState().settings,
                 experiments: true,
@@ -1573,8 +1585,6 @@ describe('local voice engine agent behavior', () => {
             }),
         );
 
-        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-        registerStorageStateReader(() => storage.getState());
         const {
             captureActiveServerAccountScopeLifetime,
             retireActiveServerAccountScopeLifetime,

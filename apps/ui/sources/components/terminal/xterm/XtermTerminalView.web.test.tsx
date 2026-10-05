@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTerminalStreamRuntime } from '@/sync/domains/terminal/stream/runtime';
 
 import type { XtermTerminalHandle } from './XtermTerminalView.web';
+// Collection loads the real owner graph outside the SDK interaction timeout.
+import './XtermTerminalView.web';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,12 +64,16 @@ class MockTerminal {
     element: HTMLElement | null = null;
     textarea: HTMLTextAreaElement | null = null;
     disposed = false;
-    buffer = { active: { cursorY: 20, baseY: 0, viewportY: 0 } };
+    buffer = {
+        active: { cursorY: 20, baseY: 0, viewportY: 0, length: 24, type: 'normal' },
+        onBufferChange: (_callback: () => void) => ({ dispose: vi.fn() }),
+    };
     cursorMoved: (() => void) | null = null;
     scrolled: (() => void) | null = null;
     onCursorMove(callback: () => void) { this.cursorMoved = callback; return { dispose: () => { this.cursorMoved = null; } }; }
     onScroll(callback: () => void) { this.scrolled = callback; return { dispose: () => { this.scrolled = null; } }; }
     onResize(_callback: () => void) { return { dispose: vi.fn() }; }
+    onWriteParsed(_callback: () => void) { return { dispose: vi.fn() }; }
     parser = {
         registerOscHandler: registerOscHandlerSpy,
         registerDcsHandler: registerDcsHandlerSpy,
@@ -117,6 +123,7 @@ class MockTerminal {
     clear = vi.fn();
     hasSelection = vi.fn(() => false);
     getSelection = vi.fn(() => '');
+    getSelectionPosition = vi.fn(() => undefined);
     attachCustomKeyEventHandler = attachCustomKeyEventHandlerSpy;
     write = vi.fn((_data: string | Uint8Array, callback?: () => void) => {
         if (!callback) {
@@ -140,7 +147,12 @@ class MockTerminal {
 }
 
 vi.mock('@xterm/xterm', () => ({
-    Terminal: MockTerminal,
+    // Static owner imports happen before this file initializes the SDK fixture.
+    Terminal: class {
+        constructor(options: Record<string, unknown> = {}) {
+            return new MockTerminal(options);
+        }
+    },
 }));
 
 vi.mock('@xterm/addon-fit', () => ({
@@ -163,14 +175,18 @@ vi.mock('@xterm/addon-webgl', () => ({
 
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock({
         theme: {
             colors: {
-                surface: '#000000',
-                surfaceSelected: '#333333',
-                text: '#ffffff',
+                surface: { base: '#000000', selected: '#333333' },
+                text: { primary: '#ffffff' },
             },
         },
     });
@@ -224,6 +240,38 @@ describe('XtermTerminalView.web', () => {
         });
         HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
         container.remove();
+    });
+
+    it('allows the content material to clear the terminal background without fading foreground text', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const previous = storage.getState().settings;
+        const materials = glassPresetMaterials('everywhere');
+        try {
+            await act(async () => {
+                storage.setState({ settings: { ...previous, glassBlurEnabled: true, glassSurfaceMaterials: materials } });
+                root.render(<XtermTerminalView onInput={() => {}} onResize={() => {}} onReady={() => {}} fontSize={12} />);
+            });
+            expect(terminalConstructorOptions[0]?.allowTransparency).toBe(true);
+            expect(terminalConstructorOptions[0]?.theme).toEqual(expect.objectContaining({ background: '#00000000', foreground: '#ffffff', cursor: '#ffffff' }));
+            const terminal = terminalInstances[0];
+            await act(async () => {
+                storage.setState({ settings: { ...previous, glassBlurEnabled: true, glassSurfaceMaterials: { ...materials, content: { blur: 'off', opacity: 1 } } } });
+            });
+            expect(terminalInstances).toHaveLength(1);
+            expect(terminal.options.theme).toEqual(expect.objectContaining({ background: '#000000', foreground: '#ffffff' }));
+        } finally {
+            await act(async () => { storage.setState({ settings: previous }); });
+        }
+    });
+
+    it('keeps ANSI text readable and preserves bold without promoting it into pale bright colors', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        await act(async () => { root.render(<XtermTerminalView fontSize={13} onInput={() => {}} onResize={() => {}} onReady={() => {}} />); });
+        expect(terminalConstructorOptions[0]?.minimumContrastRatio).toBe(1);
+        expect(terminalConstructorOptions[0]?.drawBoldTextInBrightColors).toBe(false);
+        expect(terminalConstructorOptions[0]?.fontWeightBold).toBe('bold');
     });
 
     it('reports the visible cursor row and clears it when the viewport scrolls away', async () => {

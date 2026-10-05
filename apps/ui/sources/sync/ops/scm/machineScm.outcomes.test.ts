@@ -14,6 +14,12 @@ beforeEach(() => {
 });
 
 describe('SCM mutation transport outcomes', () => {
+    it('refuses explicit commit-base authority when the target cannot honor it before sending a mutation', async () => {
+        rpc.mockResolvedValue({ success: true, capabilities: createScmCapabilities({ writeCommit: true }) });
+        const request = { cwd: '/repo', message: 'commit', expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main' };
+        expect(await machineScmCommitCreate('m', request)).toMatchObject({ success: false, errorCode: 'FEATURE_UNSUPPORTED' });
+        expect(rpc.mock.calls.map(([call]) => call.method)).toEqual(['scm.backend.describe']);
+    });
     it('negotiates undo outcomes and preserves the observed HEAD on the exact machine target', async () => {
         const { machineScmCommitUndoLast } = await import('./machineScm');
         const expectedHeadOid = 'a'.repeat(40);

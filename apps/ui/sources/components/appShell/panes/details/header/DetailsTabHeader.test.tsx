@@ -39,6 +39,21 @@ vi.mock('@expo/vector-icons', async () => {
 });
 
 describe('DetailsTabHeader', () => {
+    it('keeps a long phone title readable and its identity switcher operable', async () => {
+        const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
+        const { ToolbarButton } = await import('@/components/ui/buttons/ToolbarButton');
+        const onSwitch = vi.fn();
+        const screen = await renderScreen(
+            <SurfaceStateSizeProvider size="phone">
+                <DetailsTabHeader title="Key the settings modal by route, not window width" titleControl={<ToolbarButton testID="switch-stash" label="Kept on v0.3" onPress={onSwitch} />} />
+            </SurfaceStateSizeProvider>,
+        );
+        await screen.pressByTestIdAsync('switch-stash');
+        expect(onSwitch).toHaveBeenCalledOnce();
+        await screen.unmount();
+        const title = await renderScreen(<SurfaceStateSizeProvider size="phone"><DetailsTabHeader title="Key the settings modal by route, not window width" /></SurfaceStateSizeProvider>);
+        expect(title.findByTestId('details-tab-header.title')?.props.numberOfLines).toBeUndefined();
+    });
     it('keeps live status beside the facts in the shared band', async () => {
         const { Text } = await import('@/components/ui/text/Text');
         const screen = await renderScreen(<DetailsTabHeader title="Run" metaLeading={<Text testID="live-status">Waiting for you</Text>} meta={[{ key: 'agent', text: 'Codex' }]} />);

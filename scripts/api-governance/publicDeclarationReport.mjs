@@ -18,6 +18,9 @@ export const PUBLIC_SURFACE_PROGRAM_OPTIONS = Object.freeze({
   skipLibCheck: true,
   strict: true,
   target: ts.ScriptTarget.ESNext,
+  // Admit Node globals and explicitly imported contracts rather than every
+  // unrelated application @types package installed in the shared checkout.
+  types: ['node'],
 });
 
 /** Creates the shared public-surface program from absolute entry module paths. */

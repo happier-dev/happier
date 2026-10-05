@@ -81,6 +81,7 @@ import type {
 } from './invocation.js';
 import type {
     CurrentSessionPresentationIntentV1,
+    SessionCompanionPresentationItem,
     InteractionOptions,
     InteractionTerminalStatusV1,
     InteractionTransientApprovalAuthorRequestV1,
@@ -100,7 +101,7 @@ import type {
     UiWidget,
 } from './interactions.js';
 import type {
-    CurrentSessionPresentationIntentV1 as ProtocolCurrentSessionPresentationIntentV1,
+    CurrentSessionPresentationAuthorIntentV1 as ProtocolCurrentSessionPresentationIntentV1,
     InteractionTerminalStatusV1 as ProtocolInteractionTerminalStatusV1,
     InteractionTransientApprovalAuthorRequestV1 as ProtocolInteractionTransientApprovalAuthorRequestV1,
     InteractionTransientApprovalResultV1 as ProtocolInteractionTransientApprovalResultV1,
@@ -242,6 +243,10 @@ describe('CORE.T1/T5 public contract', () => {
         expectTypeOf<InteractionSeverity>().toEqualTypeOf<'info' | 'warning' | 'error'>();
         expectTypeOf<CurrentSessionPresentationIntentV1>()
             .toEqualTypeOf<ProtocolCurrentSessionPresentationIntentV1>();
+        expectTypeOf<Extract<CurrentSessionPresentationIntentV1, { kind: `companion.instance.${string}` }>>()
+            .toBeNever();
+        expectTypeOf<Extract<SessionCompanionPresentationItem, { kind: 'instance' }>>()
+            .toBeNever();
         expectTypeOf<InteractionTerminalStatusV1>()
             .toEqualTypeOf<ProtocolInteractionTerminalStatusV1>();
         expectTypeOf<InteractionTransientApprovalAuthorRequestV1>()

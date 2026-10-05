@@ -5,6 +5,27 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import * as runtimeStateModule from './runtime_state.mjs';
+
+test('publication component updates derive the aggregate phase without losing neighboring outcomes', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-publication-status-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeUpdate(statePath, {
+    runtimePublication: { components: { web: { phase: 'failed', error: 'web compile failed' }, daemon: { phase: 'stale', error: null } } },
+  });
+  assert.equal((await readStackRuntimeStateFile(statePath)).runtimePublication.phase, 'failed');
+  await recordStackRuntimeUpdate(statePath, {
+    runtimePublication: { components: { daemon: { phase: 'publishing', error: null } } },
+  });
+  assert.equal((await readStackRuntimeStateFile(statePath)).runtimePublication.phase, 'publishing');
+  await recordStackRuntimeUpdate(statePath, {
+    runtimePublication: { components: { daemon: { phase: 'failed', error: 'daemon preparation failed' } } },
+  });
+  const publication = (await readStackRuntimeStateFile(statePath)).runtimePublication;
+  assert.equal(publication.phase, 'failed');
+  assert.equal(publication.components.web.error, 'web compile failed');
+  assert.equal(publication.components.daemon.error, 'daemon preparation failed');
+});
 import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
 

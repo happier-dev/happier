@@ -737,7 +737,7 @@ describe('happier server add guided flow', () => {
         {
           serverId: 'default',
           name: 'Default background service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/tmp/happier-daemon.default.service',
           platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32'
             ? process.platform

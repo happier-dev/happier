@@ -124,10 +124,6 @@ vi.mock('@/sync/sync', () => ({
     sync: { submitMessage: vi.fn(), patchSessionMetadataWithRetry: vi.fn() },
 }));
 
-vi.mock('@/utils/url/sessionFileDeepLink', () => ({
-    buildSessionFileDeepLink: () => '/session/s1',
-}));
-
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: any) => promise,
 }));
@@ -196,10 +192,6 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     };
 });
 
-vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () => ({
-    TranscriptRollbackActionButton: (props: any) => React.createElement('TranscriptRollbackActionButton', props),
-}));
-
 vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
     ContextMenu: (props: any) => {
         contextMenuPropsSpy(props);
@@ -224,6 +216,7 @@ describe('MessageView (rollback button)', () => {
 
     it('renders rollback action for agent messages when rollbackAction is provided', async () => {
         const { MessageView } = await import('./MessageView');
+        const { renderWithSessionTranscriptSource: renderScreen } = await import('@/dev/testkit/sessionTranscriptSource');
 
         const message: any = { kind: 'agent-text', id: 'a1', createdAt: 1, text: 'hello', isThinking: false, seq: 2 };
 
@@ -237,13 +230,14 @@ describe('MessageView (rollback button)', () => {
         );
 
         const rollbackButtons = screen.findAll(
-            (node: any) => node.type === 'TranscriptRollbackActionButton' && node.props.testID === 'transcript-message-rollback:a1',
+            (node) => typeof node.type === 'string' && node.props.testID === 'transcript-message-rollback:a1',
         );
         expect(rollbackButtons).toHaveLength(1);
     });
 
-    it('passes checkpoint code rollback evidence from MessageView into the rollback button', async () => {
+    it('opens the checkpoint choice when the rollback row action has checkpoint evidence', async () => {
         const { MessageView } = await import('./MessageView');
+        const { renderWithSessionTranscriptSource: renderScreen } = await import('@/dev/testkit/sessionTranscriptSource');
 
         const message: any = { kind: 'agent-text', id: 'a1', createdAt: 1, text: 'hello', isThinking: false, seq: 2 };
 
@@ -266,16 +260,12 @@ describe('MessageView (rollback button)', () => {
             />,
         );
 
-        const rollbackButtons = screen.findAll(
-            (node: any) => node.type === 'TranscriptRollbackActionButton' && node.props.testID === 'transcript-message-rollback:a1',
-        );
-        expect(rollbackButtons[0]?.props.checkpointCodeRollback).toMatchObject({
-            conversationRollbackSupported: true,
-            turnId: 'turn-1',
-            cwd: '/repo',
-            expectedStartRef: 'refs/happier/checkpoints/czE/turn-start/turn-1',
-            expectedFinalRef: 'refs/happier/checkpoints/czE/turn-final/turn-1',
-        });
+        messageViewRollbackTestState.modalMock?.spies.show.mockImplementationOnce(({ props }: any) => props.onCancel());
+        await screen.pressByTestIdAsync('transcript-message-rollback:a1');
+        expect(messageViewRollbackTestState.modalMock?.spies.show).toHaveBeenCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ conversationRollbackSupported: true }),
+        }));
+        expect(executeSpy).not.toHaveBeenCalled();
     });
 
     it('routes native context-menu rollback through the checkpoint dialog/action path when checkpoint evidence is present', async () => {
@@ -289,6 +279,7 @@ describe('MessageView (rollback button)', () => {
         }));
 
         const { MessageView } = await import('./MessageView');
+        const { renderWithSessionTranscriptSource: renderScreen, createTestSessionTranscriptSource } = await import('@/dev/testkit/sessionTranscriptSource');
 
         const message: any = { kind: 'agent-text', id: 'a1', createdAt: 1, text: 'hello', isThinking: false, seq: 2 };
 
@@ -308,7 +299,7 @@ describe('MessageView (rollback button)', () => {
                         expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
                     },
                 }}
-            />,
+            />, createTestSessionTranscriptSource({ sessionId: 'session-1' }),
         );
 
         const longPressTargets = screen.findAll((node: any) => node.type === 'Pressable' && typeof node.props.onLongPress === 'function');

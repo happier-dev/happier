@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb, mountThroughReactNativeWebAsync } from '../rnwMount.testSupport.js';
 import { PluginUiPresentationHostProviderInternal, type PluginUiPresentationHost } from '../presentationHost/context.js';
+import { happierMaterialBackgroundColor } from '../presentation/layout/material.js';
 import {
   createHostApiStub,
   createSurfaceContext,
@@ -82,7 +83,7 @@ function resolveRenderedColor(
 }
 
 function hasProjectedSurfaceChrome(element: HTMLElement | null): boolean {
-  const expectedBackground = resolveRenderedColor('backgroundColor', SURFACE_THEME_FIXTURE.colors.surface);
+  const expectedBackground = resolveRenderedColor('backgroundColor', happierMaterialBackgroundColor(SURFACE_THEME_FIXTURE.colors.surface, 'floating', true));
   const expectedBorder = resolveRenderedColor('borderTopColor', SURFACE_THEME_FIXTURE.colors.border);
   const candidates = new Set<HTMLElement>();
   for (let current = element; current; current = current.parentElement) {

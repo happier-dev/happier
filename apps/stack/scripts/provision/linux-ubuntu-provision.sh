@@ -183,7 +183,7 @@ provision_happier_user_resource_slices
 # boundary, including an isolated loopback network. Grant only Bubblewrap the
 # standard AppArmor `userns` permission instead of disabling the host-wide
 # restriction.
-if command -v apparmor_parser >/dev/null 2>&1; then
+if command -v apparmor_parser >/dev/null 2>&1 && command -v aa-enabled >/dev/null 2>&1 && aa-enabled --quiet; then
   BWRAP_APPARMOR_TMP="$(mktemp)"
   printf '%s\n' \
     'abi <abi/4.0>,' \

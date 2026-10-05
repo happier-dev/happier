@@ -1,5 +1,6 @@
 import * as React from 'react';
 import * as ExpoRouter from 'expo-router';
+import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 
 import {
     useDestinationFocus,
@@ -25,10 +26,17 @@ function Screen(props: React.ComponentProps<typeof ExpoRouter.Stack.Screen>) {
 
 function StackRoot(props: React.ComponentProps<typeof ExpoRouter.Stack>) {
     const hosted = useDestinationInstanceKey() !== null;
-    return hosted ? <>{props.children}</> : <ExpoRouter.Stack {...props} />;
+    const outlet = React.useContext(WorkspaceRouteOutlet);
+    return hosted ? <>{outlet}</> : <ExpoRouter.Stack {...props} />;
 }
 
 export const Stack = Object.assign(StackRoot, { Screen });
+
+export function Slot(props: React.ComponentProps<typeof ExpoRouter.Slot>) {
+    const hosted = useDestinationInstanceKey() !== null;
+    const outlet = React.useContext(WorkspaceRouteOutlet);
+    return hosted ? <>{outlet}</> : <ExpoRouter.Slot {...props} />;
+}
 
 export function Redirect(props: React.ComponentProps<typeof ExpoRouter.Redirect>) {
     const hosted = useDestinationInstanceKey() !== null;

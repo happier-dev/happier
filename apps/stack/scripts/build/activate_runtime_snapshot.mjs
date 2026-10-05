@@ -1,11 +1,12 @@
 import { copyFile, lstat, mkdir, realpath, symlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
-import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
+import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime/componentCatalog';
 
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import {
   artifactPayloadDir,
+  assertArtifactPayload,
   readArtifactManifest,
   readReusableArtifactManifest,
   resolveComponentArtifactSupportReference,
@@ -86,6 +87,12 @@ async function validateRuntimeArtifact({ stackBaseDir, component, artifact }) {
     manifest: validation.manifest,
   });
 
+  if (!(await readReusableArtifactManifest({
+    stackBaseDir, artifactDir: artifact.artifactDir, artifactFingerprint: validation.manifest.artifactFingerprint,
+  }))) {
+    throw new Error(`[build] ${component} artifact payload is incomplete.`);
+  }
+
   return validation.manifest;
 }
 
@@ -152,6 +159,7 @@ async function resolveCanonicalCurrentComponentSource({
 
   return {
     artifactFingerprint: artifactManifest.artifactFingerprint,
+    stalePackages: artifactManifest.stalePackages ?? [],
     sourceDir: canonicalPayloadDir,
     entrypoint: resolveComponentArtifactEntrypoint(component, artifactManifest.entrypoint),
     reusedSnapshotId: null,
@@ -171,6 +179,7 @@ async function resolveComponentSource({ stackBaseDir, component, artifact, curre
     }
     return {
       artifactFingerprint: manifest.artifactFingerprint,
+      stalePackages: manifest.stalePackages ?? [],
       sourceDir: artifactPayloadDir(artifact.artifactDir),
       entrypoint: resolveComponentArtifactEntrypoint(component, manifest.entrypoint),
       reusedSnapshotId: null,
@@ -189,6 +198,14 @@ async function resolveComponentSource({ stackBaseDir, component, artifact, curre
     });
   }
 
+  await validatePublishedRuntimeComponentReference({
+    producerStackBaseDir: stackBaseDir,
+    componentPath: join(currentSnapshot.snapshotPath, componentDirName),
+    component,
+    manifest: currentSnapshot.manifest,
+    reusableSnapshotIds: currentSnapshot.manifest.reusedSnapshotIds,
+  });
+
   const canonicalCurrentSource = await resolveCanonicalCurrentComponentSource({
     stackBaseDir,
     component,
@@ -198,6 +215,7 @@ async function resolveComponentSource({ stackBaseDir, component, artifact, curre
 
   return {
     artifactFingerprint: String(currentSnapshot.manifest.components[component].artifactFingerprint ?? '').trim(),
+    stalePackages: currentSnapshot.manifest.components[component].stalePackages ?? [],
     sourceDir: join(currentSnapshot.snapshotPath, componentDirName),
     entrypoint: String(currentSnapshot.manifest.components[component].entrypoint ?? '').trim(),
     reusedSnapshotId: currentSnapshot.snapshotId,
@@ -205,6 +223,7 @@ async function resolveComponentSource({ stackBaseDir, component, artifact, curre
 }
 
 async function isPublishedRuntimeSnapshotReusable({
+  stackBaseDir,
   runtimePaths,
   snapshotId,
   sourceMetadata,
@@ -221,12 +240,17 @@ async function isPublishedRuntimeSnapshotReusable({
 
   for (const [component, source] of Object.entries(sources)) {
     if (validation.manifest.components[component]?.artifactFingerprint !== source.artifactFingerprint) return false;
-    const entrypoint = resolveRuntimeManifestEntrypoint({
-      snapshotPath: runtimePaths.snapshotDir,
-      manifest: validation.manifest,
-      component,
-    });
-    if (!entrypoint || !(await pathExists(entrypoint))) return false;
+    try {
+      await validatePublishedRuntimeComponentReference({
+        producerStackBaseDir: stackBaseDir,
+        componentPath: join(runtimePaths.snapshotDir, resolveComponentDirectoryName(component)),
+        component,
+        manifest: validation.manifest,
+        reusableSnapshotIds: validation.manifest.reusedSnapshotIds,
+      });
+    } catch {
+      return false;
+    }
   }
   const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
   if (
@@ -266,6 +290,7 @@ export async function publishRuntimeSnapshot({
   ].filter((value) => typeof value === 'string' && value.trim() && value !== snapshotId))];
 
   if (await isPublishedRuntimeSnapshotReusable({
+    stackBaseDir,
     runtimePaths,
     snapshotId,
     sourceMetadata: runtimeSourceMetadata,
@@ -316,14 +341,17 @@ export async function publishRuntimeSnapshot({
         components: {
           web: {
             artifactFingerprint: webSource.artifactFingerprint,
+            ...(webSource.stalePackages?.length ? { stalePackages: webSource.stalePackages } : {}),
             entrypoint: webSource.entrypoint,
           },
           server: {
             artifactFingerprint: serverSource.artifactFingerprint,
+            ...(serverSource.stalePackages?.length ? { stalePackages: serverSource.stalePackages } : {}),
             entrypoint: serverSource.entrypoint,
           },
           daemon: {
             artifactFingerprint: daemonSource.artifactFingerprint,
+            ...(daemonSource.stalePackages?.length ? { stalePackages: daemonSource.stalePackages } : {}),
             entrypoint: daemonSource.entrypoint,
           },
         },
@@ -396,6 +424,14 @@ async function validatePublishedRuntimeComponentReference({
   manifest,
   reusableSnapshotIds = [],
 }) {
+  const entrypoint = resolveRuntimeManifestEntrypoint({
+    snapshotPath: join(componentPath, '..'), manifest, component,
+  });
+  await assertArtifactPayload({
+    stackBaseDir: producerStackBaseDir,
+    payloadDir: componentPath,
+    manifest: { component, entrypoint: relative(componentPath, entrypoint) },
+  });
   const artifactFingerprint = String(manifest?.components?.[component]?.artifactFingerprint ?? '').trim();
   if (!artifactFingerprint) return;
   const artifactDir = resolveStackComponentArtifactDir({
@@ -416,7 +452,8 @@ async function validatePublishedRuntimeComponentReference({
 
   if (retainedLegacyReference) return;
 
-  if (!artifactValidation.ok || artifactValidation.manifest.component !== component) {
+  if (!artifactValidation.ok || artifactValidation.manifest.component !== component
+    || artifactValidation.manifest.artifactFingerprint !== artifactFingerprint) {
     if (componentStats?.isSymbolicLink()) {
       throw new Error(
         `[runtime] cannot select incomplete runtime snapshot: ${component} artifact reference is missing or invalid.`,
@@ -434,8 +471,9 @@ async function validatePublishedRuntimeComponentReference({
   // must resolve back to the canonical artifact object.
   if (!componentStats?.isSymbolicLink()) return;
 
-  await resolveComponentArtifactSupportReference({
+  await assertArtifactPayload({
     stackBaseDir: producerStackBaseDir,
+    payloadDir: artifactPayloadDir(artifactDir),
     manifest: artifactValidation.manifest,
   });
 

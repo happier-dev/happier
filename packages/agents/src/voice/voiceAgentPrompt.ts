@@ -21,6 +21,7 @@ import {
 export type VoicePromptVerbosity = 'short' | 'balanced';
 
 export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
+
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 2;
@@ -166,11 +167,22 @@ function buildVoiceBlocks(params: Readonly<{
     memoryRecallGuidanceEnabled?: boolean;
     actionSpecs?: readonly VoicePromptActionSpec[];
     disabledActionIds?: readonly string[];
-    welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
+    assistantLanguage?: string | null;
+    welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
   }>;
   extraSystemAppendBlocks?: readonly string[];
   bodyBlocks: PromptBlockV1[];
 }>): PromptBlockV1[] {
+  const language = params.base.assistantLanguage?.trim() ?? '';
+  const welcome = params.base.welcome;
+  const attemptPolicy = [
+    ...(language ? [`Reply in ${language}.`] : []),
+    ...(welcome?.enabled === true ? [welcome.mode === 'on_first_turn'
+      ? 'On your first reply to the user, start with one short friendly greeting (one sentence). Then continue with your response. A READY warm-up is not a reply to the user. Do not repeat the greeting on later turns.'
+      : welcome.text
+        ? `If a response is requested before the user speaks, say this exact greeting: ${JSON.stringify(welcome.text)} Then wait for the user. Do not repeat this startup greeting when answering a user turn.`
+        : 'If a response is requested before the user speaks, give one short friendly greeting and wait for the user. Do not repeat this startup greeting when answering a user turn.'] : []),
+  ].join('\n');
   return [
     {
       id: `${params.idPrefix}.base`,
@@ -185,6 +197,11 @@ function buildVoiceBlocks(params: Readonly<{
         scope: 'user_prompt' as const,
         text,
       }))),
+    ...(attemptPolicy ? [{
+      id: `${params.idPrefix}.attempt_policy`,
+      scope: 'session' as const,
+      text: attemptPolicy,
+    }] : []),
     ...params.bodyBlocks,
   ];
 }
@@ -225,14 +242,13 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
   /** The exact attempt catalog; omission preserves the caller's supplied catalog. */
   availableToolNames?: readonly string[];
   assistantLanguage?: string | null;
-  welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
+  welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
 }>): string {
   const ctx = params?.initialConversationContextPlaceholder?.trim() ?? '';
   const sessionId = params?.sessionIdPlaceholder?.trim() ?? '';
   const admittedNames = params?.availableToolNames === undefined ? null : new Set(params.availableToolNames);
   const actionSpecs = (params?.actionSpecs ?? listVoiceSdkSafeToolActionSpecs())
     .filter((spec) => admittedNames === null || admittedNames.has(spec.bindings?.voiceClientToolName ?? ''));
-  const language = params?.assistantLanguage?.trim() ?? '';
   const disabled = new Set(params?.disabledActionIds ?? []);
   const availableToolNames = new Set(actionSpecs
     .filter((spec) => !disabled.has(spec.id))
@@ -254,16 +270,6 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
       base: { ...(params ?? {}), actionSpecs },
       extraSystemAppendBlocks: params?.extraSystemAppendBlocks,
       bodyBlocks: [
-        ...((language || params?.welcome?.enabled === true) ? [{
-          id: 'voice.client_tools.attempt_policy',
-          scope: 'session' as const,
-          text: [
-            ...(language ? [`Reply in ${language}.`] : []),
-            ...(params?.welcome?.enabled === true ? [params.welcome.mode === 'on_first_turn'
-              ? 'On your first reply, start with one short friendly greeting (one sentence). Then continue with your response.'
-              : 'If a response is requested before the user speaks, give one short friendly greeting and wait for the user. Do not repeat this startup greeting when answering a user turn.'] : []),
-          ].join('\n'),
-        }] : []),
         {
           id: 'voice.client_tools.tool_contract',
           scope: 'session',
@@ -286,6 +292,31 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
   }));
 }
 
+/** Composes the immutable policy admitted for one standalone realtime attempt. */
+export function buildVoiceRealtimeAttemptPolicy(params: Readonly<
+  NonNullable<Parameters<typeof buildVoiceClientToolAgentPrompt>[0]> & {
+    welcome: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
+    /** Literal resolved by the host's translation owner for the reply language. */
+    welcomeText?: string;
+  }
+>): Readonly<{
+  instructions: string;
+  assistantLanguage: string | null;
+  welcome: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
+}> {
+  const text = params.welcomeText?.trim();
+  const welcome = Object.freeze({
+    enabled: params.welcome.enabled,
+    mode: params.welcome.mode,
+    ...(params.welcome.enabled && params.welcome.mode === 'immediate' && text ? { text } : {}),
+  });
+  return Object.freeze({
+    instructions: buildVoiceClientToolAgentPrompt({ ...params, welcome }),
+    assistantLanguage: params.assistantLanguage ?? null,
+    welcome,
+  });
+}
+
 export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   assistantName?: string;
   verbosity?: VoicePromptVerbosity;
@@ -294,6 +325,8 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   disabledActionIds?: readonly string[];
   memoryRecallGuidanceEnabled?: boolean;
   extraSystemAppendBlocks?: readonly string[];
+  assistantLanguage?: string | null;
+  welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
 }>): string {
   const tag = params?.actionsTag?.trim() || VOICE_ACTIONS_TAG;
   const sessionId = params?.sessionId?.trim() || '';

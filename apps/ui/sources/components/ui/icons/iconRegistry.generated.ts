@@ -6,6 +6,7 @@
 // icon is a one-line addition to the mapping, which keeps the icon set curated on purpose.
 import { ArchiveIcon } from 'phosphor-react-native/src/icons/Archive';
 import { ArrowArcLeftIcon } from 'phosphor-react-native/src/icons/ArrowArcLeft';
+import { ArrowArcRightIcon } from 'phosphor-react-native/src/icons/ArrowArcRight';
 import { ArrowCircleDownIcon } from 'phosphor-react-native/src/icons/ArrowCircleDown';
 import { ArrowCircleRightIcon } from 'phosphor-react-native/src/icons/ArrowCircleRight';
 import { ArrowCircleUpIcon } from 'phosphor-react-native/src/icons/ArrowCircleUp';
@@ -33,6 +34,7 @@ import { BellIcon } from 'phosphor-react-native/src/icons/Bell';
 import { BellSlashIcon } from 'phosphor-react-native/src/icons/BellSlash';
 import { BookBookmarkIcon } from 'phosphor-react-native/src/icons/BookBookmark';
 import { BookIcon } from 'phosphor-react-native/src/icons/Book';
+import { BookOpenIcon } from 'phosphor-react-native/src/icons/BookOpen';
 import { BookmarkIcon } from 'phosphor-react-native/src/icons/Bookmark';
 import { BooksIcon } from 'phosphor-react-native/src/icons/Books';
 import { BrowsersIcon } from 'phosphor-react-native/src/icons/Browsers';
@@ -164,6 +166,7 @@ import { PaletteIcon } from 'phosphor-react-native/src/icons/Palette';
 import { PaperPlaneIcon } from 'phosphor-react-native/src/icons/PaperPlane';
 import { PaperPlaneTiltIcon } from 'phosphor-react-native/src/icons/PaperPlaneTilt';
 import { PaperclipIcon } from 'phosphor-react-native/src/icons/Paperclip';
+import { PathIcon } from 'phosphor-react-native/src/icons/Path';
 import { PauseCircleIcon } from 'phosphor-react-native/src/icons/PauseCircle';
 import { PawPrintIcon } from 'phosphor-react-native/src/icons/PawPrint';
 import { PencilIcon } from 'phosphor-react-native/src/icons/Pencil';
@@ -172,6 +175,7 @@ import { PersonIcon } from 'phosphor-react-native/src/icons/Person';
 import { PhoneIcon } from 'phosphor-react-native/src/icons/Phone';
 import { PlayCircleIcon } from 'phosphor-react-native/src/icons/PlayCircle';
 import { PlayIcon } from 'phosphor-react-native/src/icons/Play';
+import { PlugIcon } from 'phosphor-react-native/src/icons/Plug';
 import { PlusCircleIcon } from 'phosphor-react-native/src/icons/PlusCircle';
 import { PlusIcon } from 'phosphor-react-native/src/icons/Plus';
 import { PlusSquareIcon } from 'phosphor-react-native/src/icons/PlusSquare';
@@ -242,8 +246,10 @@ import { UsersIcon } from 'phosphor-react-native/src/icons/Users';
 import { VideoCameraIcon } from 'phosphor-react-native/src/icons/VideoCamera';
 import { WarningCircleIcon } from 'phosphor-react-native/src/icons/WarningCircle';
 import { WarningIcon } from 'phosphor-react-native/src/icons/Warning';
+import { WaveformIcon } from 'phosphor-react-native/src/icons/Waveform';
 import { WheelchairIcon } from 'phosphor-react-native/src/icons/Wheelchair';
 import { WifiHighIcon } from 'phosphor-react-native/src/icons/WifiHigh';
+import { WifiSlashIcon } from 'phosphor-react-native/src/icons/WifiSlash';
 import { WindowsLogoIcon } from 'phosphor-react-native/src/icons/WindowsLogo';
 import { WrenchIcon } from 'phosphor-react-native/src/icons/Wrench';
 import { XCircleIcon } from 'phosphor-react-native/src/icons/XCircle';
@@ -253,6 +259,7 @@ import type { Icon as PhosphorIcon } from 'phosphor-react-native';
 export const ICON_REGISTRY = {
     'archive': ArchiveIcon,
     'arrow-arc-left': ArrowArcLeftIcon,
+    'arrow-arc-right': ArrowArcRightIcon,
     'arrow-circle-down': ArrowCircleDownIcon,
     'arrow-circle-right': ArrowCircleRightIcon,
     'arrow-circle-up': ArrowCircleUpIcon,
@@ -280,7 +287,9 @@ export const ICON_REGISTRY = {
     'bell-slash': BellSlashIcon,
     'book': BookIcon,
     'book-bookmark': BookBookmarkIcon,
+    'book-open': BookOpenIcon,
     'bookmark': BookmarkIcon,
+    'bookmark-plus': BookmarkIcon,
     'books': BooksIcon,
     'browsers': BrowsersIcon,
     'bug': BugIcon,
@@ -414,14 +423,17 @@ export const ICON_REGISTRY = {
     'paper-plane': PaperPlaneIcon,
     'paper-plane-tilt': PaperPlaneTiltIcon,
     'paperclip': PaperclipIcon,
+    'path': PathIcon,
     'pause-circle': PauseCircleIcon,
     'paw-print': PawPrintIcon,
     'pencil': PencilIcon,
     'pencil-simple': PencilSimpleIcon,
     'person': PersonIcon,
     'phone': PhoneIcon,
+    'phone-hang-up': PhoneIcon,
     'play': PlayIcon,
     'play-circle': PlayCircleIcon,
+    'plug': PlugIcon,
     'plus': PlusIcon,
     'plus-circle': PlusCircleIcon,
     'plus-square': PlusSquareIcon,
@@ -493,8 +505,10 @@ export const ICON_REGISTRY = {
     'video-camera': VideoCameraIcon,
     'warning': WarningIcon,
     'warning-circle': WarningCircleIcon,
+    'waveform': WaveformIcon,
     'wheelchair': WheelchairIcon,
     'wifi-high': WifiHighIcon,
+    'wifi-slash': WifiSlashIcon,
     'windows-logo': WindowsLogoIcon,
     'wrench': WrenchIcon,
     'x': XIcon,

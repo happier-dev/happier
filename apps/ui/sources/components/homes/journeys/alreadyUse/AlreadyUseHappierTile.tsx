@@ -13,7 +13,7 @@ import { t } from '@/text';
 import { SetupBlockPaper } from '@/components/ui/setupBlocks/SetupBlockPaper';
 import type { JourneyAccountService } from '../useJourneyAccountService';
 import type { AlreadyUsePath } from './alreadyUsePaths';
-import { PaneLink } from './journeyPaneKit';
+import { PaneLink, PaneServiceLabel } from './journeyPaneKit';
 
 /**
  * "Already use Happier?" at rest (lab K1): two doors with the service in view. Sign in names the
@@ -63,19 +63,19 @@ export const AlreadyUseHappierTile = React.memo(function AlreadyUseHappierTile(p
                     onPress={() => onOpenPath('other_service')}
                     style={styles.serviceSelector}
                 >
-                    <Text style={styles.serviceSelectorText} numberOfLines={1}>
-                        {t('homesJourneys.withService', { service: service.name })}
-                    </Text>
+                    <PaneServiceLabel service={service.name} style={styles.serviceSelectorText} numberOfLines={1} />
                     <Icon name="caret-down" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
                 </HappierPressable>
                 <View style={styles.spacer} />
-                <RoundButton
+                <HappierPressable
                     testID={`${testID}.connect`}
-                    size="small"
-                    display="inverted"
-                    title={t('homesJourneys.connectToHome')}
+                    accessibilityRole="link"
+                    accessibilityLabel={t('homesJourneys.connectToHome')}
+                    style={styles.connect}
                     onPress={() => onOpenPath('direct')}
-                />
+                >
+                    <Text style={styles.connectText}>{t('homesJourneys.connectToHome')}</Text>
+                </HappierPressable>
             </View>
             {service.hostsHome ? (
                 <View style={styles.hosted}>
@@ -138,6 +138,8 @@ const styles = StyleSheet.create((theme) => ({
     spacer: {
         flexGrow: 1,
     },
+    connect: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 4 },
+    connectText: { ...Typography.default(), fontSize: 12.5, color: theme.colors.text.secondary },
     hosted: {
         flexDirection: 'row',
         flexWrap: 'wrap',

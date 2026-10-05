@@ -11,6 +11,7 @@ import {
 } from '../errors.js';
 import type { GithubRepositoryRouteV1 } from '../locator.js';
 import { decodeGithubPullRequestBody } from '../mapping/entry.js';
+import { readGithubPullRequestReviewRevision } from '../get.js';
 import { readValidatedGithubFollowUpPage } from '../scan/link.js';
 import type { GithubTriageFailureV1 } from '../types.js';
 
@@ -25,6 +26,7 @@ import {
 import {
   GITHUB_CHANGED_FILES_CEILING_V1,
   buildGithubChangedFilesUrl,
+  buildGithubComparisonUrl,
   buildGithubPullRequestUrl,
   buildGithubTimelineUrl,
   readGithubValidatedPageNumber,
@@ -225,7 +227,7 @@ export async function readGithubTimelinePage(
  * reached position, not the next link, is what decides.
  */
 export async function readGithubChangedFilesPage(
-  input: PagedReadInput,
+  input: PagedReadInput & Readonly<{ comparison?: true }>,
   dependencies: GithubDetailReadDependenciesV1,
 ): Promise<GithubDetailReadResultV1<GithubDetailPageV1<GithubProjectedChangedFileRowV1>>> {
   let url: string;
@@ -238,8 +240,59 @@ export async function readGithubChangedFilesPage(
     url,
     page: input.page,
     ceiling: { limit: GITHUB_CHANGED_FILES_CEILING_V1, perPage: input.perPage },
-    project: (body) => projectGithubChangedFileRows(body, GITHUB_DETAIL_BOUNDS_V1),
+    project: (body) => projectGithubChangedFileRows(body, GITHUB_DETAIL_BOUNDS_V1, input.comparison === true),
   });
+}
+
+export type GithubPullRequestComparisonEndpointsV1 = Readonly<{
+  baseOid: string;
+  headOid: string;
+  totalFileCount: number;
+}>;
+
+/** The PR body owns endpoint and repository identity; no display projection does. */
+export async function readGithubPullRequestComparisonEndpoints(
+  input: Readonly<{ route: GithubRepositoryRouteV1; entryNumber: string; repositoryId: string }>,
+  dependencies: GithubDetailReadDependenciesV1,
+): Promise<GithubDetailReadResultV1<GithubPullRequestComparisonEndpointsV1>> {
+  let response: GithubApiResponseV1;
+  try { response = await dependencies.client.request({ url: buildGithubPullRequestUrl(input) }); }
+  catch (error) { return failed(classifyGithubTransportFailure(error)); }
+  const decoded = decodeBody(response, dependencies.now());
+  if (!decoded.ok) return failed(decoded.failure);
+  const view = decodeGithubPullRequestBody(decoded.body);
+  if (view === null || view.number !== input.entryNumber || view.repositoryId !== input.repositoryId) return failed(RESPONSE_SHAPE_INVALID);
+  const body = decoded.body as Readonly<Record<string, unknown>>;
+  const revision = readGithubPullRequestReviewRevision(body, view.nativeRevision);
+  const baseOid = revision?.baseSha;
+  const headOid = revision?.headSha;
+  const totalFileCount = body['changed_files'];
+  if (typeof baseOid !== 'string' || !/^[a-f0-9]{40}$/u.test(baseOid)
+    || typeof headOid !== 'string' || !/^[a-f0-9]{40}$/u.test(headOid)
+    || typeof totalFileCount !== 'number' || !Number.isSafeInteger(totalFileCount) || totalFileCount < 0) return failed(RESPONSE_SHAPE_INVALID);
+  return succeeded(Object.freeze({ baseOid, headOid, totalFileCount }));
+}
+
+/** GitHub PR patches start at the merge base, not the base branch's current tip. */
+export async function readGithubPullRequestComparisonBeforeOid(
+  input: Readonly<{ route: GithubRepositoryRouteV1; baseOid: string; headOid: string }>,
+  dependencies: GithubDetailReadDependenciesV1,
+): Promise<GithubDetailReadResultV1<string>> {
+  let response: GithubApiResponseV1;
+  try { response = await dependencies.client.request({ url: buildGithubComparisonUrl(input) }); }
+  catch (error) { return failed(classifyGithubTransportFailure(error)); }
+  const decoded = decodeBody(response, dependencies.now());
+  if (!decoded.ok) return failed(decoded.failure);
+  if (typeof decoded.body !== 'object' || decoded.body === null || Array.isArray(decoded.body)) return failed(RESPONSE_SHAPE_INVALID);
+  const body = decoded.body as Readonly<Record<string, unknown>>;
+  const base = body['base_commit'];
+  const mergeBase = body['merge_base_commit'];
+  if (typeof base !== 'object' || base === null || Array.isArray(base)
+    || (base as Readonly<Record<string, unknown>>)['sha'] !== input.baseOid
+    || typeof mergeBase !== 'object' || mergeBase === null || Array.isArray(mergeBase)) return failed(RESPONSE_SHAPE_INVALID);
+  const beforeOid = (mergeBase as Readonly<Record<string, unknown>>)['sha'];
+  if (typeof beforeOid !== 'string' || !/^[a-f0-9]{40}$/u.test(beforeOid)) return failed(RESPONSE_SHAPE_INVALID);
+  return succeeded(beforeOid);
 }
 
 /* --------------------------------------------------------------------- checks */

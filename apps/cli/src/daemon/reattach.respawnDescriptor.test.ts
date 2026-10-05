@@ -8,14 +8,40 @@ import { hashProcessCommand } from './sessionRegistry';
 import type { TrackedSession } from './types';
 import type { Credentials } from '@/persistence';
 
-import { adoptSessionsFromMarkers } from './reattach';
+import { adoptSessionsFromMarkers as adoptObservedSessionsFromMarkers } from './reattach';
 import {
   buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   type SessionRunnerRespawnDescriptorV1,
 } from './processSupervision/sessionRunnerRespawnDescriptor';
 import { readOrCreateDeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 
+type AdoptionInput = Parameters<typeof adoptObservedSessionsFromMarkers>[0];
+
+// These tests provide OS process observations as boundary fixtures. Production
+// reattach supplies the map from readProcessIdentityByPid, independently of discovery.
+function adoptSessionsFromMarkers(params: Omit<AdoptionInput, 'processIdentityByPid'> & Partial<Pick<AdoptionInput, 'processIdentityByPid'>>) {
+  return adoptObservedSessionsFromMarkers({
+    ...params,
+    processIdentityByPid: params.processIdentityByPid ?? new Map(params.happyProcesses.map((proc) => [proc.pid, {
+      pid: proc.pid, command: proc.command,
+    }])),
+  });
+}
+
 describe('adoptSessionsFromMarkers respawn descriptor', () => {
+  it('retains canonical reader hashes when discovery has a longer command', () => {
+    const pid = 116;
+    const command = 'happier codex --started-by daemon ' + 'x'.repeat(1100);
+    const observedCommand = command.slice(0, 1000);
+    const marker = { pid, happySessionId: 'canonical-reader-session', happyHomeDir: '/tmp/happy-home',
+      createdAt: 1, updatedAt: 1, startedBy: 'daemon' as const,
+      processStartTimeMs: 1000, processCommandHash: hashProcessCommand(observedCommand), processCommand: observedCommand };
+    const sessions = new Map<number, TrackedSession>();
+    expect(adoptSessionsFromMarkers({ markers: [marker], happyProcesses: [{ pid, command, type: 'daemon-spawned-session' }],
+      processIdentityByPid: new Map([[pid, { pid, command: observedCommand, processStartTimeMs: 1000 }]]),
+      pidToTrackedSession: sessions }).adopted).toBe(1);
+    expect(sessions.get(pid)?.processCommandHash).toBe(hashProcessCommand(observedCommand));
+  });
   it('adopts the proven authority marker before a stripped marker for the same session', () => {
     const sessionId = 'sess-full-authority';
     const command = `happier codex --happy-starting-mode remote --started-by daemon --existing-session ${sessionId}`;
@@ -33,6 +59,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       ...thin,
       pid: 118,
       updatedAt: 1,
+      processCommandHash: undefined,
       processStartTimeMs: 1_000,
       cwd: '/workspace',
       respawn: {
@@ -50,7 +77,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
         command,
         type: 'daemon-spawned-session',
       } as never)),
-      processIdentityByPid: new Map([[full.pid, {
+      processIdentityByPid: new Map([[thin.pid, { pid: thin.pid, command }], [full.pid, {
         pid: full.pid,
         processStartTimeMs: 1_000,
         command,

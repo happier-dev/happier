@@ -47,10 +47,10 @@ import {
   MachinePoolErrorV1Schema,
   machinePoolActionEndpointPathV1,
   projectSessionPublicLinkActionResultV1,
+  projectSessionPublicLinkCreateActionResultV1,
   SessionAccessErrorCodeV1Schema,
   type ActionExecutorContext,
   type ArtifactPublicLinkIssuedV1,
-  buildStoredContentPublicShareUrlV1,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -61,7 +61,7 @@ import {
   isAuthenticationStatus,
 } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { classifyServerEndpointError, isProvenPreDispatchConnectionFailure } from '@/api/client/classifyServerEndpointError';
+import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 import { configuration } from '@/configuration';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { StoredCredentials } from '@/persistence';
@@ -203,7 +203,7 @@ export function createAccountServerActionDeps(input: Readonly<{
   externalActionMachineInstallationId?: string;
   /** Exact Account credential material used only by trusted host-side encryption adapters. */
   credentials?: StoredCredentials;
-  /** Trusted local key custody; never projected through Action results. */
+  /** Optional local notification; approved creation also returns the full URL. */
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
   /** Incumbent credential/scope owner; checked around private direct-grant materialization. */
   isCredentialCurrent?: () => boolean | Promise<boolean>;
@@ -294,15 +294,11 @@ export function createAccountServerActionDeps(input: Readonly<{
       const response = await issueRequest();
       return { ok: true, response };
     } catch (error) {
-      if (params.signal?.aborted || axios.isCancel(error)) {
-        return mutation && requestIssued
-          ? { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }
-          : { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-      }
-      const classification = classifyServerEndpointError(error);
-      if (classification.kind !== 'network' && classification.kind !== 'timeout') throw error;
-      const provenPreDispatch = isProvenPreDispatchConnectionFailure(error);
-      if (mutation && requestIssued && !provenPreDispatch) {
+      const cancelled = params.signal?.aborted === true || axios.isCancel(error);
+      const failure = classifyActionTransportFailure(error, { mutation, requestIssued, cancelled });
+      if (!failure) throw error;
+      if (cancelled) return { ok: false, errorCode: failure, error: failure };
+      if (failure === 'outcome_unknown') {
         if (params.replayAmbiguousOnce) {
           try {
             // Public-link POST is value-idempotent. This reuses the one
@@ -503,7 +499,6 @@ export function createAccountServerActionDeps(input: Readonly<{
             ...(input.isCredentialCurrent ? { isCurrent: input.isCredentialCurrent } : {}),
             ...(signal ? { signal } : {}),
           });
-          if (!input.onPublicLinkIssued) return { ok: false, errorCode: 'public_link_custody_unavailable', error: 'public_link_custody_unavailable' };
           localPublication = materialized;
           const baseBody = publicRequest.body !== null && typeof publicRequest.body === 'object'
             ? publicRequest.body as Readonly<Record<string, unknown>>
@@ -658,12 +653,14 @@ export function createAccountServerActionDeps(input: Readonly<{
           return spec.outputSchema?.parse({ changed: true }) ?? { changed: true };
         }
         if (actionId === 'session.public_link.get' || actionId === 'session.public_link.create') {
-          const projected = projectSessionPublicLinkActionResultV1(response.data);
+          const projected = localPublication
+            ? projectSessionPublicLinkCreateActionResultV1(response.data, localPublication)
+            : projectSessionPublicLinkActionResultV1(response.data);
           const result = spec.outputSchema?.parse(projected) ?? projected;
           if (localPublication && input.onPublicLinkIssued) {
-            if (!projected || !projected.id || !projected.isolatedOrigin || projected.keyDerivation !== 'fragment_v1') throw new Error('public_link_publication_unconfirmed');
+            if (!projected || !('url' in projected) || typeof projected.url !== 'string') throw new Error('public_link_publication_unconfirmed');
             await input.onPublicLinkIssued({ lookupId: localPublication.lookupId, secret: localPublication.secret, shareId: projected.id,
-              url: buildStoredContentPublicShareUrlV1({ origin: projected.isolatedOrigin, lookupId: localPublication.lookupId, secret: localPublication.secret }) });
+              url: projected.url });
           }
           return result;
         }

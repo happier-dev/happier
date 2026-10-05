@@ -23,8 +23,6 @@ import {
   AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
   projectExecutionRunRequestedConfiguration,
   readBackendTargetRefV2,
-  ReviewFindingsV1Schema,
-  ReviewFindingsV2Schema,
   type ExecutionRunResumeHandle,
 } from '@happier-dev/protocol';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
@@ -33,8 +31,8 @@ import {
   isExecutionRunTranscriptCustodyError,
 } from './executionRunTranscriptPublisher';
 import { buildExecutionRunConnectedServicesCleanupReceipt } from './connectedServicesCleanupReceipt';
-import type { ReviewRunCommentService, ReviewRunMaterialization } from '@/agent/executionRuns/profiles/review/reviewComments';
-import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
+import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { materializeReviewFindings } from './materializeReviewFindings';
 
 // The same running state claims terminalization without exposing a terminal fact
 // before its required ReviewComment writes. This replaces the old early status claim.
@@ -88,7 +86,7 @@ type FinishRunNext = Omit<
 export async function finishExecutionRun(args: Readonly<{
   runId: string;
   next: FinishRunNext;
-  toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> };
+  toolResult: { output: unknown; isError?: boolean; meta?: Record<string, unknown> };
   structuredMeta?: ExecutionRunStructuredMeta;
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
@@ -113,68 +111,37 @@ export async function finishExecutionRun(args: Readonly<{
 
   let toolResult = args.toolResult;
   let structuredMeta = args.structuredMeta;
-  let materialization: ReviewRunMaterialization | undefined;
-  const intentInput = existing.intentInput && typeof existing.intentInput === 'object' && !Array.isArray(existing.intentInput)
-    ? existing.intentInput as Readonly<Record<string, unknown>> : {};
-  const reviewedFingerprint = typeof intentInput.reviewedFingerprint === 'string' ? intentInput.reviewedFingerprint : null;
-  if (existing.intent === 'review') {
-    const output = toolResult.output && typeof toolResult.output === 'object' && !Array.isArray(toolResult.output)
-      ? toolResult.output as Record<string, unknown> : { result: toolResult.output };
-    // Failure, cancellation and malformed output still describe this launch's
-    // worktree; never replace its captured fingerprint with a later SCM read.
-    toolResult = { ...toolResult, output: { ...output, reviewedFingerprint } };
-  }
-  if (existing.intent === 'review' && args.next.status === 'succeeded') {
-    const parsed = structuredMeta?.kind === 'review_findings.v2'
-      ? ReviewFindingsV2Schema.safeParse(structuredMeta.payload)
-      : ReviewFindingsV1Schema.safeParse(structuredMeta?.payload);
-    if (parsed.success) {
-      const controller = args.controllers.get(args.runId);
-      const workflowRunId = controller?.kind === 'backend' ? controller.workflowRunId ?? controller.workflowObservation?.workflowRunId : undefined;
-      materialization = args.reviewComments
-        ? await args.reviewComments.materialize({ run: existing, findings: parsed.data.findings, reviewedFingerprint, ...(workflowRunId ? { workflowRunId } : {}) })
-        : {
-            engineId: existing.backendId, status: parsed.data.findings.length ? 'failed' : 'materialized',
-            commentIds: [], comments: [], failures: parsed.data.findings.map((finding) => ({ findingId: finding.id, errorCode: 'review_comment_materialization_unavailable' })),
-          };
-      const projection = {
-        engineId: existing.backendId,
-        reviewedFingerprint,
-        commentIds: materialization.commentIds,
-        materialization: materialization.status === 'materialized' ? { kind: 'complete' as const }
-          : { kind: materialization.status, errorCode: 'review_comment_materialization_failed' },
-        ...(materialization.failures.length ? { materializationFailures: materialization.failures } : {}),
-        perEngineOutcome: [{ key: existing.backendId, runId: existing.runId, outcome: materialization.status === 'materialized' ? 'completed' : 'failed' }],
-      };
-      const projectedFindings = parsed.data.findings.map((finding) => {
-        const materialized = materialization!.comments.find((entry) => entry.findingId === finding.id);
-        return materialized ? { ...finding, comment: materialized.comment } : finding;
-      });
-      const payload = structuredMeta?.kind === 'review_findings.v2' ? parsed.data
-        : buildReviewFindingsV2Payload({
-            runId: parsed.data.runRef.runId, callId: parsed.data.runRef.callId, backendId: parsed.data.runRef.backendId,
-            backendTarget: parsed.data.runRef.backendTarget, summary: parsed.data.summary, findings: projectedFindings,
-            triage: parsed.data.triage, limits: parsed.data.limits, generatedAtMs: parsed.data.generatedAtMs,
-          });
-      structuredMeta = { kind: 'review_findings.v2', payload: { ...payload, ...projection, findings: projectedFindings } };
-      const output = toolResult.output && typeof toolResult.output === 'object' && !Array.isArray(toolResult.output)
-        ? toolResult.output as Record<string, unknown> : { result: toolResult.output };
-      toolResult = { ...toolResult, output: { ...output, ...projection, findings: projectedFindings }, meta: { ...toolResult.meta, happier: structuredMeta } };
-    } else {
-      materialization = {
-        engineId: existing.backendId, status: 'failed', commentIds: [], comments: [],
-        failures: [{ findingId: existing.runId, errorCode: 'review_findings_invalid' }],
-      };
-      toolResult = {
-        ...toolResult, isError: true,
-        output: { result: args.toolResult.output, engineId: existing.backendId, reviewedFingerprint, commentIds: [], materialization: { kind: 'failed', errorCode: 'review_findings_invalid' }, perEngineOutcome: [{ key: existing.backendId, runId: existing.runId, outcome: 'failed' }] },
-      };
+  let terminalizationError: unknown = null;
+  let shouldMaterializeInTranscript = false;
+  try {
+    const profile = args.profileCatalog
+      ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, existing.intent, existing.profileId, existing.profileSourceCustody)
+      : resolveExecutionRunIntentProfile(existing.intent);
+    shouldMaterializeInTranscript = existing.sessionId !== null && profile.transcriptMaterialization !== 'none';
+    if (args.next.status === 'failed' || args.next.status === 'cancelled') {
+      const settled = await profile.onTerminal?.({ start: existing, status: args.next.status, finishedAtMs: args.next.finishedAtMs,
+        structuredMeta: structuredMeta ?? existing.structuredMeta });
+      if (settled) {
+        structuredMeta = settled.structuredMeta;
+        toolResult = { ...toolResult, output: settled.toolResultOutput,
+          meta: { ...toolResult.meta, ...(structuredMeta ? { happier: structuredMeta } : {}) } };
+      }
     }
-  }
+  } catch (error) { terminalizationError = error; }
+  const controller = args.controllers.get(args.runId);
+  const workflowRunId = controller?.kind === 'backend'
+    ? controller.workflowRunId ?? controller.workflowObservation?.workflowRunId : undefined;
+  const projected = await materializeReviewFindings({ run: existing, toolResult, structuredMeta,
+    expectFindings: args.next.status === 'succeeded' || (args.next.status === 'failed'
+      && (args.structuredMeta?.kind === 'review_findings.v2' || args.structuredMeta?.kind === 'review_findings.v1')),
+    reviewComments: args.reviewComments, workflowRunId });
+  const materialization = projected.materialization;
+  toolResult = projected.toolResult;
+  structuredMeta = projected.structuredMeta;
 
   const resumeHandle: ExecutionRunResumeHandle | null = (() => {
     if (existing.retentionPolicy !== 'resumable') return null;
-    const providerSessionId = readBackendResumableRuntimeId(args.controllers.get(args.runId) ?? null);
+    const providerSessionId = readBackendResumableRuntimeId(args.controllers.get(args.runId) ?? null, existing.resumeHandle);
     if (typeof providerSessionId === 'string' && providerSessionId.trim().length > 0) {
       return { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(existing.backendTarget), providerSessionId };
     }
@@ -208,22 +175,6 @@ export async function finishExecutionRun(args: Readonly<{
     }
     return base;
   })();
-  let terminalizationError: unknown = null;
-  let shouldMaterializeInTranscript = false;
-  try {
-    const profile = args.profileCatalog
-      ? resolveExecutionRunIntentProfileFromCatalog(
-          args.profileCatalog,
-          existing.intent,
-          existing.profileId,
-          existing.profileSourceCustody,
-        )
-      : resolveExecutionRunIntentProfile(existing.intent);
-    shouldMaterializeInTranscript = existing.sessionId !== null
-      && profile.transcriptMaterialization !== 'none';
-  } catch (error) {
-    terminalizationError = error;
-  }
   if (!terminalizationError && shouldMaterializeInTranscript) {
     try {
       await args.sendAcp(

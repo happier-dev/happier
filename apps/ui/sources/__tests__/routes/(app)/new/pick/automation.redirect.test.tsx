@@ -20,7 +20,7 @@ describe('legacy automation picker route', () => {
         vi.resetModules();
     });
 
-    it('reaches the shared Automation wrapper instead of a second inline authoring surface', async () => {
+    it('reaches canonical Workflow authoring instead of a second inline authoring surface', async () => {
         useLocalSearchParamsMock.mockReturnValue({
             automationEnabled: '1',
             automationName: 'Legacy',
@@ -35,7 +35,7 @@ describe('legacy automation picker route', () => {
         // The old destination forced New Session into an Automation entry and
         // manufactured a fresh inline draft that reached the retained one-shot
         // writer directly, bypassing the trigger editor and its save owner.
-        expect(redirect.props.href).toEqual({ pathname: '/automations/new' });
+        expect(redirect.props.href).toEqual({ pathname: '/workflows/new' });
     });
 
     it('carries no prompt, setting or manufactured draft in the URL', async () => {
@@ -45,6 +45,6 @@ describe('legacy automation picker route', () => {
         const screen = await renderScreen(React.createElement(module.default));
 
         const redirect = screen.findByType('Redirect' as any);
-        expect(redirect.props.href).toEqual({ pathname: '/automations/new' });
+        expect(redirect.props.href).toEqual({ pathname: '/workflows/new' });
     });
 });

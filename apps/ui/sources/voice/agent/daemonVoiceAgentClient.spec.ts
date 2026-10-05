@@ -435,6 +435,28 @@ describe('DaemonVoiceAgentClient', () => {
     ]);
   });
 
+  it('admits the configured speech latency target on the real streamed turn request', async () => {
+    const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    const { ExecutionRunTurnStreamStartRequestSchema } = await import('@happier-dev/protocol');
+    settingsState.current.voice.providers.local_conversation.config.streaming.ttsChunkChars = 120;
+    let admittedTarget: unknown;
+    vi.mocked(sessionRpcWithServerAccountScope).mockImplementation(async ({ method, payload }) => {
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+        admittedTarget = ExecutionRunTurnStreamStartRequestSchema.parse(payload).speechSegmentTargetChars;
+        return { streamId: 'target-stream' };
+      }
+      return {
+        streamId: 'target-stream', nextCursor: 1, done: true,
+        events: [{ t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: 'target-stream', seq: 0, text: 'Done.' } }],
+      };
+    });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient({ serverId: 'server-a', accountId: 'account-a' });
+    await expect(client.sendTurn({ sessionId: 's1', voiceAgentId: 'run-1', userText: 'go' }))
+      .resolves.toMatchObject({ assistantText: 'Done.' });
+    expect(admittedTarget).toBe(120);
+  });
+
   it('omits default sentinel model ids from the ensureOrStart start payload', async () => {
     const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);

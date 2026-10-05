@@ -27,7 +27,7 @@ const defaultUrl = 'https://default.example.test';
 const pinUrl = 'https://pin.example.test';
 const ownUrl = 'https://own.example.test';
 
-function fixture(options: { failure?: Readonly<Record<string, Readonly<Record<string, string>>>>; pinRunning?: boolean; sameRelay?: boolean; noServices?: boolean; hiddenManagedDefault?: boolean; userOwnedOnly?: boolean } = {}) {
+function fixture(options: { failure?: Readonly<Record<string, Readonly<Record<string, string>>>>; pinRunning?: boolean; sameRelay?: boolean; noServices?: boolean; hiddenManagedDefault?: boolean; userOwnedOnly?: boolean; foreignDefault?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'hsetup-service-controls-'));
   const home = join(root, 'happier-home');
   const profileStatus = (url: string, running = true) => ({ server: { serverUrl: url }, daemon: { running }, service: { installed: true, autostart: 'at-login' }, auth: { needsAuth: false, machineId: 'machine-' + url, machineRegistered: true } });
@@ -47,7 +47,7 @@ function fixture(options: { failure?: Readonly<Record<string, Readonly<Record<st
   if (!options.noServices) {
     for (const [id, url, owned] of [['default', defaultUrl, false], ['b', options.sameRelay ? defaultUrl : pinUrl, true], ['own', ownUrl, false]] as const) {
       if ((options.userOwnedOnly && id !== 'own') || (options.hiddenManagedDefault && id === 'b')) continue;
-      const env = { HAPPIER_HOME_DIR: home, HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable', HAPPIER_DAEMON_SERVICE_TARGET_MODE: id === 'default' ? 'default-following' : 'pinned', HAPPIER_SERVER_URL: options.hiddenManagedDefault && id === 'own' ? defaultUrl : url,
+      const env = { HAPPIER_HOME_DIR: options.foreignDefault && id === 'default' ? join(root, 'foreign-home') : home, HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable', HAPPIER_DAEMON_SERVICE_TARGET_MODE: id === 'default' ? 'default-following' : 'pinned', HAPPIER_SERVER_URL: options.hiddenManagedDefault && id === 'own' ? defaultUrl : url,
         ...(id !== 'default' ? { HAPPIER_ACTIVE_SERVER_ID: id } : {}), ...(owned ? { HAPPIER_DAEMON_SERVICE_MANAGED_BY: 'desktop' } : {}) };
       if (process.platform === 'darwin') {
         const folder = join(root, 'Library', 'LaunchAgents'); mkdirSync(folder, { recursive: true });
@@ -122,6 +122,13 @@ async function setAutostart() {
       expect.objectContaining({ serverUrl: ownUrl, status: expect.objectContaining({ daemonRunning: true }) }),
     ]) });
     expect(fake.readInvocations()).not.toContainEqual(['--server', 'own', 'service', 'stop', '--json']);
+  });
+
+  it('aggregate stop excludes a running foreign-home default while stopping its own installed pin', async () => {
+    const fake = fixture({ foreignDefault: true });
+    await run(createDaemonServiceStopHandler());
+    expect(fake.readInvocations()).not.toContainEqual(['service', 'stop', '--json']);
+    expect(fake.readInvocations()).toContainEqual(['--server', 'b', 'service', 'stop', '--json']);
   });
 
   it('attempts remaining stops and re-reads the failed target before reporting its label', async () => {

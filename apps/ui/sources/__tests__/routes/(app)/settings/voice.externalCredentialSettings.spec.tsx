@@ -334,9 +334,12 @@ describe('VoiceSettingsScreen external provider credentials', () => {
     const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
     const screen = await renderSettingsView(<VoiceSettingsScreen />);
     const providerRowTestId = `settings.voice.provider.${encodeURIComponent(providerId)}.default`;
-    // The credential state reads under the provider's name (the row's subtitle).
-    expect(screen.findByTestId(providerRowTestId)?.props.subtitle)
-      .toBe('settingsVoice.externalCredentials.ready');
+    // The credential state is the service tile's readiness line in the Service gallery.
+    const serviceTileStatus = () => screen.findAll((node) => Array.isArray(node.props?.tiles))[0]
+      ?.props.tiles.find((tile: { testID: string }) => tile.testID === providerRowTestId)?.status;
+    // The tile's full prerequisite is its accessible detail; the visible text is a short status.
+    const serviceStatus = () => { const status = serviceTileStatus(); return status?.detail ?? status?.text; };
+    expect(serviceStatus()).toBe('settingsVoice.externalCredentials.ready');
 
     setRouteSettings({
       secrets: [machineSecret],
@@ -356,10 +359,8 @@ describe('VoiceSettingsScreen external provider credentials', () => {
       screen.tree.update(<VoiceSettingsScreen />);
     });
 
-    expect(screen.findByTestId(providerRowTestId)?.props.subtitle)
-      .toContain('settingsVoice.externalCredentials.missing');
-    expect(screen.findByTestId(providerRowTestId)?.props.subtitle)
-      .toContain('voice.readiness.credential_missing');
+    expect(serviceStatus()).toContain('settingsVoice.externalCredentials.missing');
+    expect(serviceStatus()).toContain('voice.readiness.credential_missing');
     expect(screen.tree.findByType('VoiceCredentialItem' as never).props)
       .not.toHaveProperty('machineId');
   });

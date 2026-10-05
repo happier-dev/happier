@@ -2908,6 +2908,18 @@ export type SessionCompanionPreferenceSlot = Readonly<{
   stored: SessionCompanionPreferenceEntry | undefined;
 }>;
 
+/** Hook and admitted Actions borrow the same exact realm-qualified read owner. */
+export function readSessionCompanionPreferenceSlotFromState(
+  state: Pick<StorageState, 'profileScope' | 'sessions' | 'sessionListIndexByServerId' | 'sessionListRowsByServerId' | 'ordinarySessionListMembershipByServerId' | 'concurrentSessionListCacheByServerId' | 'localSettings'>,
+  sessionId: string | null,
+  activeServerId: string | null | undefined,
+  serverId?: string | null,
+): SessionCompanionPreferenceSlot {
+  if (!sessionId) return { storageKey: null, stored: undefined };
+  const storageKey = resolveSessionCompanionPreferenceStorageKeyFromState(state, sessionId, activeServerId, serverId);
+  return { storageKey, stored: storageKey ? state.localSettings.sessionCompanionPreferencesBySessionV1?.[storageKey] : undefined };
+}
+
 /**
  * Reads one Session's Companion preference slot. The subscription is one map
  * lookup, so a Companion change in another Session does not rerender this one,
@@ -2918,21 +2930,7 @@ export function useSessionCompanionPreferenceSlot(
   serverId?: string | null,
 ): SessionCompanionPreferenceSlot {
   const activeServer = useActiveServerSnapshot();
-  return getStorage()(useShallow((state): SessionCompanionPreferenceSlot => {
-    if (!sessionId) return { storageKey: null, stored: undefined };
-    const storageKey = resolveSessionCompanionPreferenceStorageKeyFromState(
-      state,
-      sessionId,
-      activeServer.serverId,
-      serverId,
-    );
-    return {
-      storageKey,
-      stored: storageKey
-        ? state.localSettings.sessionCompanionPreferencesBySessionV1?.[storageKey]
-        : undefined,
-    };
-  }));
+  return getStorage()(useShallow((state) => readSessionCompanionPreferenceSlotFromState(state, sessionId, activeServer.serverId, serverId)));
 }
 
 /**

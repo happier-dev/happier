@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createDirectPeerTransferApp } from './directPeerTransport';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
 import type { DirectTransferImportOpenRequest, DirectTransferImportSessionManager } from './directTransferImportSession';

@@ -2,6 +2,7 @@ export type ClaudeEffectiveModelEvidence = Readonly<{
   modelId: string;
   displayName?: string | null;
   contextWindowTokens?: number | null;
+  reasoningEffort?: string | null;
 }>;
 
 export type ClaudeEffectiveModelEvidenceSubscription = (

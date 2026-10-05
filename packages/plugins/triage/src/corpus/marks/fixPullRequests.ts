@@ -1,21 +1,23 @@
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import {
     MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     type TriageEntryPresentationStateV1,
     type TriageEntryRefV1,
+    type TriageFixPullRequestStatusV1,
+    type TriageFixPullRequestV1,
     type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
-import { CORPUS_SESSION_LINKS_INDEX_ID } from '../collections/ids.js';
 import { fromCorpusStoredRow } from '../collections/rowCodec.js';
 import type {
     CorpusFixPullRequestLinkV1,
-    CorpusSessionLinkRowV1,
     CorpusUserMarkRowV1,
 } from '../collections/rows.js';
 import { sameTriageEntryReference } from '../identity/components.js';
-import { deriveSessionLinkEntryTag, deriveUserMarkTag } from '../identity/tags.js';
+import { deriveUserMarkTag } from '../identity/tags.js';
+import { readTriageSessionLinksPageV1 } from '../../sessions/readEntrySessionLinks.js';
 
 /**
  * The read and resolution half of the fix-PR link (`design/FIX-LINK.md`).
@@ -66,27 +68,14 @@ export async function readFixPullRequestSources(input: Readonly<{
     // One bounded page per relation, the same page the detail's linked-Session
     // read uses. A cut page is reported rather than walked without bound.
     let incomplete = false;
-    const entryTag = await deriveSessionLinkEntryTag(collections.sessionLinks, entryRef, options);
-    const sessions = await collections.sessionLinks.query({
-        index: CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
-        prefix: [entryTag],
-        order: 'asc',
-        limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
-    }, options);
+    const sessions = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { entryRef } }, options);
     if (sessions.nextCursor !== undefined) incomplete = true;
 
     const coLinked: TriageCoLinkedEntryV1[] = [];
-    for (const sessionRow of sessions.rows) {
-        const { sessionId } = fromCorpusStoredRow<CorpusSessionLinkRowV1>(sessionRow).value;
-        const siblings = await collections.sessionLinks.query({
-            index: CORPUS_SESSION_LINKS_INDEX_ID.bySession,
-            prefix: [sessionId],
-            order: 'asc',
-            limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
-        }, options);
+    for (const { sessionId } of sessions.links) {
+        const siblings = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { sessionId } }, options);
         if (siblings.nextCursor !== undefined) incomplete = true;
-        for (const siblingRow of siblings.rows) {
-            const sibling = fromCorpusStoredRow<CorpusSessionLinkRowV1>(siblingRow).value;
+        for (const sibling of siblings.links) {
             if (sameTriageEntryReference(sibling.entryRef, entryRef)) continue;
             const seen = coLinked.findIndex((entry) => sameTriageEntryReference(entry.entryRef, sibling.entryRef));
             if (seen === -1) {
@@ -116,16 +105,8 @@ export async function readFixPullRequestSources(input: Readonly<{
 }
 
 /** The PR's lifecycle as the fix link reads it. */
-export type TriageFixPullRequestStatusV1 = 'open' | 'merged' | 'closed' | 'unknown';
+export type { TriageFixPullRequestStatusV1, TriageFixPullRequestV1 } from '@happier-dev/triage-protocol/v1';
 export type TriageFixPullRequestPresentationV1 = TriageEntryPresentationStateV1;
-
-export type TriageFixPullRequestV1 = Readonly<{
-    entryRef: TriageEntryRefV1;
-    /** `user` when the reader linked it; `session` when a fixing Session implies it. */
-    origins: readonly ('user' | 'session')[];
-    status: TriageFixPullRequestStatusV1;
-    display: Readonly<{ title?: string; scopeLabel?: string; displayPath?: string }>;
-}>;
 
 export type TriageResolvedFixPullRequestsV1 = Readonly<{
     /** Ranked: open, merged, unknown, then closed; a user link before a derived one; newest first. */
@@ -134,6 +115,50 @@ export type TriageResolvedFixPullRequestsV1 = Readonly<{
     primary: TriageFixPullRequestV1 | null;
     incomplete: boolean;
 }>;
+
+/** Private projection input: mounted facts or source-qualified exact reads, never caller-authored wire data. */
+export type TriageFixPullRequestProjectionV1 = Readonly<{
+    workflowSubjectOf(entryRef: TriageEntryRefV1): TriageSourceWorkflowSubjectV1 | null;
+    presentationOf(entryRef: TriageEntryRefV1): TriageFixPullRequestPresentationV1 | null
+        | Promise<TriageFixPullRequestPresentationV1 | null>;
+}>;
+
+/** A missing descriptor cannot invalidate a durable user choice. */
+export function isKnownNonPullRequestSubject(subject: TriageSourceWorkflowSubjectV1 | null | undefined): boolean {
+    return subject != null && subject !== 'pullRequest';
+}
+
+export async function readResolvedFixPullRequests(input: Readonly<{
+    collections: FixReadCollections;
+    entryRef: TriageEntryRefV1;
+    projection: TriageFixPullRequestProjectionV1;
+    signal?: AbortSignal;
+}>): Promise<TriageResolvedFixPullRequestsV1> {
+    const sources = await readFixPullRequestSources(input);
+    throwIfAborted(input.signal);
+    // Let the canonical resolver filter, dismiss and deduplicate before any live source read.
+    const candidates = resolveFixPullRequests(sources, {
+        workflowSubjectOf: input.projection.workflowSubjectOf,
+        presentationOf: () => null,
+    }).candidates;
+    const presentations = await Promise.all(candidates.map(async ({ entryRef }) => {
+        if (input.projection.workflowSubjectOf(entryRef) !== 'pullRequest') return null;
+        try {
+            return await input.projection.presentationOf(entryRef);
+        } catch {
+            // Source reachability cannot erase a durable relationship; cancellation still aborts the read.
+            throwIfAborted(input.signal);
+            return null;
+        }
+    }));
+    throwIfAborted(input.signal);
+    return resolveFixPullRequests(sources, {
+        workflowSubjectOf: input.projection.workflowSubjectOf,
+        presentationOf: (entryRef) => presentations[candidates.findIndex(
+            (candidate) => sameTriageEntryReference(candidate.entryRef, entryRef),
+        )] ?? null,
+    });
+}
 
 /**
  * Pull-request lifecycle in the source-neutral vocabulary (`CONTRACT.md` §4):
@@ -176,11 +201,13 @@ export function resolveFixPullRequests(
     const drafts: Draft[] = [];
 
     for (const link of sources.linked) {
+        const subject = projection.workflowSubjectOf(link.entryRef);
+        if (isKnownNonPullRequestSubject(subject)) continue;
         drafts.push({
             candidate: {
                 entryRef: link.entryRef,
                 origins: ['user'],
-                status: statusOf(projection.presentationOf(link.entryRef)),
+                status: statusOf(subject === null ? null : projection.presentationOf(link.entryRef)),
                 display: { title: link.displayAtLink.title, scopeLabel: link.displayAtLink.scopeLabel },
             },
             user: true,

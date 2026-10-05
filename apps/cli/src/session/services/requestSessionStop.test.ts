@@ -51,7 +51,8 @@ vi.mock('@/session/query/resolveSessionId', () => ({
   resolveSessionIdOrPrefix: resolveSessionIdOrPrefixMock,
 }));
 
-vi.mock('@/session/transport/rpc/machineRpc', () => ({
+vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(),
   callMachineRpc: callMachineRpcMock,
 }));
 
@@ -155,6 +156,7 @@ describe('requestSessionStop', () => {
       credentials,
       machineId: 'machine-owning-session',
       method: 'stop-session',
+      timeoutMs: null,
       request: { sessionId },
       authorization: { kind: 'session.write', sessionId },
     });

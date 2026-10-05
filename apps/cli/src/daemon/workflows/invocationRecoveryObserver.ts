@@ -10,6 +10,8 @@ import {
   getActionSpec,
   resumeActionCompletionV1,
   readActionCompletionRunObservationV1,
+  isActionCompletionRunObservationPendingV1,
+  type ReviewWalkthroughObservation,
 } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -139,7 +141,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   nativeActionRuns?: Readonly<{
     get: (runId: string, signal?: AbortSignal) => Promise<unknown>;
     stop: (runId: string, signal?: AbortSignal) => Promise<unknown>;
-    wait: (runId: string, signal?: AbortSignal) => Promise<unknown>;
+    wait: (runId: string, signal?: AbortSignal, observation?: ReviewWalkthroughObservation) => Promise<unknown>;
   }>;
 }>) {
   const now = params.now ?? Date.now;
@@ -168,7 +170,8 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           if (!parsed.success || parsed.data.run.runId !== run.runId) throw new Error('execution_run_correspondence_mismatch');
           return { ...run, native: parsed.data };
         }));
-        const active = snapshots.filter(({ native }) => native.run.status === 'running');
+        const active = snapshots.filter(({ native, observation }) => native.run.status === 'running'
+          && (!observation || isActionCompletionRunObservationPendingV1(readActionCompletionRunObservationV1(native, observation))));
         if (active.length) {
           let stopUnavailable = false;
           if (!input.observationOnly && (input.terminalParent || input.cancellationRequested)) {
@@ -179,9 +182,10 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           // retains this exact native wait even if the Stop response was lost.
           return { kind: 'unresolved', code: stopUnavailable ? 'execution_run_observation_unavailable' : 'execution_run_input_pending',
             ...(!input.observationOnly ? { waitForCompletion: async () => {
-              const waited = await Promise.allSettled(active.map(async ({ runId }) => {
-                const parsed = ExecutionRunGetResponseSchema.safeParse(await params.nativeActionRuns!.wait(runId, input.signal));
-                if (!parsed.success || parsed.data.run.runId !== runId || parsed.data.run.status === 'running') {
+              const waited = await Promise.allSettled(active.map(async ({ runId, observation }) => {
+                const parsed = ExecutionRunGetResponseSchema.safeParse(await params.nativeActionRuns!.wait(runId, input.signal, observation));
+                if (!parsed.success || parsed.data.run.runId !== runId
+                  || isActionCompletionRunObservationPendingV1(readActionCompletionRunObservationV1(parsed.data, observation))) {
                   throw new Error('execution_run_terminal_observation_unavailable');
                 }
               }));
@@ -194,7 +198,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           resolveDeclaration: () => getActionSpec(id.data).completion,
           observeRun: async (run) => {
             const snapshot = snapshots.find((entry) => entry.runId === run.runId && entry.key === run.key);
-            return snapshot ? readActionCompletionRunObservationV1(snapshot.native)
+            return snapshot ? readActionCompletionRunObservationV1(snapshot.native, run.observation)
               : { kind: 'outcome_uncertain', code: 'execution_run_correspondence_mismatch' };
           } });
         return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }

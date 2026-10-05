@@ -314,8 +314,9 @@ function SessionBoardControllerRuntimeOwner(props: React.PropsWithChildren<Reado
         const projected = current.status === 'ready' ? current.snapshot.itemsById.get(itemId) : null;
         if (projected?.state.kind !== 'ready') return;
         const source = projected.state.item.source;
-        if (source.kind !== 'installedSurface') return;
-        await openRecoveryRoute(() => { router.push(buildPluginDetailRoute('settings', source.surface.pluginId)); });
+        if (source.kind !== 'widget' || source.instance.definition.kind !== 'installed') return;
+        const pluginId = source.instance.definition.surface.pluginId;
+        await openRecoveryRoute(() => { router.push(buildPluginDetailRoute('settings', pluginId)); });
     }, [openRecoveryRoute, router]);
 
     // Board records use the Session's existing Plain/E2EE owner. A locked row

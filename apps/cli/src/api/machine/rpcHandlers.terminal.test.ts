@@ -125,20 +125,28 @@ describe('registerMachineTerminalRpcHandlers', () => {
         bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     sessionManager.ensure({ terminalKey: 'one', cwd: '/one', sessionId: 'session-one' });
     sessionManager.ensure({ terminalKey: 'two', cwd: '/two', sessionId: 'session-two' });
+    let restart: ((params: unknown) => Promise<unknown>) | undefined;
     const register = (requiredSessionId?: string) => {
       const registered = new Map<string, (params: unknown) => Promise<unknown>>();
       registerMachineTerminalRpcHandlers({ rpcHandlerManager: {
         registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => registered.set(method, handler),
       } as unknown as RpcHandlerManager, deps: { env: {}, sessionManager, requiredSessionId } });
+      restart = registered.get(RPC_METHODS.DAEMON_TERMINAL_RESTART);
       return registered.get('daemon.terminal.list');
     };
     try {
       const list = register();
       expect(list).toBeDefined();
       await expect(list!({})).resolves.toEqual({ ok: true, terminals: sessionManager.list() });
+      const originalTerminalId = sessionManager.list().find((terminal) => terminal.terminalKey === 'one')?.terminalId;
+      await expect(restart!({ terminalKey: 'one' })).resolves.toMatchObject({ ok: true });
+      expect(sessionManager.list().find((terminal) => terminal.terminalKey === 'one')?.terminalId).not.toBe(originalTerminalId);
+      await expect(list!({})).resolves.toMatchObject({ ok: true, terminals: expect.arrayContaining([
+        expect.objectContaining({ terminalKey: 'one', sessionId: 'session-one' }),
+      ]) });
       await expect(list!({ sessionId: 'session-two' })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
       await expect(register('session-one')!({})).resolves.toEqual({ ok: true, terminals: sessionManager.list().filter((terminal) => terminal.sessionId === 'session-one') });
-      expect(provider.spawned).toHaveLength(2);
+      expect(provider.spawned).toHaveLength(3);
     } finally { sessionManager.dispose(); }
   });
 
@@ -148,6 +156,34 @@ describe('registerMachineTerminalRpcHandlers', () => {
       registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => registered.set(method, handler),
     } as unknown as RpcHandlerManager, deps: { env: {} } });
     await expect(registered.get('daemon.terminal.list')!({})).resolves.toEqual({ ok: true, terminals: [] });
+  });
+
+  it('attributes restart after daemon state loss from the request and rejects a restricted sibling Session', async () => {
+    const provider = new FakePtyProvider();
+    const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: { SHELL: '/bin/bash' },
+      config: { maxSessions: 10, idleTimeoutMs: 0, bufferMaxBytes: 1000, bufferMaxEvents: 10,
+        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
+    const register = (requiredSessionId?: string) => {
+      const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+      registerMachineTerminalRpcHandlers({ rpcHandlerManager: {
+        // The RPC registrar is the boundary; invoke its generic handler with wire input.
+        registerHandler: (method, handler) => registered.set(method, async params => {
+          const result: unknown = await Reflect.apply(handler, undefined, [params]);
+          return result;
+        }),
+      }, deps: { env: {}, sessionManager, requiredSessionId } });
+      return registered;
+    };
+    try {
+      const handlers = register();
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!({ terminalKey: 'after-daemon-restart', sessionId: 'session-one' })).resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({})).resolves.toMatchObject({ ok: true, terminals: [
+        { terminalKey: 'after-daemon-restart', sessionId: 'session-one' },
+      ] });
+      const restricted = register('session-one');
+      await expect(restricted.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!({ terminalKey: 'sibling', sessionId: 'session-two' })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
+      expect(provider.spawned).toHaveLength(1);
+    } finally { sessionManager.dispose(); }
   });
   it('fails closed when explicitly disabled', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();

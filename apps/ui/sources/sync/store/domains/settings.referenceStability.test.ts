@@ -184,7 +184,7 @@ describe('createSettingsDomain settings projection reference stability', () => {
     it('restores device layout and Administration memory only for their exact Account and Home', async () => {
         const { getState } = createTestStore();
         const targets = { agents: { serverIdentityId: 'srv_one', machineId: 'machine-a' } };
-        const layouts = { workspace: createInitialSessionSplitCanvasSnapshot({ sessionId: 'session-a', maxLeaves: 4 }) };
+        const layouts = { workspace: createInitialSessionSplitCanvasSnapshot({ sessionId: 'session-a', scope }) };
         await getState().activateSettingsScope(scope);
         getState().applySettingsLocal({ machineAdministrationTargetsLocalV1: targets, sessionSplitCanvasLayoutsV1: layouts });
 

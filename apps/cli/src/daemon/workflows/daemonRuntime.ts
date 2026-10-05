@@ -22,6 +22,7 @@ import {
   freezeActionCompletionContractV1,
   zodSchemaToJsonSchemaObject,
   ExecutionRunWaitResultSchema,
+  ExecutionRunGetResponseSchema,
   readActionCompletionRunObservationV1,
 } from '@happier-dev/protocol';
 import {
@@ -453,6 +454,15 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             executor: actionExecutor,
             buildContext: resolveWorkflowActionContext,
             observeRun: async (run, observation) => {
+              if (run.observation) {
+                const observed = ExecutionRunGetResponseSchema.safeParse(await input.machineActionDirectTargetTransport.invoke(
+                  SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: run.runId, includeStructured: true, waitForOutput: run.observation },
+                  observation.signal ? { signal: observation.signal } : undefined));
+                if (!observed.success || observed.data.run.runId !== run.runId) {
+                  return { kind: 'outcome_uncertain', code: 'execution_run_observation_unavailable' };
+                }
+                return readActionCompletionRunObservationV1(observed.data, run.observation);
+              }
               const waited = ExecutionRunWaitResultSchema.safeParse(await input.machineActionDirectTargetTransport.invoke(
                 SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, { runId: run.runId },
                 observation.signal ? { signal: observation.signal } : undefined));
@@ -505,7 +515,13 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
               method: SESSION_RPC_METHODS.EXECUTION_RUN_GET, request: { runId, includeStructured: true }, ...(signal ? { signal } : {}) }),
             stop: async (runId, signal) => await callMachineRpc({ credentials: params.credentials, machineId: input.machineId,
               method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP, request: { runId }, ...(signal ? { signal } : {}) }),
-            wait: async (runId, signal) => {
+            wait: async (runId, signal, observation) => {
+              if (observation) return await callMachineRpc({
+                credentials: params.credentials, machineId: input.machineId,
+                method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+                request: { runId, includeStructured: true, waitForOutput: observation }, timeoutMs: null,
+                ...(signal ? { signal } : {}),
+              });
               const waited = ExecutionRunWaitResultSchema.safeParse(await callMachineRpc({
                 credentials: params.credentials, machineId: input.machineId,
                 method: SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, request: { runId }, timeoutMs: null,

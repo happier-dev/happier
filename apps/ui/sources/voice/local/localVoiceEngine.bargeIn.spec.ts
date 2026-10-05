@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -19,7 +21,7 @@ async function registerControlSessionBinding(): Promise<void> {
     const storage = await getStorage();
     storage.__setState({ sessions: {
         ...storage.getState().sessions,
-        s1: { id: 's1', active: true, updatedAt: Date.now(), metadata: {} },
+        s1: { id: 's1', serverId: 'server-a', active: true, updatedAt: Date.now(), metadata: {} },
     } });
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     voiceSessionBindingStore.getState().bind({
@@ -77,6 +79,9 @@ async function driveReplyToSpeaking() {
 function emitFinal(transcript: string): void {
     emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript, confidence: 0.9 }] });
 }
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine real-producer barge-in', () => {
     registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });

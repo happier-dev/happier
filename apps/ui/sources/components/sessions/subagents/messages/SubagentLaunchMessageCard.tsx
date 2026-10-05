@@ -3,7 +3,7 @@ import React from 'react';
 import { t } from '@/text';
 import type { SubagentLaunchV1 } from '@happier-dev/protocol';
 
-import { SubagentStructuredMessageCard } from './SubagentStructuredMessageCard';
+import { SubagentStructuredMessageCard, projectSubagentStructuredFindText } from './SubagentStructuredMessageCard';
 
 function describeLaunchTitle(payload: SubagentLaunchV1): string {
     if (payload.kind === 'agent_team_create') return t('session.subagents.messages.launch.createTeamTitle');
@@ -29,4 +29,8 @@ export function SubagentLaunchMessageCard(props: Readonly<{ payload: SubagentLau
             messageText={props.messageText}
         />
     );
+}
+
+export function projectSubagentLaunchFindText(payload: SubagentLaunchV1, messageText: string) {
+    return projectSubagentStructuredFindText({ title: describeLaunchTitle(payload), targetLabel: describeLaunchTarget(payload), detailText: describeLaunchDetail(payload), messageText });
 }

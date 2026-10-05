@@ -58,7 +58,7 @@ export type ArtifactAccessActionResultById = {
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string;
+                name: string | null;
                 username?: string | null | undefined;
             };
         }[];
@@ -66,7 +66,6 @@ export type ArtifactAccessActionResultById = {
     readonly "artifact.access.grants.set": {
         artifactId: string;
         ownerAccountId: string;
-        access: 'view' | 'edit' | 'admin' | 'owner';
         grants: {
             principal: {
                 kind: 'account';
@@ -83,16 +82,16 @@ export type ArtifactAccessActionResultById = {
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string;
+                name: string | null;
                 username?: string | null | undefined;
             };
         }[];
+        access: 'view' | 'edit' | 'admin' | 'owner' | null;
         changed: boolean;
     };
     readonly "artifact.access.grants.remove": {
         artifactId: string;
         ownerAccountId: string;
-        access: 'view' | 'edit' | 'admin' | 'owner';
         grants: {
             principal: {
                 kind: 'account';
@@ -109,10 +108,11 @@ export type ArtifactAccessActionResultById = {
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string;
+                name: string | null;
                 username?: string | null | undefined;
             };
         }[];
+        access: 'view' | 'edit' | 'admin' | 'owner' | null;
         changed: boolean;
     };
 };

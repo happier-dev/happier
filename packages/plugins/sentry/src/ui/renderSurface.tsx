@@ -56,7 +56,7 @@ import {
   type TriageDetailSurfaceInputV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
-import { TriageDetailPanel, useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
+import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageDetailActivity, useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
 // closed fact and failure vocabularies, so they are consumed from the one published
 // owner rather than re-spelled here: six copies is how one declared `compact` number
@@ -111,10 +111,15 @@ import {
 } from './detail/selectedEventController.js';
 import {
   SENTRY_DEFAULT_DETAIL_TAB_V1,
+  SENTRY_DETAIL_TABS_V1,
   sentryResolveSelectedTab,
   sentryVisibleDetailTabs,
   type SentryDetailTabIdV1,
 } from './detail/tabDeclarations.js';
+
+const DETAIL_PANEL_RETENTION = Object.fromEntries(
+  SENTRY_DETAIL_TABS_V1.map((declaration) => [declaration.id, declaration.retention] as const),
+);
 
 const STATE_TONES = Object.freeze({
   active: 'warning',
@@ -662,6 +667,7 @@ function OverviewPanel({
   locale,
   nowMs,
   onOpenStackTrace,
+  story = false,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   overview: SentryDetailOverviewV1;
@@ -671,6 +677,7 @@ function OverviewPanel({
   nowMs: number;
   /** Absent in a Triage panel, where Stack trace is the frame's own tab (r0.42). */
   onOpenStackTrace?: () => void;
+  story?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const factLabel = (field: SentryDetailFieldV1): string => {
@@ -706,8 +713,7 @@ function OverviewPanel({
   });
 
   return (
-    <ScrollArea>
-      <Stack gap="large">
+      <TriageDetailStory kind={story ? 'report' : undefined}>
         {overview.summary === null ? null : <Text variant="body">{overview.summary}</Text>}
         <LiveSummary summary={summary} locale={locale} nowMs={nowMs} />
         {statusFields.length === 0 ? null : (
@@ -775,8 +781,7 @@ function OverviewPanel({
               }]),
           ]}
         />
-      </Stack>
-    </ScrollArea>
+      </TriageDetailStory>
   );
 }
 
@@ -893,7 +898,7 @@ function ActivatedOccurrenceDetail({
     setRevealUser(false);
   }, [selected]);
 
-  if (selected.kind !== 'event') return null;
+  if (!active || selected.kind !== 'event') return null;
   if (read.kind === 'idle' || read.kind === 'loading') {
     return <LoadingState title="Reading this occurrence" titleKey="plugins.sentry.ui.readingSelectedOccurrence" />;
   }
@@ -1084,13 +1089,8 @@ function OccurrencesPanel({
   const text = usePluginTranslation();
   // The reader's own ordering choice (`SENTRY.md` §7.4). It lives in the panel
   // because it is a way of looking at this list, not a fact about the issue —
-  // and it resets with the panel's active interval, which is the only state
-  // Occurrences is allowed to keep across a tab leave (§7.2b).
+  // and stays with the settled pages it ordered until the detail retires.
   const [spread, setSpread] = React.useState(false);
-  const { active } = useTabPanelActivity();
-  React.useEffect(() => {
-    if (!active) setSpread(false);
-  }, [active]);
   const controller = useSentryOccurrences(input, spread);
   const { state } = controller;
 
@@ -1614,10 +1614,12 @@ function SentryDetailBody({
       <Screen safeArea>
         <TriageDetailPanel
           panel={input.panel}
+          retention={DETAIL_PANEL_RETENTION}
           ariaLabel={text('plugins.sentry.ui.tabsLabel', 'Sentry issue detail sections')}
           panels={{
             overview: (
               <OverviewPanel
+                story
                 input={input}
                 overview={overview}
                 summary={summary}
@@ -1626,7 +1628,7 @@ function SentryDetailBody({
                 nowMs={nowMs}
               />
             ),
-            activity: panels.activity,
+            activity: <TriageDetailActivity>{panels.activity}</TriageDetailActivity>,
             'stack-trace': panels['stack-trace'],
             occurrences: panels.occurrences,
             release: panels.release,
@@ -1690,7 +1692,7 @@ function SentryDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <SentryDetailBody input={admitted.input} signal={context.signal} />;
+  return <TriageDetailInstance><SentryDetailBody input={admitted.input} signal={context.signal} /></TriageDetailInstance>;
 }
 
 /**

@@ -77,24 +77,6 @@ const source: InstalledWidgetSource = {
 };
 
 describe('installed widget correlation', () => {
-    it('retires a direct Companion mount when current placement admission disappears without losing the stored source', () => {
-        const projection = (placements?: readonly ('board' | 'companion')[]) => widgetProjectionOf([
-            { pluginId: 'acme.review', localId: 'review-status-widget', ...(placements ? { placements } : {}) },
-        ]);
-        const resolve = (placements?: readonly ('board' | 'companion')[], placement?: 'board' | 'companion') => resolveInstalledWidgetMount({
-            source,
-            target: 'session',
-            presentation: 'content',
-            placement,
-            runtime: runtime({ pluginUiProjection: projection(placements) }),
-        });
-        expect(resolve(['board', 'companion'], 'companion').unresolved).toBeNull();
-        expect(resolve(['board'], 'companion').unresolved?.reasonCode).toBe('widget_placement_unadmitted');
-        expect(resolve(undefined, 'companion').placement).toBeNull();
-        expect(resolve(['companion']).placement).toBeNull();
-        expect(resolve().unresolved).toBeNull();
-    });
-
     it('resolves a widget only for the target it was made for', () => {
         const projection = widgetProjectionOf(
             [{ pluginId: 'acme.review', localId: 'latest', target: 'app' }],

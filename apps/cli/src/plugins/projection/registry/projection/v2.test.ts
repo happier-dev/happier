@@ -60,11 +60,11 @@ function admitPluginRuntime(
 }
 
 describe('buildPluginProjectionV2', () => {
-    it('projects installed Agent usage reporting without inferring it for undeclared Agents', () => {
+    it('projects installed Agent output capabilities without inferring them for undeclared Agents', () => {
         const project = (usageReporting: true | undefined) => {
             const contributes = PluginContributesV2Schema.parse({ agents: [{
                 id: 'reporter', title: 'Reporter', runtime: { kind: 'custom' }, primary: 'sessions',
-                capabilities: { sessions: {
+                capabilities: { ...(usageReporting ? { structuredOutput: { formats: ['json'] } } : {}), sessions: {
                     open: ['create'], delivery: ['newTurn'], cancel: true,
                     ...(usageReporting ? { usageReporting } : {}),
                 } },
@@ -74,10 +74,11 @@ describe('buildPluginProjectionV2', () => {
                 provenance: 'external', source: { kind: 'path' },
             });
             const registry = { ...createEmptyResolvedContributionRegistry(), agents: [agent] };
-            return buildPluginProjectionV2({ registry, generation: 1 }).agentsById[agent.id]?.capabilities?.sessions;
+            return buildPluginProjectionV2({ registry, generation: 1 }).agentsById[agent.id]?.capabilities;
         };
-        expect(project(true)).toHaveProperty('usageReporting', true);
-        expect(project(undefined)).not.toHaveProperty('usageReporting');
+        expect(project(true)).toMatchObject({ sessions: { usageReporting: true }, structuredOutput: { formats: ['json'] } });
+        expect(project(undefined)?.sessions).not.toHaveProperty('usageReporting');
+        expect(project(undefined)).not.toHaveProperty('structuredOutput');
     });
 
     it('projects an attributed targeted-admission rejection through the canonical diagnostics record', () => {
@@ -883,6 +884,57 @@ describe('buildPluginProjectionV2', () => {
             'happier.review.coderabbit/review-prompt-resource',
             'happier.review.deepsec/review-prompt-resource',
         ]);
+    });
+
+    it('projects actual dynamic Resource scopes without fabricating packaged paths', () => {
+        const pluginId = 'acme.contextual-resources';
+        const pluginRootPath = `/plugins/${pluginId}`;
+        const loaded: LoadedPlugin = {
+            pluginId, pluginRootPath,
+            manifestPath: `${pluginRootPath}/.happier-plugin/plugin.json`,
+            daemonEntryPath: null, devDaemonEntryPath: null,
+            sourceSpec: { kind: 'archive', locator: `${pluginId}.tgz`, trustPolicy: 'prompt', installPolicy: 'copy' },
+            manifest: normalizePluginManifestV2({
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Resources',
+                engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+                contributes: { resources: [
+                    { id: 'packaged', kind: 'asset', path: 'resources/banner.txt', contentType: 'text/plain' },
+                    { id: 'account', source: 'dynamic', kind: 'config', contentType: 'application/json' },
+                    { id: 'session', source: 'dynamic', scope: 'session', kind: 'config', contentType: 'application/json' },
+                    { id: 'surface', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json' },
+                ] },
+            }),
+        };
+        const resolved = projectLoadedPluginContributes({ loadResult: { loadedPlugins: [loaded], diagnosticsByPluginId: {} }, provenance: 'external' });
+        const projection = buildPluginProjectionV2({ registry: { ...createEmptyResolvedContributionRegistry(), resources: resolved.resources ?? [] }, generation: 1 });
+        const admitted = PluginProjectionV2Schema.parse(projection).resourcesById;
+        expect(admitted[`${pluginId}/packaged`]).toMatchObject({ path: 'resources/banner.txt', scope: 'global' });
+        for (const [id, scope] of [['account', 'global'], ['session', 'session'], ['surface', 'surface']]) {
+            expect(admitted[`${pluginId}/${id}`]).toMatchObject({ id, pluginId, scope, contentType: 'application/json' });
+            expect(admitted[`${pluginId}/${id}`]).not.toHaveProperty('path');
+        }
+    });
+
+    it('stamps Resource-only declarations with the actual runtime occurrence and execution origin', () => {
+        const pluginId = 'acme.data';
+        const registry = admitPluginRuntime({ ...createEmptyResolvedContributionRegistry(), resources: [{
+            pluginId, provenance: 'external', source: { kind: 'path' },
+            definition: { kindVersion: 1, id: 'report', type: 'config', source: 'dynamic', scope: 'global', contentType: 'application/json' },
+        }] }, pluginId);
+        const origin = { serverIdentityId: 'srv_data', materializationRef: {
+            machineId: 'machine-a', materializationId: 'actual-data-materialization', pluginId,
+        } };
+        const project = (executionOrigin: typeof origin | undefined) => buildPluginProjectionV2({ registry, generation: 1,
+            ...(executionOrigin ? { pluginExecutionOriginsByPluginId: { [pluginId]: executionOrigin } } : {}),
+        });
+        const projection = project(origin);
+        expect(projection.resourcesById[`${pluginId}/report`]).toMatchObject({
+            occurrenceId: registry.occurrenceIdsByPluginId![pluginId], ...origin,
+        });
+        expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+        expect(project(undefined).resourcesById[`${pluginId}/report`]).not.toHaveProperty('materializationRef');
+        expect(project({ ...origin, materializationRef: { ...origin.materializationRef, pluginId: 'acme.other' } })
+            .resourcesById[`${pluginId}/report`]).not.toHaveProperty('materializationRef');
     });
 
     it('fails closed instead of relabeling an invalid resource kind as an asset', () => {

@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it } from 'vitest';
 
 import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
@@ -47,6 +48,7 @@ function createRuntimeRegistry(
     contributes: createResolvedContributionRegistry({
       agents: [agent],
     }),
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => [],
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: async () => [],

@@ -128,6 +128,7 @@ export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
    * Session sharing off). It carries the protocol-owned Session-access code only.
    */
   SESSION_CREATION_ACCESS_REFUSED: 'session_creation_access_refused',
+  SESSION_CREATION_INITIAL_TRIGGER_REFUSED: 'session_creation_initial_trigger_refused',
   /** A strict no-effect initial-access refusal requiring a newer server or daemon. */
   SESSION_INITIAL_ACCESS_UPDATE_REQUIRED: 'update_required',
 } as const;
@@ -207,6 +208,10 @@ export const SessionCreationTerminalSpawnErrorDetailSchema = z.union([
   SessionCreationOrganizationInvalidSpawnErrorDetailSchema,
   SessionCreationCorrespondenceConflictSpawnErrorDetailSchema,
   SessionCreationAccessRefusedSpawnErrorDetailSchema,
+  z.object({
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED),
+    code: z.enum(['invalid_input', 'target_unavailable', 'feature_disabled']),
+  }).strict(),
   OperationUpdateRequiredV1Schema.extend({
     operation: z.literal('session.spawn_new'),
     component: z.enum(['server', 'daemon']),

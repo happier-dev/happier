@@ -43,6 +43,11 @@ test('root typecheck plan preserves prerequisite order and every Turbo workspace
       '--filter=@happier-dev/server',
       '--filter=@happier-dev/tests',
     ],
+    [
+      'tsc', '--noEmit',
+      '-p', 'packages/protocol/tsconfig.json',
+      '-p', 'packages/plugins/triage/tsconfig.json',
+    ],
   ]);
 });
 
@@ -105,6 +110,8 @@ test('compiler-only typecheck executes compilers after preparation and reports c
       assert.ok(args.includes('--noEmit'));
     }
   }
+  assert.ok(executed.some((args) => args.includes('packages/protocol/tsconfig.json')));
+  assert.ok(executed.some((args) => args.includes('packages/plugins/triage/tsconfig.json')));
   const cliPackage = JSON.parse(readFileSync('apps/cli/package.json', 'utf8')) as {
     scripts: Record<string, string>;
   };

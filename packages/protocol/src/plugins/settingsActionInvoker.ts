@@ -141,11 +141,13 @@ export function createHostPluginSettingsActionInvoker<Context = undefined, Apply
       key: string;
       declaration: PluginSettingsActionDeclarationV2;
       userGesture: boolean;
+      /** Host request to obtain admission from the real confirmation port; never approval evidence. */
+      requestHumanInteraction?: boolean;
       signal: AbortSignal;
       isCurrent(): boolean;
       context?: Context;
     }>): Promise<ApplyResult> {
-      if (!input.userGesture) {
+      if (!input.userGesture && !input.requestHumanInteraction) {
         throw ports.createError('plugin_settings_action_user_gesture_required', 'Plugin settings actions require an explicit user gesture');
       }
       if (active.has(input.key)) {
@@ -159,7 +161,7 @@ export function createHostPluginSettingsActionInvoker<Context = undefined, Apply
       input.signal.addEventListener('abort', retireReservation, { once: true });
       try {
         assertCurrent(input.signal, input.isCurrent, ports.createError);
-        if (input.declaration.confirmation.kind === 'required') {
+        if (input.declaration.confirmation.kind === 'required' || input.requestHumanInteraction) {
           const confirmed = await ports.confirm({
             declaration: input.declaration,
             signal: input.signal,

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter, useSegments } from 'expo-router';
 import { t } from '@/text';
 
-import { getCurrentAuth } from '@/auth/context/AuthContext';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { TokenStorage } from '@/auth/storage/tokenStorage';

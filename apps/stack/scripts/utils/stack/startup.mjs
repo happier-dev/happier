@@ -11,7 +11,7 @@ import { applyHappyServerMigrations } from '../server/infra/happy_server_infra.m
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
-} from '@happier-dev/cli-common/firstPartyRuntime';
+} from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 
 function looksLikeMissingTableError(msg) {
   const s = String(msg ?? '').toLowerCase();

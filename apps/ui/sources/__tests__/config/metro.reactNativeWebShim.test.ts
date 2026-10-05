@@ -134,6 +134,37 @@ describe('metro.config.js (web)', () => {
         expect(config.transformer?.unstable_allowRequireContext).toBe(true);
     });
 
+    it('excludes colocated tests from every workspace Metro graph while retaining runtime modules', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (candidate: string) => blockList.some(
+            (pattern: unknown) => pattern instanceof RegExp && pattern.test(candidate),
+        );
+
+        for (const candidate of [
+            resolve(uiDir, 'sources/components/markdown/enriched/EnrichedMarkdownText.webStreamingReveal.test.tsx'),
+            resolve(uiDir, 'sources/components/markdown/rendering/splitMarkdownRenderSegments.sourceRange.test.ts'),
+            resolve(uiDir, 'sources/app/(app)/settings/voice.spec.tsx'),
+            resolve(repoRoot, 'packages/plugins/elevenlabs/src/ui/voice/runtime.test.ts'),
+            resolve(repoRoot, 'packages/brand/planet.test.mjs'),
+            String.raw`C:\repo\apps\ui\sources\voice\runtime\nativeWebRtcRuntime.test.ts`,
+        ]) {
+            expect(isBlocked(candidate), candidate).toBe(true);
+        }
+        for (const candidate of [
+            resolve(uiDir, 'sources/components/markdown/enriched/EnrichedMarkdownTextAdapter.tsx'),
+            resolve(uiDir, 'sources/dev/testkit/harness/useForegroundVoiceTextTurnQaBridge.ts'),
+            resolve(repoRoot, 'packages/plugins/elevenlabs/src/ui/voice/runtime.ts'),
+            String.raw`C:\repo\apps\ui\sources\voice\runtime\nativeWebRtcRuntime.ts`,
+        ]) {
+            expect(isBlocked(candidate), candidate).toBe(false);
+        }
+    });
+
     it('keeps Expo default workspace watch folders in local development', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');

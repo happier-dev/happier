@@ -88,7 +88,7 @@ describe('New Session Send on a Temporary computer with an unresolvable Profile'
         storage.getState().activateProfileScope(SCOPE);
         storage.getState().activateSettingsScope(SCOPE);
         storage.getState().applySettings(storage.getState().settings, 1);
-        const { sync } = await import('@/sync/sync');
+        const { sync } = await import('@/sync/syncEngine');
         syncSingletonBridge.current = sync;
 
         const { useCreateNewSession } = await import('./useCreateNewSession');

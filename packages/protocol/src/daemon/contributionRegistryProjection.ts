@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { InputHintsSchema, InputPathSchema } from '../inputs/inputFields.js';
+import { WidgetConnectedAccountPurposeBindingV1Schema } from '../widgets/widgetConnectedAccountPurposeBindingV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { PluginHostedHtmlSourceV1Schema } from '../plugins/contributions/ui/hostedHtmlSourceV1.js';
 import { PluginUiHostedHtmlRequestedCapabilitiesV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
@@ -42,6 +44,7 @@ import {
   PluginActionSlashV2Schema,
   PluginActionSurfaceV2Schema,
   pluginActionRequiresConfirmationPresentation,
+  hasValidPluginConnectedAccountPurposeBindingsV2,
 } from '../plugins/actions/v2.js';
 import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
 import { PluginDiagnosticRemediationV1Schema } from './pluginContributionIntrospection.js';
@@ -59,8 +62,12 @@ import {
   PluginAgentCapabilitiesV2Schema,
   AgentUiProjectedDeclarationV1Schema,
   PluginResourceContextV1Schema,
+  PluginDynamicResourceScopeV1Schema,
   PluginResourceKindV2Schema,
   PluginWorkflowContributionV1Schema,
+  PluginInputTypeContributionV1Schema,
+  PluginDragSourceContributionV1Schema,
+  PluginDropTargetContributionV1Schema,
 } from '../plugins/contributions/v2.js';
 import {
   PluginDescriptorClearWhenEmptyV1Schema,
@@ -92,8 +99,6 @@ import { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from '../plugins/settings/accountSe
 import { PluginUiHeaderActionPresentationV1Schema } from '../plugins/contributions/ui/sessionHeaderActions.js';
 import {
   PluginDeclarativeDocumentSourceV1Schema,
-  PluginUiWidgetPlacementV1Schema,
-  readPluginUiWidgetPlacementsV1,
 } from '../plugins/contributions/ui/v2.js';
 import {
   PluginDeclarativeProjectedModelV1Schema,
@@ -112,6 +117,7 @@ import {
 import {
   PluginContributionIdentityV1Schema as CanonicalPluginContributionIdentityV1Schema,
   PluginContributionLocalIdSchema as CanonicalPluginContributionLocalIdSchema,
+  qualifyPluginContributionReferenceV1,
 } from '../plugins/contributionIdentity.js';
 import {
   ComposerReferenceCandidatePageV1Schema,
@@ -1292,11 +1298,34 @@ export type PluginProjectedCommandV2 = z.infer<typeof PluginProjectedCommandV2Sc
 export const PluginProjectedResourceV2Schema = z.object({
   id: z.string().trim().min(1),
   pluginId: z.string().trim().min(1),
+  /** Actual serving runtime slot; absent on earlier projection writers. */
+  occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema.optional(),
+  /** Producer-owned origin, consumed by the same Administration selection as Views. */
+  serverIdentityId: PluginMachineExecutionOriginV1Schema.shape.serverIdentityId.optional(),
+  materializationRef: PluginMachineExecutionOriginV1Schema.shape.materializationRef.optional(),
   resourceKind: PluginResourceKindV2Schema,
-  path: z.string().trim().min(1),
+  /** Dynamic Resources have no packaged file path. */
+  path: z.string().trim().min(1).optional(),
+  /** Current declaration fact; absent older rows cannot serve contextual refresh. */
+  scope: PluginDynamicResourceScopeV1Schema.optional(),
+  /** Exact admitted Resource HostAccess, never a widget-owned credential choice. */
+  connectedAccountPurposes: z.array(z.object({
+    purpose: z.string().trim().min(1), serviceRefs: z.array(PluginContributionIdentityV1Schema).min(1),
+  }).strict()).optional(),
   digest: PluginOptionalStringSchema,
   contentType: PluginOptionalStringSchema,
-}).strict();
+}).strict().superRefine((resource, context) => {
+  if (resource.path === undefined && resource.scope === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'A pathless Resource must carry its declared scope.' });
+  }
+  const hasOrigin = resource.serverIdentityId !== undefined || resource.materializationRef !== undefined;
+  if (hasOrigin && (resource.serverIdentityId === undefined || resource.materializationRef === undefined || resource.occurrenceId === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Projected Resource origin requires both exact origin fields and its serving occurrence.' });
+  }
+  if (resource.materializationRef && resource.materializationRef.pluginId !== resource.pluginId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['materializationRef', 'pluginId'], message: 'Projected Resource origin must match its pluginId.' });
+  }
+});
 export type PluginProjectedResourceV2 = z.infer<typeof PluginProjectedResourceV2Schema>;
 
 /**
@@ -1953,7 +1982,10 @@ const PluginProjectedUiGenericEntryV2Schema = strictProjectedFamilyEntrySchema([
   'featureGate',
   'badge',
   'home',
-  'placements',
+  'inputs',
+  'inputSchema',
+  'sessionInputPath',
+  'connectedAccountPurposeBindings',
   'actions',
   'headerActions',
   'rightSidebar',
@@ -1976,7 +2008,11 @@ const PluginProjectedUiGenericEntryV2Schema = strictProjectedFamilyEntrySchema([
   command: PluginUiResolvedSemanticCommandV1Schema.optional(),
   headerActions: z.array(PluginProjectedUiHeaderActionV2Schema).optional(),
   binding: PluginUiSurfaceBindingV1Schema.optional(),
-  placements: z.array(PluginUiWidgetPlacementV1Schema).optional(),
+  inputs: InputHintsSchema.optional(),
+  inputSchema: PluginJsonSchemaV2Schema.optional(),
+  sessionInputPath: InputPathSchema.optional(),
+  connectedAccountPurposeBindings: z.array(WidgetConnectedAccountPurposeBindingV1Schema).optional(),
+  resources: z.array(PluginContributionIdentityV1Schema).optional(),
   container: PluginUiContainerV1Schema.optional(),
   identity: PluginContributionIdentityV1Schema.optional(),
   viewer: OpenableContentViewerSelectorV1Schema.optional(),
@@ -1994,19 +2030,32 @@ const PluginProjectedUiGenericEntryV2Schema = strictProjectedFamilyEntrySchema([
   serverIdentityId: PluginMachineExecutionOriginV1Schema.shape.serverIdentityId.optional(),
   materializationRef: PluginMachineExecutionOriginV1Schema.shape.materializationRef.optional(),
 }).strict().superRefine((value, context) => {
-  if (value.placements !== undefined) {
+  if (value.resources !== undefined && (value.contributionKind !== 'surfacePlacement'
+    || value.binding?.kind !== 'inline' || value.binding.role !== 'widget'
+    || value.resources.some(resource => resource.pluginId !== value.pluginId))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['resources'], message: 'Widget Resources must name the same declaring plugin.' });
+  }
+  if (value.inputs !== undefined || value.inputSchema !== undefined || value.sessionInputPath !== undefined || value.connectedAccountPurposeBindings !== undefined) {
     const binding = value.binding;
-    if (value.contributionKind !== 'surfacePlacement'
-      || binding?.kind !== 'inline'
-      || binding.role !== 'widget'
-      || (binding.targetKind !== 'session' && binding.targetKind !== 'app')
-      || readPluginUiWidgetPlacementsV1(binding.targetKind, value.placements) === null) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['placements'],
-        message: 'Widget placements must match the inline widget target.',
-      });
+    if (value.contributionKind !== 'surfacePlacement' || binding?.kind !== 'inline' || binding.role !== 'widget'
+      || (value.sessionInputPath !== undefined && binding.targetKind !== 'session')) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['inputs'], message: 'Widget input descriptors require an inline widget binding.' });
     }
+    if (value.inputs !== undefined && value.inputSchema === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['inputSchema'], message: 'Widget inputs require their value-admission schema.' });
+    }
+    if (value.sessionInputPath !== undefined && !value.inputs?.fields.some((field) => field.path === value.sessionInputPath)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionInputPath'], message: 'The exact Session path must name a declared widget input.' });
+    }
+  }
+  if (!hasValidPluginConnectedAccountPurposeBindingsV2(value.inputSchema, value.connectedAccountPurposeBindings ?? [])
+    || value.connectedAccountPurposeBindings?.some((binding) => !value.inputs?.fields.some((field) => field.path === binding.path)
+      || !value.resources?.some(resource => resource.pluginId === binding.consumer.pluginId && resource.localId === binding.consumer.localId))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['connectedAccountPurposeBindings'], message: 'Widget viewer purposes must bind exact declared Connected Account input fields.' });
+  }
+  if (value.binding?.kind === 'inline' && value.binding.role === 'widget' && value.binding.targetKind === 'session'
+    && (value.inputs === undefined || value.inputSchema === undefined || value.sessionInputPath === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionInputPath'], message: 'Session widgets require an exact typed Session input.' });
   }
   if (value.contributionKind === 'searchProvider') {
     context.addIssue({
@@ -2175,7 +2224,7 @@ export type DaemonPluginUiTargetedSurfaceSelectedRendererV1 = z.infer<
  * setup. It is carried beside the setup Action and is neither a destination
  * nor targeted-contribution membership.
  */
-export const DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema = z.object({
+export const DaemonPluginUiEmbeddedSurfaceV1Schema = z.object({
   contribution: PluginContributionIdentityV1Schema,
   occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   projectionGeneration: z.number().int().nonnegative(),
@@ -2185,6 +2234,7 @@ export const DaemonContributionRegistryProjectionAutomationEligibleEventSetupSur
   resourceCapability: PluginUiResourceBindingCapabilityV1Schema,
   contributorTargetedContributions: PluginUiTargetedContributionsV1Schema,
 }).strict();
+export const DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema = DaemonPluginUiEmbeddedSurfaceV1Schema;
 export type DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 = z.infer<
   typeof DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema
 >;
@@ -2404,7 +2454,62 @@ export function readDaemonPluginUiTargetedSurfaceMountV1<
     : null;
 }
 
+const PluginProjectedInputTypeEntryV1Schema = z.object({
+  id: z.string().min(1), pluginId: PluginIdSchema, pluginVersion: z.string().min(1), occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema.optional(),
+  serverIdentityId: PluginMachineExecutionOriginV1Schema.shape.serverIdentityId.optional(),
+  materializationRef: PluginMachineExecutionOriginV1Schema.shape.materializationRef.optional(),
+  definition: PluginInputTypeContributionV1Schema,
+  pickerSurface: DaemonPluginUiEmbeddedSurfaceV1Schema.optional(),
+}).strict().superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) {
+    context.addIssue({ code: 'custom', path: ['id'], message: 'Input type identity must match its descriptor' });
+  }
+  const hasOrigin = entry.serverIdentityId !== undefined || entry.materializationRef !== undefined;
+  if (hasOrigin && (!entry.serverIdentityId || !entry.materializationRef || !entry.occurrenceId)) {
+    context.addIssue({ code: 'custom', message: 'Projected input type origin requires both exact origin fields and its serving occurrence' });
+  }
+  if (entry.materializationRef && entry.materializationRef.pluginId !== entry.pluginId) {
+    context.addIssue({ code: 'custom', path: ['materializationRef', 'pluginId'], message: 'Projected input type origin must match its pluginId' });
+  }
+  const mount = entry.pickerSurface;
+  const declaredPicker = entry.definition.picker
+    ? qualifyPluginContributionReferenceV1(entry.definition.picker, entry.pluginId)
+    : null;
+  if (mount && (!entry.definition.picker || !entry.occurrenceId
+    || mount.contribution.pluginId !== entry.pluginId || mount.contribution.localId !== entry.definition.id
+    || mount.occurrenceId !== entry.occurrenceId
+    || mount.contributorTargetedContributions.target.pluginId !== entry.pluginId
+    || mount.contributorTargetedContributions.target.occurrenceId !== entry.occurrenceId
+    || !mount.contributorTargetedContributions.target.sourceCustody
+    || mount.executionOrigin.materializationRef.pluginId !== entry.pluginId
+    || mount.rendererChain[0]?.pluginId !== declaredPicker?.pluginId
+    || mount.rendererChain[0]?.localId !== declaredPicker?.localId
+    || mount.rendererChain.some(renderer => renderer.pluginId !== entry.pluginId)
+    || !mount.rendererChain.some(renderer => renderer.pluginId === mount.selectedRenderer.identity.pluginId
+      && renderer.localId === mount.selectedRenderer.identity.localId))) {
+    context.addIssue({ code: 'custom', path: ['pickerSurface'], message: 'Picker surface must carry the exact admitted input type authority' });
+  }
+});
+
+export const PluginProjectedDragSourceEntryV1Schema = z.object({
+  id: z.string().min(1), pluginId: PluginIdSchema, pluginVersion: z.string().min(1), occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema.optional(),
+  definition: PluginDragSourceContributionV1Schema,
+}).strict().superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Drag source identity must match its descriptor' });
+});
+export type PluginProjectedDragSourceEntryV1 = z.infer<typeof PluginProjectedDragSourceEntryV1Schema>;
+export const PluginProjectedDropTargetEntryV1Schema = z.object({
+  id: z.string().min(1), pluginId: PluginIdSchema, pluginVersion: z.string().min(1), occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema.optional(),
+  definition: PluginDropTargetContributionV1Schema,
+}).strict().superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Drop target identity must match its descriptor' });
+});
+export type PluginProjectedDropTargetEntryV1 = z.infer<typeof PluginProjectedDropTargetEntryV1Schema>;
+
 export const PluginProjectedFamilyEntryV2Schema = z.union([
+  PluginProjectedDragSourceEntryV1Schema,
+  PluginProjectedDropTargetEntryV1Schema,
+  PluginProjectedInputTypeEntryV1Schema,
   PluginProjectedDefinitionEntryV2Schema,
   PluginProjectedWorkflowEntryV1Schema,
   PluginProjectedVoiceProviderEntryV2Schema,
@@ -2447,6 +2552,9 @@ const PluginProjectedBrowserFamilyV2Schema = projectedFamilySchema('pluginBrowse
 const PluginProjectedVoiceModelPacksFamilyV2Schema = projectedFamilySchema('voiceModelPacks', PluginProjectedDefinitionEntryV2Schema);
 const PluginProjectedRolesFamilyV1Schema = projectedFamilySchema('roles', PluginProjectedDefinitionEntryV2Schema);
 const PluginProjectedWorkflowsFamilyV1Schema = projectedFamilySchema('workflows', PluginProjectedWorkflowEntryV1Schema);
+const PluginProjectedInputTypesFamilyV1Schema = projectedFamilySchema('inputTypes', PluginProjectedInputTypeEntryV1Schema);
+const PluginProjectedDragSourcesFamilyV1Schema = projectedFamilySchema('dragSources', PluginProjectedDragSourceEntryV1Schema);
+const PluginProjectedDropTargetsFamilyV1Schema = projectedFamilySchema('dropTargets', PluginProjectedDropTargetEntryV1Schema);
 const PluginProjectedVoiceProvidersFamilyV2Schema = projectedFamilySchema('voiceProviders', PluginProjectedVoiceProviderEntryV2Schema);
 const PluginProjectedComposerAttachmentsFamilyV1Schema = projectedFamilySchema('composerAttachments', PluginProjectedComposerAttachmentEntryV1Schema);
 const PluginProjectedComposerControlsFamilyV1Schema = projectedFamilySchema('composerControls', PluginProjectedComposerControlEntryV1Schema);
@@ -2465,6 +2573,9 @@ const PluginProjectedFamiliesByIdV2Schema = z.object({
   voiceModelPacks: PluginProjectedVoiceModelPacksFamilyV2Schema.optional(),
   roles: PluginProjectedRolesFamilyV1Schema.optional(),
   workflows: PluginProjectedWorkflowsFamilyV1Schema.optional(),
+  inputTypes: PluginProjectedInputTypesFamilyV1Schema.optional(),
+  dragSources: PluginProjectedDragSourcesFamilyV1Schema.optional(),
+  dropTargets: PluginProjectedDropTargetsFamilyV1Schema.optional(),
   voiceProviders: PluginProjectedVoiceProvidersFamilyV2Schema.optional(),
   composerAttachments: PluginProjectedComposerAttachmentsFamilyV1Schema.optional(),
   composerControls: PluginProjectedComposerControlsFamilyV1Schema.optional(),
@@ -2485,6 +2596,9 @@ export const PluginProjectedFamilyV2Schema = z.union([
   PluginProjectedVoiceModelPacksFamilyV2Schema,
   PluginProjectedRolesFamilyV1Schema,
   PluginProjectedWorkflowsFamilyV1Schema,
+  PluginProjectedInputTypesFamilyV1Schema,
+  PluginProjectedDragSourcesFamilyV1Schema,
+  PluginProjectedDropTargetsFamilyV1Schema,
   PluginProjectedVoiceProvidersFamilyV2Schema,
   PluginProjectedComposerAttachmentsFamilyV1Schema,
   PluginProjectedComposerControlsFamilyV1Schema,

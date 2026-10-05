@@ -87,7 +87,7 @@ describe('openMachineLiveStreamRelayClient', () => {
                     ok: true as const,
                     routeKind: 'loopback_direct' as const,
                     response: {
-                        v: 1,
+                        v: 2,
                         ok: true,
                         receipt: PEER_MEDIATION_RECEIPTS.streamStarted,
                         streamId: input.streamId,

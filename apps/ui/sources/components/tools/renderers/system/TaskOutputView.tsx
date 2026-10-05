@@ -2,7 +2,8 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { CodeView } from '@/components/ui/media/CodeView';
-import { Text } from '@/components/ui/text/Text';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { t } from '@/text';
 
 import type { ToolViewProps } from '../core/_registry';
@@ -11,6 +12,13 @@ import { tailTextWithEllipsis } from "@happier-dev/session-core/tools";
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 
 const MAX_OUTPUT_CHARS = 4000;
+
+export const projectTaskOutputDisplayText: ToolDisplayTextProjector = (tool) => {
+    if (tool.state === 'running' && readBoolean(maybeParseJson(tool.input), 'block')) {
+        return toolTextBlock('tool-task-output-waiting', t('tools.taskOutputView.waitingForTask'));
+    }
+    return toolTextBlock('tool-task-output-body', readOutputText(tool.result));
+};
 
 /**
  * `TaskOutput` reads the output of a *background task* — a detached `Bash` command or a backgrounded
@@ -22,16 +30,18 @@ const MAX_OUTPUT_CHARS = 4000;
  * transcript) leaves nothing to render. So this card shows only what is attested — that the model is
  * waiting on the task, and the output when a path actually retained it — and nothing else.
  */
-export const TaskOutputView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const TaskOutputView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     if (detailLevel === 'title') return null;
 
-    const isBlocking = readBoolean(maybeParseJson(tool.input), 'block');
-    const output = readOutputText(tool.result);
+    const blocks = projectTaskOutputDisplayText(tool);
+    const waiting = blocks.find((block) => block.id === 'tool-task-output-waiting')?.text;
+    const output = blocks.find((block) => block.id === 'tool-task-output-body')?.text;
 
-    if (tool.state === 'running' && isBlocking) {
+    if (waiting) {
         return (
             <ToolSectionView>
-                <Text style={styles.notice}>{t('tools.taskOutputView.waitingForTask')}</Text>
+                <ToolFindText text={waiting} blockId="tool-task-output-waiting" messageId={messageId} style={styles.notice} />
             </ToolSectionView>
         );
     }
@@ -40,7 +50,7 @@ export const TaskOutputView = React.memo<ToolViewProps>(({ tool, detailLevel }) 
 
     return (
         <ToolSectionView fullWidth={detailLevel === 'full'}>
-            <CodeView code={detailLevel === 'full' ? output : tailTextWithEllipsis(output, MAX_OUTPUT_CHARS)} />
+            <CodeView code={detailLevel === 'full' || find.active ? output : tailTextWithEllipsis(output, MAX_OUTPUT_CHARS)} findRanges={find.ranges('tool-task-output-body')} />
         </ToolSectionView>
     );
 });

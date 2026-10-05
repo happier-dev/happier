@@ -14,6 +14,7 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { renderScreen } from '@/dev/testkit';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';

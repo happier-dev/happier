@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import type { GithubCheckObservationV1 } from '../checks.js';
+import type { GithubPatchEvidenceV1 } from './contracts.js';
 import { readGithubAbsoluteWebUrl } from '../locator.js';
 import { readGithubChangedFileImportSpecifiers } from './files/orderChangedFiles.js';
 
@@ -27,11 +28,9 @@ import {
  *
  * It is an allow-list, and three of its refusals are deliberate:
  *
- * - **a changed file's `patch` never crosses this boundary.** The rich diff body
- *   is held at the 03b catalog under B6, so a changed-file row publishes only
- *   whether GitHub supplied a patch for that file. That is what lets the panel
- *   say *diff unavailable for this file* — a real provider fact — without this
- *   source shipping diff bytes to a surface that has no owner to render them;
+ * - A display-only changed-file read publishes patch availability. An explicit
+ *   comparison read also preserves exact patch text and its coverage; availability
+ *   by itself cannot prove that GitHub supplied all the changed lines.
  * - **a timeline event's payload bag is not copied.** A timeline row is what
  *   happened, who did it, and when. The comment body an event carries belongs to
  *   the comments plane, which is separately paginated and separately bounded;
@@ -471,9 +470,10 @@ export type GithubProjectedChangedFileRowV1 = Readonly<{
    * `false` when GitHub omitted this file's `patch` — which it does for very
    * large files. It is a real provider fact and the reason a row can render as
    * *diff unavailable for this file* with its counts rather than as an empty
-   * diff. The patch text itself never crosses this boundary.
+   * diff. Comparison callers consume `evidence`, not this display boolean.
    */
   diffAvailable: boolean;
+  evidence?: GithubPatchEvidenceV1;
   /** Relative static imports observed in the available patch, not a full file graph. */
   importSpecifiers?: readonly string[];
   truncated?: true;
@@ -482,6 +482,7 @@ export type GithubProjectedChangedFileRowV1 = Readonly<{
 export function projectGithubChangedFileRows(
   raw: unknown,
   bounds: GithubDetailBoundsV1,
+  comparison = false,
 ): GithubPageProjectionV1<GithubProjectedChangedFileRowV1> {
   if (!Array.isArray(raw)) return emptyPage();
 
@@ -494,7 +495,8 @@ export function projectGithubChangedFileRows(
       omittedRowCount += 1;
       continue;
     }
-    const rawPath = readString(entry['filename']);
+    const rawPath = comparison && typeof entry['filename'] === 'string' && entry['filename'].length > 0
+      ? entry['filename'] : readString(entry['filename']);
     const rawStatus = readString(entry['status']);
     if (rawPath === null || rawStatus === null) {
       omittedRowCount += 1;
@@ -506,7 +508,7 @@ export function projectGithubChangedFileRows(
       continue;
     }
 
-    const path = normalizedOrNull(rawPath);
+    const path = comparison ? { value: rawPath, truncated: false } : normalizedOrNull(rawPath);
     if (path === null) {
       omittedRowCount += 1;
       continue;
@@ -516,7 +518,11 @@ export function projectGithubChangedFileRows(
       omittedRowCount += 1;
       continue;
     }
-    const previousPath = normalizedOrNull(entry['previous_filename']);
+    const rawPreviousPath = comparison && typeof entry['previous_filename'] === 'string' && entry['previous_filename'].length > 0
+      ? entry['previous_filename'] : readString(entry['previous_filename']);
+    const previousPath = comparison && rawPreviousPath !== null
+      ? { value: rawPreviousPath, truncated: false }
+      : normalizedOrNull(entry['previous_filename']);
     const blobSha = boundedOrNull(entry['sha'], bounds.identifierUtf8Bytes);
     const additions = readCount(entry['additions']) ?? 0;
     const deletions = readCount(entry['deletions']) ?? 0;
@@ -540,6 +546,7 @@ export function projectGithubChangedFileRows(
       ...(blobSha === null ? {} : { blobSha: blobSha.value }),
       ...(webUrl === null ? {} : { webUrl }),
       diffAvailable: typeof entry['patch'] === 'string',
+      ...(comparison ? { evidence: projectPatchEvidence(entry['patch'], readCount(entry['additions']), readCount(entry['deletions'])) } : {}),
       ...(truncated ? { truncated: true as const } : {}),
     }));
   }
@@ -549,6 +556,36 @@ export function projectGithubChangedFileRows(
     omittedRowCount,
     projectionTruncated,
   });
+}
+
+/** Counts provider patch coverage without rewriting its bytes or guessing binary status. */
+function projectPatchEvidence(patch: unknown, additions: number | null, deletions: number | null): GithubPatchEvidenceV1 {
+  if (typeof patch !== 'string') return Object.freeze({ state: 'unavailable', reason: 'provider_patch_missing' });
+  let added = 0;
+  let removed = 0;
+  let beforeRemaining = 0;
+  let afterRemaining = 0;
+  let valid = additions !== null && deletions !== null;
+  let hasHunk = false;
+  const lines = patch.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const header = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/u.exec(line);
+    if (header) {
+      valid = valid && beforeRemaining === 0 && afterRemaining === 0;
+      beforeRemaining = header[1] === undefined ? 1 : Number(header[1]);
+      afterRemaining = header[2] === undefined ? 1 : Number(header[2]);
+      hasHunk = true;
+    } else if (line.startsWith('+') && hasHunk) { added += 1; afterRemaining -= 1; }
+    else if (line.startsWith('-') && hasHunk) { removed += 1; beforeRemaining -= 1; }
+    else if (line.startsWith(' ') && hasHunk) { beforeRemaining -= 1; afterRemaining -= 1; }
+    else if (line === '\\ No newline at end of file' || (line === '' && index === lines.length - 1)) { /* Diff metadata / final newline. */ }
+    else valid = false;
+    if (beforeRemaining < 0 || afterRemaining < 0) valid = false;
+  }
+  return valid && beforeRemaining === 0 && afterRemaining === 0 && added === additions && removed === deletions
+    ? Object.freeze({ state: 'available', patch })
+    : Object.freeze({ state: 'truncated', patch, reason: 'provider_patch_truncated' });
 }
 
 /* -------------------------------------------------------------------- checks */

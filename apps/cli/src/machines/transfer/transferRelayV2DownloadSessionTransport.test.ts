@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import {
     createTransferSessionLifecycle,
     openDownloadTransferSession,
-} from '@/transfers/core/transferSessionLifecycle';
+} from '@happier-dev/transfers/node';
 
 type RelayChannel = Readonly<{
     onEnvelope: (listener: (payload: TransferRelayV2SendEnvelope) => void) => () => void;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type TextInput as NativeTextInput, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPageHeader,
@@ -42,6 +42,8 @@ export type PageHeaderTextEditor = Readonly<{
     /** The value is final (Enter on a title, blur). */
     onCommit?: () => void;
     editable?: boolean;
+    /** Entity owners may focus the existing field after an explicit draft operation. */
+    controlRef?: React.RefObject<NativeTextInput | null>;
     testID?: string;
 }>;
 
@@ -50,12 +52,18 @@ export type PageHeaderPrimaryAction = NavigationHeaderAction;
 
 export type PageHeaderProps = Readonly<{
     title: string;
+    /** The surface's one display greeting, above the regular page-title step. */
+    titleProminence?: 'page' | 'hero';
     /** An inline mark after the title, such as a release-channel badge. */
     titleAccessory?: React.ReactNode;
     /** One sentence saying what the page is for. */
     description?: string;
     /** Identity details under the description (an identifier to copy, a version and machine). */
     details?: React.ReactNode;
+    /** Defaults to identity; column places the summary below title and actions at full content width. */
+    detailsPlacement?: 'identity' | 'column';
+    /** Center an entity's identity above its controls in a compact measured pane. */
+    compactPresentation?: 'centered';
     /**
      * The distinguishing facts of the thing the page is about, on one quiet line (wrapping when
      * narrow), after `details`. An empty list keeps the line's place while the facts load.
@@ -151,10 +159,13 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         ) : null}
         <HappierPageHeader
             title={titleNode}
+            titleProminence={props.titleProminence}
             showTitle={showTitle}
             titleAccessory={props.titleAccessory}
             description={descriptionNode}
             details={props.details}
+            detailsPlacement={props.detailsPlacement}
+            compactPresentation={props.compactPresentation}
             meta={meta}
             leading={props.leading}
             actions={actions}
@@ -175,7 +186,11 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
 function PageHeaderInlineTextField(props: Readonly<{ editor: PageHeaderTextEditor; role: 'title' | 'description' }>) {
     const { theme } = useUnistyles();
     const { editor } = props;
-    const inputRef = React.useRef<React.ComponentRef<typeof TextInput> | null>(null);
+    const inputRef = React.useRef<NativeTextInput | null>(null);
+    const setInputRef = React.useCallback((input: NativeTextInput | null) => {
+        inputRef.current = input;
+        if (editor.controlRef) editor.controlRef.current = input;
+    }, [editor.controlRef]);
     const valueAtFocusRef = React.useRef(editor.value);
     const latestRef = React.useRef(editor);
     latestRef.current = editor;
@@ -199,7 +214,7 @@ function PageHeaderInlineTextField(props: Readonly<{ editor: PageHeaderTextEdito
     }, [isTitle]);
     return (
         <TextInput
-            ref={inputRef}
+            ref={setInputRef}
             testID={editor.testID}
             accessibilityLabel={editor.accessibilityLabel}
             value={editor.value}
@@ -239,7 +254,7 @@ function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryActio
 const renderPageHeaderText: HappierPageHeaderTextRender = (input) => (
     <Text
         accessibilityRole={input.header ? 'header' : undefined}
-        style={input.role === 'pageTitle' ? stylesheet.title : input.role === 'meta' ? stylesheet.metaText : stylesheet.description}
+        style={input.role === 'heroTitle' ? stylesheet.heroTitle : input.role === 'pageTitle' ? stylesheet.title : input.role === 'meta' ? stylesheet.metaText : stylesheet.description}
     >
         {input.text}
     </Text>
@@ -248,6 +263,11 @@ const renderPageHeaderText: HappierPageHeaderTextRender = (input) => (
 const stylesheet = StyleSheet.create((theme) => ({
     title: {
         ...pageTitleTypography(),
+        color: theme.colors.text.primary,
+    },
+    heroTitle: {
+        ...Typography.default('bold'),
+        ...happierPageTextMetrics('heroTitle'),
         color: theme.colors.text.primary,
     },
     // The editable forms keep the text steps exactly, so editing never moves the page.

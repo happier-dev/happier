@@ -148,11 +148,11 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
     },
   });
   const guestConfig = await readFile(target.sshConfigFile, 'utf8');
-  assert.match(guestConfig, /HostName 127\.0\.0\.1/);
+  assert.match(guestConfig, /HostName happier-dev-target-worker/);
   assert.match(guestConfig, /HostKeyAlias happier-dev-target-worker/);
   assert.match(guestConfig, /Port 54321/);
   assert.match(guestConfig, /IdentityFile .*id_ed25519/);
-  assert.match(guestConfig, /ProxyCommand ssh -T -F .*outer\.conf"? happier-dev-target-worker-host -W %h:%p/);
+  assert.match(guestConfig, /ProxyCommand ssh -T -F .*outer\.conf"? happier-dev-target-worker-host -W 127\.0\.0\.1:%p/);
   assert.match(guestConfig, /ForwardAgent no/);
   assert.match(guestConfig, /ControlMaster auto/);
   assert.match(guestConfig, /ControlPersist 600/);
@@ -234,6 +234,7 @@ test('managed worker SSH publication follows a changed Lima port and migrates to
   await writeFile(configPath, [
     'Host happier-dev-target-worker',
     '  HostName 127.0.0.1',
+    '  ProxyCommand ssh -T -F /tmp/outer.conf outer -W %h:%p',
     '  Port 54321',
     '  User lima',
     `  UserKnownHostsFile "${join(root, 'known-hosts')}"`,
@@ -272,6 +273,8 @@ test('managed worker SSH publication follows a changed Lima port and migrates to
   assert.deepEqual(result, { changed: true, port: 60955, hostKeyAliasAdded: true });
   assert.deepEqual(modes, ['yes', 'accept-new', 'yes']);
   const contents = await readFile(configPath, 'utf8');
+  assert.match(contents, /HostName happier-dev-target-worker/);
+  assert.match(contents, /-W 127\.0\.0\.1:%p/);
   assert.match(contents, /Port 60955/);
   assert.match(contents, /HostKeyAlias happier-dev-target-worker/);
   assert.match(contents, /StrictHostKeyChecking yes/);

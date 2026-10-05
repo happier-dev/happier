@@ -2,7 +2,7 @@ import type { ExecutionRunControllerFailureSignal } from './failureSignal';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { VoiceAgentTurnStreamReadResult } from '@/agent/voice/agent/voiceAgentTypes';
-import type { ExecutionRunInputTurnV1, SessionInputCausalPermissionAuthorityV1, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
+import type { ExecutionRunInputTurnV1, ExecutionRunResumeHandle, SessionInputCausalPermissionAuthorityV1, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
 import type { DurableProviderInputAcceptanceV1 } from '@/agent/runtime/session/input/providerInputOutcome';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import type { ExecutionRunPermissionRequestStore } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
@@ -142,7 +142,13 @@ export function readBackendRuntimeId(ctrl: ExecutionRunController | null): strin
   return ctrl.kind === 'backend' ? ctrl.runtimeId : null;
 }
 
-export function readBackendResumableRuntimeId(ctrl: ExecutionRunController | null): string | null {
+export function readBackendResumableRuntimeId(
+  ctrl: ExecutionRunController | null,
+  resumeHandle?: ExecutionRunResumeHandle | null,
+): string | null {
   if (!ctrl || ctrl.kind !== 'backend' || ctrl.backendSupportsResume !== true) return null;
-  return ctrl.runtimeId;
+  // Native checkpoint observations belong to the retained Run. Its live control
+  // address can be a host Run id and must never replace that vendor identity.
+  if (resumeHandle?.kind === 'provider_session.v1') return resumeHandle.providerSessionId;
+  return ctrl.backend.readProviderSessionId?.() ?? null;
 }

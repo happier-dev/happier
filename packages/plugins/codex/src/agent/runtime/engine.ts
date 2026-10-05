@@ -169,9 +169,13 @@ export const createCodexAgentRuntime: AgentRuntimeFactory = () => {
       async resolveTerminalPresentation(selection) {
         const backendMode = readCodexBackendMode(selection);
         const source = selection.runtimeDescriptorV1;
+        const startingMode = selection.requestedHost === 'herdr'
+          || selection.requestedHost === 'zellij'
+          || selection.requestedHost === 'tmux'
+          ? 'terminal' : 'remote';
         return {
           kind: backendMode === 'appServer' ? 'provider_attach' : 'none',
-          ...(backendMode === 'appServer' ? { startingMode: 'terminal' as const } : {}),
+          ...(backendMode === 'appServer' ? { startingMode } : {}),
           runtimeDescriptorV1: {
             ...(source?.agentId === 'codex' ? source : {}), v: 1, agentId: 'codex',
             agent: { ...(source?.agentId === 'codex' ? source.agent : {}), backendMode },

@@ -1,5 +1,5 @@
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
-import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol';
+import { PluginAgentSessionCapabilitiesV2Schema, readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '@/api/types';
@@ -26,7 +26,7 @@ describe('OpenCode native todo host composition', () => {
             contributionId: 'opencode',
             agentId: 'opencode',
             occurrenceId: 'opencode-occurrence',
-            declarations: declaration?.capabilities?.sessions?.workStateSources ?? [],
+            declarations: PluginAgentSessionCapabilitiesV2Schema.parse(Reflect.get(declaration?.capabilities ?? {}, 'sessions')).workStateSources ?? [],
             isCurrent: () => true,
         });
         const sessionStorage = new Map<string, unknown>();
@@ -75,7 +75,7 @@ describe('OpenCode native todo host composition', () => {
             mcpRemove: vi.fn(async () => undefined),
         } satisfies OpenCodeServerClient;
         const runtime = createOpenCodeServerRuntime({
-            ctx, directory: '/repo', happierSessionId: 'happy-session-1', baseUrl: 'http://127.0.0.1:49196', client,
+            ctx, directory: '/repo', happierSessionId: 'happy-session-1', client,
             mcpRegistration: Promise.resolve({ requiredHappier: { status: 'ready' }, registeredServers: [] }),
             mcpProjection: { registrations: [], requiredHappierServerName: null, requiredHappierConfigurationPresent: false },
         });

@@ -22,7 +22,7 @@ import { WorkflowStepExecutionSelectionSchema, type WorkflowBlock, type Workflow
   type WorkflowActionValueReferenceV1,
   type WorkflowValidationIssue } from './workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetV1 } from './workflowWorkspaceV1.js';
-import { collectWorkflowConditionValueReferences, type WorkflowValueReference } from './workflowReferenceV1.js';
+import { collectWorkflowConditionValueReferences, readWorkflowValuePathV1, type WorkflowValueReference } from './workflowReferenceV1.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
@@ -52,8 +52,8 @@ export type WorkflowMaterializationEffectsV1 = Readonly<{
   readLaunchProfile?: (profileId: string) => Promise<AiLaunchProfile | null>;
   resolveTargetAvailability: (leaf: Readonly<{
     blockId: string; selection: WorkflowResolvedStepSelectionV1;
-    executionTarget: WorkflowRunExecutionTargetV1; actionId?: string;
-  }>) => Promise<boolean>;
+    executionTarget: WorkflowRunExecutionTargetV1; actionId?: string; kind?: WorkflowMaterializedLeafV1['kind'];
+  }>, context: Readonly<{ sessionIds: readonly string[] }>) => Promise<boolean>;
   readActionContract?: (actionId: string) => Promise<NonNullable<WorkflowMaterializedLeafV1['actionContract']> | null>;
 }>;
 export type WorkflowMaterializationAdmissionV1 =
@@ -246,17 +246,71 @@ function projectActionStart(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineI
   return { leaves, effectiveInput: effectiveInput.data };
 }
 
-export async function readWorkflowAcceptedAgentStartLeavesV1(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'workspaceTarget' | 'materializedLeaves'>): Promise<readonly MaterializedWorkflowLeafV1[]> {
+type WorkflowBoundItem = Readonly<{ value: JsonValue; index: number; position: number; count: number }>;
+type WorkflowBindingContext = Pick<WorkflowMaterializationContextV1, 'inputs' | 'origin'>;
+
+/** Enumerate only items already frozen in Run inputs, never future result choices. */
+function actionItemContexts(definition: WorkflowDefinitionV1, blockId: string, context: WorkflowBindingContext): readonly (WorkflowBoundItem | undefined)[] | null {
+  const pending: { blocks: readonly WorkflowBlock[]; items: readonly (WorkflowBoundItem | undefined)[] | null }[] = [
+    { blocks: definition.blocks, items: [undefined] },
+  ];
+  while (pending.length > 0) {
+    const { blocks, items } = pending.pop()!;
+    for (const block of blocks) {
+      if (block.id === blockId) return items;
+      if (block.kind === 'parallel') pending.push(...block.branches.map((branch) => ({ blocks: branch.blocks, items })));
+      else if (block.kind === 'if') pending.push({ blocks: block.then, items }, { blocks: block.otherwise, items });
+      else if (block.kind === 'loop') {
+        let bodyItems = items;
+        if (block.repetition.kind === 'items') {
+          const expanded: WorkflowBoundItem[] = [];
+          bodyItems = expanded;
+          if (items === null) bodyItems = null;
+          else for (const item of items) {
+            const values = boundValue(block.repetition.items, context, block.id, 'run', item);
+            if (!Array.isArray(values)) { bodyItems = null; break; }
+            values.forEach((value, index) => expanded.push({ value, index, position: index + 1, count: values.length }));
+          }
+        }
+        pending.push({ blocks: block.body, items: bodyItems });
+        if (block.repetition.kind === 'evaluate') pending.push({ blocks: [block.repetition.evaluator], items });
+      }
+    }
+  }
+  return null;
+}
+
+export async function readWorkflowAcceptedAgentStartLeavesV1(snapshot: Pick<WorkflowAcceptedSnapshotV1,
+  'machineId' | 'workspaceTarget' | 'materializedLeaves' | 'authoredDefinition' | 'frozenChildren' | 'inputs' | 'origin'>): Promise<readonly MaterializedWorkflowLeafV1[]> {
   const result: MaterializedWorkflowLeafV1[] = [];
   for (const leaf of snapshot.materializedLeaves) {
     const agent = agentLeaf(snapshot, leaf);
     if (agent) result.push(agent);
-    result.push(...projectActionStart(snapshot, leaf).leaves);
+    const definition = leaf.sourceKey === '$root' ? snapshot.authoredDefinition : snapshot.frozenChildren[leaf.sourceKey];
+    const authored = definition && leavesOf(definition).find((block) => block.id === leaf.blockId);
+    const context = { inputs: leaf.sourceKey === '$root' ? snapshot.inputs : {}, origin: snapshot.origin };
+    const items = definition !== undefined && leaf.kind === 'action' && authored?.kind === 'action' && hasUnresolvedValue(leaf.actionInput)
+      ? actionItemContexts(definition, leaf.blockId, context) : null;
+    if (items === null || authored?.kind !== 'action') {
+      result.push(...projectActionStart(snapshot, leaf).leaves);
+      continue;
+    }
+    for (const item of items) {
+      const actionInput = { ...leaf.actionInput };
+      for (const [field, binding] of Object.entries(authored.input)) {
+        if (!hasUnresolvedValue(actionInput[field]) || !(binding.kind === 'list'
+          ? binding.items.some((reference) => reference.kind === 'item') : binding.kind === 'item')) continue;
+        actionInput[field] = binding.kind === 'list'
+          ? binding.items.map((reference) => boundValue(reference, context, leaf.blockId, 'run', item))
+          : boundValue(binding, context, leaf.blockId, 'run', item);
+      }
+      result.push(...projectActionStart(snapshot, { ...leaf, actionInput }).leaves);
+    }
   }
   return result;
 }
 
-function boundValue(reference: WorkflowActionValueReferenceV1, context: WorkflowMaterializationContextV1, blockId: string, purpose: 'run' | 'definition'): JsonValue | Unresolved {
+function boundValue(reference: WorkflowActionValueReferenceV1, context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem): JsonValue | Unresolved {
   if (reference.kind === 'literal') return reference.value;
   if (reference.kind === 'input') return Object.hasOwn(context.inputs, reference.name)
     ? context.inputs[reference.name]! : { kind: 'unresolved' };
@@ -264,6 +318,10 @@ function boundValue(reference: WorkflowActionValueReferenceV1, context: Workflow
     if (purpose === 'definition' && !context.origin?.originSessionId) return { kind: 'unresolved' };
     if (!context.origin?.originSessionId) throw new WorkflowMaterializationFailureV1({ code: 'invalid_input', blockId });
     return context.origin.originSessionId;
+  }
+  if (reference.kind === 'item' && item) {
+    const selected = readWorkflowValuePathV1(item[reference.field], reference.path ?? []);
+    return selected === undefined ? { kind: 'unresolved' } : selected;
   }
   return { kind: 'unresolved' };
 }
@@ -478,8 +536,10 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     concrete.set(sourceKey, { ...definition, defaults });
   }
   let agentStartLeaves: readonly MaterializedWorkflowLeafV1[];
+  const frozenChildren = Object.fromEntries([...concrete].filter(([key]) => key !== '$root'));
   try { agentStartLeaves = await readWorkflowAcceptedAgentStartLeavesV1({
     machineId: input.context.machineId, workspaceTarget: input.context.workspaceTarget, materializedLeaves,
+    authoredDefinition: root, frozenChildren, inputs: input.context.inputs, origin: input.context.origin,
   }); }
   catch (error) { if (error instanceof WorkflowMaterializationFailureV1) return { ok: false, error: error.error }; throw error; }
   const permissionCeiling = deriveWorkflowAcceptedPermissionCeilingV1(concrete.get('$root')!,
@@ -505,8 +565,17 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       if (input.admission.kind === 'agent') workDepth = admitted.stamped.workDepth;
     }
   }
+  // Action leaves also receive the supplied origin as defaultSessionId, even
+  // without an explicit origin reference in the authored definition.
+  const requiredOriginSessionId = purpose === 'run' ? input.context.origin?.originSessionId : undefined;
   for (const leaf of materializedLeaves) {
-    if ((leaf.kind === 'step' || leaf.kind === 'action') && !await input.effects.resolveTargetAvailability(leaf)) return unavailable(leaf.blockId);
+    const conversation = leaf.selection.conversation;
+    const sessionIds = [...new Set([
+      ...(requiredOriginSessionId ? [requiredOriginSessionId] : []),
+      ...(conversation?.kind === 'existing_session' ? [conversation.sessionId] : []),
+    ])];
+    if ((leaf.kind === 'step' || leaf.kind === 'action' || sessionIds.length > 0)
+      && !await input.effects.resolveTargetAvailability(leaf, { sessionIds })) return unavailable(leaf.blockId);
   }
   for (const leaf of agentStartLeaves) {
     if (leaf.kind !== 'action' || !leaf.facts.agentTarget || leaf.facts.agentTarget.kind === 'unresolved') continue;
@@ -516,9 +585,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     if (!await input.effects.resolveTargetAvailability({ blockId: leaf.blockId,
       selection: { ...selected.selection, agentTarget: leaf.facts.agentTarget },
       executionTarget: leaf.runsAs.kind === 'session' ? { kind: 'session' } : { kind: 'detached_run' },
-    })) return unavailable(leaf.blockId);
+    }, { sessionIds: [] })) return unavailable(leaf.blockId);
   }
-  const frozenChildren = Object.fromEntries([...concrete].filter(([key]) => key !== '$root'));
   if (purpose === 'definition') return { ok: true, agentStartLeaves, materializedLeaves };
   const { origin, resultDelivery, actionCaller, ...sharedContext } = input.context;
   const snapshot = WorkflowAcceptedSnapshotV1Schema.safeParse({

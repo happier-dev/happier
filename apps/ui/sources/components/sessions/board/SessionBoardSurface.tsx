@@ -25,7 +25,16 @@ import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Typography } from '@/constants/Typography';
 import type { FocusReturnRef, FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
-import { useTreeDropAutoscroll } from '@/components/ui/treeDragDrop';
+import { WidgetInstanceActionInputSchemasV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { runBoardWidgetSetupCommand } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { measureWindowBounds, readWindowBounds, useTreeDropAutoscroll, useEntityDragDropRuntime, type WindowBounds } from '@/components/ui/treeDragDrop';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { sessionSurfaceMeasurable, useSessionSurfaceEntityDrag, useSessionSurfaceGeometryRefresh, SessionSurfaceEntityFeedback, type SessionSurfaceEntityBinding } from './SessionSurfaceEntityDrag';
+import { resolveSessionBoardEntityDrop, sessionSurfaceDropRefused } from './sessionSurfaceEntityDrop';
+import { executeSessionBoardEntityDrop, SessionBoardDestinationSchema, SessionBoardViewDestinationSchema } from './sessionBoardEntityBinding';
+import { resolveSessionSurfaceKeyboardDestination } from './sessionSurfaceKeyboardDestination';
+import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
 import {
     isSessionBoardEmpty,
     resolveSessionBoardExecutableCurrentness,
@@ -48,7 +57,7 @@ import {
     sessionBoardViewTabNativeId,
 } from './SessionBoardViewStrip';
 import { isSpanNearViewport, quantizeScrollOffset, resolveNearViewportWindow } from '@/components/widgets/nearViewport';
-import type { SessionBoardItemRect } from './SessionBoardItemMoveHandle';
+import { resolveSessionBoardAnchoredPointerDrop, type SessionBoardItemRect } from './sessionBoardMoveStrategy';
 import { useWidgetFrameSurfaceDefault } from '@/components/widgets/frame/useWidgetFrameStyle';
 import type { WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { resolveWidgetFrameStyle } from '@/components/widgets/frame/widgetFrameStyle';
@@ -162,6 +171,7 @@ export type { SessionBoardAddIntent } from './useSessionBoardController';
 
 export type SessionBoardSurfaceProps = Readonly<{
     sessionId: string;
+    serverId?: string | null;
     session?: Session;
     controller: SessionBoardController;
     host: SessionBoardMountHost;
@@ -541,6 +551,9 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
     const viewPanelId = `session-board-${accessibilityInstanceId}-tabpanel`;
     const controller = props.controller;
     const snapshot = controller.snapshot;
+    const { binding: dragScope } = useServerCredentialAccountScopeBinding(props.serverId);
+    const dragRuntime = useEntityDragDropRuntime();
+    const dragAddress = normalizeSessionAddress(dragScope?.serverId, props.sessionId);
     // A sidebar preview and a retained background tab are read-only for
     // different reasons, but neither may draw a control that writes to the
     // shared Board. Only `navigationOnly` also changes the projection itself;
@@ -609,6 +622,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
     const scrollOffsetY = React.useRef(0);
     const gridContentY = React.useRef(0);
     const scrollRef = React.useRef<ScrollView>(null);
+    const scrollWindow = React.useRef<WindowBounds | null>(null);
     const orderedPresentationItemIds = React.useRef<readonly string[]>([]);
     const presentationKey = `view:${controller.activeViewId}`;
     const dragAutoscrollActive = useSharedValue(false);
@@ -619,7 +633,8 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
     const scrollContentHeight = useSharedValue(0);
     const scrollToOffset = React.useCallback((offsetY: number) => {
         scrollRef.current?.scrollTo({ y: offsetY, animated: false });
-    }, []);
+        dragRuntime.refresh();
+    }, [dragRuntime]);
     useTreeDropAutoscroll({
         isActive: dragAutoscrollActive,
         pointerY: dragPointerContentY,
@@ -629,6 +644,56 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
         contentHeight: scrollContentHeight,
         scrollToOffset,
     });
+    const measureDragViewport = React.useCallback(() => {
+        void measureWindowBounds(sessionSurfaceMeasurable(scrollRef.current)).then(bounds => {
+            scrollWindow.current = bounds;
+            scrollViewportTop.value = bounds?.y ?? 0;
+            dragRuntime.refresh();
+        });
+    }, [dragRuntime, scrollViewportTop]);
+    useSessionSurfaceGeometryRefresh(measureDragViewport);
+    React.useEffect(() => {
+        const update = () => {
+            const current = dragRuntime.getSnapshot();
+            const effect = current.admission?.status === 'allowed' ? current.admission.effect : null;
+            const widgetMove = effect?.actionId === 'widgets.instance.move'
+                ? WidgetInstanceActionInputSchemasV1['widgets.instance.move'].safeParse(effect.input) : null;
+            const targetsBoard = effect?.actionId === 'session.board.layout.update'
+                || widgetMove?.success && 'to' in widgetMove.data && widgetMove.data.to.surface.owner.kind === 'sessionBoard'
+                    && widgetMove.data.to.surface.owner.sessionId === props.sessionId;
+            dragAutoscrollActive.value = current.phase === 'carrying' && !!targetsBoard
+                && current.item?.scope.serverId === dragScope?.serverId && current.item?.scope.accountId === dragScope?.accountId;
+            if (!dragAutoscrollActive.value) dragPointerContentY.value = null;
+        };
+        update();
+        return dragRuntime.subscribe(update);
+    }, [dragRuntime, dragScope, props.sessionId, dragAutoscrollActive, dragPointerContentY]);
+    const widgetMovementSurface = React.useMemo(() => dragScope && dragAddress ? { ...dragScope.scope, owner: { kind: 'sessionBoard' as const, sessionId: dragAddress.sessionId } } : null, [dragScope, dragAddress]);
+    const widgetMovement = useWidgetMovementAdmission(props.retained ? null : widgetMovementSurface, controller.snapshot);
+    const admitWidgetMovement = widgetMovement.admit;
+    const viewStripDrag = useSessionSurfaceEntityDrag(dragScope && dragAddress && mutationControls ? {
+        scope: dragScope.scope, isCurrent: () => dragScope.isCurrent() && controller.supports('item.moveAnchored'),
+        admitWidgetMovement,
+        getItem: () => null, title: t('sessionBoard.views.label'),
+        pointerDestination: (bounds, pointer) => {
+            for (const [viewId, rect] of viewRects.current) {
+                const x = bounds.x + rect.x - viewsHorizontalOffset.current;
+                const y = bounds.y + rect.y;
+                if (pointer.x >= x && pointer.x <= x + rect.width && pointer.y >= y && pointer.y <= y + rect.height) return { viewId };
+            }
+            return null;
+        },
+        target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'],
+            listDestinations: () => (controller.snapshot?.views ?? []).filter(view => !view.synthetic).map(view => ({ destination: { viewId: view.id }, label: resolveSessionBoardViewTitle(view), group: t('sessionBoard.views.label') })),
+            resolve: ({ item, destination }) => {
+                const parsed = SessionBoardViewDestinationSchema.safeParse(destination);
+                const viewId = parsed.success ? parsed.data.viewId : null;
+                return viewId ? resolveSessionBoardEntityDrop({ item, scope: dragScope.scope, address: dragAddress, board: controller.snapshot, viewId, widgetSourceRef: widgetMovement.sourceRef,
+                    preview: { verb: t('sessionBoard.item.moveTargetView', { title: controller.snapshot?.views.find(view => view.id === viewId)?.title ?? t('sessionBoard.views.label') }), target: controller.snapshot?.views.find(view => view.id === viewId)?.title ?? t('sessionBoard.views.label') } }) : sessionSurfaceDropRefused('target-gone');
+            },
+            execute: effect => executeSessionBoardEntityDrop(controller, effect),
+        },
+    } : null);
     const onGridLayout = React.useCallback((event: LayoutChangeEvent) => {
         const width = Math.trunc(event.nativeEvent.layout.width);
         recordSectionOrigin(gridContentY, event.nativeEvent.layout.y);
@@ -868,10 +933,84 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
             // the same title resolver the view strip draws — a shared view title is
             // author copy that may be absent or blank, and `null` is not a label.
             .map((candidate) => ({ id: candidate.id, title: resolveSessionBoardViewTitle(candidate) }));
+        const entityDrag: SessionSurfaceEntityBinding | null = dragScope && dragAddress && props.retained !== true && placed && activeView && !activeView.synthetic ? {
+            scope: dragScope.scope,
+            admitWidgetMovement,
+            isCurrent: () => dragScope.isCurrent() && controller.snapshot?.itemsById.get(itemId)?.state.kind === 'ready'
+                && controller.snapshot.views.some(view => view.id === activeView.id && view.placements.some(placement => placement.itemId === itemId)),
+            title: projected.state.kind === 'ready' ? projected.state.item.title : itemId,
+            getItem: () => ({ kind: 'session-board-item', scope: dragScope.scope, address: dragAddress, viewId: activeView.id, itemId }),
+            keyboardDestination: (intent, selected, destinations) => {
+                const live = controller.snapshot;
+                const sourceView = live?.views.find(view => view.id === activeView.id);
+                if (!sourceView) return null;
+                if (intent === 'previous' || intent === 'next') return resolveSessionSurfaceKeyboardDestination({
+                    itemKey: itemId, orderedKeys: sourceView.placements.map(placement => placement.itemId), selected, destinations, direction: intent,
+                    readAnchor: destination => {
+                        const parsed = SessionBoardDestinationSchema.safeParse(destination.destination);
+                        return parsed.success && parsed.data.viewId === sourceView.id ? parsed.data : null;
+                    },
+                });
+                const views = live?.views.filter(view => !view.synthetic) ?? [];
+                const value = SessionBoardViewDestinationSchema.safeParse(selected?.destination);
+                const selectedView = value.success ? value.data.viewId : activeView.id;
+                const viewId = views[views.findIndex(view => view.id === selectedView) + (intent === 'in' ? 1 : -1)]?.id;
+                return destinations.find(destination => {
+                    const target = SessionBoardViewDestinationSchema.safeParse(destination.destination);
+                    return target.success && target.data.viewId === viewId;
+                }) ?? null;
+            },
+            getNativeBounds: () => {
+                const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
+                const rect = placementRects.current.get(itemId);
+                return viewport && rect ? { ...rect, x: viewport.x + rect.x, y: viewport.y + gridContentY.current + rect.y - scrollOffsetY.current } : null;
+            },
+            ...(mutationControls && controller.supports('item.moveAnchored') ? {
+                getBoardTarget: () => ({ surface: { ...dragScope.scope, owner: { kind: 'sessionBoard', sessionId: dragAddress.sessionId } },
+                    tabId: activeView.id, itemId, itemIds: controller.snapshot?.views.find(view => view.id === activeView.id)?.placements.map(placement => placement.itemId) ?? [] }),
+                pointerDestination: (bounds: WindowBounds, pointer: Readonly<{ x: number; y: number }>) => {
+                    const carried = dragRuntime.getSnapshot().item;
+                    if (carried?.kind !== 'session-board-item' || carried.address.sessionId !== dragAddress.sessionId) return { viewId: activeView.id, itemId, side: pointer.y < bounds.y + bounds.height / 2 ? 'before' : 'after' };
+                    const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
+                    const sourceRect = carried?.kind === 'session-board-item' ? placementRects.current.get(carried.itemId) : null;
+                    if (!viewport || !sourceRect || carried?.kind !== 'session-board-item') return null;
+                    const anchor = resolveSessionBoardAnchoredPointerDrop({ draggedId: carried.itemId,
+                        orderedIds: controller.snapshot?.views.find(view => view.id === activeView.id)?.placements.map(placement => placement.itemId) ?? [],
+                        itemRects: placementRects.current, droppedInside: true,
+                        translationX: pointer.x - viewport.x - sourceRect.x - sourceRect.width / 2,
+                        translationY: pointer.y - viewport.y - gridContentY.current + scrollOffsetY.current - sourceRect.y - sourceRect.height / 2 });
+                    return anchor ? { ...anchor, viewId: activeView.id } : null;
+                },
+                target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'] as const,
+                    containsPointer: pointer => {
+                        const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
+                        return !!viewport && pointer.y >= viewport.y && pointer.y <= viewport.y + viewport.height && pointer.x >= viewport.x && pointer.x <= viewport.x + viewport.width;
+                    },
+                    listDestinations: () => (['before', 'after'] as const).map(side => ({ destination: { side, itemId, viewId: activeView.id }, group: `${t('sessionBoard.views.label')} · ${resolveSessionBoardViewTitle(activeView)}`, label: t(side === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target: projected.state.kind === 'ready' ? projected.state.item.title : itemId }) })),
+                    resolve: ({ item, destination }: Parameters<NonNullable<SessionSurfaceEntityBinding['target']>['resolve']>[0]) => {
+                        const anchor = SessionBoardDestinationSchema.safeParse(destination);
+                        return anchor.success ? resolveSessionBoardEntityDrop({ item, scope: dragScope.scope, address: dragAddress, board: controller.snapshot, viewId: activeView.id, anchor: anchor.data, widgetSourceRef: widgetMovement.sourceRef,
+                            preview: { verb: t(anchor.data.side === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target: projected.state.kind === 'ready' ? projected.state.item.title : itemId }), target: projected.state.kind === 'ready' ? projected.state.item.title : itemId } }) : sessionSurfaceDropRefused('same-position');
+                    },
+                    execute: (effect: Parameters<typeof executeSessionBoardEntityDrop>[1]) => executeSessionBoardEntityDrop(controller, effect),
+                    autoscroll: (pointer: Readonly<{ x: number; y: number }>) => { dragPointerContentY.value = pointer.y; },
+                },
+            } : {}),
+        } : null;
+        const movePlacement = (viewId: string, anchor?: Readonly<{ side: 'before' | 'after'; itemId: string }>) => {
+            const item = entityDrag?.getItem();
+            if (!item || !dragScope?.isCurrent() || !dragAddress) return;
+            const admission = resolveSessionBoardEntityDrop({ item, scope: dragScope.scope, address: dragAddress,
+                board: controller.snapshot, viewId, ...(anchor ? { anchor } : {}),
+                preview: { verb: t('sessionBoard.item.moved.reordered', { title: itemId }), target: viewId } });
+            if (admission.status === 'allowed') void executeSessionBoardEntityDrop(controller, admission.effect);
+        };
         return (
             <SessionWidgetHost
+                {...(entityDrag ? { entityDrag } : {})}
                 expanded={expanded}
                 sessionId={props.sessionId}
+                serverId={props.serverId}
                 {...(props.session ? { session: props.session } : {})}
                 item={projected}
                 host={props.host}
@@ -934,6 +1073,12 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                 {...(mutationControls && controller.supports('item.rename')
                     ? { onRename: (title: string) => { void controller.run({ kind: 'item.rename', itemId, title }); } }
                     : {})}
+                {...(mutationControls && controller.supports('item.inputs')
+                    ? { onSetInputs: (bindings: WidgetInputBindingsV1) => runBoardWidgetSetupCommand(
+                        () => controller.run({ kind: 'item.inputs', itemId, bindings }),
+                        t('widgetAdd.saveFailed'),
+                    ) }
+                    : {})}
                 {...(mutationControls && placed && controller.supports('item.resize')
                     ? { onResize: (next: SessionBoardItemWidth) => { void controller.run({ kind: 'item.resize', itemId, width: next }); } }
                     : {})}
@@ -942,63 +1087,20 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                     : {})}
                 {...(mutationControls && controller.supports('item.move') && movable
                     ? {
-                        onMove: (direction: 'before' | 'after') => { void controller.run({ kind: 'item.move', itemId, direction }); },
-                        onMoveAnchored: (anchor: Readonly<{ side: 'before' | 'after'; itemId: string }>) => {
-                            if (!activeView || activeView.synthetic) return;
-                            void controller.run({
-                                kind: 'item.moveAnchored',
-                                itemId,
-                                fromViewId: activeView.id,
-                                toViewId: activeView.id,
-                                anchor,
-                            });
+                        onMove: (direction: 'before' | 'after') => {
+                            const current = controller.snapshot?.views.find(view => view.id === activeView?.id);
+                            const at = current?.placements.findIndex(placement => placement.itemId === itemId) ?? -1;
+                            const neighbor = at < 0 ? null : current?.placements[at + (direction === 'before' ? -1 : 1)];
+                            if (current && neighbor) movePlacement(current.id, { side: direction, itemId: neighbor.itemId });
                         },
-                        orderedMoveItemIds: placements.map((placement) => placement.itemId),
-                        moveItemRects: placementRects.current,
                         canMoveBefore: movable.before,
                         canMoveAfter: movable.after,
-                        movePosition: placementIndex + 1,
-                        moveTotal: placements.length,
-                        onDragActivityChange: (active: boolean) => {
-                            dragAutoscrollActive.value = active;
-                            if (!active) dragPointerContentY.value = null;
-                        },
-                        onDragTranslation: (_translationX: number, translationY: number) => {
-                            const rect = placementRects.current.get(itemId);
-                            if (!rect) return;
-                            dragPointerContentY.value = gridContentY.current
-                                + rect.y
-                                + (rect.height / 2)
-                                - scrollOffsetY.current
-                                + translationY;
-                        },
                     }
                     : {})}
                 {...(mutationControls && controller.supports('item.moveToView') && moveDestinations.length > 0
                     ? {
                         moveDestinations,
-                        onMoveToView: (viewId: string) => { void controller.run({ kind: 'item.moveToView', itemId, viewId }); },
-                        resolveMoveToView: (translationX: number, translationY: number) => {
-                            const itemRect = placementRects.current.get(itemId);
-                            if (!itemRect) return null;
-                            const x = itemRect.x + (itemRect.width / 2) + translationX;
-                            const y = scrollViewportY.current
-                                + gridContentY.current
-                                + itemRect.y
-                                + (itemRect.height / 2)
-                                - scrollOffsetY.current
-                                + translationY;
-                            for (const destination of moveDestinations) {
-                                const rect = viewRects.current.get(destination.id);
-                                if (!rect) continue;
-                                const left = rect.x - viewsHorizontalOffset.current;
-                                const top = viewsRowY.current + rect.y;
-                                if (x >= left && x <= left + rect.width && y >= top && y <= top + rect.height) {
-                                    return destination.id;
-                                }
-                            }
-                            return null;
-                        },
+                        onMoveToView: (viewId: string) => { movePlacement(viewId); },
                     }
                     : {})}
                 {...(props.navigationOnly ? { openActionLabel: t('sessionBoard.sidebar.openInDetails') } : {})}
@@ -1061,7 +1163,8 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
             {mutationControls ? <MutationRecoveryNotice controller={controller} testID={testID} /> : null}
             <View
                 style={styles.viewsRow}
-                onLayout={(event) => { viewsRowY.current = event.nativeEvent.layout.y; }}
+                ref={viewStripDrag.ref}
+                onLayout={(event) => { viewsRowY.current = event.nativeEvent.layout.y; viewStripDrag.onLayout(event); }}
             >
                 <View style={styles.viewsStrip}>
                     <SessionBoardViewStrip
@@ -1075,8 +1178,9 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         onViewLayout={(viewId, event) => {
                             const { x, y, width, height } = event.nativeEvent.layout;
                             viewRects.current.set(viewId, { x, y, width, height });
+                            dragRuntime.refresh();
                         }}
-                        onHorizontalOffset={(offset) => { viewsHorizontalOffset.current = offset; }}
+                        onHorizontalOffset={(offset) => { viewsHorizontalOffset.current = offset; dragRuntime.refresh(); }}
                         onViewFocusTargetChange={props.onViewFocusTargetChange}
                         focusFallbackRef={props.viewActionsFocusTargetRef}
                         {...(mutationControls ? {
@@ -1135,7 +1239,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                     scrollEventThrottle={16}
                     onLayout={(event) => {
                         scrollViewportY.current = event.nativeEvent.layout.y;
-                        scrollViewportTop.value = 0;
+                        measureDragViewport();
                         scrollViewportHeight.value = event.nativeEvent.layout.height;
                         setMeasuredViewportHeight(event.nativeEvent.layout.height);
                     }}
@@ -1146,6 +1250,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                     onScroll={(event) => {
                         scrollOffsetY.current = event.nativeEvent.contentOffset.y;
                         scrollOffset.value = event.nativeEvent.contentOffset.y;
+                        dragRuntime.refresh();
                         capturePresentationPosition(event.nativeEvent.contentOffset.y);
                         // Quantized by one minimum card height so a flick advances the
                         // body window once per card rather than once per frame.
@@ -1302,6 +1407,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                     )}
                 </ScrollView>
             )}
+            <SessionSurfaceEntityFeedback kind="session-board-item" scope={dragScope?.scope ?? null} address={dragAddress} testID={`${testID}-move`} />
         </View>
     );
 }

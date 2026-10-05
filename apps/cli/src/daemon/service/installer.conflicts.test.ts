@@ -76,7 +76,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist',
         platform: 'darwin',
         happierHomeDir: '/Users/tester/.happier',
@@ -109,7 +109,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist',
         platform: 'darwin',
         happierHomeDir: '/Users/tester/.happier',
@@ -145,7 +145,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -184,7 +184,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: installedPath,
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier/',
@@ -216,7 +216,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -227,7 +227,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service duplicate',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.duplicate.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -264,7 +264,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: installedPath,
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -300,7 +300,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier-old',
@@ -334,7 +334,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier-other',
@@ -370,7 +370,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist',
         platform: 'darwin',
         mode: 'user',
@@ -412,7 +412,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Legacy default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         releaseChannel: 'stable',
@@ -448,7 +448,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Legacy default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/Users/tester/Library/LaunchAgents/com.happier.cli.daemon.default.plist',
         platform: 'darwin',
         mode: 'user',
@@ -489,7 +489,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -523,7 +523,7 @@ describe('installDaemonService conflict handling', () => {
         {
           serverId: 'default',
           name: 'Default background service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
           platform: 'linux',
           mode: 'user',
@@ -615,7 +615,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default automatic startup',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -628,7 +628,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.company.service',
         platform: 'linux',
         mode: 'user',
@@ -664,7 +664,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.company.service',
         platform: 'linux',
         mode: 'user',
@@ -677,7 +677,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'cloud',
         name: 'Cloud',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.cloud.service',
         platform: 'linux',
         mode: 'user',
@@ -710,7 +710,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -721,7 +721,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.company.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -760,7 +760,7 @@ describe('installDaemonService conflict handling', () => {
         {
           serverId: 'default',
           name: 'Default background service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
           platform: 'linux',
           mode: 'user',
@@ -802,7 +802,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.company.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -813,7 +813,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'preview-company',
         name: 'Preview Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.preview.preview-company.service',
         platform: 'linux',
         happierHomeDir: '/home/tester/.happier',
@@ -846,7 +846,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'stack-a',
         name: 'Stack A stable',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.stable.stack-a.service',
         platform: 'linux',
         mode: 'user',
@@ -881,7 +881,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -893,7 +893,7 @@ describe('installDaemonService conflict handling', () => {
       {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/tester/.config/systemd/user/happier-daemon.dev.default.service',
         platform: 'linux',
         mode: 'user',

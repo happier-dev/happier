@@ -25,6 +25,24 @@ export type ScmWriteOperation =
 /** Bookkeeping, not a write the user made: a successful refresh or a selection toggle never replaces the outcome. */
 const QUIET_ON_SUCCESS: ReadonlySet<ScmProjectOperationKind> = new Set(['refresh', 'stage', 'unstage']);
 
+function outcomeFromLogEntry(entry: ScmProjectOperationLogEntry): ScmOperationOutcome {
+    return normalizeScmOperationOutcome({
+        success: entry.status === 'success', outcome: entry.outcome, errorCode: entry.errorCode, error: entry.detail,
+        ...(entry.operation === 'commit' && entry.status === 'success' && entry.detail ? { commitSha: entry.detail } : {}),
+    });
+}
+
+/** A recorded push, never a commit timestamp or an uncertain outward result. Logs are newest first. */
+export function selectLastSuccessfulScmPushAt(log: readonly ScmProjectOperationLogEntry[], target?: Readonly<{ remote: string; branch: string | null }>): number | null {
+    return log.find((entry) => {
+        if (entry.operation !== 'push') return false;
+        const outcome = outcomeFromLogEntry(entry);
+        if (outcome.kind !== 'succeeded') return false;
+        if (!target) return true;
+        return outcome.effect?.kind === 'remote' && outcome.effect.remote === target.remote && outcome.effect.branch === target.branch;
+    })?.timestamp ?? null;
+}
+
 export function selectScmWriteOperation(input: Readonly<{
     inFlight: ScmProjectInFlightOperation | null;
     log: readonly ScmProjectOperationLogEntry[];
@@ -44,14 +62,7 @@ export function selectScmWriteOperation(input: Readonly<{
     }
     const latest = input.log.find((entry) => !((entry.outcome?.kind ?? (entry.status === 'success' ? 'succeeded' : 'failed')) === 'succeeded' && QUIET_ON_SUCCESS.has(entry.operation)));
     if (!latest) return null;
-    const outcome = normalizeScmOperationOutcome({
-        success: latest.status === 'success',
-        outcome: latest.outcome,
-        errorCode: latest.errorCode,
-        error: latest.detail,
-        // Existing successful commit entries store the returned SHA in detail, never a diagnostic.
-        ...(latest.operation === 'commit' && latest.status === 'success' && latest.detail ? { commitSha: latest.detail } : {}),
-    });
+    const outcome = outcomeFromLogEntry(latest);
     const effect = 'effect' in outcome ? outcome.effect : undefined;
     const result = effect?.kind === 'commit' ? { sha: effect.commitSha }
         : effect?.kind === 'pull_request' ? { url: effect.url } : undefined;

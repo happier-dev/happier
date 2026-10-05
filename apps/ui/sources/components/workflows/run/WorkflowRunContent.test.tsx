@@ -17,6 +17,13 @@ import {
  * clock for the behaviour it asserts. `vi.mock` is hoisted above this import.
  */
 import { WorkflowRunContent } from './WorkflowRunContent';
+import { WorkflowReviewCard, type WorkflowReviewDraft } from './WorkflowReviewCard';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { WorkflowMaterializedLeafV1Schema } from '@happier-dev/protocol';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
+import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 const virtualizedListState = vi.hoisted(() => ({
     props: null as Record<string, any> | null,
@@ -28,6 +35,19 @@ const modalSpies = vi.hoisted(() => ({
     update: vi.fn<(id: string, props: unknown) => void>(),
     hide: vi.fn<(id: string) => void>(),
 }));
+const envelopeHttp = vi.hoisted(() => ({
+    createSessionDataKeyEnvelopeClient: vi.fn(),
+    readSessionDataKeyEnvelopeCollectionPage: vi.fn(),
+    prepareSessionDataKeyEnvelopesForScope: vi.fn(),
+    prepareSessionDataKeyEnvelopesDetached: vi.fn(),
+    createMembershipSessionDataKeyEnvelopeClient: vi.fn(),
+    prepareMembershipHistoryEnvelopesForScope: vi.fn(),
+    membershipHistoryPreparationScopeKey: vi.fn(),
+    prepareMembershipHistoryEnvelopesDetached: vi.fn(),
+}));
+// Recipient-envelope HTTP is unrelated to Run rendering: Collaboration is never opened.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => envelopeHttp);
+vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', () => envelopeHttp);
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -46,23 +66,6 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key, params) => (params ? `${key}:${JSON.stringify(params)}` : key) });
 });
-vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
-    SegmentedTabBar: (props: {
-        tabs: ReadonlyArray<{ id: string; label: string }>;
-        activeTabId: string;
-        onSelectTab: (id: string) => void;
-        testIDPrefix?: string;
-    }) => React.createElement(
-        'SegmentedTabBar',
-        { testID: props.testIDPrefix },
-        props.tabs.map((tab) => React.createElement('Pressable', {
-            key: tab.id,
-            testID: `${props.testIDPrefix}:${tab.id}`,
-            accessibilityState: { selected: props.activeTabId === tab.id },
-            onPress: () => props.onSelectTab(tab.id),
-        })),
-    ),
-}));
 vi.mock('@/components/ui/lists/virtualized', () => ({
     VirtualizedList: React.forwardRef((props: Record<string, any>, ref) => {
         virtualizedListState.props = props;
@@ -90,6 +93,7 @@ vi.mock('@/components/ui/lists/virtualized', () => ({
 }));
 
 afterEach(async () => {
+    for (const request of Object.values(envelopeHttp)) expect(request).not.toHaveBeenCalled();
     await standardCleanup();
     virtualizedListState.props = null;
     virtualizedListState.scrollToOffset.mockReset();
@@ -100,6 +104,10 @@ afterEach(async () => {
 });
 
 type ContentProps = React.ComponentProps<typeof WorkflowRunContent>;
+
+function WorkflowRunPaneProvider({ children }: React.PropsWithChildren) {
+    return <AppPaneProvider>{children}</AppPaneProvider>;
+}
 
 function flattenTestStyle(style: unknown): Record<string, unknown> {
     if (typeof style === 'function') return flattenTestStyle(style({}));
@@ -113,6 +121,8 @@ function flattenTestStyle(style: unknown): Record<string, unknown> {
 
 async function renderContent(overrides: Partial<ContentProps> = {}) {
     const props: ContentProps = {
+        // These controls do not need a live transcript; the real pane's inactive contract remains exercised.
+        active: false,
         run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
         definition: createWorkflowDefinitionFixture(),
         invocations: [],
@@ -124,10 +134,139 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
         onChangeView: vi.fn(),
         ...overrides,
     };
-    return renderScreen(React.createElement(WorkflowRunContent, props));
+    return renderScreen(React.createElement(WorkflowRunContent, props), { wrapper: WorkflowRunPaneProvider });
 }
 
 describe('WorkflowRunContent', () => {
+    it.each([1200, 390])('keeps source actions on the tab row at width %s', async (width) => {
+        viewport.window = { width, height: 844 };
+        for (const kind of ['edit', 'open', 'sourceless', 'deleted'] as const) {
+            const onSource = vi.fn();
+            const onSave = vi.fn();
+            const screen = await renderContent({
+                hasSource: kind !== 'sourceless',
+                sourceAction: kind === 'edit' || kind === 'open' ? { kind, onPress: onSource } : null,
+                onSaveAsWorkflow: onSave,
+            });
+            const actionId = kind === 'sourceless' ? 'save-as-workflow' : `${kind}-workflow`;
+            expect(screen.findByTestId('workflow-run-show-current-work')).not.toBeNull();
+            if (kind === 'deleted') {
+                expect(screen.findByTestId('workflow-run-edit-workflow')).toBeNull();
+                expect(screen.findByTestId('workflow-run-open-workflow')).toBeNull();
+                expect(screen.findByTestId('workflow-run-save-as-workflow')).toBeNull();
+            } else {
+                expect(screen.findByTestId(`workflow-run-${actionId}`)).not.toBeNull();
+                await screen.pressByTestIdAsync(`workflow-run-${actionId}`);
+                expect(kind === 'sourceless' ? onSave : onSource).toHaveBeenCalledOnce();
+                expect(screen.findByTestId(kind === 'edit' ? 'workflow-run-open-workflow' : 'workflow-run-edit-workflow')).toBeNull();
+            }
+            await screen.unmount();
+        }
+    });
+
+    it('shows current executable work without selecting a completed row or a running frame', async () => {
+        const onSelectInvocation = vi.fn();
+        const rows = [
+            createWorkflowInvocationIndexFixture({ id: 'frame', lifecycle: 'running' }),
+            createWorkflowInvocationIndexFixture({ id: 'old', lifecycle: 'completed', sequence: '1' }),
+            createWorkflowInvocationIndexFixture({ id: 'current', lifecycle: 'running', sequence: '2', attempt: '1' }),
+        ];
+        const progress = (blockId: string, attempt: string) => ({
+            kind: 'happier.workflow-progress.v1' as const, invocationPath: { blockId, scope: [] },
+            blockKind: 'step' as const, attempt, logicalInvocationRecordId: 'old',
+        });
+        const screen = await renderContent({ invocations: rows, onSelectInvocation,
+            invocationProgressById: new Map([['old', progress('analyze', '0')], ['current', progress('analyze', '1')]]),
+        });
+        await screen.pressByTestIdAsync('workflow-run-show-current-work');
+        expect(onSelectInvocation).toHaveBeenCalledWith('current');
+        await screen.update(React.createElement(WorkflowRunContent, {
+            ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps),
+            run: createWorkflowRunSummaryFixture({ state: 'succeeded' }),
+        }));
+        expect(screen.findByTestId('workflow-run-show-current-work')?.props.disabled).toBe(true);
+    });
+
+    it.each([1200, 390])('retains accepted nested attempt context in the shared header across views at width %s', async (width) => {
+        viewport.window = { width, height: 844 };
+        const definition = createWorkflowDefinitionFixture({ blocks: [
+            ...createWorkflowDefinitionFixture().blocks,
+            { kind: 'workflow', id: 'call', workflowRef: 'builtin:review', input: {} },
+        ] });
+        const frozenChildren = { 'builtin:review': createWorkflowDefinitionFixture() };
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'retry', attempt: '1' });
+        const progress = {
+            kind: 'happier.workflow-progress.v1' as const,
+            invocationPath: { blockId: 'analyze', scope: [
+                { kind: 'workflow' as const, blockId: 'call' },
+                { kind: 'iteration' as const, blockId: 'rounds', index: 2 },
+            ] },
+            blockKind: 'step' as const, attempt: '1', logicalInvocationRecordId: 'first', previousAttemptRecordId: 'first',
+        };
+        const materializedLeaves = [WorkflowMaterializedLeafV1Schema.parse({
+            sourceKey: 'builtin:review', blockId: 'analyze', kind: 'step', selection: {
+                agentTarget: { kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex },
+            },
+            authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'detached_run' },
+            role: { roleId: 'reviewer', name: 'Frozen reviewer', instructions: 'Review', runsAs: { kind: 'session' },
+                workspaceWrites: 'deny', secondOpinion: 'off', enabled: true },
+        })];
+        materializedLeaves.unshift({ ...materializedLeaves[0]!, sourceKey: '$root',
+            role: { ...materializedLeaves[0]!.role!, name: 'Root reviewer' } });
+        const screen = await renderContent({ definition, frozenChildren, materializedLeaves,
+            invocations: [invocation], selectedInvocationId: invocation.id,
+            invocationProgressById: new Map([[invocation.id, progress]]), selectedInvocationProgress: progress,
+            invocationPage: width === 390,
+        });
+        for (const view of ['flow', 'steps', 'activity'] as const) {
+            await screen.update(React.createElement(WorkflowRunContent, {
+                ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps), view,
+            }));
+            const header = screen.findAllByTestId(width === 390 ? 'workflow-run-selected-header' : 'details-pane.header')
+                .find((node) => typeof node.props.title === 'string');
+            expect(header).toBeDefined();
+            expect(header?.props.title).toBe('Analyze the repository');
+            expect(header?.props.subtitle).toEqual(expect.stringContaining('Frozen reviewer'));
+            expect(header?.props.subtitle).not.toContain('Root reviewer');
+            expect(header?.props.subtitle).toContain('workflows.input.iteration 3');
+            expect(header?.props.subtitle).toContain('workflows.run.attempt:{"attempt":"2"}');
+            expect(header?.props.subtitle).not.toContain('duration');
+        }
+        await screen.update(React.createElement(WorkflowRunContent, {
+            ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps),
+            materializedLeaves: materializedLeaves.map(({ role: _role, ...leaf }) => leaf),
+        }));
+        const agentHeader = screen.findAllByTestId(width === 390 ? 'workflow-run-selected-header' : 'details-pane.header')
+            .find((node) => typeof node.props.title === 'string');
+        expect(agentHeader?.props.subtitle.toLowerCase()).toContain('codex');
+        await screen.update(React.createElement(WorkflowRunContent, {
+            ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps),
+            materializedLeaves: materializedLeaves.map(({ role: _role, ...leaf }) => ({
+                ...leaf, selection: { ...leaf.selection, agentTarget: null },
+            })),
+        }));
+        const untargetedHeader = screen.findAllByTestId(width === 390 ? 'workflow-run-selected-header' : 'details-pane.header')
+            .find((node) => typeof node.props.title === 'string');
+        expect(untargetedHeader?.props.subtitle).toContain('workflows.input.iteration 3');
+        expect(untargetedHeader?.props.subtitle).toContain('workflows.run.attempt:{"attempt":"2"}');
+        expect(untargetedHeader?.props.subtitle.toLowerCase()).not.toContain('codex');
+    });
+    it('opens an unopened held child Wait from Flow using accepted children and loaded ancestry', async () => {
+        const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'workflow', id: 'call', workflowRef: 'builtin:review', input: {} }] });
+        const frozenChildren = { 'builtin:review': createWorkflowDefinitionFixture({ blocks: [
+            { kind: 'wait', id: 'held', document: { text: 'Continue?', references: [], attachments: [] } },
+        ] }) };
+        const onSelectInvocation = vi.fn();
+        const screen = await renderContent({ definition, frozenChildren, view: 'flow', onSelectInvocation,
+            invocations: [
+                createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+                createWorkflowInvocationIndexFixture({ id: 'call', parentRecordId: 'root', memberOrdinal: '0', sequence: '1' }),
+                createWorkflowInvocationIndexFixture({ id: 'held-row', parentRecordId: 'call', memberOrdinal: '0', sequence: '2', lifecycle: 'waiting_for_review' }),
+            ],
+        });
+        await screen.pressByTestIdAsync(`workflow-run-flow-node-${JSON.stringify(['call', 'held'])}`);
+        expect(onSelectInvocation.mock.calls.at(-1)?.[0]).toBe('held-row');
+    });
     it('keeps a successful outcome outside Needs you while the origin acknowledgement is behind', async () => {
         const screen = await renderContent({
             run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded', originDeliveryAckRevision: 0 }),
@@ -216,7 +355,7 @@ describe('WorkflowRunContent', () => {
         expect(screen.findByTestId('workflow-run-replacement-input')).not.toBeNull();
     });
 
-    it('presents the selected detail through the canonical modal on compact layouts and returns focus to the row', async () => {
+    it('leaves phone selection to the exact pushed invocation page rather than opening a detail modal', async () => {
         viewport.window = { width: 390, height: 844 };
         const onSelectInvocation = vi.fn();
         const onDeselectInvocation = vi.fn();
@@ -242,19 +381,13 @@ describe('WorkflowRunContent', () => {
         }));
         expect(screen.findByTestId('workflow-run-inspector')).toBeNull();
         expect(screen.findByTestId('workflow-run-selected-detail')).toBeNull();
-        expect(modalSpies.show).toHaveBeenCalledTimes(1);
-        const config = modalSpies.show.mock.calls[0]?.[0] as Readonly<{
-            chrome?: Readonly<{ kind: string; testID?: string }>;
-            focusReturnRef?: Readonly<{ current: unknown }>;
-            onRequestClose?: () => void;
-            props: Readonly<{ testIDPrefix: string }>;
-        }>;
-        expect(config.chrome).toMatchObject({ kind: 'card', testID: 'workflow-run-detail-modal' });
-        expect(config.focusReturnRef?.current).toBe(rowHost);
-        expect(config.props.testIDPrefix).toBe('workflow-run');
-        // Closing the sheet releases the selection through the one selection owner.
-        config.onRequestClose?.();
-        expect(onDeselectInvocation).toHaveBeenCalledTimes(1);
+        expect(modalSpies.show).not.toHaveBeenCalled();
+        await screen.update(React.createElement(WorkflowRunContent, {
+            ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps),
+            invocationPage: true,
+        }));
+        expect(screen.findByTestId('workflow-run-selected-detail')).toBeTruthy();
+        expect(screen.findAllByType('VirtualizedList' as never)).toHaveLength(0);
 
         // Growing past compact moves the same selection into the inspector and
         // takes the sheet down; nothing is selected twice.
@@ -262,22 +395,295 @@ describe('WorkflowRunContent', () => {
         await screen.update(React.createElement(WorkflowRunContent, {
             ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps),
         }));
-        expect(modalSpies.hide).toHaveBeenCalledWith('workflow-detail-modal');
         expect(screen.findByTestId('workflow-run-inspector')).toBeTruthy();
+    });
+
+    it('offers Steps as the frozen read-only document with exact occurrence selection', async () => {
+        const onSelectInvocation = vi.fn();
+        const screen = await renderContent({
+            view: 'steps',
+            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1' })],
+            invocationStructure: new Map([['inv-1', {
+                invocationId: 'inv-1', blockId: 'analyze', nodeId: 'analyze', occurrence: [], isFrame: false, coverageKind: 'executable',
+            }]]),
+            onSelectInvocation,
+        });
+        expect(screen.findByTestId('workflow-run-view:steps')).toBeTruthy();
+        expect(screen.findByTestId('workflow-run-steps-list-root')).toBeTruthy();
+        expect(screen.findByTestId('workflow-run-steps-add-root')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-steps-occurrence-inv-1');
+        expect(onSelectInvocation).toHaveBeenCalledWith('inv-1');
+    });
+
+    it('keeps the first Agent input bindings and Returns visible as read-only words in Steps', async () => {
+        const screen = await renderContent({ view: 'steps', definition: createWorkflowDefinitionFixture({ blocks: [
+            { kind: 'step', id: 'first', document: { text: 'Do the work', references: [], attachments: [] },
+                input: [{ kind: 'literal', value: 'Recorded input' }], result: { kind: 'json', schema: { type: 'object' } } },
+        ] }) });
+        expect(screen.getTextContent()).toContain('Recorded input');
+        expect(screen.findByTestId('workflow-run-steps-step-first-returns')).toBeTruthy();
+        expect(screen.findByTestId('workflow-run-steps-step-first-add-input')).toBeNull();
+        const binding = screen.findByTestId('workflow-run-steps-step-first-input-0');
+        expect(binding).toBeTruthy();
+        expect(binding?.findAll((node) => typeof node.type === 'string'
+            && (typeof node.props.onChangeText === 'function' || node.props.accessibilityRole === 'radio'))).toHaveLength(0);
+    });
+
+    it('closes a selected docked step through the canonical pane header and selection owner', async () => {
+        const onDeselectInvocation = vi.fn();
+        const screen = await renderContent({ selectedInvocationId: 'inv-1', onDeselectInvocation });
+        await screen.pressByTestIdAsync('details-pane.header.close');
+        expect(onDeselectInvocation).toHaveBeenCalledOnce();
+    });
+
+    it('keeps an inactive exact Session pane free of transcript and composer subscriptions', async () => {
+        const screen = await renderContent({
+            active: false,
+            selectedInvocationId: 'inv-1',
+            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1' })],
+            selectedInvocationProgress: {
+                kind: 'happier.workflow-progress.v1',
+                blockKind: 'step',
+                invocationPath: { blockId: 'analyze', scope: [] },
+                attempt: '0', logicalInvocationRecordId: 'inv-1',
+                execution: { kind: 'session', sessionId: 'step-session', localInputId: 'input-1' },
+            },
+        });
+        expect(screen.findByTestId('session-in-pane-inactive:step-session')).toBeTruthy();
+        expect(screen.findByTestId('session-in-pane:step-session')).toBeNull();
+    });
+
+    it('selects exact repeated Action and Wait occurrences from Steps', async () => {
+        const onSelectInvocation = vi.fn();
+        await withPopoverWebGlobals(async () => {
+            const invocations = ['notify-old', 'notify-new', 'wait-old', 'wait-new'].map((id, index) =>
+                createWorkflowInvocationIndexFixture({ id, sequence: String(index), lifecycle: index % 2 === 0 ? 'completed' : 'waiting_for_review' }));
+            const screen = await renderContent({
+                view: 'steps', onSelectInvocation,
+                definition: createWorkflowDefinitionFixture({ blocks: [
+                    { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Frozen message' } } },
+                    { kind: 'wait', id: 'held', document: { text: 'Review before continuing', references: [], attachments: [] } },
+                ] }),
+                invocations,
+                invocationStructure: new Map(invocations.map((invocation) => {
+                    const blockId = invocation.id.startsWith('notify') ? 'notify' : 'held';
+                    return [invocation.id, { invocationId: invocation.id, blockId, nodeId: blockId,
+                        occurrence: [], isFrame: false, coverageKind: 'executable' as const }];
+                })),
+            });
+            expect(screen.findByTestId('workflow-run-steps-notify-occurrence-notify-old')).toBeNull();
+            await screen.pressByTestIdAsync('workflow-run-steps-notify-select-occurrence');
+            await screen.pressByTestIdAsync('workflow-run-steps-notify-occurrence-notify-old');
+            expect(onSelectInvocation.mock.calls.at(-1)?.[0]).toBe('notify-old');
+            await screen.pressByTestIdAsync('workflow-run-steps-held-select-occurrence');
+            await screen.pressByTestIdAsync('workflow-run-steps-held-occurrence-wait-new');
+            expect(onSelectInvocation.mock.calls.at(-1)?.[0]).toBe('wait-new');
+        });
+    });
+
+    it('reads frozen Action bindings without mounting editable reference controls', async () => {
+        const screen = await renderContent({ view: 'steps', definition: createWorkflowDefinitionFixture({ blocks: [
+            { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {
+                message: { kind: 'literal', value: 'Frozen message' },
+                recipients: { kind: 'list', items: [{ kind: 'input', name: 'person' }, { kind: 'origin_session_id' }] },
+            } },
+        ] }) });
+        for (const field of ['message', 'recipients']) {
+            const binding = screen.findByTestId(`workflow-run-steps-action-notify-field-${field}`);
+            expect(binding).toBeTruthy();
+            expect(binding?.findAll((node) => typeof node.type === 'string'
+                && (typeof node.props.onChangeText === 'function' || node.props.accessibilityRole === 'radio'))).toHaveLength(0);
+        }
+        expect(screen.getTextContent()).toContain('Frozen message');
+    });
+
+    it('renders frozen nested documents through the same owner without mixing identical child block occurrences', async () => {
+        const onSelectInvocation = vi.fn();
+        const workflowRef = 'builtin:keep-going-until-done';
+        const screen = await renderContent({
+            view: 'steps',
+            definition: createWorkflowDefinitionFixture({ blocks: [
+                { kind: 'workflow', id: 'first', workflowRef, input: { topic: { kind: 'literal', value: 'Frozen topic' } } },
+                { kind: 'workflow', id: 'second', workflowRef, input: {} },
+            ] }),
+            frozenChildren: { [workflowRef]: createWorkflowDefinitionFixture() },
+            invocations: [
+                createWorkflowInvocationIndexFixture({ id: 'first-child', lifecycle: 'completed' }),
+                createWorkflowInvocationIndexFixture({ id: 'second-child', lifecycle: 'waiting_for_review' }),
+            ],
+            invocationStructure: new Map(['first', 'second'].map((id) => [`${id}-child`, {
+                invocationId: `${id}-child`, blockId: 'analyze', nodeId: resolveWorkflowFlowScopedNodeId('analyze', [id]),
+                occurrence: [{ kind: 'workflow' as const, blockId: id }], isFrame: false, coverageKind: 'executable' as const,
+            }])),
+            selectedInvocationId: 'first-child', onSelectInvocation,
+        });
+        expect(screen.findByTestId('workflow-run-steps-first-list-root')).toBeTruthy();
+        expect(screen.findByTestId('workflow-run-steps-second-list-root')).toBeTruthy();
+        expect(screen.findAllByTestId('workflow-run-steps-first-occurrence-first-child')).not.toHaveLength(0);
+        expect(screen.findByTestId('workflow-run-steps-first-occurrence-second-child')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-steps-second-occurrence-second-child');
+        expect(onSelectInvocation).toHaveBeenCalledWith('second-child');
+        const binding = screen.findByTestId('workflow-run-steps-workflow-first-input-topic');
+        expect(binding?.findAll((node) => typeof node.type === 'string' && typeof node.props.onChangeText === 'function')).toHaveLength(0);
+    });
+
+    it.each(['owner', 'view'] as const)('offers Discuss only from the exact Session input grant (%s)', async (level) => {
+        const store = getStorage();
+        const prior = store.getState().sessions;
+        const session = createSessionFixture({ id: 'discussion-session', access: createSessionAccessFixture(level) });
+        store.setState({ sessions: { ...prior, [session.id]: session } });
+        let discuss: (() => void) | undefined;
+        try {
+            await renderContent({
+                selectedInvocationId: 'inv-1',
+                selectedInvocationProgress: {
+                    kind: 'happier.workflow-progress.v1', blockKind: 'step',
+                    invocationPath: { blockId: 'analyze', scope: [] }, attempt: '0', logicalInvocationRecordId: 'inv-1',
+                    execution: { kind: 'session', sessionId: session.id, localInputId: 'input-1' },
+                },
+                renderReviewCard: (onDiscuss) => { discuss = onDiscuss; return React.createElement('ReviewSlot'); },
+            });
+            expect(typeof discuss === 'function').toBe(level === 'owner');
+        } finally {
+            await act(async () => store.setState({ sessions: prior }));
+        }
+    });
+
+    it('covers the exact phone conversation with one canonical review card, not a second inline card', async () => {
+        viewport.window = { width: 390, height: 844 };
+        const screen = await renderContent({
+            active: true, invocationPage: true, selectedInvocationId: 'inv-1',
+            selectedInvocationProgress: {
+                kind: 'happier.workflow-progress.v1', blockKind: 'step',
+                invocationPath: { blockId: 'analyze', scope: [] }, attempt: '0', logicalInvocationRecordId: 'inv-1',
+                execution: { kind: 'session', sessionId: 'step-session', localInputId: 'input-1' },
+            },
+            renderReviewCard: () => React.createElement('ReviewSlot'),
+        });
+        expect(screen.findByTestId('session-in-pane-inactive:step-session')).toBeTruthy();
+        expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(0);
+        expect(modalSpies.show).toHaveBeenCalledTimes(1);
+        expect(modalSpies.show.mock.calls[0]?.[0]).toMatchObject({
+            chrome: { testID: 'workflow-run-review-modal' }, props: { card: expect.anything() },
+        });
+    });
+
+    it('reopens the same phone hold with its external draft and resets dismissal for a new exact attempt', async () => {
+        viewport.window = { width: 390, height: 844 };
+        const drafts = new Map<string, WorkflowReviewDraft>();
+        const progress: NonNullable<ContentProps['selectedInvocationProgress']> = {
+            kind: 'happier.workflow-progress.v1', blockKind: 'wait',
+            invocationPath: { blockId: 'held', scope: [] }, attempt: '0', logicalInvocationRecordId: 'held-1',
+        };
+        let exactId = 'held-1';
+        let currentProgress = progress;
+        const renderReviewCard = (_discuss?: () => void, placement?: Readonly<{ compact: boolean }>) => {
+            const id = exactId;
+            return <WorkflowReviewCard progress={currentProgress} contract={{ kind: 'text' }} waitForYou contentRevision="7"
+                draft={drafts.get(id)} onChangeDraft={(next) => { if (next) drafts.set(id, next); else drafts.delete(id); }}
+                onComplete={async () => {}} primaryActionPlacement={placement?.compact ? 'footer' : 'inline'} />;
+        };
+        const screen = await renderContent({ active: true, invocationPage: true, selectedInvocationId: exactId,
+            selectedInvocationProgress: progress, renderReviewCard });
+        // Modal rendering/dismissal is a genuine UI boundary. Mount its real supplied component/card.
+        const readModal = (index: number) => modalSpies.show.mock.calls[index]?.[0] as Readonly<{
+            component: React.ComponentType<{ card: React.ReactNode; onClose: () => void }>;
+            props: { card: React.ReactNode };
+            onRequestClose: () => void;
+        }>;
+        const first = readModal(0);
+        const overlay = await renderScreen(React.createElement(first.component, { ...first.props, onClose: first.onRequestClose }));
+        await act(async () => { overlay.changeTextByTestId('workflow-review-editor', 'My retained answer'); });
+        await act(async () => { first.onRequestClose(); });
+        await overlay.unmount();
+        expect(screen.findAllByType(WorkflowReviewCard)).toHaveLength(0);
+        expect(screen.findByTestId('workflow-run-selected-detail')).toBeTruthy();
+        await screen.pressByTestIdAsync('workflow-run-open-review');
+        expect(modalSpies.show).toHaveBeenCalledTimes(2);
+        const reopened = readModal(1);
+        const reopenedOverlay = await renderScreen(React.createElement(reopened.component, { ...reopened.props, onClose: reopened.onRequestClose }));
+        expect(reopenedOverlay.findByTestId('workflow-review-editor')?.props.value).toBe('My retained answer');
+        await act(async () => { reopened.onRequestClose(); });
+        await reopenedOverlay.unmount();
+        exactId = 'held-2';
+        currentProgress = { ...progress, attempt: '1', previousAttemptRecordId: 'held-1' };
+        await screen.update(React.createElement(WorkflowRunContent, {
+            ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps), selectedInvocationId: exactId,
+            selectedInvocationProgress: currentProgress,
+        }));
+        expect(modalSpies.show).toHaveBeenCalledTimes(3);
+        const fresh = readModal(2);
+        const freshOverlay = await renderScreen(React.createElement(fresh.component, { ...fresh.props, onClose: fresh.onRequestClose }));
+        expect(freshOverlay.findByTestId('workflow-review-editor')?.props.value).toBe('');
+        expect(drafts.get('held-1')?.text).toBe('My retained answer');
+    });
+
+    it('opens the exact previous attempt from a failed generation without choosing its value', async () => {
+        const onSelectInvocation = vi.fn();
+        const screen = await renderContent({ selectedInvocationId: 'generation-2', onSelectInvocation,
+            selectedInvocationProgress: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+                invocationPath: { blockId: 'analyze', scope: [] }, attempt: '1', logicalInvocationRecordId: 'analyze',
+                previousAttemptRecordId: 'published-1', reason: { code: 'generation_failed' },
+            } });
+        await screen.pressByTestIdAsync('workflow-run-previous-attempt');
+        expect(onSelectInvocation).toHaveBeenCalledWith('published-1');
+    });
+
+    it('never gives an Action leaf a conversation even when a stale Session override remains', async () => {
+        let discuss: (() => void) | undefined;
+        const screen = await renderContent({
+            selectedInvocationId: 'action-1', selectedSessionId: 'stale-session',
+            selectedInvocationProgress: {
+                kind: 'happier.workflow-progress.v1', blockKind: 'action',
+                invocationPath: { blockId: 'notify', scope: [] }, attempt: '0', logicalInvocationRecordId: 'action-1',
+            },
+            renderReviewCard: (onDiscuss) => { discuss = onDiscuss; return React.createElement('ReviewSlot'); },
+        });
+        expect(screen.findByTestId('session-in-pane-inactive:stale-session')).toBeNull();
+        expect(discuss).toBeUndefined();
     });
 
     it('leads with the outcome and the Run origin', async () => {
         const screen = await renderContent();
 
-        expect(screen.findByTestId('workflow-run-state')).toBeTruthy();
         expect(screen.findByTestId('workflow-run-outcome')).toBeTruthy();
-        expect(screen.findByTestId('workflow-run-origin')).toBeTruthy();
+        // The origin is the first fact of the header's meta line.
+        expect(screen.findByTestId('workflow-run-header-meta')?.findAll((node) => node.props.testID === 'workflow-run-origin').length)
+            .toBeGreaterThan(0);
     });
 
-    it('says usage is unavailable rather than showing zero', async () => {
+    it('says a held Wait-for-you status once, as the first words of the outcome, and offers Map · Steps · Activity', async () => {
+        const definition = createWorkflowDefinitionFixture({ blocks: [
+            { kind: 'wait', id: 'confirm', document: { text: 'Confirm the release', references: [], attachments: [] } },
+        ] });
+        const screen = await renderContent({
+            definition,
+            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'waiting_for_review' }),
+            invocations: [
+                createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+                createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_review' }),
+            ],
+        });
+        // No separate status pill: the status is said in the outcome line only.
+        expect(screen.findByTestId('workflow-run-state')).toBeNull();
+        const outcome = String(screen.findByTestId('workflow-run-outcome')?.props.children);
+        expect(outcome).toContain('workflows.run.outcomeLine');
+        expect(outcome).toContain('"word":"workflows.review.waitTitle"');
+        expect(outcome).toContain('workflows.run.attentionWaitSentence');
+        // A Wait-for-you step never borrows the review hold's word.
+        const text = screen.getTextContent();
+        expect(text).not.toContain('workflows.runState.waiting_for_review');
+        expect(text).not.toContain('workflows.invocationState.waiting_for_review');
+        expect(text.indexOf('workflows.tabs.map')).toBeGreaterThan(-1);
+        expect(text.indexOf('workflows.tabs.map')).toBeLessThan(text.indexOf('workflows.tabs.steps'));
+        expect(text.indexOf('workflows.tabs.steps')).toBeLessThan(text.indexOf('workflows.tabs.activity'));
+    });
+
+    it('shows no usage line when the provider supplied none', async () => {
         const screen = await renderContent();
 
-        expect(screen.getTextContent()).toContain('workflows.run.usageUnavailable');
+        expect(screen.findByTestId('workflow-run-usage')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('workflows.run.usageUnavailable');
     });
 
     it('does not claim complete child coverage while invocation history is paged', async () => {
@@ -633,6 +1039,7 @@ describe('WorkflowRunContent', () => {
         const openExecutionRun = vi.fn();
         const screen = await renderContent({
             selectedInvocationId: 'inv-1',
+            selectedSessionId: 'stale-session',
             selectedInvocationProgress: {
                 kind: 'happier.workflow-progress.v1',
                 invocationPath: { blockId: 'analyze', scope: [] },
@@ -646,6 +1053,7 @@ describe('WorkflowRunContent', () => {
             },
             onOpenExecutionRun: openExecutionRun,
         });
+        expect(screen.findByTestId('session-in-pane-inactive:stale-session')).toBeNull();
         await screen.pressByTestIdAsync('workflow-run-open-execution-run');
         expect(openExecutionRun).toHaveBeenCalledWith('execution/run 1');
         expect(screen.findByTestId('workflow-run-open-session')).toBeNull();
@@ -1000,7 +1408,7 @@ describe('WorkflowRunContent', () => {
         // subscribes to `window`. The shared testkit harness supplies exactly those
         // globals instead of replacing the owner with a local stand-in.
         await withPopoverWebGlobals(async () => {
-            const screen = await renderContent({ onSaveAsWorkflow: saveAsWorkflow, onDelete: vi.fn() });
+            const screen = await renderContent({ hasSource: true, onSaveAsWorkflow: saveAsWorkflow, onDelete: vi.fn() });
 
             await screen.pressByTestIdAsync('workflow-run-overflow');
             expect(screen.findByTestId('workflow-run-save-as-workflow')).toBeTruthy();
@@ -1515,8 +1923,11 @@ describe('WorkflowRunContent', () => {
         });
 
         await screen.pressByTestIdAsync('workflow-run-use-replacement-input');
-        screen.findByTestId('workflow-run-replacement-input')?.props.onChangeText('Try the safer path');
-        await act(async () => {});
+        expect(screen.findByTestId('workflow-run-replacement-input')).toBeTruthy();
+        await act(async () => {
+            screen.findByTestId('workflow-run-replacement-input')?.props.onChangeText('Try the safer path');
+        });
+        expect(screen.findByTestId('workflow-run-replacement-input')?.props.value).toBe('Try the safer path');
         // Same conversation is the default, and fresh agent is genuinely
         // reachable rather than being decided by which capability came first.
         expect(screen.findByTestId('workflow-run-replacement-conversation-same_conversation')

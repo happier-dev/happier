@@ -22,7 +22,8 @@ import type {
 } from '@happier-dev/plugin-sdk/voice/client';
 
 const OpenAiIdSchema = z.string().min(1);
-const OpenAiToolParametersSchema = createVoiceRecordSchema(VoiceRealtimeJsonValueSchema);
+// Generated JSON Schema is metadata, not a live tool argument/result payload.
+const OpenAiToolParametersSchema = createVoiceRecordSchema(z.json());
 // Ingress contract: OpenAI server events are an upstream-owned, additively
 // evolving wire. Each schema therefore requires exactly the fields this adapter
 // reads and tolerates everything else. A closed allowlist here fails silently in
@@ -319,7 +320,7 @@ export type OpenAiRealtimeClientToolDefinition = Readonly<{
 }>;
 
 export function encodeOpenAiRealtimeClientEvent(value: unknown): VoiceRealtimeJsonValue {
-  return VoiceRealtimeJsonValueSchema.parse(OpenAiClientEventSchema.parse(value));
+  return z.json().parse(OpenAiClientEventSchema.parse(value));
 }
 
 export function createOpenAiToolSessionUpdate(

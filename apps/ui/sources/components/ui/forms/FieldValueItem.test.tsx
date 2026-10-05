@@ -52,6 +52,27 @@ function field(screen: Awaited<ReturnType<typeof renderField>>) {
 }
 
 describe('FieldValueItem', () => {
+    it('steps a numeric draft, keeps its units out of storage, and respects the owner bounds', async () => {
+        const { FieldValueItem } = await import('./FieldValueItem');
+        const saved: string[] = [];
+        function Host() {
+            const [value, setValue] = React.useState('2');
+            return <FieldValueItem title="Messages" value={value} kind="integer" unit="messages"
+                stepper={{ min: 1, max: 3, step: 1 }} fieldTestID="count"
+                onCommit={(next) => { saved.push(next); setValue(next); return next; }} />;
+        }
+        const screen = await renderScreen(<Host />);
+        await act(async () => { screen.findByTestId('count.increment')!.props.onPress(); });
+        expect(saved).toEqual(['3']);
+        expect(screen.findByTestId('count.increment')!.props.disabled).toBe(true);
+        await act(async () => { screen.findByTestId('count.decrement')!.props.onPress(); });
+        expect(saved).toEqual(['3', '2']);
+        await act(async () => { screen.findByTestId('count')!.props.onChangeText('1'); });
+        await act(async () => { screen.findByTestId('count')!.props.onBlur(); });
+        await act(async () => { screen.findByTestId('count.decrement')!.props.onPress(); });
+        expect(saved.at(-1)).toBe('1');
+        expect(screen.findByTestId('count.decrement')!.props.disabled).toBe(true);
+    });
     it('commits the typed value when focus leaves the field, not on every keystroke', async () => {
         const onCommit = vi.fn();
         const screen = await renderField({ value: 'claude', onCommit });

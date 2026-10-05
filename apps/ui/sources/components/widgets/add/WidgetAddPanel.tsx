@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { AccessibilityInfo, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -12,9 +12,12 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+import { WidgetSetupStep } from './WidgetSetupStep';
+import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
 import {
     filterWidgetAddSections,
     matchesWidgetAddAsk,
+    resolveWidgetAddPick,
     type WidgetAddAsk,
     type WidgetAddEntry,
     type WidgetAddSection,
@@ -39,8 +42,15 @@ export type WidgetAddPanelProps = Readonly<{
     /** Phones: the switch takes its own full-width row under the title, and Done closes. */
     phone?: boolean;
     onRequestClose: () => void;
+    /** The Set up step opened or closed (the popover widens for its inputs | preview columns). */
+    onSetupOpenChange?: (open: boolean) => void;
+    /** Exact Home/session identity for the step's option reads. */
+    serverId?: string | null;
+    sessionId?: string | null;
     testID: string;
 }>;
+
+type AddFeedback = Readonly<{ entryId: string; message: string; failed: boolean }>;
 
 /**
  * The one Add surface for widgets (lab `cwidgets` G1, round 2): a title with who sees what you add,
@@ -59,11 +69,42 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
     const sections = React.useMemo(() => filterWidgetAddSections(props.sections, query), [props.sections, query]);
     const ask = props.ask && matchesWidgetAddAsk(props.ask, query) ? props.ask : null;
     const close = props.onRequestClose;
+    // The one Set up step (lab dadd A): open only for a configurable pick with something missing or
+    // ambiguous. Search and the chosen view stay as they were, so Back returns to the same gallery.
+    const [setup, setSetup] = React.useState<Readonly<{ entryId: string; setup: WidgetSetup }> | null>(null);
+    const [feedback, setFeedback] = React.useState<AddFeedback | null>(null);
+    const onSetupOpenChange = props.onSetupOpenChange;
+    const openSetup = React.useCallback((next: Readonly<{ entryId: string; setup: WidgetSetup }> | null) => {
+        setSetup(next);
+        onSetupOpenChange?.(next !== null);
+    }, [onSetupOpenChange]);
+    const confirmAdded = React.useCallback((entry: Readonly<{ id: string; title: string }>, result: Extract<WidgetSetupSubmitResult, { ok: true }>) => {
+        const message = result.approvalPending ? t('widgetAdd.areaApprovalPending') : t('widgetAdd.justAdded', { widget: entry.title });
+        setFeedback({ entryId: entry.id, message, failed: false });
+        AccessibilityInfo.announceForAccessibility?.(message);
+    }, []);
     const pick = React.useCallback((entry: WidgetAddEntry) => {
-        if (entry.added) return;
+        const decision = resolveWidgetAddPick(entry);
+        if (decision.kind === 'added') return;
+        setFeedback(null);
+        if (decision.kind === 'setup') {
+            openSetup({ entryId: entry.id, setup: decision.setup });
+            return;
+        }
+        if (decision.kind === 'submit') {
+            const next = decision.setup;
+            // Fully bound: no step. It goes straight through the same Action, and the tile says so.
+            void next.submit(next.initial).then(
+                (result) => (result.ok
+                    ? confirmAdded(entry, result)
+                    : setFeedback({ entryId: entry.id, message: result.message, failed: true })),
+                () => setFeedback({ entryId: entry.id, message: t('widgetAdd.addFailed'), failed: true }),
+            );
+            return;
+        }
         entry.onPick();
         if (entry.closesOnPick) close();
-    }, [close]);
+    }, [close, confirmAdded, openSetup]);
     const pickAsk = React.useCallback(() => {
         props.ask?.onPick();
         close();
@@ -86,6 +127,26 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         />
     );
     const nothing = sections.length === 0 && !ask;
+
+    if (setup) {
+        const entryTitle = props.sections.flatMap((section) => section.entries).find((entry) => entry.id === setup.entryId)?.title;
+        return (
+            <WidgetSetupStep
+                key={setup.entryId}
+                setup={setup.setup}
+                phone={props.phone === true}
+                onBack={() => openSetup(null)}
+                onCancel={close}
+                onDone={(result) => {
+                    openSetup(null);
+                    confirmAdded({ id: setup.entryId, title: entryTitle ?? setup.setup.title }, result);
+                }}
+                {...(props.serverId ? { serverId: props.serverId } : {})}
+                {...(props.sessionId ? { sessionId: props.sessionId } : {})}
+                testID={`${props.testID}.setup`}
+            />
+        );
+    }
 
     return (
         <View testID={props.testID} accessibilityLabel={props.title} style={styles.root}>
@@ -117,6 +178,18 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
                 style={styles.search}
                 {...(Platform.OS === 'web' && !props.phone ? { autoFocus: true } : {})}
             />
+            {feedback ? (
+                <View style={styles.feedback} testID={`${props.testID}.feedback`} accessibilityLiveRegion="polite">
+                    <Icon
+                        name={feedback.failed ? 'warning' : 'check'}
+                        size={13}
+                        color={feedback.failed ? theme.colors.state.danger.foreground : theme.colors.text.secondary}
+                    />
+                    <Text style={[styles.feedbackText, feedback.failed ? styles.feedbackFailed : null]} numberOfLines={2}>
+                        {feedback.message}
+                    </Text>
+                </View>
+            ) : null}
             {props.view === 'gallery' ? (
                 <>
                     {sections.map((section) => (
@@ -172,7 +245,7 @@ function listRow(
         icon: <Icon name={entry.icon} size={18} color={entry.added ? text.tertiary : text.secondary} />,
         ...(entry.added
             ? { right: <AddedMark />, disabled: true }
-            : { onPress: () => pick(entry) }),
+            : { ...(entry.count ? { right: <CountMark count={entry.count} /> } : {}), onPress: () => pick(entry) }),
     };
 }
 
@@ -184,6 +257,11 @@ function AddedMark(): React.ReactElement {
             <Text style={stylesheet.addedText}>{t('widgetAdd.added')}</Text>
         </View>
     );
+}
+
+/** "2 on Home": a configurable widget already here, still pickable for another copy (lab dbind G). */
+function CountMark(props: Readonly<{ count: string }>): React.ReactElement {
+    return <Text style={stylesheet.count} numberOfLines={1}>{props.count}</Text>;
 }
 
 function GallerySection(props: Readonly<{
@@ -231,7 +309,7 @@ function Tile(props: Readonly<{ entry: WidgetAddEntry; onPick: (entry: WidgetAdd
         <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
-            accessibilityLabel={[entry.title, entry.subtitle, entry.added ? t('widgetAdd.added') : null].filter(Boolean).join(', ')}
+            accessibilityLabel={[entry.title, entry.subtitle, entry.added ? t('widgetAdd.added') : entry.count ?? null].filter(Boolean).join(', ')}
             disabled={entry.added === true}
             onPress={() => props.onPick(entry)}
             style={(state) => [
@@ -255,7 +333,7 @@ function Tile(props: Readonly<{ entry: WidgetAddEntry; onPick: (entry: WidgetAdd
                     <Text style={styles.tileTitle} numberOfLines={1}>{entry.title}</Text>
                     {entry.subtitle ? <Text style={styles.tileSubtitle} numberOfLines={1}>{entry.subtitle}</Text> : null}
                 </View>
-                {entry.added ? <AddedMark /> : null}
+                {entry.added ? <AddedMark /> : entry.count ? <CountMark count={entry.count} /> : null}
             </View>
         </HappierPressable>
     );
@@ -360,6 +438,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     tileTitle: { ...Typography.default('semiBold'), fontSize: 12.5, lineHeight: 17, color: theme.colors.text.primary },
     tileSubtitle: { ...Typography.default(), fontSize: 11.5, lineHeight: 15, color: theme.colors.text.tertiary },
     added: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    count: { ...Typography.default('semiBold'), fontSize: 11.5, lineHeight: 17, color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
+    feedback: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingTop: 4, paddingBottom: 2 },
+    feedbackText: { ...Typography.default(), flex: 1, fontSize: 12, lineHeight: 16, color: theme.colors.text.secondary },
+    feedbackFailed: { color: theme.colors.state.danger.foreground },
     addedText: { ...Typography.default(), fontSize: 11.5, color: theme.colors.text.tertiary },
     chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 6, paddingBottom: 4 },
     chip: {

@@ -20,6 +20,8 @@ vi.mock('@/sync/store/hooks', () => ({ useLocalSetting: () => 1 }));
 describe('CodeBlockViewFrame part radius', () => {
     it('rounds the frame with the theme code block radius', async () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+        const { useUnistyles } = await import('react-native-unistyles');
+        const { glassSurfaceBackgroundColor } = await import('@/components/ui/glass/glassSurfacePaint');
 
         const screen = await renderScreen(<CodeBlockViewFrame code={'x'} language={null} wrap={false} showCopyButton={false}>
                     <React.Fragment>child</React.Fragment>
@@ -31,5 +33,8 @@ describe('CodeBlockViewFrame part radius', () => {
         };
         const rounded = screen.tree.root.findAll((node) => typeof node.type === 'string' && flatten(node.props?.style).borderRadius === 37);
         expect(rounded.length).toBeGreaterThan(0);
+        const { theme } = useUnistyles();
+        expect(flatten(rounded[0].props.style).backgroundColor).toBe(glassSurfaceBackgroundColor(theme.colors.surface.inset, 'content', true));
+        expect(flatten(rounded[0].props.style).opacity).toBeUndefined();
     });
 });

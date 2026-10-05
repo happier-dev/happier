@@ -294,6 +294,7 @@ export function SessionBoardPane(props: SessionBoardPaneProps): React.ReactEleme
         <View style={styles.root} testID={testID}>
             <SessionBoardSurface
                 sessionId={props.sessionId}
+                serverId={props.serverId}
                 {...(props.session ? { session: props.session } : {})}
                 controller={controller}
                 host={props.host}

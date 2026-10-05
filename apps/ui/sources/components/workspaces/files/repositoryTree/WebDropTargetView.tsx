@@ -1,17 +1,14 @@
 import * as React from 'react';
 import { Platform, View, type ViewProps } from 'react-native';
+import { attachWebDragDropHandlers, type WebDragDropHandlers } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
+import { writeRepositoryFileDropTarget, type RepositoryFileDropTarget } from './repositoryFileDropTarget';
 
-type WebDragDropHandlers = Readonly<{
-    onDragEnter?: (event: any) => void;
-    onDragLeave?: (event: any) => void;
-    onDragOver?: (event: any) => void;
-    onDrop?: (event: any) => void;
-}>;
+export type WebDropTargetViewProps = ViewProps & WebDragDropHandlers & Readonly<{ repositoryFileDropTarget?: RepositoryFileDropTarget }>;
 
-export type WebDropTargetViewProps = ViewProps & WebDragDropHandlers;
-
-export function WebDropTargetView(props: WebDropTargetViewProps): React.ReactElement {
-    const { onDragEnter, onDragLeave, onDragOver, onDrop, ...rest } = props;
+export const WebDropTargetView = React.forwardRef<View, WebDropTargetViewProps>(function WebDropTargetView(props, forwardedRef): React.ReactElement {
+    const { onDragEnter, onDragLeave, onDragOver, onDrop, repositoryFileDropTarget, ...rest } = props;
+    const destinationRef = React.useRef(repositoryFileDropTarget);
+    destinationRef.current = repositoryFileDropTarget;
     const handlersRef = React.useRef<WebDragDropHandlers>({
         onDragEnter,
         onDragLeave,
@@ -35,6 +32,10 @@ export function WebDropTargetView(props: WebDropTargetViewProps): React.ReactEle
     }, []);
 
     const setHostRef = React.useCallback((node: unknown) => {
+        // RN Web delivers a DOM host for the public View ref at this platform boundary.
+        const view = node as View | null;
+        if (typeof forwardedRef === 'function') forwardedRef(view);
+        else if (forwardedRef) forwardedRef.current = view;
         if (Platform.OS !== 'web') return;
 
         const hostElement = (node as HTMLElement | null) ?? null;
@@ -43,26 +44,17 @@ export function WebDropTargetView(props: WebDropTargetViewProps): React.ReactEle
         detachHostListeners();
         if (!hostElement) return;
 
-        const listeners: ReadonlyArray<readonly [keyof GlobalEventHandlersEventMap, EventListener]> = [
-            ['dragenter', (event) => handlersRef.current.onDragEnter?.(event)],
-            ['dragleave', (event) => handlersRef.current.onDragLeave?.(event)],
-            ['dragover', (event) => handlersRef.current.onDragOver?.(event)],
-            ['drop', (event) => handlersRef.current.onDrop?.(event)],
-        ];
-
-        for (const [type, listener] of listeners) {
-            hostElement.addEventListener(type, listener);
-        }
+        if (typeof hostElement.setAttribute === 'function') writeRepositoryFileDropTarget(hostElement, destinationRef.current);
 
         attachedHostRef.current = hostElement;
-        detachHostListenersRef.current = () => {
-            for (const [type, listener] of listeners) {
-                hostElement.removeEventListener(type, listener);
-            }
-        };
-    }, [detachHostListeners]);
+        detachHostListenersRef.current = attachWebDragDropHandlers(hostElement, () => handlersRef.current);
+    }, [detachHostListeners, forwardedRef]);
 
     React.useEffect(() => detachHostListeners, [detachHostListeners]);
+    React.useLayoutEffect(() => {
+        const host = attachedHostRef.current;
+        if (host && typeof host.setAttribute === 'function') writeRepositoryFileDropTarget(host, repositoryFileDropTarget);
+    }, [repositoryFileDropTarget?.destinationDir, repositoryFileDropTarget?.hoverPath, repositoryFileDropTarget?.autoExpandDirectoryPath]);
 
     return (
         <View
@@ -70,4 +62,4 @@ export function WebDropTargetView(props: WebDropTargetViewProps): React.ReactEle
             ref={setHostRef}
         />
     );
-}
+});

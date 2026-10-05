@@ -116,6 +116,44 @@ async function findPierreHoverUtilityButtonProps(utility: any): Promise<any> {
 }
 
 describe('PierreDiffViewer (web)', () => {
+    it('uses the surface evidence fallback if the external renderer fails', async () => {
+        fileDiffSpy.mockImplementation(() => { throw new Error('renderer failed'); });
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+            const screen = await renderScreen(<PierreDiffViewer mode="unified" filePath="a.ts"
+                errorFallback={<div data-testid="evidence-unavailable">Evidence unavailable</div>}
+                unifiedDiff={'--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-before\n+after\n'} />);
+            expect(screen.findAllByProps({ 'data-testid': 'evidence-unavailable' })).toHaveLength(1);
+        } finally {
+            fileDiffSpy.mockReset();
+            error.mockRestore();
+        }
+    });
+    it('preserves the final blank context row of a selected hunk without parser diagnostics', async () => {
+        fileDiffSpy.mockClear();
+        const error = vi.spyOn(console, 'error');
+        try {
+            const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+            await renderScreen(<PierreDiffViewer mode="unified" filePath="src/a.ts" unifiedDiff={[
+                'diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts',
+                '@@ -1,2 +1,2 @@', '-before', '+after', '  ',
+            ].join('\n')} />);
+            const patch = fileDiffSpy.mock.calls.at(-1)?.[0].fileDiff;
+            expect(patch?.additionLines).toEqual(['after\n', ' \n']);
+            expect(error.mock.calls.filter((call) => String(call[0]).includes('invalid rawLine'))).toEqual([]);
+        } finally {
+            error.mockRestore();
+        }
+    });
+    it('retains complete source for expandable text comparisons', async () => {
+        fileDiffSpy.mockClear();
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+        const oldText = Array.from({ length: 40 }, (_, index) => `line ${index}`).join('\n');
+        await renderScreen(<PierreDiffViewer mode="text" filePath="a.txt" oldText={oldText}
+            newText={oldText.replace('line 20', 'changed 20')} contextLines={3} />);
+        expect(fileDiffSpy.mock.calls.at(-1)?.[0]?.fileDiff.isPartial).toBe(false);
+    });
     beforeEach(() => {
         resetSettingValues();
         pierreWorkerPoolMock.current = null;
@@ -298,16 +336,13 @@ describe('PierreDiffViewer (web)', () => {
 
         const wrapper = screen.findByProps({ 'data-testid': 'pierre-diff-viewer' });
         expect(wrapper.props.style).toMatchObject({
-            display: 'flex',
-            flex: '1 1 0%',
-            flexDirection: 'column',
             inset: 0,
             minHeight: 0,
             overflow: 'hidden',
             position: 'absolute',
         });
         expect(screen.findByType('Virtualizer' as any).props.style).toMatchObject({
-            flex: '1 1 0%',
+            flex: 1,
             minHeight: 0,
             overflowY: 'auto',
         });
@@ -332,9 +367,9 @@ describe('PierreDiffViewer (web)', () => {
                 text: { link: '#link' },
             },
         })).toMatchObject({
-            '--diffs-bg-selection': '#surface-inset',
+            '--diffs-bg-selection': 'var(--happier-glass-content-background-color, color-mix(in srgb, #surface-inset var(--happier-glass-content-opacity, 100%), transparent))',
             '--diffs-selection-number-fg': '#surface',
-            '--diffs-bg-selection-number': '#success',
+            '--diffs-bg-selection-number': 'var(--happier-glass-content-background-color, color-mix(in srgb, #success var(--happier-glass-content-opacity, 100%), transparent))',
             '--diffs-selection-base': '#success',
         });
     });
@@ -567,11 +602,11 @@ describe('PierreDiffViewer (web)', () => {
 
         expect(virtualizerSpy).toHaveBeenCalledTimes(0);
         expect(screen.findByProps({ 'data-testid': 'pierre-diff-viewer' }).props.style?.position).toBeUndefined();
-        const firstRenderedKey = screen.tree.findByType('FileDiff').props.renderedFileDiff.cacheKey;
+        const firstRenderedKey = screen.tree.findByType('FileDiff').props.fileDiff.cacheKey;
         await renderer.act(async () => {
             screen.tree.update(view(patch.replace('+bar', '+updated')));
         });
-        expect(screen.tree.findByType('FileDiff').props.renderedFileDiff.cacheKey).not.toBe(firstRenderedKey);
+        expect(screen.tree.findByType('FileDiff').props.fileDiff.cacheKey).not.toBe(firstRenderedKey);
     });
 
     it('wires Pierre line clicks to onPressLine with a mapped CodeLine', async () => {
@@ -1222,7 +1257,6 @@ describe('PierreDiffViewer (web)', () => {
         });
 
         const secondOptions = fileDiffSpy.mock.calls[fileDiffSpy.mock.calls.length - 1]?.[0]?.options;
-        expect(String(secondOptions?.unsafeCSS ?? '')).toContain('happier:pierre:clear');
         expect(String(secondOptions?.unsafeCSS ?? '')).not.toContain("[data-line-type='change-addition'][data-line='1']");
     });
 

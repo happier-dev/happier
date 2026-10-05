@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { I18nManager } from 'react-native';
+import { I18nManager, Platform } from 'react-native';
 
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import {
@@ -7,6 +7,7 @@ import {
   deriveHappierCollectionSections,
   resolveHappierCollectionInitialKey,
   resolveHappierCollectionKeyCommand,
+  resolveHappierCollectionSpatialFocus,
   type HappierCollectionDraftTitleStore,
   type HappierCollectionGrouping,
   type HappierCollectionKey,
@@ -15,9 +16,13 @@ import {
   type HappierCollectionWindow,
 } from './collectionModel.js';
 import { useHappierCollectionLayout, type HappierCollectionLayoutState } from './collectionLayout.js';
+import type { HappierCollectionPresentation } from './collectionTable.js';
 import {
   HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT,
   createHappierListMultiSelectionStore,
+  readHappierPointerModifiers,
+  resolveHappierListMultiSelectionKeyboardIntent,
+  resolveHappierPointerPlatform,
   type HappierListMultiSelectionSnapshot,
   type HappierListMultiSelectionStore,
 } from './multiSelection.js';
@@ -58,13 +63,31 @@ export type HappierCollectionModelInput<Item> = Readonly<{
   draft?: HappierCollectionDraftInput | null;
 }>;
 
+export type HappierCollectionViewport = Readonly<{
+  offsetRef: { current: number };
+  horizontalOffsetRef: { current: number };
+  anchorRef: { current: HappierCollectionKey | null };
+}>;
+
 export type HappierCollectionActions = Readonly<{
-  focus: (key: HappierCollectionKey) => void;
+  focus: (key: HappierCollectionKey, viewport?: HappierCollectionViewport) => void;
+  requestFocus: (key: HappierCollectionKey) => void;
+  consumeFocusRequest: (request: Readonly<{ key: string }>) => void;
   toggleExpanded: (key: HappierCollectionKey) => void;
   open: (key: HappierCollectionKey) => void;
   close: () => void;
   /** Dispatches one of the list presentation's keys; `true` when the key was the Collection's. */
   handleKey: (key: string) => boolean;
+  navigate: (input: Readonly<{
+    key: string;
+    from: string;
+    presentation: 'table' | 'list' | 'board' | 'grid';
+    columns?: number;
+    event?: unknown;
+    store?: HappierListMultiSelectionStore | null;
+    eligibleKeys?: readonly string[];
+  }>) => boolean;
+  showColumn: (key: string) => void;
 }>;
 
 export type HappierCollectionModel<Item> = Readonly<{
@@ -75,6 +98,11 @@ export type HappierCollectionModel<Item> = Readonly<{
   keys: readonly HappierCollectionKey[];
   window: HappierCollectionWindow;
   focusKey: HappierCollectionKey | null;
+  /** New request identity means a physical move; observing focus does not create a request. */
+  focusRequest: Readonly<{ key: string }> | null;
+  boardColumnKey: string | null;
+  /** Mount-lifetime viewport facts; columns have separate anchors without a second logical cursor. */
+  viewport: (view: HappierCollectionPresentation, columnKey?: string) => HappierCollectionViewport;
   selection: HappierListMultiSelectionSnapshot | null;
   selectionStore: HappierListMultiSelectionStore | null;
   expanded: ReadonlySet<HappierCollectionKey>;
@@ -151,6 +179,19 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
 
   // ---- focus and peek: two facts that never derive from selection ----
   const [focusKey, setFocusKey] = useState<HappierCollectionKey | null>(null);
+  const [focusRequest, setFocusRequest] = useState<Readonly<{ key: string }> | null>(null);
+  const [boardColumnKey, showColumn] = useState<string | null>(null);
+  const viewports = useRef(new Map<HappierCollectionPresentation, Map<string | undefined, HappierCollectionViewport>>());
+  const viewport = useCallback((view: HappierCollectionPresentation, columnKey?: string) => {
+    let columns = viewports.current.get(view);
+    if (columns === undefined) { columns = new Map(); viewports.current.set(view, columns); }
+    let current = columns.get(columnKey);
+    if (current === undefined) {
+      current = { offsetRef: { current: 0 }, horizontalOffsetRef: { current: 0 }, anchorRef: { current: null } };
+      columns.set(columnKey, current);
+    }
+    return current;
+  }, []);
   const [expanded, setExpanded] = useState<ReadonlySet<HappierCollectionKey>>(EMPTY_EXPANDED);
   const expandable = input.expandable === true;
 
@@ -172,10 +213,19 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
   const commandInputRef = useRef({ keys, focusKey, openKey, expandable, rtl });
   commandInputRef.current = { keys, focusKey, openKey, expandable, rtl };
 
-  const focus = useCallback((key: HappierCollectionKey) => {
+  const focus = useCallback((key: HappierCollectionKey, viewport?: HappierCollectionViewport) => {
+    if (viewport !== undefined) viewport.anchorRef.current = key;
+    commandInputRef.current.focusKey = key;
     setFocusKey(key);
     selectionStore?.setFocusedKey(key);
   }, [selectionStore]);
+  const requestFocus = useCallback((key: HappierCollectionKey) => {
+    focus(key);
+    setFocusRequest({ key });
+  }, [focus]);
+  const consumeFocusRequest = useCallback((request: Readonly<{ key: string }>) => {
+    setFocusRequest(current => current === request ? null : current);
+  }, []);
   const toggleExpanded = useCallback((key: HappierCollectionKey) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -194,9 +244,49 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     else close();
     return true;
   }, [close, focus, open, toggleExpanded]);
+  const navigate = useCallback((input: Parameters<HappierCollectionActions['navigate']>[0]) => {
+    const eligible = input.eligibleKeys === undefined ? null : new Set(input.eligibleKeys);
+    const sectionKeys = sections.map(section => section.items.map(keyOf));
+    const allKeys = sectionKeys.flat();
+    const navigationKeys = allKeys.filter(key => eligible === null || eligible.has(key));
+    const from = commandInputRef.current.focusKey !== null && navigationKeys.includes(commandInputRef.current.focusKey)
+      ? commandInputRef.current.focusKey : input.from;
+    const store = input.store ?? selectionStore;
+    const selectionSnapshot = store?.getSnapshot();
+    const selectionKeys = selectionSnapshot === undefined ? null : new Set(selectionSnapshot.visibleOrderedKeys);
+    const modifiers = readHappierPointerModifiers(input.event);
+    const intent = store === null ? null : resolveHappierListMultiSelectionKeyboardIntent({
+      key: input.key, ...modifiers, platform: resolveHappierPointerPlatform(Platform.OS),
+      entries: allKeys.map(key => ({ disabled: (eligible !== null && !eligible.has(key))
+        || (selectionKeys !== null && !selectionKeys.has(key)) })), currentIndex: allKeys.indexOf(from), rtl,
+    });
+    if (intent !== null && intent.kind !== 'extendRange' && (intent.kind !== 'exit' || store?.getSnapshot().isSelectionMode)) {
+      if (intent.kind === 'exit') store?.exit();
+      else if (intent.kind === 'selectAllVisible') store?.selectAllVisible();
+      else if (intent.kind === 'toggleFocused') store?.toggle(from);
+      return true;
+    }
+    // After selection declines them, activation belongs to the row (or table Space peek), not navigation.
+    if (input.key === 'Enter' || input.key === ' ' || input.key === 'Spacebar') return false;
+    const next = intent?.kind === 'extendRange' ? allKeys[intent.toIndex] ?? null
+      : resolveHappierCollectionSpatialFocus({ key: input.key, from, sections: sectionKeys,
+        presentation: input.presentation, ...(input.columns === undefined ? {} : { columns: input.columns }),
+        ...(eligible === null ? {} : { eligibleKeys: eligible }), rtl });
+    if (next === null) return false;
+    if (intent?.kind === 'extendRange' && store !== null) {
+      const snapshot = store.getSnapshot();
+      if (snapshot.count === 0) store.replaceWith(from);
+      store.selectRange(next);
+    }
+    commandInputRef.current.focusKey = next;
+    focus(next);
+    store?.setFocusedKey(next);
+    setFocusRequest({ key: next });
+    return true;
+  }, [focus, keyOf, rtl, sections, selectionStore]);
   const actions = useMemo<HappierCollectionActions>(
-    () => ({ focus, toggleExpanded, open, close, handleKey }),
-    [close, focus, handleKey, open, toggleExpanded],
+    () => ({ focus, requestFocus, consumeFocusRequest, toggleExpanded, open, close, handleKey, navigate, showColumn }),
+    [close, consumeFocusRequest, focus, handleKey, navigate, open, requestFocus, toggleExpanded],
   );
 
   const draft = useMemo<HappierCollectionDraft | null>(
@@ -210,6 +300,9 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     keys,
     window: input.window ?? HAPPIER_COLLECTION_WINDOW_COMPLETE,
     focusKey,
+    focusRequest,
+    boardColumnKey,
+    viewport,
     selection: selectionStore === null ? null : selectionSnapshot,
     selectionStore,
     expanded,
@@ -219,4 +312,12 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     landingKey,
     actions,
   };
+}
+
+/** A new view entry restores once; ordinary renders and data refreshes do not request another scroll. */
+export function useHappierCollectionViewport<Item>(model: HappierCollectionModel<Item>, view: HappierCollectionPresentation, columnKey?: string) {
+  const viewport = model.viewport(view, columnKey);
+  // Stable across refreshes, but a remounted scroller reads the latest observed offset, not the entry's old one.
+  const scrollRequest = useMemo(() => ({ get offset() { return viewport.offsetRef.current; } }), [viewport]);
+  return { viewport, scrollRequest };
 }

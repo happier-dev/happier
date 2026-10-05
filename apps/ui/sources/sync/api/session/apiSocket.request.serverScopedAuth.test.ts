@@ -4,6 +4,9 @@ import { runInNewContext } from 'node:vm';
 import { createDeferred } from '@/dev/testkit';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 
+// Resolve the real transport owner during collection so graph loading is outside the request-ordering test.
+await import('./apiSocket');
+
 const tokenStorageMock = vi.hoisted(() => ({
     getCredentials: vi.fn(),
     getCredentialsForServerUrl: vi.fn(),
@@ -333,6 +336,30 @@ describe('apiSocket.request server-scoped credentials', () => {
         expect(pingCalls).toHaveLength(1);
         await expect(a.json()).resolves.toEqual({ ok: true });
         await expect(b.json()).resolves.toEqual({ ok: true });
+    });
+
+    it('reads current state for no-store requests while an older GET is outstanding', async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        let reads = 0;
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            if (!String(input).endsWith('/v1/ping')) return new Response('ok');
+            if (++reads === 1) {
+                await gate;
+                return Response.json({ state: 'delivering' });
+            }
+            return Response.json({ state: 'committed' });
+        }));
+        tokenStorageMock.getCredentialsForServerUrl.mockResolvedValue({ token: 'scoped-token', secret: 's' });
+        const { apiSocket } = await import('./apiSocket');
+        Reflect.set(apiSocket, 'config', { endpoint: 'https://stack.example.test', token: 'unused' });
+        const oldRead = apiSocket.request('/v1/ping');
+        await vi.waitFor(() => expect(reads).toBe(1));
+        const currentRead = apiSocket.request('/v1/ping', { cache: 'no-store' });
+        await Promise.resolve();
+        release();
+        await expect((await oldRead).json()).resolves.toEqual({ state: 'delivering' });
+        await expect((await currentRead).json()).resolves.toEqual({ state: 'committed' });
     });
 
     it('does not include raw auth tokens in global in-flight request keys', async () => {

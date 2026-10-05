@@ -1,8 +1,12 @@
 export * from './artifactArchive.js';
 export * from './artifactIntegrity.js';
 export * from './composer.js';
+export * from './entityDragDrop.js';
+export * from './entityDragDropHost.js';
 export * from './currentUiContext.js';
 export * from './hostApi.js';
+export * from './widgetArea.js';
+export * from './widgetAreaHost.js';
 export * from './hostApiRequests.js';
 export * from './selectedActionInput.js';
 // `hostApiRequests` consumes this semantic identity, but UI host integrations
@@ -129,10 +133,6 @@ export {
   PluginUiDestinationPlacementV1Schema,
   PluginUiAppPageColumnV1Schema,
   PluginUiWidgetHomeV1Schema,
-  PluginUiWidgetPlacementV1Schema,
-  PluginUiWidgetSessionPlacementsV1Schema,
-  PluginUiWidgetAppPlacementsV1Schema,
-  readPluginUiWidgetPlacementsV1,
   PluginUiDestinationRankHintV1Schema,
   PluginUiSettingsGroupReferenceV1Schema,
   PluginUiSettingsGroupV1Schema,
@@ -143,7 +143,6 @@ export {
   type PluginUiDestinationPlacementV1,
   type PluginUiAppPageColumnV1,
   type PluginUiWidgetHomeV1,
-  type PluginUiWidgetPlacementV1,
   type PluginUiSettingsGroupReferenceV1,
   type PluginUiSettingsGroupV1,
   type PluginUiSettingsHostGroupIdV1,
@@ -224,3 +223,4 @@ export {
   type RuntimeActionIdV1,
 } from '../../actions/actionIds.js';
 export * from './liveStream.js';
+export { selectPluginUiWidgetEntriesV1 } from '../contributions/ui/widgetInventory.js';

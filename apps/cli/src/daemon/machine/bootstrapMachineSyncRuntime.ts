@@ -814,6 +814,7 @@ export async function bootstrapMachineSyncRuntime(
                 workingDirectory: string;
                 path: string;
                 asZip: boolean;
+                confinedToWorkingDirectory?: boolean;
               }>
             | Readonly<{
                 t: 'workspace_sync_seed_v1';
@@ -889,6 +890,7 @@ export async function bootstrapMachineSyncRuntime(
                       workingDirectory: input.workingDirectory,
                       path: input.path,
                       asZip: input.asZip,
+                      confinedToWorkingDirectory: input.confinedToWorkingDirectory,
                       accessPolicy: params.filesystemAccessPolicy,
                       sessionRpcTransferMaxBytes: null,
                     })

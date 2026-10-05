@@ -5,9 +5,11 @@ import {
   createVoiceProviderRegistry,
   projectVoiceProviderCredentialReadiness,
   projectVoiceProviderSettings,
+  projectVoiceProviderDeclarationRegistryBase,
   type VoiceUiRuntimeContribution,
 } from './providerRegistry';
 import { createDefaultVoiceProviderRegistry } from './defaultRegistry';
+import { BUILT_IN_VOICE_UI_ENTRIES } from './builtInEntries';
 import {
   commitExternalVoiceProviderRegistration,
   removeExternalVoiceProviderRegistration,
@@ -68,6 +70,22 @@ function bundledSpeechContribution(
 }
 
 describe('voice provider registry', () => {
+  it('retains built-in service art at the same public mark owner', () => {
+    const registry = createVoiceProviderRegistry({ builtIn: BUILT_IN_VOICE_UI_ENTRIES });
+    expect(registry.get('local_conversation')?.mark).toEqual({ kind: 'icon', name: 'desktop' });
+  });
+  it('projects an external service mark at the same declaration owner as bundled identity', () => {
+    const declaration = VoiceProviderContributionSchema.parse({
+      id: 'conversation', title: 'Installed service', kind: 'conversation',
+      mark: { kind: 'icon', name: 'waveform' }, roles: ['realtime_conversation'], platforms: ['web'],
+      capabilities: { turn: { cancelResponse: true, bargeIn: true }, tools: { effectCalls: 'none' } },
+      client: { artifactId: 'voice', exportName: 'activate' },
+    });
+    expect(projectVoiceProviderDeclarationRegistryBase({ declaration, providerSettings: null }).mark)
+      .toEqual({ kind: 'icon', name: 'waveform' });
+    const openai = createDefaultVoiceProviderRegistry().get('happier.voice.openai/realtime-openai');
+    expect(openai?.mark).toEqual({ kind: 'connected_service', serviceId: 'openai' });
+  });
   it('composes built-in and bundled entries in deterministic provider-id order', () => {
     const middle = bundledSpeechContribution('happier.voice.middle', 'middle');
     const registry = createVoiceProviderRegistry({

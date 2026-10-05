@@ -10,6 +10,7 @@ import {
 } from '@/components/settings/connectedServices/pools/QualifiedPoolDetailView';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
@@ -145,6 +146,8 @@ function PoolFrame(props: Readonly<{ advanced?: boolean; manage?: boolean }>) {
             accounts={POOL_ACCOUNTS}
             accountLabels={POOL_LABELS}
             serviceLabel="Claude"
+            legacyServiceId={getQualifiedConnectedServiceRegistryEntry(group.ref.service)?.legacyServiceId ?? null}
+            onConnectAccount={() => {}}
             mutations={MUTATIONS}
             autoDisablePlanInvalidEnabled
             quotaLimitSelectionEnabled
@@ -203,6 +206,8 @@ function PoolStatesBoard() {
                             accounts={POOL_ACCOUNTS}
                             accountLabels={POOL_LABELS}
                             serviceLabel="Claude"
+                            legacyServiceId={getQualifiedConnectedServiceRegistryEntry(cell.group.ref.service)?.legacyServiceId ?? null}
+                            onConnectAccount={() => {}}
                             mutations={MUTATIONS}
                             memberQuotaByAccountId={cell.quota}
                             presentIdentity={present}

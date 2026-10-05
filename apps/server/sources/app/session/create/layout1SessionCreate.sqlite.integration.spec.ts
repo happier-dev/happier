@@ -1,16 +1,26 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
+import { encodeBase64 } from "privacy-kit";
 import { randomUUID } from "node:crypto";
 import {
     sealEncryptedDataKeyEnvelopeV1,
     signAccountContentKeyBindingV1,
+    openEncryptedDataKeyEnvelopeV1,
+    prepareSessionDataKeyEnvelopeItemV1,
+    runSessionDataKeyPreparationPass,
+    SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1,
+    type SessionDataKeyEnvelopeItemV1,
+    type PatchSessionDataKeyEnvelopesV1,
     type SessionInitialAccessMaterializedV1,
+    type SessionInitialTriggerAdmissionV1,
+    AutomationTriggerIdSchema,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { eventRouter } from "@/app/events/eventRouter";
 import { publishSessionArchiveTransition } from "@/app/session/archive/publishSessionArchiveTransition";
 import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAccountServiceDigest } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
@@ -29,6 +39,8 @@ import {
 import type { Layout1SessionCreateOutcome } from "./layout1SessionRowWrite";
 import { admitWorkflowRun } from "@/app/workflows/workflowRunService";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "@/app/automations/automationAccountCurrentness";
+import { resolveEffectiveSessionAccess } from "@/app/session/access/sessionAccess";
+import { readSessionDataKeyEnvelopePage, applySessionDataKeyEnvelopes } from "@/app/session/encryption/sessionDataKeyEnvelopeService";
 import {
     sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1,
@@ -114,6 +126,7 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         dataEncryptionKey?: string | null;
         teamCredentialBindings?: import("@happier-dev/protocol/teams").SessionTeamCredentialBindingIntentListV1;
         initialAccess?: SessionInitialAccessMaterializedV1;
+        initialTriggers?: SessionInitialTriggerAdmissionV1[];
         originKind?: "none" | "session" | "execution_run" | "run_step";
         originSessionId?: string;
         originRunId?: string;
@@ -137,6 +150,7 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
             organizationPlacement: undefined,
             teamCredentialBindings: params.teamCredentialBindings,
             initialAccess: params.initialAccess,
+            initialTriggers: params.initialTriggers,
             originKind: params.originKind,
             originSessionId: params.originSessionId,
             originRunId: params.originRunId,
@@ -151,6 +165,90 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         }
         return result.prepared;
     }
+
+    function initialTrigger(machineId: string, automationId: string): SessionInitialTriggerAdmissionV1 {
+        return {
+            automationId, name: "Prepare workspace", enabled: true,
+            assignments: [{ machineId, enabled: true, priority: 0 }],
+            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null,
+                workflow: { t: "plain", v: { workspace: { directory: "/repo" },
+                    executionTarget: { kind: "session" }, inlineDefinition: {
+                        version: 1, inputs: [],
+                        defaults: { agentTarget: { kind: "agent", identity: { pluginId: "happier.agent.test", localId: "test" } } },
+                        blocks: [{ kind: "step", id: "prepare", document: { text: "Prepare", references: [], attachments: [] },
+                            input: [], result: { kind: "text" } }],
+                    } } } },
+            triggers: [{ triggerId: AutomationTriggerIdSchema.parse(`${automationId}-start`),
+                trigger: { kind: "sessionLifecycle", enabled: true, events: ["sessionStarted"], policy: { kind: "everyMatch" } } }],
+        };
+    }
+
+    it("admits initial Session-start triggers and their occurrence atomically, without refiring on rejoin", async () => {
+        const owner = await createPlainAccount("pk-initial-triggers");
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
+        const admission = initialTrigger(machine.id, "prepare-on-birth");
+        admission.triggers.push({ triggerId: AutomationTriggerIdSchema.parse("prepare-on-schedule"),
+            trigger: { kind: "schedule", enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000, scheduleExpr: null, timezone: null } } });
+        const request = prepared({ accountId: owner.id, tag: "initial-triggers",
+            initialTriggers: [admission] });
+        const created = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, request));
+        if (created.kind !== "created") throw new Error("Session was not created");
+        expect(await db.automation.findUnique({ where: { id: "prepare-on-birth" } }))
+            .toMatchObject({ scopeSessionId: created.session.id, accountId: owner.id });
+        expect(await db.automationRun.findMany({ where: { automationId: "prepare-on-birth" } }))
+            .toEqual([expect.objectContaining({ causeSourceSessionId: created.session.id,
+                causeSessionLifecycleEvent: "sessionStarted", causeTriggerKind: "sessionLifecycle", state: "queued" })]);
+        expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: "prepare-on-schedule" } }))
+            .toMatchObject({ kind: "schedule", nextRunAt: expect.any(Date) });
+        const rejoined = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, {
+            ...request, initialTriggers: [initialTrigger(machine.id, "should-not-attach-on-rejoin")],
+        }));
+        expect(rejoined.kind).toBe("rejoined");
+        expect(await db.automation.count({ where: { accountId: owner.id } })).toBe(1);
+        expect(await db.automationRun.count({ where: { accountId: owner.id } })).toBe(1);
+    });
+
+    it.each(["unavailable assignment", "duplicate trigger identity"] as const)(
+        "rolls back a reserved Session and every initial trigger if a later trigger is refused: %s", async (refusal) => {
+        const owner = await createPlainAccount("pk-initial-triggers-rollback");
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
+        const later = initialTrigger(refusal === "unavailable assignment" ? "missing-machine" : machine.id, "later-invalid");
+        if (refusal === "duplicate trigger identity") later.triggers.push(later.triggers[0]);
+        await expect(inTx((tx) => createFreshBoundLayout1SessionInTx(tx, {
+            sessionId: "initial-triggers-rollback", prepared: prepared({ accountId: owner.id, tag: "initial-triggers-rollback",
+                initialTriggers: [initialTrigger(machine.id, "first-valid"), later],
+            }),
+        }))).rejects.toMatchObject({ name: "SessionInitialTriggerAdmissionError" });
+        expect(await db.session.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(await db.automation.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(await db.automationRun.count({ where: { accountId: owner.id } })).toBe(0);
+    });
+
+    it("refuses an initial PR trigger without a Channel binding and rolls back the Session", async () => {
+        const owner = await createPlainAccount("pk-initial-pr-trigger");
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
+        const admission = initialTrigger(machine.id, "initial-pr-trigger");
+        admission.triggers = [{ triggerId: AutomationTriggerIdSchema.parse("initial-pr-comment"),
+            trigger: { kind: "prComment", enabled: true, pullRequest: { repository: "owner/repo", number: 42 } } }];
+        await expect(inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx,
+            prepared({ accountId: owner.id, tag: "initial-pr-trigger", initialTriggers: [admission] }))))
+            .rejects.toMatchObject({ name: "SessionInitialTriggerAdmissionError", code: "target_unavailable" });
+        expect(await db.session.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(await db.automation.count({ where: { accountId: owner.id } })).toBe(0);
+    });
+
+    it("refuses initial triggers when the canonical Automation dependency is disabled", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: "0" });
+        const owner = await createPlainAccount("pk-initial-trigger-gate");
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
+        await expect(inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx,
+            prepared({ accountId: owner.id, tag: "initial-trigger-gate",
+                initialTriggers: [initialTrigger(machine.id, "gated-trigger")] }))))
+            .rejects.toMatchObject({ name: "SessionInitialTriggerAdmissionError", code: "feature_disabled" });
+        expect(await db.session.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(await db.automation.count({ where: { accountId: owner.id } })).toBe(0);
+    });
 
     it("atomically attaches ordinary and reserved-identity children without reattaching a rejoin", async () => {
         const owner = await createPlainAccount("pk-reports-to-create");
@@ -319,14 +417,27 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         expect(rejoinChange.cursor).toBeGreaterThan(creationChange!.cursor);
     });
 
-    it("rejoins without reapplying a different submitted initial-access draft", async () => {
-        const owner = await createPlainAccount("pk-constructor-access-rejoin");
+    it.each(["plain", "e2ee"] as const)("creates %s Team-view Sessions that teammates can open without permission approval and keeps non-Team Sessions private", async (mode) => {
+        const ownerContent = tweetnacl.box.keyPair();
+        const recipientContent = tweetnacl.box.keyPair();
+        const makeAccount = (content: typeof ownerContent) => {
+            const binding = createSignedAccountContentBinding(content.publicKey);
+            return db.account.create({ data: { publicKey: binding.publicKey, encryptionMode: mode,
+                ...(mode === "e2ee" ? { contentPublicKey: Buffer.from(binding.contentPublicKey), contentPublicKeySig: Buffer.from(binding.contentPublicKeySig) } : {}) } });
+        };
+        const owner = await makeAccount(ownerContent);
+        const recipient = await makeAccount(recipientContent);
         const team = await db.team.create({ data: { name: "Initial access rejoin" } });
-        await db.teamMembership.create({
-            data: { teamId: team.id, accountId: owner.id, role: "owner" },
-        });
-
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: "owner" },
+            { teamId: team.id, accountId: recipient.id, role: "member" },
+        ] });
+        const dataKey = tweetnacl.randomBytes(32);
+        const encryptionFields = { accountEncryptionMode: mode, dataEncryptionKey: mode === "e2ee"
+            ? encodeBase64(new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerContent.publicKey, randomBytes: tweetnacl.randomBytes })))
+            : null };
         const created = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, prepared({
+            ...encryptionFields,
             accountId: owner.id,
             tag: "access-rejoin",
             initialAccess: { grants: [{
@@ -337,11 +448,48 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         })));
         expect(created.kind).toBe("created");
         if (created.kind !== "created") return;
+        expect(created.session.primaryTeamId).toBeNull();
+        const access = await inTx(tx => resolveEffectiveSessionAccess(tx, { accountId: recipient.id, sessionId: created.session.id, authentication: TEST_AUTHENTICATION }));
+        expect(access).toMatchObject({ level: "view", capabilities: { readTranscript: true, approveRuntimePermissions: false } });
+        if (mode === "e2ee") {
+            const result = await runSessionDataKeyPreparationPass<SessionDataKeyEnvelopeItemV1, PatchSessionDataKeyEnvelopesV1['entries'][number]>({
+                fetchPage: async cursor => {
+                    const result = await readSessionDataKeyEnvelopePage({ actorAccountId: owner.id, sessionId: created.session.id, authentication: TEST_AUTHENTICATION,
+                        query: { state: "action_required", limit: SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1, ...(cursor ? { cursor } : {}) } });
+                    if (!result.ok || result.page.status !== "required") throw new Error("Expected E2EE audience");
+                    return result.page;
+                },
+                itemKey: item => item.recipientAccountId,
+                prepareEntries: async items => {
+                    const entries: Array<PatchSessionDataKeyEnvelopesV1['entries'][number]> = [];
+                    const failedItemKeys: string[] = [];
+                    for (const item of items) {
+                        const result = prepareSessionDataKeyEnvelopeItemV1({ item, sessionDataKey: dataKey, randomBytes: tweetnacl.randomBytes });
+                        if (result.kind === "prepared") entries.push(result.entry);
+                        else failedItemKeys.push(item.recipientAccountId);
+                    }
+                    return { entries, failedItemKeys };
+                },
+                commitEntries: async entries => {
+                    const result = await applySessionDataKeyEnvelopes({ actorAccountId: owner.id, sessionId: created.session.id, authentication: TEST_AUTHENTICATION, entries });
+                    if (!result.ok) throw new Error(result.error);
+                    return result.appliedCount;
+                },
+                isScopeCurrent: () => true,
+            });
+            expect(result).toMatchObject({ status: "complete", preparedCount: 1 });
+            const envelope = await db.sessionDataKeyEnvelope.findUniqueOrThrow({ where: { sessionId_recipientAccountId: { sessionId: created.session.id, recipientAccountId: recipient.id } } });
+            expect(openEncryptedDataKeyEnvelopeV1({ envelope: new Uint8Array(envelope.encryptedDataKey), recipientSecretKeyOrSeed: recipientContent.secretKey })).toEqual(dataKey);
+        }
+        const privateSession = await inTx(tx => createOrRejoinLayout1SessionByTagInTx(tx, prepared({ ...encryptionFields, accountId: owner.id, tag: "private-non-team" })));
+        if (privateSession.kind !== "created") throw new Error("Private Session fixture failed");
+        expect(await inTx(tx => resolveEffectiveSessionAccess(tx, { accountId: recipient.id, sessionId: privateSession.session.id, authentication: TEST_AUTHENTICATION }))).toBeNull();
         const stored = await db.sessionTeamGrant.findUniqueOrThrow({
             where: { sessionId_teamId: { sessionId: created.session.id, teamId: team.id } },
         });
 
         const rejoined = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, prepared({
+            ...encryptionFields,
             accountId: owner.id,
             tag: "access-rejoin",
             initialAccess: { grants: [{

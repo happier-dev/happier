@@ -1,8 +1,12 @@
 import * as React from 'react';
+import NodeModule from 'node:module';
+import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
+    AUTHORING_MEMORY_ROUTE_V1,
+    AccountProfileSchema,
     encodeBase64,
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
@@ -1031,7 +1035,8 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => ({
     }),
 }));
 
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>()),
     captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime.value,
 }));
 
@@ -1063,6 +1068,37 @@ vi.mock('@/sync/http/client', async (importOriginal) => {
             return original.serverFetch(...args);
         },
     };
+});
+
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
+const widgetSessionQueryBoundary = vi.hoisted(() => ({
+    sessionIds: null as readonly string[] | null,
+    features: null as unknown,
+}));
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch')>();
+    return { ...original, runtimeFetchWithServerReachability: (...args: Parameters<typeof original.runtimeFetchWithServerReachability>) => {
+        if (widgetSessionQueryBoundary.features && args[0].serverUrl === 'https://server_1'
+            && new URL(args[0].url).pathname === '/v1/features') {
+            args[0].onIssued?.();
+            return Promise.resolve(new Response(JSON.stringify(widgetSessionQueryBoundary.features), { status: 200 }));
+        }
+        return original.runtimeFetchWithServerReachability(...args);
+    } };
+});
+// Same genuine Home query transport boundary as sessionList.spec.ts. Session
+// awareness projection, option admission and the configured binder stay real.
+vi.mock('@/sync/domains/session/listing/sessionListQueryRuntime', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/domains/session/listing/sessionListQueryRuntime')>();
+    return { ...original, fetchSessionListQueryPageForHome: (...args: Parameters<typeof original.fetchSessionListQueryPageForHome>) => {
+        if (widgetSessionQueryBoundary.sessionIds && args[0] === 'server_1') return Promise.resolve({
+            current: true, sessionIds: [...widgetSessionQueryBoundary.sessionIds], nextCursor: null, hasNext: false,
+            attentionNextCursor: null, attentionHasNext: false,
+        });
+        return original.fetchSessionListQueryPageForHome(...args);
+    } };
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
@@ -1429,7 +1465,7 @@ beforeEach(async () => {
     accountEncryptionModeCredentials.value = { token: 'plugin-surface-account-mode-test-token' };
     // Mutate the genuine singleton boundary: a module-replacement Proxy can
     // leave cyclic imports holding the original, credential-less Sync object.
-    const credentialBoundary = vi.spyOn((await import('@/sync/sync')).sync, 'getCredentials')
+    const credentialBoundary = vi.spyOn((await import('@/sync/syncEngine')).sync, 'getCredentials')
         .mockImplementation(() => {
             const credentials = accountEncryptionModeCredentials.value;
             if (!credentials) throw new Error('Account credentials unavailable in test boundary');
@@ -11810,9 +11846,86 @@ describe('Composer physical surface mount', () => {
  * mocked, and it is asserted on.
  */
 describe('installed Session widget through the mounted plugin controller', () => {
-    it.each([true, false])('runs public native input with selected Resource grant=%s, safe Action, and retirement', async (resourceGranted) => {
+    it('requires Connect when a stale caller substitutes a missing existing-purpose selection', async () => {
+        const { readWidgetDescriptor } = await import('@/components/widgets/widgetCatalog');
+        const { widgetProjectionEntry } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
+        const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const surface = { pluginId: 'com.acme.metrics', localId: 'widget' };
+        const consumer = { pluginId: surface.pluginId, localId: 'metrics' };
+        const row = {
+            ...widgetProjectionEntry({ ...surface, target: 'app',
+                resources: [consumer],
+                inputs: { fields: [{ path: 'connection', title: 'Connection', widget: 'select', required: true, connectedAccountOptions: true }] },
+                inputSchema: { type: 'object', additionalProperties: false, required: ['connection'], properties: {
+                    connection: { type: 'object', additionalProperties: false, required: ['service', 'accountId'], properties: {
+                        service: { type: 'object', additionalProperties: false, required: ['pluginId', 'localId'], properties: {
+                            pluginId: { type: 'string' }, localId: { type: 'string' },
+                        } }, accountId: { type: 'string' },
+                    } },
+                } },
+            }),
+            connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'metrics-read', consumer }],
+        };
+        const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [surface.pluginId]: { id: surface.pluginId, displayName: 'Metrics', enabled: true,
+                source: { kind: 'local', locator: `/plugins/${surface.pluginId}` } } },
+            actionsById: {}, resourcesById: { metrics: { id: consumer.localId, pluginId: consumer.pluginId,
+                resourceKind: 'config', scope: 'global', connectedAccountPurposes: [{ purpose: 'metrics-read',
+                    serviceRefs: [{ pluginId: surface.pluginId, localId: 'cloud' }] }] } },
+            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [row.id]: row } } },
+        }));
+        const candidate = readWidgetDescriptor(projection, surface);
+        if (!candidate) throw new Error('Canonical viewer-input widget must be admitted');
+        const scope = { serverId: 'server_1', accountId: 'account-a', owner: { kind: 'home' as const } };
+        const saved = { service: { pluginId: surface.pluginId, localId: 'cloud' }, accountId: 'my-connection' };
+        const previous = storage.getState();
+        onTestFinished(() => { storage.setState(previous, true); });
+        storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId },
+            profile: AccountProfileSchema.parse({ id: scope.accountId }) });
+        pluginSurfaceAccountLifetime.setScope(scope);
+        contributionProjectionDescribeMock.mockClear();
+        resourceReadMock.mockClear();
         reactNativeSurfaceProps.length = 0;
-        const { InstalledWidgetSurface } = await import('@/components/widgets/InstalledWidgetSurface');
+        const render = (viewerValues: Record<string, typeof saved>) => {
+            const staleProps = { viewerValues };
+            return <AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+            machineId: 'machine_1', serverId: scope.serverId, platform: 'web',
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {},
+        }}><WidgetSurface scope={scope} providedContext={{}} descriptor={candidate}
+            instance={{ v: 1, id: `setup-preview:${candidate.key}`, definition: { kind: 'installed', surface },
+                bindings: { connection: { kind: 'viewer', purpose: 'metrics-read' } } }}
+            {...staleProps} appRuntime={{ pluginUiProjection: projection, pluginBrowserProjection: null,
+                phase: 'current', interactionEnabled: true, machineId: 'machine_1', serverId: scope.serverId, platform: 'web' }}
+            presentation="content" recordRevision="preview-draft" testID="private-preview" />
+        </AppShellPluginUiProjectionValueProvider>;
+        };
+        const screen = await renderScreen(render({}));
+        await flushHookEffects();
+        expect(screen.findByTestId('private-preview-state-diagnostic-widget_viewer_connection_missing')).not.toBeNull();
+        await screen.update(render({ connection: saved }));
+        await flushHookEffects();
+        expect(screen.findByTestId('private-preview-state-diagnostic-widget_viewer_connection_missing')).not.toBeNull();
+        expect(contributionProjectionDescribeMock).not.toHaveBeenCalled();
+        expect(resourceReadMock).not.toHaveBeenCalled();
+        expect(reactNativeSurfaceProps).toHaveLength(0);
+        await screen.unmount();
+    });
+
+    it.each([
+        { resourceGranted: true, deniedBeforeMount: true, repair: 'none' },
+        { resourceGranted: true, deniedBeforeMount: false, repair: 'none' },
+        { resourceGranted: false, deniedBeforeMount: false, repair: 'none' },
+        { resourceGranted: true, deniedBeforeMount: false, repair: 'missing' },
+        { resourceGranted: true, deniedBeforeMount: false, repair: 'invalid' },
+        { resourceGranted: true, deniedBeforeMount: false, repair: 'lost' },
+    ] as const)('runs public native input with selected Resource grant=$resourceGranted, initial denial=$deniedBeforeMount, repair=$repair, safe Action, and retirement', async ({ resourceGranted, deniedBeforeMount, repair }) => {
+        reactNativeSurfaceProps.length = 0;
+        const { WidgetSurface } = await import('@/components/widgets/surface/WidgetSurface');
+        const { readWidgetDescriptor } = await import('@/components/widgets/widgetCatalog');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { publicAuthoringDefinition } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/definition');
         const { renderSurface } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewPanel.native');
         const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
@@ -11839,7 +11952,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
         const bundleId = `reactNativeBundle:${pluginId}:${declaration.renderer}`;
         const identity = { ...generatedReactNativeCacheIdentity, pluginId, contributionId: declaration.renderer };
         const artifactGraph = generatedReactNativeArtifactGraph;
-        const model = withMountedTargetPackage(normalizePluginUiProjection(PluginProjectionV2Schema.parse({
+        const projected = PluginProjectionV2Schema.parse({
             v: 2, generation: 1, actionsById,
             familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
                 [placementId]: {
@@ -11849,6 +11962,8 @@ describe('installed Session widget through the mounted plugin controller', () =>
                     renderer: { kind: 'reactNative', contributionId: declaration.renderer },
                     runtime: { resourceCapability: { readable: resourceGranted, dynamic: resourceGranted } },
                     display: { title: 'Review status' },
+                    inputs: declaration.inputs, inputSchema: declaration.inputSchema, sessionInputPath: declaration.sessionInputPath,
+                    resources: declaration.resources,
                     availability: { state: 'available', reason: 'available', diagnostics: [] },
                 },
                 [bundleId]: {
@@ -11863,7 +11978,10 @@ describe('installed Session widget through the mounted plugin controller', () =>
                     },
                 },
             } } },
-        })), target, { displayName: createPluginLocalizedTextResolver({ projection: null, locale: 'en' })(pluginId, publicAuthoringDefinition.displayName), version: publicAuthoringDefinition.version });
+        });
+        const model = withMountedTargetPackage(normalizePluginUiProjection(projected), target, { displayName: createPluginLocalizedTextResolver({ projection: null, locale: 'en' })(pluginId, publicAuthoringDefinition.displayName), version: publicAuthoringDefinition.version });
+        primeExactTargetedContributions({ pluginId, occurrenceId, actionsById,
+            projection: PluginProjectionV2Schema.parse({ ...projected, installedPackagesById: model.installedPackagesById }) });
         const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
         // Supply installed executable bytes at the platform cache boundary. The
         // incumbent native mount executes the actual public development source.
@@ -11885,14 +12003,115 @@ describe('installed Session widget through the mounted plugin controller', () =>
             phase: 'current' as const, interactionEnabled: true,
             machineId: 'machine_1', serverId: 'server_1', platform: 'web' as const,
         };
-        const session = createSessionFixture({ id: 'session-widget', serverId: 'server_1' });
-        const render = (current = runtime) => <InstalledWidgetSurface
-            target={{ kind: 'session', sessionId: session.id, session }} recordRevision="item-revision-1"
-            source={{ kind: 'installedSurface', surface: { pluginId, localId: declaration.id } }}
-            input={{ view: 'detail' }} presentation="content" runtime={current} testID="public-widget"
+        if (!deniedBeforeMount && repair === 'none') {
+            const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+            widgetSessionQueryBoundary.features = createRootLayoutFeaturesResponse({ features: {
+                plugins: { enabled: true }, sessions: { enabled: true, board: { enabled: true } },
+            } });
+            const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+            resetServerFeaturesClientForTests();
+            const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
+            const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+            const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+            const credentials = { token: createAccountTokenForTests('account-a') };
+            accountEncryptionModeCredentials.value = credentials;
+            accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+            const http = createHomeHubArtifactHttpBoundary('account-a');
+            const connection = await restoreServerAccountForTest({ serverUrl: 'https://server_1', credentials,
+                request: (url, init) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path === '/v1/features') return Promise.resolve(Response.json(widgetSessionQueryBoundary.features));
+                    if (path === AUTHORING_MEMORY_ROUTE_V1) return Promise.resolve(Response.json({ rows: [] }));
+                    if (path === `/v2/sessions/session-widget-a/system-records/record`) return Promise.resolve(Response.json({ record: null }));
+                    if (path === `/v2/sessions/session-widget-a/system-records`) return Promise.resolve(Response.json({ records: [], nextCursor: null, hasNext: false }));
+                    return http.request(url, init);
+                } });
+            expect(connection.home.id).toBe('server_1');
+            onTestFinished(() => connection.dispose());
+        }
+        const { createSessionAccessFixture, createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const session = createSessionFixture({ id: 'session-widget-b', serverId: 'server_1', metadata: { path: '/workspace/b', host: 'machine-b', machineId: 'machine_1' },
+            access: createSessionAccessFixture('owner', { readTranscript: !deniedBeforeMount }) });
+        const ambient = createSessionFixture({ id: 'session-widget-a', serverId: 'server_1', metadata: { path: '/workspace/a', host: 'machine-a', machineId: 'machine_a' } });
+        const previous = storage.getState();
+        onTestFinished(() => { storage.setState(previous, true); widgetSessionQueryBoundary.sessionIds = null; widgetSessionQueryBoundary.features = null; });
+        widgetSessionQueryBoundary.sessionIds = deniedBeforeMount || repair === 'lost' ? [ambient.id] : [session.id, ambient.id];
+        storage.setState({ profileScope: { serverId: 'server_1', accountId: 'account-a' },
+            sessions: { ...(repair === 'lost' ? {} : { [session.id]: session }), [ambient.id]: ambient },
+            sessionListRowsByServerId: { server_1: Object.fromEntries([session, ambient].map(entry => {
+                if (!entry.metadata) throw new Error('Expected widget Session metadata');
+                return [entry.id, createSessionListRenderableSessionFixture({ id: entry.id, updatedAt: entry.updatedAt, active: entry.active,
+                    presence: entry.presence, encryptionMode: entry.encryptionMode,
+                    encryptedContentAvailability: entry.encryptedContentAvailability,
+                    metadata: { ...entry.metadata, summaryText: entry.id } })];
+            })) },
+            ordinarySessionListMembershipByServerId: { server_1: [session.id, ambient.id] },
+            sessionListIndexByServerId: { server_1: [session, ambient].map(entry => ({ type: 'session', sessionId: entry.id, serverId: 'server_1', serverName: 'Home' })) },
+            machineListByServerId: { server_1: [createMachineFixture({ id: 'machine_1', active: true }), createMachineFixture({ id: 'machine_a', active: true })] } });
+        const descriptor = readWidgetDescriptor(model, { pluginId, localId: declaration.id });
+        const onRepairInputs = vi.fn();
+        const render = (current = runtime) => <WidgetSurface
+            scope={{ serverId: 'server_1', accountId: 'account-a', owner: { kind: 'sessionBoard', sessionId: ambient.id } }}
+            providedContext={{ session: [{ serverId: 'server_1', sessionId: ambient.id }] }}
+            instance={{ v: 1, id: 'configured-b', definition: { kind: 'installed', surface: { pluginId, localId: declaration.id } },
+                bindings: {
+                    ...(repair === 'missing' ? {} : { session: { kind: 'value' as const, value: repair === 'invalid' ? 'not-a-session-ref' : { serverId: 'server_1', sessionId: session.id } } }),
+                    view: { kind: 'value', value: 'detail' },
+                } }}
+            descriptor={descriptor} recordRevision="item-revision-1"
+            onRepairInputs={onRepairInputs}
+            presentation="content" appRuntime={{ ...current, machineId: 'machine_a' }} testID="public-widget"
         />;
+        contributionProjectionDescribeMock.mockClear();
+        if (!deniedBeforeMount && repair === 'none') {
+            // Metro's lazy require is a module-loader boundary. Reuse the real
+            // executor from this Vitest source graph, never a stub of Action logic.
+            const executorModule = await import('@/sync/ops/actions/defaultActionExecutor');
+            const loader = NodeModule as unknown as {
+                _load(request: string, parent: { filename?: string } | undefined, isMain: boolean): unknown;
+            };
+            const load = loader._load;
+            const loaderBoundary = vi.spyOn(loader, '_load').mockImplementation((request, parent, isMain) =>
+                request === './defaultActionExecutor' && parent?.filename?.endsWith('/frontDoorRuntimeActionExecutor.ts')
+                    ? executorModule : load.call(loader, request, parent, isMain));
+            onTestFinished(() => loaderBoundary.mockRestore());
+        }
         const screen = await renderScreen(render());
-        await vi.waitFor(() => expect(reactNativeSurfaceProps.length).toBeGreaterThan(0));
+        await flushHookEffects();
+        if (repair !== 'none') {
+            const action = screen.findByTestId('public-widget-inputs-repair');
+            expect(action).not.toBeNull();
+            await act(async () => { action!.props.onPress(); });
+            const expected = repair === 'missing'
+                ? { status: 'selection_required', reasonCode: 'widget_input_missing' }
+                : repair === 'invalid'
+                    ? { status: 'invalid', reasonCode: 'widget_input_schema_invalid' }
+                    : { status: 'unavailable', reasonCode: 'widget_session_unavailable' };
+            expect(onRepairInputs).toHaveBeenCalledWith(expect.objectContaining({
+                ...expected,
+                fields: expect.arrayContaining([{ path: 'session', ...expected }]),
+            }));
+            expect(contributionProjectionDescribeMock).not.toHaveBeenCalled();
+            expect(resourceReadMock).not.toHaveBeenCalled();
+            expect(reactNativeSurfaceProps).toHaveLength(0);
+            await screen.unmount();
+            return;
+        }
+        if (deniedBeforeMount) {
+            expect(screen.findByTestId('public-widget-state')).toBeTruthy();
+            await flushHookEffects();
+            expect(contributionProjectionDescribeMock).not.toHaveBeenCalled();
+            expect(reactNativeSurfaceProps).toHaveLength(0);
+            expect(resourceReadMock).not.toHaveBeenCalled();
+            await screen.unmount();
+            return;
+        }
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(reactNativeSurfaceProps.length, JSON.stringify(screen.findAll(node =>
+                typeof node.props.testID === 'string' && node.props.testID.startsWith('public-widget'))
+                .map(node => node.props.testID))).toBeGreaterThan(0);
+        });
         const context = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
         if (!resourceGranted) {
             expect(context.hostApi.version().methods).not.toContain('readResource');
@@ -11909,7 +12128,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
         // `detail` must reach the author component, whose summary view truncates
         // this same Resource to three lines.
         expect(statusText!.props.numberOfLines).toBeUndefined();
-        expect(context.launchInput).toEqual({ view: 'detail' });
+        expect(context.launchInput).toEqual({ session: { serverId: 'server_1', sessionId: session.id }, view: 'detail' });
         expect(context.surface.mount).toMatchObject({ kind: 'embedded', role: 'widget', presentation: 'content' });
         expect(context.surface.target).toMatchObject({ kind: 'session', sessionId: session.id });
         expect(resourceReadMock).toHaveBeenCalledWith('machine_1', expect.objectContaining({
@@ -11928,6 +12147,15 @@ describe('installed Session widget through the mounted plugin controller', () =>
             qualifiedActionId: `${pluginId}/review-summary`, input: { transcript: 'Ready for the public widget review' },
             executionSurface: 'ui', expectedContributorOccurrenceId: occurrenceId,
         })));
+        // B revocation retires the physical lifetime; the still-readable A
+        // offered as context must never substitute for the saved exact pin.
+        await act(async () => { storage.setState({ sessions: {
+            [ambient.id]: ambient,
+            [session.id]: { ...session, access: session.access ? { ...session.access, capabilities: { ...session.access.capabilities, readTranscript: false } } : null },
+        } }); });
+        await vi.waitFor(() => expect(context.signal.aborted).toBe(true));
+        expect(resourceReadMock).not.toHaveBeenCalledWith('machine_a', expect.anything());
+        expect(declarativeActionExecuteMock).not.toHaveBeenCalledWith('machine_a', expect.anything());
         await screen.unmount();
         expect(context.signal.aborted).toBe(true);
         await expect(context.hostApi.readResource('review-session-status')).rejects.toMatchObject({ code: 'stale_surface' });

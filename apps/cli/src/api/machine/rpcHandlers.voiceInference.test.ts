@@ -11,8 +11,8 @@ import type {
   DaemonVoiceInferenceModelStatus,
   DaemonVoiceInferenceNormalizationDecision,
 } from '@happier-dev/protocol';
-import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 
 import { registerMachineVoiceInferenceRpcHandlers } from './rpcHandlers.voiceInference';
 import { createDiagnosticsControllerWithRemovalFailure } from '../../daemon/voiceDiagnostics/controller.testkit';

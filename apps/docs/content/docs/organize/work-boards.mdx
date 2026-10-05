@@ -1,0 +1,108 @@
+---
+title: Work Boards
+description: Keep sessions, workflow runs, workflows and machines together in a live board, arranged by position or status.
+---
+
+Keep the work you check together in one place. A Work Board combines sessions,
+workflow runs, workflow definitions and machines as cards, with status taken from
+the underlying item. Open a card to return to that work.
+
+## Availability
+
+Work Boards are **0.3 development behavior**, not a stable-release feature.
+Use a current 0.3 client and Home with the current Artifacts implementation.
+Workflow content additionally depends on Workflows being available on that Home.
+
+The **Boards** destination described here is separate from a session's
+[Session Board and Companion](/sessions/session-board), which hosts widgets for
+one session.
+
+## Create and fill a board
+
+1. Open **Boards** in the app navigation and choose **New board**.
+2. Open **Board settings** from the header's ⋯ menu and give the board a name.
+3. Choose what appears automatically: **Needs you**, **Running now**,
+   **My machines**, or **Sessions**. The Sessions filter uses the same choices as
+   the Sessions list; its default selects both sessions and workflow runs,
+   with **Started by** set to you.
+4. Use **Add to board** to search for sessions, workflow runs, workflows or
+   machines and add individual items. Items added this way appear under
+   **Added by hand** in Board settings.
+
+In current 0.3 development source, **Add to board → Widgets** opens the shared
+widget Gallery. Choose a built-in, installed or reusable widget; fill missing
+inputs in **Set up** before adding. You can add another copy with different
+inputs. **Edit inputs** changes only that copy, while editing a reusable
+definition affects its references. Widgets use the same Board document and
+save operations as work cards, with widths of one or two card columns.
+
+Sources can be combined. The same item appears once even if it matches a source
+and was also added by hand. Removing a hand-picked item does not remove it while
+an automatic source still includes it. Change that source or its filter if you
+want the item to leave the board.
+
+## Arrange and open work
+
+**Canvas** lets you drag cards into position. **Snap to grid** is controlled in
+Board settings. On the web, hold Shift during a drag to snap that move even when
+snapping is off. A focused Canvas card can also be moved with arrow keys; native
+accessibility actions offer directional moves.
+
+**By status** groups work cards into **Needs you · Working · Finished · Idle ·
+Offline**. Switching layouts keeps the saved Canvas positions. Phones show the
+stacked By status view and retain those positions for wider devices. See the
+[work glossary](/organize/work-glossary#status-buckets-and-state-words) for the
+difference between a group and the word on a card.
+
+Widgets appear first in By status, in Board order. Their saved widths remain
+available for wider layouts even when the phone displays one column. The
+widget composition remains under development and loaded-platform validation.
+
+Cards show summaries: session awareness; a workflow run's state, attention and
+available step progress; a workflow's triggers, last run and needs-you count;
+or machine presence and counts from loaded sessions. Scheduled next-run times
+currently show **Not loaded yet** on Board cards rather than a calculated time.
+Missing summary data is not a zero count or proof that no run is scheduled.
+Open the workflow or run for its own detail surface.
+
+A Needs you session or run card opens its item in **Inbox** when that destination
+is available; otherwise it opens the work itself. Answer permissions or review
+requests there. Board cards do not approve work.
+
+## Keep a board near your sessions
+
+Turn on **Show in the Sessions list** in Board settings to show that board above the
+Sessions list, including its needs-you count. Pinning is off for a new board.
+The Sessions list's pinned-board visibility preference also controls whether
+those rows are shown.
+
+A board is saved as one Account document on the Home where you created it.
+Its item references retain their own Home identity. Putting a card on a board
+does not grant access to that item; sharing the board also does not share its
+sessions or workflows. See [Sharing](/accounts/session-sharing).
+
+## When a card or save is unavailable
+
+**Unavailable** means this device cannot currently serve that card's Home or
+content; it is not proof that the work was deleted or finished. A retained item
+from an unavailable Home keeps its saved position. Workflow and run projections
+are currently scoped to the active Account/Home, so even a connected second
+Home can be unavailable in this view. Return to the appropriate Home to inspect
+the work.
+
+A failed read offers retry rather than treating the board collection as empty.
+If a save is refused, the board returns to its last acknowledged state and shows
+the save failure. Use **Try again** after correcting the cause, or **Dismiss** to
+clear the notice. A missing board cannot be repaired by retrying its edit.
+If the board exceeds Board storage, remove some items before trying again;
+changing Account settings does not address that storage failure.
+Deleting a board removes its arrangement, not the sessions, runs, workflows or
+machines it references.
+
+## Related
+
+- [Work glossary](/organize/work-glossary)
+- [Artifacts](/organize/artifacts)
+- [Sharing](/accounts/session-sharing)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Session Board and Companion](/sessions/session-board)

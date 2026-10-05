@@ -18,6 +18,9 @@ type DetailsReviewTranslations = Readonly<{
     trayExpandedHint: string;
     askPlaceholder: string;
     send: string;
+    draftAuthor: string;
+    draftStatus: string;
+    includeComment: string;
 }>;
 
 export const detailsReviewTranslations = {
@@ -35,6 +38,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'They go with your next message to the agent.',
         askPlaceholder: 'Tell the agent what to change…',
         send: 'Send',
+        draftAuthor: 'You', draftStatus: 'draft', includeComment: 'Goes with your next message',
     },
     ca: {
         title: 'Revisió',
@@ -50,6 +54,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Van amb el teu proper missatge a l’agent.',
         askPlaceholder: 'Digues a l’agent què ha de canviar…',
         send: 'Envia',
+        draftAuthor: 'Tu', draftStatus: 'esborrany', includeComment: 'Va amb el teu proper missatge',
     },
     de: {
         title: 'Prüfen',
@@ -65,6 +70,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Sie gehen mit deiner nächsten Nachricht an den Agenten.',
         askPlaceholder: 'Sag dem Agenten, was er ändern soll…',
         send: 'Senden',
+        draftAuthor: 'Du', draftStatus: 'Entwurf', includeComment: 'Geht mit deiner nächsten Nachricht mit',
     },
     es: {
         title: 'Revisión',
@@ -80,6 +86,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Van con tu próximo mensaje al agente.',
         askPlaceholder: 'Dile al agente qué cambiar…',
         send: 'Enviar',
+        draftAuthor: 'Tú', draftStatus: 'borrador', includeComment: 'Va con tu próximo mensaje',
     },
     fr: {
         title: 'Relecture',
@@ -95,6 +102,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Ils partent avec votre prochain message à l’agent.',
         askPlaceholder: 'Dites à l’agent quoi modifier…',
         send: 'Envoyer',
+        draftAuthor: 'Vous', draftStatus: 'brouillon', includeComment: 'Part avec votre prochain message',
     },
     it: {
         title: 'Revisione',
@@ -110,6 +118,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Vanno con il tuo prossimo messaggio all’agente.',
         askPlaceholder: 'Di all’agente cosa cambiare…',
         send: 'Invia',
+        draftAuthor: 'Tu', draftStatus: 'bozza', includeComment: 'Va con il tuo prossimo messaggio',
     },
     ja: {
         title: 'レビュー',
@@ -125,6 +134,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: '次のメッセージと一緒にエージェントへ送られます。',
         askPlaceholder: 'エージェントに変更内容を伝える…',
         send: '送信',
+        draftAuthor: 'あなた', draftStatus: '下書き', includeComment: '次のメッセージに添付',
     },
     pl: {
         title: 'Przegląd',
@@ -140,6 +150,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Trafią do agenta z twoją następną wiadomością.',
         askPlaceholder: 'Powiedz agentowi, co zmienić…',
         send: 'Wyślij',
+        draftAuthor: 'Ty', draftStatus: 'szkic', includeComment: 'Trafi do następnej wiadomości',
     },
     pt: {
         title: 'Revisão',
@@ -155,6 +166,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Eles vão com sua próxima mensagem para o agente.',
         askPlaceholder: 'Diga ao agente o que mudar…',
         send: 'Enviar',
+        draftAuthor: 'Você', draftStatus: 'rascunho', includeComment: 'Vai com sua próxima mensagem',
     },
     ru: {
         title: 'Проверка',
@@ -170,6 +182,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: 'Они уйдут агенту вместе со следующим сообщением.',
         askPlaceholder: 'Скажите агенту, что изменить…',
         send: 'Отправить',
+        draftAuthor: 'Вы', draftStatus: 'черновик', includeComment: 'Уйдёт со следующим сообщением',
     },
     'zh-Hans': {
         title: '审查',
@@ -185,6 +198,7 @@ export const detailsReviewTranslations = {
         trayExpandedHint: '它们会随你的下一条消息发送给代理。',
         askPlaceholder: '告诉代理要修改什么…',
         send: '发送',
+        draftAuthor: '你', draftStatus: '草稿', includeComment: '随下一条消息发送',
     },
     'zh-Hant': {
         title: '審查',
@@ -200,5 +214,6 @@ export const detailsReviewTranslations = {
         trayExpandedHint: '它們會隨你的下一則訊息傳送給代理。',
         askPlaceholder: '告訴代理要修改什麼…',
         send: '傳送',
+        draftAuthor: '你', draftStatus: '草稿', includeComment: '隨下一則訊息傳送',
     },
 } satisfies Record<string, DetailsReviewTranslations>;

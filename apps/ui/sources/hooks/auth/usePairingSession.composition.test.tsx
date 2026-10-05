@@ -185,12 +185,12 @@ describe('trusted-Home-displayed QR two-client composition', () => {
             throw new Error(`Unexpected QR boundary request: ${path}`);
         });
 
-        let setupLayout = { order: ['setup'], hidden: [] as string[] };
+        let setupLayout: Parameters<typeof setHomeSetupStepHidden>[0] = { v: 1, order: ['setup'], hidden: [], instances: [] };
         const trusted = await renderHook(() => usePairingSession({
             enabled: true, isAuthenticated: true,
             onCompleted: () => {
                 const next = setHomeSetupStepHidden(setupLayout, 'addPhone', true);
-                setupLayout = { order: [...next.order], hidden: [...next.hidden] };
+                setupLayout = next;
             },
         }));
         await act(async () => {

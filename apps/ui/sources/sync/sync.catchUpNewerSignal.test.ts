@@ -240,7 +240,7 @@ async function seedLoadedSession(
     sessionSeq: number,
     options: Readonly<{ withMaterializedMessage?: boolean }> = {},
 ): Promise<typeof import('./sync').sync> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     const t = sync as unknown as SyncCatchUpTestAccess;
     sync.disconnectServer();
     storage.getState().applySessions([createSession(SESSION_ID, sessionSeq)]);
@@ -295,7 +295,7 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
     });
 
     it('does NOT flip the signal for a first-ever snapshot load (initial open is not "catching up")', async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const t = sync as unknown as SyncCatchUpTestAccess;
         sync.disconnectServer();
         // Never-loaded session → fetchMessages takes the snapshot branch, which is intentionally

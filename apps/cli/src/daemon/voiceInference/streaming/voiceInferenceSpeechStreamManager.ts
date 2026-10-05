@@ -41,7 +41,7 @@ import { resolveVoiceInferencePaths } from '@/daemon/voiceInference/voiceInferen
 import { resolveVoiceInferenceSttMaxUploadBytes } from '@/daemon/voiceInference/voiceInferenceWorkerConfig';
 import type { VoiceInferenceWorkerStreamingTranscriptionSession } from '@/daemon/voiceInference/voiceInferenceWorker.execution';
 import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
-import { openAes256GcmBytes, sealAes256GcmBytes } from '@/utils/crypto/aes256GcmBytes';
+import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 
 type PeerApplicationEncryptionSession = {
   binding: PeerApplicationEncryptionAuthorityBindingV1;

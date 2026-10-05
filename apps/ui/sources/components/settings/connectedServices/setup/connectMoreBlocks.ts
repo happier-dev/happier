@@ -1,5 +1,24 @@
 import { homeConnectServiceStepId } from '../home/selectHomeConnectInvitations';
 import type { ConnectedServiceSetupCatalogEntry, ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
+import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { parseQualifiedPluginContributionKey, QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol';
+
+/** The same setup target travels from an inline block or a phone detail footer to the page. */
+export function buildConnectedServiceSetupRoute(target: ConnectedServiceSetupTarget) {
+    return { pathname: '/(app)/settings/connected-services/connect' as const, params: {
+        ...(target.kind !== 'catalog' ? { service: target.serviceKey } : {}),
+        ...(target.kind === 'reconnect' ? { accountId: target.accountId } : {}),
+    } };
+}
+
+/** A transient route result, validated before it enters the index's existing settle owner. */
+export function readConnectedServiceSetupResult(params: Readonly<Record<string, string | string[] | undefined>>) {
+    if (typeof params.connectedService !== 'string' || typeof params.connectedAccount !== 'string') return null;
+    const service = parseQualifiedPluginContributionKey(params.connectedService);
+    if (!service) return null;
+    const parsed = QualifiedConnectedAccountRefSchema.safeParse({ service, accountId: params.connectedAccount });
+    return parsed.success ? { serviceKey: params.connectedService, account: parsed.data } : null;
+}
 
 /** The "More services" / "API keys, code hosts and tools" block that grows into the whole catalog. */
 export const CONNECT_MORE_BROWSE_ID = '__browse';
@@ -13,7 +32,7 @@ export function signsInWithAnAccount(entry: Pick<ConnectedServiceSetupCatalogEnt
 /**
  * What "Connect more" offers as its own blocks (lab `csvc` A1, P0). On the page: the services the agents
  * on your machines accept that nobody connected yet and nobody set aside ("Not now" is the Home set-up
- * dismissal `connect:<service>`). On first run: the plans people sign in with (keys wait). Everything
+ * dismissal `connect:<service>`). On first run: the registry's explicitly featured services. Everything
  * else addable is behind the browse block.
  */
 export function selectConnectMoreOffer(input: Readonly<{
@@ -26,7 +45,7 @@ export function selectConnectMoreOffer(input: Readonly<{
     const agentServices = input.addable.filter((entry) => entry.section === 'agents' && input.connectableKeys.has(entry.serviceKey));
     const offered = input.layout === 'section'
         ? agentServices.filter((entry) => entry.usedBy.length > 0 && !input.hidden.has(homeConnectServiceStepId(entry.serviceKey)))
-        : agentServices.some(signsInWithAnAccount) ? agentServices.filter(signsInWithAnAccount) : agentServices;
+        : agentServices.filter((entry) => getConnectedServiceSetupPresentation(entry.service)?.firstRun === true);
     return { offered, browse: input.addable.length > offered.length };
 }
 

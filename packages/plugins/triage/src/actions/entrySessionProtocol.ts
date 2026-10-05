@@ -1,6 +1,7 @@
 import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/plugin-sdk/ui';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/plugin-sdk/contributions';
+import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 import {
     defineProtocolArray,
     defineProtocolJsonValue,
@@ -8,6 +9,7 @@ import {
     defineProtocolObject,
     defineProtocolString,
     defineProtocolUnion,
+    ProtocolLaunchProfileIdV2Schema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -22,6 +24,7 @@ import {
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
 
 /**
  * The strict contract of the two Session Actions the common header presses.
@@ -41,11 +44,9 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
  * `entrySessionLinks.ts` writer, which is why removing a link still happens in
  * exactly one place.
  *
- * Both are declared here rather than in `@happier-dev/triage-protocol` for the
- * reason the link and pin Actions are: the caller family is this plugin's own
- * mounted surfaces, and publishing a Session-start or link-removing shape
- * cross-plugin would invite a second authority over a relationship the corpus
- * contract gives exactly one owner.
+ * These Session Actions belong to this plugin's orchestration owner. Mounted
+ * surfaces and admitted automated callers reach the same handlers; caller
+ * exposure does not grant another authority over corpus relationships.
  */
 
 const triageText = defineProtocolString({
@@ -78,19 +79,6 @@ const triageDisposition = defineProtocolUnion([
     defineProtocolLiteral('rejoined'),
     defineProtocolLiteral('existing'),
 ]);
-
-/**
- * The entry as the caller's device-local projection rendered it.
- *
- * The locator travels whole rather than pre-resolved to a path, exactly as the
- * link Action carries it: which member the link freezes is the writer's
- * decision, and a caller that resolved it first would be a second place that
- * rule lives.
- */
-const TriageEntrySessionLinkDisplayV1Schema = defineProtocolObject({
-    locator: TriageEntryLocatorV1Schema,
-    scopeLabel: triageText,
-}, { policy: 'closed' });
 
 /**
  * The generic Session target the user selected, restated at this Action's wire
@@ -142,7 +130,7 @@ const TriageAgentExecutionTargetV1Schema = defineProtocolObject({
 const TriageNewSessionSpawnV1Schema = defineProtocolObject({
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
-    profileId: triageIdentifier.optional(),
+    profileId: ProtocolLaunchProfileIdV2Schema.optional(),
     modelSelection: defineProtocolJsonValue().optional(),
     permissionMode: defineProtocolJsonValue().optional(),
     transcriptStorage: defineProtocolJsonValue().optional(),
@@ -150,20 +138,22 @@ const TriageNewSessionSpawnV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 
 /**
- * What Triage reads back out of the host's own settled new-Session draft.
+ * The narrow materialization projection of an admitted host new-Session draft.
  *
  * The default Ask/Fix path names no Agent: the reader opens the host's New
  * Session surface, picks the Agent and the working directory there exactly as
  * they do for any other Session, and the host settles
  * `PluginUiSelectActionInputServerStartDraftV1`
  * (`packages/protocol/src/plugins/ui/hostApiRequests.ts`) back with no
- * invocation. This schema is how that settlement becomes a start — and it
+ * invocation. `newSessionDestination` first admits that complete value through
+ * the canonical `SessionServerStartSpawnDraftV1Schema`, then projects its explicit
+ * path into this incumbent materialization grammar. This schema
  * deliberately reuses the two member schemas immediately above rather than
  * restating them, so the draft this admits is by construction a start the wire
  * can already carry and Triage never acquires a second Agent-target grammar.
  *
  * The policy is additive-open/drop because the settled draft is the host's
- * WHOLE New Session projection. The small set of Session defaults that the
+ * New Session projection after admission. The small set of Session defaults that the
  * canonical spawn wire already owns (model, permission, transcript and
  * terminal selection) survives unchanged, together with the configured
  * profile reference. Unowned authoring members such as title and startup
@@ -179,7 +169,7 @@ export const TriageStartEntrySessionSettledDraftV1Schema = defineProtocolObject(
         kind: defineProtocolLiteral('path'),
         path: triageText,
     }, { policy: 'closed' }),
-    profileId: triageIdentifier.optional(),
+    profileId: ProtocolLaunchProfileIdV2Schema.optional(),
     modelSelection: defineProtocolJsonValue().optional(),
     permissionMode: defineProtocolJsonValue().optional(),
     transcriptStorage: defineProtocolJsonValue().optional(),
@@ -283,6 +273,9 @@ const TriageStartEntrySessionWorkspaceModeV1Schema = defineProtocolUnion([
 const triagePromptBody = defineProtocolString({
     minLength: 1,
 });
+
+/** Shared admission for a retained configured Review instruction. */
+export const TriagePullRequestReviewInstructionsV1Schema = triagePromptBody;
 
 /**
  * What the pressed action configured to deliver once the Session exists
@@ -464,12 +457,26 @@ const TriageStartEntrySessionReviewContextV1Schema = defineProtocolObject({
  * person selected, while this Action immediately rereads the selected source
  * and delegates the one fan-out to `review.start`.
  */
+export const TRIAGE_PULL_REQUEST_REVIEW_CHOICE_MEMBERS_V1 = {
+    engineIds: defineProtocolArray(reviewEngineId, { minItems: 1 }),
+    outputs: defineProtocolArray(defineProtocolLiteral('walkthrough'), { minItems: 1 }).optional(),
+    comparisonSource: ScmComparisonSourceProtocolSchema.optional(),
+    /** Untrusted relay; canonical ReviewStartInputSchema admits and normalizes it before effects. */
+    narrator: defineProtocolJsonValue().optional(),
+    /** Transient host launch choice; no credential values or readiness authority. */
+    launchSelection: defineProtocolJsonValue().optional(),
+} as const;
+export const TriagePullRequestReviewChoiceV1Schema = defineProtocolObject(
+    TRIAGE_PULL_REQUEST_REVIEW_CHOICE_MEMBERS_V1, { policy: 'closed' },
+);
+export type TriagePullRequestReviewChoiceV1 = ReturnType<typeof TriagePullRequestReviewChoiceV1Schema.parse>;
+
 export const TriageStartPullRequestReviewInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     sessionId: triageSessionId,
     review: TriageStartEntrySessionReviewContextV1Schema,
-    engineIds: defineProtocolArray(reviewEngineId, { minItems: 1 }),
     instructions: triagePromptBody,
+    ...TRIAGE_PULL_REQUEST_REVIEW_CHOICE_MEMBERS_V1,
 }, { policy: 'closed' });
 export type TriageStartPullRequestReviewInputV1 = ReturnType<
     typeof TriageStartPullRequestReviewInputV1Schema.parse

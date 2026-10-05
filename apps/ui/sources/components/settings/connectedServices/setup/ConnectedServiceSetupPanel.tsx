@@ -9,11 +9,12 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { SetupBlockGrid, type SetupBlockItem } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupBlockPaper } from '@/components/ui/setupBlocks/SetupBlockPaper';
 import { Text } from '@/components/ui/text/Text';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Typography } from '@/constants/Typography';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
+import { useMachineAdministrationTargetSelection, type MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { ConnectedServiceId, PluginContributionIdentityV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
@@ -56,11 +57,13 @@ export type ConnectedServiceSetupPanelProps = Readonly<{
     onConnected?: (account: QualifiedConnectedAccountRef, serviceKey: string) => void;
     /** Renders one service's flow; the live panel runs the service's controller (a fixture preview passes its own). */
     renderServiceFlow?: (entry: ConnectedServiceSetupCatalogEntry, target: ConnectedServiceSetupTarget) => React.ReactNode;
+    /** A host's canonical selection input (dev frames supply a non-executable presentation fixture). */
+    targetSelection?: MachineAdministrationTargetSelectionV1;
     /**
      * `frame` (default): the set-up block's frame is the paper (Connected services, Home).
      * `card`: the panel brings its own (the modal, where there is no block to grow from).
      */
-    chrome?: 'frame' | 'card';
+    chrome?: 'frame' | 'card' | 'page';
     /**
      * `all`: every service, the "Signed in on a machine?" explainer, code hosts and tools, and the
      * Providers pointer (Connected services). `home`: only the services the host passes, with Home's
@@ -84,9 +87,11 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     const { theme } = useUnistyles();
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
-    const targetSelection = useMachineAdministrationTargetSelection(
+    const defaultTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
+        { enabled: props.targetSelection === undefined },
     );
+    const targetSelection = props.targetSelection ?? defaultTargetSelection;
     const { target, catalog, onClose, onTargetChange, onConnected } = props;
     const scope = props.scope ?? 'all';
     const selected = target.kind === 'catalog'
@@ -107,7 +112,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
     const agentSelected = selected !== null && blocks.some((candidate) => candidate.serviceKey === selected.serviceKey);
     // A service outside the catalog's blocks (signing an account in again where no machine publishes
     // the service to add another) shows its flow directly.
-    const direct = selected !== null && !agentSelected && !selectedIsTool;
+    const direct = selected !== null && (props.chrome === 'page' || (!agentSelected && !selectedIsTool));
     const showBack = selected !== null && (blocks.length + tools.length) > 1;
     const back = React.useCallback(() => {
         if (showBack) onTargetChange({ kind: 'catalog' });
@@ -196,13 +201,12 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
                     style={({ pressed }) => [styles.back, pressed ? styles.backPressed : null]}
                 >
                     <Icon name="caret-left" size={14} color={theme.colors.text.secondary} />
-                    <Text style={styles.backText}>{t('connectedServicesSetup.back')}</Text>
                 </Pressable>
             ) : null}
             <View style={styles.lead}>
                 {selected
                     ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} size="row" />
-                    : <Icon name="link" size={18} color={theme.colors.text.secondary} />}
+                    : <Icon name="plug" size={18} color={theme.colors.text.secondary} />}
             </View>
             <View style={styles.headText}>
                 <Text style={styles.title} accessibilityRole="header">{title}</Text>
@@ -230,9 +234,6 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
         <>
             {!selectedIsTool ? (
                 <View style={styles.section}>
-                    {scope === 'all' && !selected && tools.length > 0 ? (
-                        <Text style={styles.sectionLabel}>{t('connectedServicesSettings.setupForYourAgents')}</Text>
-                    ) : null}
                     <SetupBlockGrid
                         testID="connected-service-setup:catalog"
                         frame="bare"
@@ -257,6 +258,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
                                 style={({ pressed }) => [styles.tools, pressed ? styles.toolsPressed : null]}
                             >
                                 <Text style={styles.toolsTitle}>{t('connectedServicesSettings.setupToolsTitle')}</Text>
+                                <View style={styles.toolMarks}>{tools.slice(0, 3).map((tool) => <ConnectedServiceMark key={tool.serviceKey} legacyServiceId={tool.legacyServiceId} size="inline" />)}</View>
                                 <Text style={styles.toolsNames} numberOfLines={1}>
                                     {formatAgentNames(tools.map((tool) => tool.label))}
                                 </Text>
@@ -284,7 +286,9 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
             accessibilityRole="summary"
             accessibilityLabel={title}
         >
-            {head}
+            {props.chrome === 'page' ? <PageHeader title={title} description={purpose} alwaysShowTitle
+                leading={selected ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} size="row" /> : <Icon name="plug" size={24} />}
+                actions={<MachineAdministrationTargetSelector selection={targetSelection} presentation="chip" testIDPrefix="connected-service-setup-target" />} /> : head}
             <View style={styles.body}>
                 {body}
                 {!selected && scope === 'home' ? (
@@ -319,6 +323,8 @@ const styles = StyleSheet.create((theme) => ({
         paddingTop: 16,
         paddingLeft: 18,
         paddingRight: 14,
+        paddingBottom: 14,
+        backgroundColor: theme.colors.surface.sectionTint,
     },
     lead: {
         alignItems: 'center',
@@ -369,7 +375,6 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     back: {
-        flexBasis: '100%',
         flexDirection: 'row',
         alignItems: 'center',
         alignSelf: 'flex-start',
@@ -379,6 +384,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 4,
         borderRadius: 6,
     },
+    toolMarks: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     backPressed: {
         backgroundColor: theme.colors.surface.pressedOverlay,
     },

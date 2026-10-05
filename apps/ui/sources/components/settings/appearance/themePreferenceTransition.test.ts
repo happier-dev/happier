@@ -178,6 +178,19 @@ describe('theme preference transitions', () => {
         expect(mutation).toHaveBeenCalledOnce();
     });
 
+    it('rejects a failed settings mutation inside the native transition', async () => {
+        const failure = new Error('settings scope changed');
+        await expect(runThemePreferenceChange({
+            currentPreference: 'light',
+            nextPreference: 'dark',
+            platform: 'ios',
+            reduceMotion: false,
+            systemTheme: 'light',
+            nativeController: { run: async update => update() },
+            mutation: () => { throw failure; },
+        })).rejects.toBe(failure);
+    });
+
     it('applies immediately when reduced motion is preferred', async () => {
         const mutation = vi.fn();
         const animate = vi.fn();

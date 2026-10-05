@@ -1,5 +1,6 @@
 import type { SessionBoardItemProjection, SessionBoardSnapshot } from './sessionBoardProjection';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { sessionBoardSourceRequiresExclusiveMount } from './sessionBoardPrimaryMount';
 
 /**
  * The exact currentness proof an executable Session item may consume.
@@ -26,7 +27,7 @@ export function resolveSessionBoardExecutableCurrentness(
         'pluginUiProjection' | 'phase' | 'interactionEnabled'
     > | null,
 ): SessionBoardExecutableCurrentness {
-    if (item.state.kind !== 'ready' || item.state.item.source.kind === 'declarative') {
+    if (item.state.kind !== 'ready' || !sessionBoardSourceRequiresExclusiveMount(item.state.item.source.kind)) {
         return 'not_executable';
     }
     if (!snapshot.capabilities.readTranscript) return 'unverified';
@@ -39,7 +40,7 @@ export function resolveSessionBoardExecutableCurrentness(
         || current.state.kind !== 'ready') {
         return 'unverified';
     }
-    if (item.state.item.source.kind === 'installedSurface') {
+    if (item.state.item.source.kind === 'widget' && item.state.item.source.instance.definition.kind === 'installed') {
         if (!pluginRuntime || pluginRuntime.phase === 'unavailable') return 'unverified';
         if (pluginRuntime.phase === 'retainedOffline') return 'offline';
         if (pluginRuntime.phase === 'establishing') return 'stale';

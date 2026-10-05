@@ -62,7 +62,7 @@ import type { AzureDevOpsApiClient, AzurePullRequestRow } from './types.js';
  * eventually do.
  */
 
-/** The Action ids the mounted detail body invokes, and nothing else does. */
+/** Native detail Action ids shared by the mounted detail body and agent callers. */
 export const AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
   readIterations: 'triage-read-iterations',
   listCommits: 'triage-list-commits',

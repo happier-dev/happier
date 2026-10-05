@@ -1,5 +1,6 @@
 import { buildQualifiedPluginContributionKey, type ActionDefinitionV1 } from '@happier-dev/protocol';
 import { formatQualifiedPluginActionId, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
 import { executeContributedAction } from './executeContributedAction';
@@ -10,6 +11,7 @@ import {
 } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginActionSurface } from '@/plugins/runtime/types';
 import type { PluginExternalActionContext } from '../services/types';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../../resolveExecutablePluginRuntimeRegistry';
 
 function projectDefinition(definition: ResolvedActionDefinition, identity: NonNullable<ResolvedActionContribution['identity']>): ActionDefinitionV1 {
   return Object.freeze({
@@ -89,7 +91,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
   captureApprovalReplayPlacement?: true;
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
-  return async ({ action, input: actionInput, context, approvalExecutionOrigin, signal }) => {
+  return async ({ action, input: actionInput, context, approvalExecutionOrigin, requiredDangerLevel, signal }) => {
     const invocationSignal = signal ?? context.signal ?? new AbortController().signal;
     invocationSignal.throwIfAborted();
     const surface = input.fixedInvocationSurface ?? readSurface(context.surface);
@@ -111,6 +113,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         runtimeRegistry: lease.registry,
         actionId: buildQualifiedPluginContributionKey(action),
         input: actionInput,
+        ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
         ...(input.captureApprovalReplayPlacement ? { captureApprovalReplayPlacement: true } : {}),
         ...(input.requestCurrentIntent
           ? {
@@ -168,5 +171,74 @@ export function createCommittedContributedActionDefinitionLister(input: Readonly
     } finally {
       void lease.release().catch(() => input.onLeaseReleaseError?.());
     }
+  };
+}
+
+/** Catalog/schema identity and Resource authority are shared by discovery and target dispatch. */
+export function createRegistryInputTypeDeps(runtime: Pick<ResolvedExecutablePluginRuntimeRegistry,
+  'contributes' | 'readUiResource'>): Required<Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>> {
+  return {
+    resolveInputType: async (identity, context) => {
+      context.signal?.throwIfAborted();
+        const registry = runtime.contributes;
+        const occurrenceId = registry.occurrenceIdsByPluginId?.[identity.pluginId];
+        const candidates = (registry.inputTypes ?? []).filter(entry =>
+          entry.identity.pluginId === identity.pluginId && entry.identity.localId === identity.localId);
+        return occurrenceId && candidates.length === 1
+          ? { identity: candidates[0]!.identity, occurrenceId, definition: candidates[0]!.definition } : null;
+    },
+    readInputTypeResource: async ({ type, resource, context, sessionId }) => {
+        const registry = runtime.contributes;
+        if (registry.occurrenceIdsByPluginId?.[type.identity.pluginId] !== type.occurrenceId) {
+          return { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' };
+        }
+        const types = (registry.inputTypes ?? []).filter(entry => entry.identity.pluginId === type.identity.pluginId
+          && entry.identity.localId === type.identity.localId);
+        const declared = types.length === 1 ? inputTypeResourceReference({ ...type, definition: types[0]!.definition }) : null;
+        if (!declared || declared.pluginId !== resource.pluginId || declared.localId !== resource.localId) {
+          return { ok: false, errorCode: 'input_type_options_unavailable', error: 'input_type_options_unavailable' };
+        }
+        const occurrenceId = registry.occurrenceIdsByPluginId?.[resource.pluginId];
+        const candidates = registry.resources.filter(entry => entry.pluginId === resource.pluginId
+          && entry.definition.id === resource.localId);
+        const read = runtime.readUiResource;
+        if (!read || !occurrenceId || candidates.length !== 1) {
+          return { ok: false, errorCode: 'input_type_options_unavailable', error: 'input_type_options_unavailable' };
+        }
+        const definition = candidates[0]!.definition;
+        // A headless form has no mounted surface; do not manufacture a surface proof.
+        if (definition.source === 'dynamic' && definition.scope === 'surface') {
+          return { ok: false, errorCode: 'input_type_options_unavailable', error: 'input_type_options_unavailable' };
+        }
+        const result = await read({ callerPluginId: resource.pluginId, resourceId: resource.localId,
+          expectedCallerOccurrenceId: occurrenceId,
+          ...(definition.source === 'dynamic' && definition.scope === 'session' && sessionId
+            ? { context: { kind: 'session' as const, sessionId } } : {}),
+          ...(context.signal ? { signal: context.signal } : {}) });
+        if (result.contentType !== 'application/json') {
+          return { ok: false, errorCode: 'input_type_options_invalid', error: 'input_type_options_invalid' };
+        }
+        try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)) as unknown; }
+        catch { return { ok: false, errorCode: 'input_type_options_invalid', error: 'input_type_options_invalid' }; }
+    },
+  };
+}
+
+/** Input types resolve from the serving catalog while its incumbent lease is held. */
+export function createCommittedInputTypeDeps(input: Readonly<{
+  acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
+}> = {}): Required<Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>> {
+  const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
+  return {
+    resolveInputType: async (identity, context) => {
+      const lease = await acquire();
+      try { return await createRegistryInputTypeDeps(lease.registry).resolveInputType(identity, context); }
+      finally { await lease.release(); }
+    },
+    readInputTypeResource: async request => {
+      const lease = await acquire();
+      try { return await createRegistryInputTypeDeps(lease.registry).readInputTypeResource(request); }
+      finally { await lease.release(); }
+    },
   };
 }

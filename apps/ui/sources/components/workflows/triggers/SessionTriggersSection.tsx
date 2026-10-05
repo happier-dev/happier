@@ -35,6 +35,7 @@ import { useOpenTriggerAsWorkflow } from './useOpenTriggerAsWorkflow';
 export type SessionTriggersSectionViewProps = Readonly<{
     groups: readonly SessionTriggerGroupModel[];
     status: 'loading' | 'ready' | 'failed';
+    pullRequestLinksUnavailable?: boolean;
     /** Trigger rows whose write is in flight. */
     pendingKeys: ReadonlySet<string>;
     onToggle: (row: SessionTriggerRowModel, next: boolean) => void;
@@ -84,6 +85,14 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                     testID="session-work-triggers-failed"
                     tone="warning"
                     reason={t('workflows.triggers.section.loadFailed')}
+                    action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: props.onRetry }}
+                />
+            ) : null}
+            {props.pullRequestLinksUnavailable ? (
+                <SurfaceFreshnessLine
+                    testID="session-work-trigger-links-unavailable"
+                    tone="warning"
+                    reason={t('workflows.triggers.pullRequest.loadFailed')}
                     action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: props.onRetry }}
                 />
             ) : null}
@@ -194,7 +203,7 @@ export const SessionTriggersSection = React.memo(function SessionTriggersSection
         const trigger = set?.triggers.find((candidate) => candidate.id === row.triggerId);
         const when = trigger ? readTriggerWhen(trigger) : null;
         if (!set?.target || !when) return null;
-        return { when, then: readTriggerThen(set.target), enabled: row.enabled };
+        return { when, then: readTriggerThen(set.target, set.context?.executionTarget, set.context?.inputs), enabled: row.enabled };
     }, [popover, read.sets]);
 
     const close = React.useCallback(() => setPopover(null), []);
@@ -221,6 +230,7 @@ export const SessionTriggersSection = React.memo(function SessionTriggersSection
             <SessionTriggersSectionView
                 groups={groups}
                 status={read.status}
+                pullRequestLinksUnavailable={!Array.isArray(read.pullRequestLinks) && read.pullRequestLinks.status === 'unavailable'}
                 pendingKeys={pendingKeys}
                 onToggle={toggle}
                 onOpen={(openedRow, anchor) => {
@@ -255,21 +265,21 @@ export const SessionTriggersSection = React.memo(function SessionTriggersSection
                     whenKinds={SESSION_TRIGGER_WHEN_KINDS}
                     unavailableKinds={Object.fromEntries(Object.entries(SESSION_UNAVAILABLE_KINDS).map(([kind, key]) => [kind, t(key)]))}
                     sessionId={props.sessionId}
-                    pullRequestLinks={read.pullRequestLinks}
+                    {...(Array.isArray(read.pullRequestLinks) ? { pullRequestLinks: read.pullRequestLinks } : {})}
                     initial={initial}
                     {...(row === null && boundWhen !== undefined ? { initialWhen: boundWhen } : {})}
                     workflowOptions={thenOptions.workflowOptions}
                     onSubmit={async (value, write) => {
-                        if (write.target === null) return;
+                        if (write.target === null || write.trigger === null) return;
                         if (row === null) {
-                            await read.add({ target: write.target, trigger: write.trigger });
+                            await read.add({ target: write.target, trigger: write.trigger, inputs: write.inputs });
                             return;
                         }
                         const { enabled: _enabled, ...definition } = write.trigger;
                         await read.update({
                             triggerId: row.triggerId,
                             expectedRevision: row.revision,
-                            patch: { target: write.target, trigger: definition, enabled: value.enabled },
+                            patch: { target: write.target, trigger: definition, enabled: value.enabled, inputs: write.inputs },
                         });
                     }}
                     machineId={read.machineId}

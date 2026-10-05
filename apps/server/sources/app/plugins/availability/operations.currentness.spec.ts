@@ -331,7 +331,10 @@ function currentHostedArchiveFixture() {
         slot: qualifiedRelease.uiSlots[0]!,
         uiArtifact, packageArtifact, uiEnvelope, packageEnvelope, foreignAccountId,
         changeOwnerMode() {
-            owner = { ...owner, ...createSignedAccountContentBinding(), encryptionMode: "e2ee" };
+            const binding = createSignedAccountContentBinding();
+            owner = { ...owner, publicKey: binding.publicKey,
+                contentPublicKey: privacyKit.encodeBase64(binding.contentPublicKey),
+                contentPublicKeySig: privacyKit.encodeBase64(binding.contentPublicKeySig), encryptionMode: "e2ee" };
         },
     };
 }

@@ -1,4 +1,4 @@
-import { ArtifactActionInputSchemasV1, type ActionExecutorContext, type ArtifactActionIdV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
+import { ArtifactActionInputSchemasV1, isArtifactHtmlHeaderV1, type ActionExecutorContext, type ArtifactActionIdV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { publishArtifactFromWorkspaceFile, readArtifactWorkspaceFile } from './publishArtifactFromWorkspaceFile';
 
@@ -10,11 +10,12 @@ export function createCliArtifactActions(params: Readonly<{
   resolvePublishCaller: (context: ActionExecutorContext) => Promise<ArtifactPublishCaller | null>;
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
 }>) {
-  const readUpload = async (context: ActionExecutorContext, input: Readonly<{ uploadPath: string; mime?: string }>, signal?: AbortSignal) => {
+  const readUpload = async (context: ActionExecutorContext, input: Readonly<{ uploadPath: string; mime?: string; header: Readonly<Record<string, unknown>> }>, signal?: AbortSignal) => {
     const caller = await params.resolvePublishCaller(context);
     if (!caller) throw Object.assign(new Error('artifact_source_unavailable'), { code: 'artifact_source_unavailable' });
     const { bytes } = await readArtifactWorkspaceFile({ caller, path: input.uploadPath, signal });
-    return { binary: { bytes, mime: input.mime ?? 'application/octet-stream' } };
+    return { binary: { bytes, mime: input.mime ?? (isArtifactHtmlHeaderV1(input.header)
+      ? typeof input.header.mime === 'string' ? input.header.mime : 'text/html' : 'application/octet-stream') } };
   };
   return async (args: Readonly<{ actionId: ArtifactActionIdV1; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>): Promise<unknown> => {
     const signal = args.signal ?? args.context.signal;
@@ -24,6 +25,7 @@ export function createCliArtifactActions(params: Readonly<{
         case 'artifact.public_link.create':
         case 'artifact.public_link.list':
         case 'artifact.public_link.revoke':
+        case 'artifact.public_link.audit':
           return await params.store.publicLinks({ actionId: args.actionId, input: args.input, signal }, params.onPublicLinkIssued);
         case 'artifact.create': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
@@ -35,18 +37,22 @@ export function createCliArtifactActions(params: Readonly<{
         }
         case 'artifact.get': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
-          return { artifact: await params.store.read(input.artifactId, signal ? { signal } : undefined) };
+          const artifact = await params.store.read(input.artifactId, signal ? { signal } : undefined);
+          return { artifact, ...(artifact ? await params.store.htmlPreview(artifact, signal) : {}) };
         }
         case 'artifact.list': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
-          return await params.store.list({ ...input, sort: input.sort ?? 'updated_desc', ...(signal ? { signal } : {}) });
+          const page = await params.store.list({ ...input, sort: input.sort ?? 'updated_desc', ...(signal ? { signal } : {}) });
+          return { items: page.items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
         }
         case 'artifact.update': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const content = 'uploadPath' in input ? await readUpload(args.context, input, signal) : { body: input.body };
           const result = await params.store.update({ artifactId: input.artifactId, header: input.header,
             expectedRevision: input.expectedRevision, ...content, ...(signal ? { signal } : {}) });
-          return result.ok ? { artifactId: input.artifactId, revision: result.revision } : result;
+          return result.ok ? { artifactId: input.artifactId, revision: result.revision,
+            ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}),
+            ...(result.previewError ? { previewError: result.previewError } : {}) } : result;
         }
         case 'artifact.delete': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);

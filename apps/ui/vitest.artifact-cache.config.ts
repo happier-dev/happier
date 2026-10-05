@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig } from 'vitest/config';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,7 @@ export default defineConfig({
         __DEV__: true,
     },
     test: {
+        ...resolveVitestWorkers(),
         environment: 'node',
         server: {
             deps: {

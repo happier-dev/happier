@@ -12,19 +12,26 @@
  */
 export type GlassCapability = 'liquidGlass' | 'blur' | 'webBlur' | 'solid';
 
-export type ResolveGlassCapabilityInput = Readonly<{
+export type ResolveGlassCapabilityInput = GlassMaterialEnvironment & Readonly<{
     liquidGlassAvailable: boolean;
     blurAvailable: boolean;
     /** Web CSS `backdrop-filter` blur (defaults to unavailable). */
     webBlurAvailable?: boolean;
     reduceTransparency: boolean;
+    settings?: GlassMaterialSettings;
+    surfaceGroup?: GlassSurfaceGroup;
 }>;
 
 export function resolveGlassCapability(input: ResolveGlassCapabilityInput): GlassCapability {
-    if (input.reduceTransparency) {
+    const material = input.settings ? resolveGlassSurfaceMaterial(input.settings, input.surfaceGroup ?? 'floating', input).material : null;
+    if (input.reduceTransparency || input.windowActive === false
+        || material?.blur === 'off') {
         return 'solid';
     }
-    if (input.liquidGlassAvailable) {
+    // Liquid Glass has clear/regular materials, not an intensity control.
+    // Strong uses the adjustable native blur rather than collapsing to regular.
+    const strong = material?.blur === 'strong';
+    if (input.liquidGlassAvailable && !(strong && input.blurAvailable)) {
         return 'liquidGlass';
     }
     if (input.blurAvailable) {
@@ -35,3 +42,4 @@ export function resolveGlassCapability(input: ResolveGlassCapabilityInput): Glas
     }
     return 'solid';
 }
+import { resolveGlassSurfaceMaterial, type GlassMaterialSettings, type GlassSurfaceGroup, type GlassMaterialEnvironment } from './glassMaterial';

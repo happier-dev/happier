@@ -21,10 +21,8 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
  * A mounted surface reaches no Account Collection of its own — the Host API it
  * holds exposes actions, not storage — so this is the only transport between a
  * Pin the reader pressed and the one canonical `user-marks` writer. It is
- * declared here rather than in `@happier-dev/triage-protocol` for the same
- * reason the aggregate list Action is: the caller family is this plugin's own
- * mounted surfaces, and publishing a pin-writing shape cross-plugin would
- * invite a second pin authority the corpus contract forbids.
+ * declared beside the registered Action for mounted and automated callers;
+ * exposing the intent never creates another user-mark writer.
  *
  * The mark's storage tag is deliberately absent from both results. A row id is
  * plaintext server metadata even on an E2EE Account, and nothing a surface

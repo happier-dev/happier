@@ -59,6 +59,7 @@ describe('SessionListHeaderItem', () => {
         spotlightTestState.unmounts = 0;
     });
 
+
     it('keeps the attention header mounted when its spotlight registration activates', async () => {
         const item = {
             type: 'header',

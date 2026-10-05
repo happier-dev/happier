@@ -8,10 +8,12 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 import type { DecryptedArtifact, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { storage } from '@/sync/domains/state/storage';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { uiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 import { updateSkillPromptBundleWithEntry, removeSkillPromptBundleEntry } from './promptBundles';
+import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 
 describe('UI prompt-library Artifact CAS', () => {
   const originalCredentials = Reflect.get(sync, 'credentials');
@@ -22,6 +24,17 @@ describe('UI prompt-library Artifact CAS', () => {
     Reflect.set(sync, 'credentials', originalCredentials);
     storage.setState(initialState, true);
     vi.restoreAllMocks();
+  });
+
+  it('rejects another Artifact kind even when it has a prompt-shaped body', async () => {
+    const artifact: DecryptedArtifact = {
+      id: 'other', title: 'Other', header: { v: 1, kind: 'role.v1', title: 'Other' },
+      body: JSON.stringify({ v: 1, markdown: 'Must not disclose', createdAtMs: 1, updatedAtMs: 1 }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      isDecrypted: true, storageMode: 'plain',
+    };
+    storage.setState({ artifacts: { other: artifact } });
+    await expect(expandPromptTemplateInvocation({ targetArtifactId: 'other', argsText: '' })).rejects.toThrow();
   });
 
   it('refuses a retired caller before an Artifact read or write reaches HTTP', async () => {

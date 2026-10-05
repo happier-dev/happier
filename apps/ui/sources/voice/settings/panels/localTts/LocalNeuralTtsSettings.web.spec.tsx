@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
-import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 
 installLocalTtsCommonModuleMocks({
     modal: async () => {
@@ -102,6 +101,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     });
 
     it('renders the exact selected daemon pack catalog and fails closed for a retired stored voice', async () => {
+        const { DaemonVoiceModelCatalogProvider } = await import('@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext');
         const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
         const render = async (voiceId: string | null) => (await renderScreen(
             <DaemonVoiceModelCatalogProvider value={daemonCatalog}>

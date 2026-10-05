@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { hasAgentIconMark } from '@/agents/catalog/catalog';
+import { resolveSessionAuthoringAgentId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { Icon } from '@/components/ui/icons/Icon';
 
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -14,36 +17,44 @@ import type {
     AuthoringComposerCustodyEntry,
     WorkflowAuthoringComposerCustody,
 } from '@/components/sessions/authoring/authoringComposerCustody';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
-import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
+import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
 
 import {
     listWorkflowStepOverriddenFields,
+    resolveEffectiveWorkflowStepExecution,
     type WorkflowDraftValidation,
     workflowIssuesForBlock,
 } from '@/sync/domains/workflows/workflowAuthoring';
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 import { formatWorkflowConversationLabel, formatWorkflowWorkspaceLabel } from './WorkflowContinuityControls';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
+import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 
 /**
- * One repeatable authored step: a stable ordinal, a prompt-derived label, the prompt,
- * and a quiet line describing whether its settings are inherited.
+ * One repeatable authored step (07 S7, 04 §4.3): a stable ordinal, a prompt-derived label,
+ * the prompt in the real composer with the step's **Step options** chip in its chip row,
+ * and one footer line saying what it returns.
  *
- * The prompt is the visual centre. Inherited configuration collapses to one line
- * rather than repeating chrome on every step, and Customize reveals the same
- * controlled values without changing what the step can express.
+ * The prompt is the visual centre. Inherited configuration reads as one quiet chip
+ * ("Workflow defaults") rather than repeating chrome on every step; a step that changes
+ * something names it on that bordered chip, which opens the same controlled values.
  */
+
+/** The step's engine group as its composer chip shows it: who runs it, on which model. */
 
 type WorkflowStepPromptFieldProps = Readonly<{
     custody: AuthoringComposerCustodyEntry;
@@ -54,7 +65,11 @@ type WorkflowStepPromptFieldProps = Readonly<{
     accessibilityLabel: string;
     editable: boolean;
     onChangeDocument: (document: ScopedAuthoringDocument) => void;
+    onCommitDocument?: () => void;
     onFocusPrompt: () => void;
+    /** The step's own chips in the composer's chip row (Step options). */
+    extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    agentInputContext?: React.ComponentProps<typeof ScopedAuthoringComposer>['agentInputContext'];
 }>;
 
 /**
@@ -90,11 +105,14 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
                 custody={props.custody}
                 scope={props.composerScope}
                 document={props.document}
-                onChangeDocument={props.onChangeDocument}
+                onChangeDocument={props.editable ? props.onChangeDocument : undefined}
+                onBlur={props.editable ? props.onCommitDocument : undefined}
                 attachmentsEnabled
                 placeholder={t('workflows.editor.promptPlaceholder')}
                 editable={props.editable}
                 onFocus={props.onFocusPrompt}
+                agentInputContext={props.agentInputContext}
+                {...(props.extraActionChips === undefined ? {} : { extraActionChips: props.extraActionChips })}
             />
         </View>
     );
@@ -120,9 +138,22 @@ export function WorkflowStepEditor(props: Readonly<{
     actions: readonly WorkflowBlockAction[];
     onSelect: () => void;
     onChangeDocument: (document: WorkflowStep['document']) => void;
+    onCommitDocument?: () => void;
     /** Opens Step options, anchored beside this step's Customize control. */
     onCustomize: (anchorRef: React.RefObject<View | null>) => void;
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
+    /**
+     * Writes one of the step's own engine fields through the draft owner; `undefined` deletes it
+     * so the step inherits the workflow default again (04 §5.2).
+     */
+    onChangeExecutionField?: <TField extends keyof WorkflowStepExecutionSelection>(
+        field: TField,
+        value: WorkflowStepExecutionSelection[TField] | undefined,
+    ) => void;
+    onChangeExecutionFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
+    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+    /** The host's Agent and model catalogs for the in-composer engine chip. */
+    authoringFacts?: SessionAuthoringControlFacts;
     /** Registers the prompt input so Add can focus it once layout is ready. */
     registerPromptRef?: (blockId: string, focus: (() => void) | null) => void;
     /** `false`: the reading presentation (04 §4.11) — nothing here edits. */
@@ -140,10 +171,8 @@ export function WorkflowStepEditor(props: Readonly<{
         onSelect, onChangeDocument, onCustomize, registerPromptRef, testIDPrefix,
     } = props;
 
-    const { theme } = useUnistyles();
     const editable = props.editable !== false;
     const inputRef = React.useRef<ScopedAuthoringComposerHandle>(null);
-    const customizeAnchorRef = React.useRef<View>(null);
     const custody = props.composerCustody.entryFor(step.id);
     // The prompt's handlers close over the current document through a ref, so
     // they stay referentially stable while the whole draft changes underneath.
@@ -171,9 +200,9 @@ export function WorkflowStepEditor(props: Readonly<{
         return () => registerPromptRef?.(step.id, null);
     }, [registerPromptRef, step.id]);
 
-    const overriddenFields = listWorkflowStepOverriddenFields(step);
-    // The Step options chip reads the workflow's settings or what differs
-    // ("Separate conversations", "A background run", "Reviews before continuing"), D-7.
+    // The Step options chip reads "Workflow defaults" or what differs ("Fresh",
+    // "A background run", "Reviews before continuing"), D-7. An engine change is the
+    // engine chip's to show (bordered there), so it adds no words here.
     const stepDifferences = [
         ...(step.execution?.conversation === undefined
             ? []
@@ -181,8 +210,48 @@ export function WorkflowStepEditor(props: Readonly<{
         ...(step.execution?.workspace === undefined ? [] : [formatWorkflowWorkspaceLabel(props.draft, step.execution.workspace)]),
         ...(step.execution?.executionTarget?.kind === 'detached_run' ? [t('workflows.page.sections.aBackgroundRun')] : []),
         ...(step.pauseForReview === true ? [t('workflows.page.inspector.reviewsBeforeContinuing')] : []),
-        ...(overriddenFields.length === 0 ? [] : [t('workflows.a11y.overridden')]),
     ];
+    const latestCustomizeRef = React.useRef(onCustomize);
+    latestCustomizeRef.current = onCustomize;
+    const stepOptionsChip = useWorkflowStepOptionsChip({
+        label: stepDifferences.length === 0 ? t('workflows.page.blocks.workflowDefaults') : stepDifferences.join(' · '),
+        changed: stepDifferences.length > 0,
+        onOpen: (anchorRef) => latestCustomizeRef.current(anchorRef),
+        testID: `${testIDPrefix}-step-${step.id}-customize`,
+        labelTestID: `${testIDPrefix}-step-${step.id}-inheritance`,
+    });
+    // The engine chip (agent or role · model) leads the composer's chip row, quiet while the step
+    // inherits and bordered once the step sets its own (04 §4.3). It is keyed on the step's own
+    // engine facts, not the whole draft, so typing elsewhere never re-renders this composer.
+    const effective = resolveEffectiveWorkflowStepExecution(props.draft, step);
+    const { theme } = useUnistyles();
+    const agentId = resolveSessionAuthoringAgentId({ agentTarget: effective.agentTarget, facts: props.authoringFacts });
+    const kindMark = agentId !== null && hasAgentIconMark(agentId, theme)
+        ? <AgentIcon agentId={agentId} size={16} /> : <Icon name="robot" size={16} />;
+    const engine = step.execution?.engine ?? props.draft.defaults.engine;
+    const roleSelection = React.useMemo(() => ({
+        value: engine && 'role' in engine ? engine.role : null,
+        onChange: (role: string) => { if (editable) props.onChangeEngine?.({ role }); },
+    }), [editable, engine, props.onChangeEngine]);
+    const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
+        disabled: !editable, onChangeFields: props.onChangeExecutionFields, roleSelection });
+    const agentInputContext = React.useMemo(() => ({
+        agentType: enginePicker.agentId ?? agentId ?? undefined,
+        agentLabel: engine && 'role' in engine
+            ? props.draft.roles?.find(role => role.roleId === engine.role && 'name' in role)?.name ?? engine.role
+            : enginePicker.label,
+        modelMode: effective.modelSelection?.ref.modelId,
+        permissionMode: effective.permissionMode,
+        agentPickerOptions: enginePicker.options,
+        agentPickerSelectedOptionId: enginePicker.selectedOptionId,
+        onAgentPickerSelect: enginePicker.onSelect,
+        // The native AgentInput owns opening its options. This presence also keeps
+        // the effective engine chip visible in a read-only document.
+        onAgentClick: enginePicker.onAgentClick,
+    }), [agentId, effective.modelSelection, effective.permissionMode, enginePicker.agentId,
+        engine, props.draft.roles, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
+    const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
+    const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
     const displayName = workflowStepPromptLabel(step)
         ?? t('workflows.editor.unnamedStep', { position: ordinal });
@@ -198,6 +267,7 @@ export function WorkflowStepEditor(props: Readonly<{
             style={workflowEditorStyles.blockBody}
         >
             <WorkflowBlockHeading
+                kindMark={kindMark}
                 ordinal={ordinal}
                 displayName={displayName}
                 accessibilityLabel={accessibilityLabel}
@@ -208,15 +278,17 @@ export function WorkflowStepEditor(props: Readonly<{
                 testID={`${testIDPrefix}-step-${step.id}-label`}
                 actionsTestID={`${testIDPrefix}-step-${step.id}-actions`}
             />
+            {props.slots?.occurrenceSelector ?? null}
 
-            {/* A Session dragged onto the step continues it here (web; J19). The
+            {/* A Session carried onto the step binds its conversation. The
                 zone always wraps the prompt so enabling it never remounts the composer. */}
             <WorkflowStepSessionDropZone
                 stepId={step.id}
-                {...(editable && props.sessionDrop !== undefined ? { sessionDrop: props.sessionDrop } : {})}
+                label={displayName}
+                {...(props.sessionDrop === undefined ? {} : { sessionDrop: props.sessionDrop })}
                 testID={`${testIDPrefix}-step-${step.id}-session-drop`}
             >
-                <View style={workflowEditorStyles.promptFrame}>
+                <View ref={promptFrameRef} collapsable={false} style={workflowEditorStyles.promptFrame}>
                     <WorkflowStepPromptField
                         ref={inputRef}
                         custody={custody}
@@ -226,56 +298,31 @@ export function WorkflowStepEditor(props: Readonly<{
                         accessibilityLabel={accessibilityLabel}
                         editable={editable}
                         onChangeDocument={handleChangeDocument}
+                        onCommitDocument={props.onCommitDocument}
                         onFocusPrompt={handleFocusPrompt}
+                        agentInputContext={agentInputContext}
+                        {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
                     />
                 </View>
             </WorkflowStepSessionDropZone>
 
             {props.slots?.reviewedCard ?? null}
 
-            {!editable ? (
-                props.slots?.engineChip || props.slots?.footer ? (
-                    <View style={workflowEditorStyles.metaRow}>
-                        {props.slots?.engineChip ?? null}
-                        {props.slots?.footer ?? null}
-                    </View>
-                ) : null
-            ) : (
-            <View style={workflowEditorStyles.metaRow}>
-                <Text
-                    testID={`${testIDPrefix}-step-${step.id}-inheritance`}
-                    style={workflowEditorStyles.metaText}
-                >
-                    {stepDifferences.length === 0
-                        ? t('workflows.editor.usingWorkflowSettings')
-                        : stepDifferences.join(' · ')}
-                </Text>
-                <View ref={customizeAnchorRef} collapsable={false}>
-                    <HappierPressable
-                        testID={`${testIDPrefix}-step-${step.id}-customize`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('workflows.editor.customize')}
-                        hasPopup="dialog"
-                        onPress={() => onCustomize(customizeAnchorRef)}
-                        style={(state) => [
-                            workflowEditorStyles.actionTarget,
-                            workflowPressFeedbackStyle(state, theme.colors.border.focus),
-                        ]}
-                    >
-                        <Text style={workflowEditorStyles.metaAction}>{t('workflows.editor.customize')}</Text>
-                    </HappierPressable>
+            {!editable && (props.slots?.engineChip || props.slots?.footer) ? (
+                <View style={workflowEditorStyles.metaRow}>
+                    {props.slots?.engineChip ?? null}
+                    {props.slots?.footer ?? null}
                 </View>
-            </View>
-            )}
-
-            {editable ? (
-                <WorkflowStepDataEditor
-                    draft={props.draft}
-                    step={step}
-                    onChangeInput={props.onChangeInput}
-                    testIDPrefix={testIDPrefix}
-                />
             ) : null}
+
+            <WorkflowStepDataEditor
+                draft={props.draft}
+                step={step}
+                editable={editable}
+                onChangeInput={props.onChangeInput}
+                {...(editable ? { onAddNamedResults: () => onCustomize(promptFrameRef) } : {})}
+                testIDPrefix={testIDPrefix}
+            />
 
             {!editable || props.revealIssues === false ? null : issues.map((issue) => (
                 <Text

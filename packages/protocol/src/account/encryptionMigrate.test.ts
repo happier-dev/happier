@@ -46,7 +46,7 @@ import {
 describe('account/encryptionMigrate', () => {
   it('binds the exact binary inventory and refuses target-mode mismatches or duplicate blob identities', () => {
     const blob = { blobId: '11111111-1111-4111-8111-111111111111', expectedContentSha256: 'a'.repeat(64),
-      content: { t: 'plain' as const, v: 'AA==' } };
+      content: { t: 'plain' as const, uploadId: '11111111-1111-4111-8111-111111111112', contentSha256: 'b'.repeat(64) } };
     const item = { artifactId: '22222222-2222-4222-8222-222222222222', expectedHeaderVersion: 1, expectedBodyVersion: 1,
       expectedDataEncryptionKey: 'source', dataEncryptionKey: 'plain', header: 'header', body: 'body',
       recipientKeyEnvelopes: [], revisions: [], blobs: [blob] };
@@ -57,10 +57,15 @@ describe('account/encryptionMigrate', () => {
     expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
       artifacts: { ...request.artifacts, items: [{ ...item, blobs: [{ ...blob, expectedContentSha256: 'b'.repeat(64) }] }] } }, ...binding }))
       .not.toBe(digest);
+    for (const content of [{ ...blob.content, contentSha256: 'c'.repeat(64) },
+      { ...blob.content, uploadId: '11111111-1111-4111-8111-111111111113' }]) {
+      expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
+        artifacts: { ...request.artifacts, items: [{ ...item, blobs: [{ ...blob, content }] }] } }, ...binding })).not.toBe(digest);
+    }
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
       artifacts: { ...request.artifacts, items: [{ ...item, blobs: [blob, blob] }] } }).success).toBe(false);
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
-      artifacts: { ...request.artifacts, items: [{ ...item, blobs: [{ ...blob, content: { t: 'encrypted', c: 'AA==' } }] }] } }).success).toBe(false);
+      artifacts: { ...request.artifacts, items: [{ ...item, blobs: [{ ...blob, content: { ...blob.content, t: 'encrypted' } }] }] } }).success).toBe(false);
   });
   it('converts the canonical content-key digest to the Account-currentness fingerprint without rehashing', () => {
     const publicKey = new Uint8Array(32).fill(0x5a);

@@ -6,15 +6,17 @@ import {
   createCapturingLegendListMock,
   createDeferred,
   createExpoVectorIconsMock,
-  createLiveStorageStoreMock,
   createModalModuleMock,
   createSessionFixture,
   createSessionMessagesFixture,
-  createStorageModuleStub,
   renderScreen,
   standardCleanup,
 } from '@/dev/testkit';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
+import {
+  installDisconnectedServerSocketBoundary,
+  restoreServerAccountForTest,
+} from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -22,10 +24,12 @@ import type { SessionMessages } from '@/sync/store/domains/messages';
 
 const legendListMock = createCapturingLegendListMock({ renderItems: true });
 const modalMock = createModalModuleMock({ confirmResult: true });
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+let storage: typeof import('@/sync/domains/state/storage')['storage'];
 
 const state = vi.hoisted(() => ({
   profileScope: null as ServerAccountScope | null,
-  profileScopeListeners: new Set<() => void>(),
   refreshCalls: [] as string[],
   loadOlderCalls: [] as string[],
   refreshBySessionId: new Map<string, () => Promise<void>>(),
@@ -51,34 +55,11 @@ vi.mock('expo-router', async () => {
   return createExpoRouterMock({ pathname: '/settings/voice-history' }).module;
 });
 
-vi.mock('@/sync/domains/state/storage', () => {
-  const storage = createLiveStorageStoreMock(() => ({
-    profileScope: state.profileScope,
-    sessions: state.sessions,
-    sessionMessages: state.sessionMessages,
-  }));
-  return createStorageModuleStub({
-    storage,
-    useActiveServerAccountScope: () => React.useSyncExternalStore(
-      (listener) => {
-        state.profileScopeListeners.add(listener);
-        return () => state.profileScopeListeners.delete(listener);
-      },
-      () => state.profileScope,
-      () => state.profileScope,
-    ),
-  });
-});
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-  getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
-  subscribeActiveServer: () => () => {},
-}));
-
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
   captureServerRequestAuthorityForServerAccountScope: async ({ scope }: { scope: ServerAccountScope }) => ({
     scope,
     context: {},
+    release: async () => {},
     request: async () => new Response(JSON.stringify({
       sessions: [lookupSessionRecord(
         scope.accountId === 'account-a' ? 'voice-history-a' : 'voice-history-b',
@@ -125,6 +106,7 @@ function lookupSessionRecord(id: string) {
 function historySession(id: string): Session {
   return createSessionFixture({
     id,
+    serverId: connection.home.id,
     active: false,
     metadata: {
       path: '/Users/tester/voice-history',
@@ -165,7 +147,7 @@ function voiceMessage(id: string, text: string): Message {
 
 function publishScope(scope: ServerAccountScope): void {
   state.profileScope = scope;
-  for (const listener of [...state.profileScopeListeners]) listener();
+  storage.setState({ profileScope: scope });
 }
 
 async function flushAsyncWork(): Promise<void> {
@@ -178,12 +160,16 @@ async function flushAsyncWork(): Promise<void> {
 }
 
 describe('Voice History route account scope', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    storage = (await import('@/sync/domains/state/storage')).storage;
+    connection = await restoreServerAccountForTest({
+      serverUrl: 'https://voice-history.test',
+      accountId: 'account-a',
+    });
     legendListMock.state.reset();
     modalMock.spies.confirm.mockReset();
     modalMock.spies.confirm.mockResolvedValue(true);
-    state.profileScope = { serverId: 'server-1', accountId: 'account-a' };
-    state.profileScopeListeners.clear();
+    state.profileScope = { serverId: connection.home.id, accountId: 'account-a' };
     state.refreshCalls.length = 0;
     state.loadOlderCalls.length = 0;
     state.refreshBySessionId.clear();
@@ -204,12 +190,17 @@ describe('Voice History route account scope', () => {
         isLoaded: true,
       }),
     };
+    storage.setState({
+      profileScope: state.profileScope,
+      sessions: state.sessions,
+      sessionMessages: state.sessionMessages,
+    });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     standardCleanup();
-    state.profileScopeListeners.clear();
     registerStorageStateReader(() => null as never);
+    await connection?.dispose();
   });
 
   it('remounts one History consumer per same-server Account scope and never restores Account A rows', async () => {
@@ -229,11 +220,7 @@ describe('Voice History route account scope', () => {
       sessions: [lookupSessionRecord('voice-history-a')],
     }).success).toBe(true);
     const route = await import('../../../../app/(app)/settings/voice-history');
-    registerStorageStateReader(() => ({
-      profileScope: state.profileScope,
-      sessions: state.sessions,
-      sessionMessages: state.sessionMessages,
-    }) as never);
+    registerStorageStateReader(() => storage.getState());
     const screen = await renderScreen(React.createElement(route.default));
     await flushAsyncWork();
     await vi.waitFor(() => expect(state.refreshCalls).toEqual(['voice-history-a']));
@@ -252,7 +239,7 @@ describe('Voice History route account scope', () => {
     expect(state.loadOlderCalls).toEqual(['voice-history-a']);
 
     await act(async () => {
-      publishScope({ serverId: 'server-1', accountId: 'account-b' });
+      publishScope({ serverId: connection.home.id, accountId: 'account-b' });
     });
     expect(screen.findByTestId('voice-history-row-account-a-row')).toBeNull();
     expect(screen.findByTestId('voice-history-loading')).not.toBeNull();

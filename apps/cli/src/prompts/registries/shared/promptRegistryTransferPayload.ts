@@ -7,7 +7,7 @@ import type { PromptRegistryFetchedItemV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
-import type { DownloadTransferSource } from '@/transfers/targets/downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 
 function createTempPromptRegistryPayloadPath(): string {
   return join(tmpdir(), 'happier', 'prompt-registry-items', `${randomUUID()}.json`);

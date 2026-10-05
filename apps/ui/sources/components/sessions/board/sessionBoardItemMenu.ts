@@ -5,7 +5,7 @@ import type {
 
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import type { WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
-import { buildWidgetFrameStyleActions } from '@/components/widgets/frame/widgetFrameMenu';
+import { buildWidgetDefinitionActions, buildWidgetFrameStyleActions } from '@/components/widgets/frame/widgetFrameMenu';
 import { t } from '@/text';
 
 import type { SessionWidgetDensity } from './SessionWidgetHost';
@@ -37,6 +37,10 @@ export type SessionBoardItemMenuInput = Readonly<{
     onEdit?: (() => void) | undefined;
     /** Starts the inline title editor. Present so rename is not pointer-only. */
     onRename?: (() => void) | undefined;
+    /** A configured widget's Edit inputs… (lab dbind E): this copy only; the line repeats its binding. */
+    editInputs?: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
+    /** The widget definition flows this card offers (About, Save as your widget, Post a snapshot). */
+    definition?: Readonly<{ onAbout?: (() => void) | undefined; onSaveAsYours?: (() => void) | undefined; onPostSnapshot?: (() => void) | undefined }>;
     onMove?: ((direction: 'before' | 'after') => void) | undefined;
     canMoveBefore?: boolean | undefined;
     canMoveAfter?: boolean | undefined;
@@ -108,6 +112,10 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
         });
     }
 
+    // About and Save as your widget only read the item; Post a snapshot is offered only to an editor
+    // by its producer. All three reach readers of this Session alike.
+    actions.push(...buildWidgetDefinitionActions({ ...(input.definition ?? {}), group: contentGroup }));
+
     if (input.density !== 'full' || !input.canEdit) {
         // A compact Companion/sidebar placement still needs a way to remove the
         // shared Board item. This is deliberately distinct from the viewer-local
@@ -125,6 +133,16 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
         return actions;
     }
 
+    if (input.editInputs) {
+        actions.push({
+            id: 'edit-inputs',
+            title: t('widgetAdd.editInputs'),
+            ...(input.editInputs.binding ? { subtitle: input.editInputs.binding } : {}),
+            icon: 'sliders-horizontal',
+            group: contentGroup,
+            onPress: input.editInputs.onPress,
+        });
+    }
     if (input.onEdit && isSessionBoardItemEditableInPlace(item)) {
         actions.push({ id: 'edit', title: t('common.edit'), icon: 'pencil', group: contentGroup, onPress: input.onEdit });
     }

@@ -5,19 +5,17 @@ import type { PluginUiInlineSurfacePlacementProjection } from '@/sync/domains/pl
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import {
     resolveWidgetInlineMount,
-    isWidgetPlacementAdmitted,
     selectWidgetPlacementsBySurface,
-    type WidgetPlacement,
     type WidgetPresentation,
     type WidgetTargetKind,
 } from '@/sync/domains/plugins/ui/widgetContract';
 import type { PluginSurfacePresentationState } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 
 /**
- * The exact persisted installed-plugin reference of a widget: a stable
+ * The installed arm passed by the configured-instance adapter: a stable
  * qualified surface identity and nothing else — no plugin version, immutable
  * generation, renderer, machine, Artifact or placement. A Board item stores it
- * as its `installedSurface` source; Home stores its qualified key.
+ * inside its canonical instance definition; this mount-only wrapper is not a persisted shape.
  */
 export type InstalledWidgetSource = Readonly<{
     kind: 'installedSurface';
@@ -78,8 +76,6 @@ export function resolveInstalledWidgetMount(input: Readonly<{
     target: WidgetTargetKind;
     /** The public embedded presentation this physical host maps onto. */
     presentation: WidgetPresentation;
-    /** Direct host placement; omitted keeps Session Board / App Home admission. */
-    placement?: WidgetPlacement;
     runtime: Pick<PluginUiProjectionCurrentness, 'phase' | 'pluginUiProjection'>;
 }>): InstalledWidgetMount {
     const inlineMount = resolveWidgetInlineMount(input.presentation, input.target);
@@ -100,9 +96,6 @@ export function resolveInstalledWidgetMount(input: Readonly<{
             'unavailable',
             placements.length === 0 ? 'widget_surface_absent' : 'widget_surface_ambiguous',
         );
-    }
-    if (!isWidgetPlacementAdmitted(placements[0]!, input.placement)) {
-        return unresolved('unavailable', 'widget_placement_unadmitted');
     }
     // The projection normalizer already parsed this binding through
     // `PluginUiSurfaceBindingV1Schema`, whose inline arm enforces the Registry

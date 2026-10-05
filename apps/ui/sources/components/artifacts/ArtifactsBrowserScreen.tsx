@@ -140,7 +140,7 @@ export function ArtifactsBrowser(props: Readonly<{
     const anatomy = useBrowserAnatomy(presentation);
     const newDocument = React.useCallback(() => router.push('/artifacts/new' as never), [router]);
 
-    const firstVisit = loaded && total === 0;
+    const firstVisit = loaded && total === 0 && !loadFailed;
     const header = (
         <BrowserHeader
             total={total}

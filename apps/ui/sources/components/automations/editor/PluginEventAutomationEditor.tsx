@@ -6,7 +6,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { AutomationPluralEditorScreen } from './AutomationPluralEditorScreen';
 import { PluginEventAutomationComposerContent } from './PluginEventAutomationComposerContent';
 import { buildPluginEventAutomationTriggerInput } from './pluginEventAutomationDraft';
 import {
@@ -24,9 +23,7 @@ type PluginEventDefinitionInput = Extract<
     Readonly<{ kind: 'pluginEvent' }>
 >;
 
-type PluginEventEditorCompletion = Parameters<
-    NonNullable<React.ComponentProps<typeof AutomationPluralEditorScreen>['renderPluginEventEditor']>
->[0]['onComplete'];
+type PluginEventEditorCompletion = (definition: PluginEventDefinitionInput) => void;
 
 type PluginEventEditorObservationPlacement = Readonly<{
     kind: 'checkpointedPull';

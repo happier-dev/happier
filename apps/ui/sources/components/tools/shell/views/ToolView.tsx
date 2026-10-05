@@ -8,6 +8,8 @@ import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { Metadata } from '@happier-dev/session-core/state';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { PermissionFooter } from '../permissions/PermissionFooter';
+import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
+import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { t } from '@/text';
@@ -42,6 +44,7 @@ import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveIna
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { buildApprovalToolCallLocation, doesApprovalMatchToolCall } from './toolApprovalPromptMatching';
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { shouldShowTranscriptRowPinAction } from '@/components/sessions/transcript/transcriptRowActionVisibility';
@@ -53,9 +56,12 @@ import {
 } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { SessionBoardActionResultReference } from '@/components/sessions/transcript/references/SessionBoardActionResultReference';
 import { WorkflowRunActionResultReference } from '@/components/sessions/transcript/references/WorkflowRunActionResultReference';
+import { WorkflowDefinitionActionResultReference } from '@/components/sessions/transcript/references/WorkflowDefinitionActionResultReference';
 import { BrowserActionResultReference } from '@/components/sessions/transcript/references/BrowserActionResultReference';
 import { ComputerActionResultReference } from '@/components/sessions/transcript/references/ComputerActionResultReference';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
+import { useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
 
@@ -67,6 +73,8 @@ interface ToolViewProps {
     sessionId?: string;
     serverId?: string;
     messageId?: string;
+    /** Synthetic thinking cards consume their original message's text block. */
+    findBodyBlockId?: string;
     /** Row seq, so a seq-targeted transcript jump can land its highlight here. */
     jumpHighlightSeq?: number | null;
     headerAction?: ToolRowPinAction | null;
@@ -119,6 +127,13 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
     const interaction = props.interaction ?? sourceInteraction;
     const { theme } = useUnistyles();
     const [isExpanded, setIsExpanded] = React.useState(false);
+    const find = useTranscriptFindRow(messageId);
+    const findBodyReveal = find?.reveal && find.reveal.blockId !== 'tool-title';
+    const findRevealId = findBodyReveal ? find?.reveal?.requestId : undefined;
+    React.useEffect(() => {
+        if (findRevealId !== undefined) setIsExpanded(true);
+    }, [findRevealId]);
+    const findRanges = (blockId: string) => find?.blocks.find((block) => block.id === blockId)?.sourceRanges;
     const {
         toolViewDetailLevelDefault,
         toolViewDetailLevelDefaultLocalControl,
@@ -171,6 +186,11 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
+    const pendingLanding = usePendingPromptLanding(resolvePermissionRequestId(toolForRendering), messageId);
+    const pendingLandingToken = messageId ? pendingLanding?.token : undefined;
+    React.useEffect(() => {
+        if (pendingLandingToken !== undefined) setIsExpanded(true);
+    }, [pendingLandingToken]);
 
     const handleToggleExpanded = React.useCallback(() => {
         setIsExpanded((v) => !v);
@@ -237,7 +257,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
     const expandedDetailLevel: 'summary' | 'full' =
         (toolViewExpandedDetailLevelByToolName as Record<string, 'summary' | 'full'> | null | undefined)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
-    const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
+    const effectiveDetailLevel = isExpanded ? (findBodyReveal ? 'full' : expandedDetailLevel) : collapsedDetailLevel;
 
     const transcriptSidechainId = React.useMemo(() => {
         return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
@@ -361,7 +381,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
         toolForRendering.id ??
         `${sessionId ?? 'no-session'}:${normalizedToolName}:${toolForRendering.createdAt}`;
 
-    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript
+    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript || pendingLandingToken !== undefined
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
@@ -390,7 +410,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
     return (
         <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
-            sessionId={sessionId ?? ''}
+            sessionAddress={transcriptSource.sessionId === sessionId ? normalizeSessionAddress(transcriptSource.serverId, sessionId) : null}
             routeMessageId={messageId ?? null}
             seq={transcriptSeq}
             radius={TOOL_VIEW_HIGHLIGHT_RADIUS}
@@ -408,18 +428,18 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                         {icon}
                     </View>
                     <View style={styles.titleContainer}>
-                        <Text style={styles.toolName} numberOfLines={1}>
-                            {toolTitle}
-                            {headerStatusText ? <Text style={styles.status}>{` ${headerStatusText}`}</Text> : null}
+                        <Text style={styles.toolName} numberOfLines={find?.reveal?.blockId && ['tool-title', 'tool-subtitle', 'tool-status'].includes(find.reveal.blockId) ? undefined : 1}>
+                            {findRanges('tool-title')?.length ? <FindHighlightedText text={toolTitle} ranges={findRanges('tool-title')} /> : toolTitle}
+                            {headerStatusText ? <Text style={styles.status}> {findRanges('tool-status')?.length ? <FindHighlightedText text={headerStatusText} ranges={findRanges('tool-status')} /> : headerStatusText}</Text> : null}
                             {showSubtitleInline && headerDescription ? (
-                                <Text style={styles.compactSubtitle} numberOfLines={1}>
-                                    {` · ${headerDescription}`}
+                                <Text style={styles.compactSubtitle} numberOfLines={find?.reveal?.blockId === 'tool-subtitle' ? undefined : 1}>
+                                    {' · '}{findRanges('tool-subtitle')?.length ? <FindHighlightedText text={headerDescription} ranges={findRanges('tool-subtitle')} /> : headerDescription}
                                 </Text>
                             ) : null}
                         </Text>
                         {!showSubtitleInline && headerDescription ? (
-                            <Text testID="tool-card-subtitle" style={styles.toolDescription} numberOfLines={1}>
-                                {headerDescription}
+                            <Text testID="tool-card-subtitle" style={styles.toolDescription} numberOfLines={find?.reveal?.blockId === 'tool-subtitle' ? undefined : 1}>
+                                {findRanges('tool-subtitle')?.length ? <FindHighlightedText text={headerDescription} ranges={findRanges('tool-subtitle')} /> : headerDescription}
                             </Text>
                         ) : null}
                     </View>
@@ -503,6 +523,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                         sessionId={sessionId}
                         serverId={props.serverId}
                         messageId={messageId}
+                        findBodyBlockId={props.findBodyBlockId}
                         interaction={interaction}
                         detailLevel={renderBodyDetailLevel}
                         setHeaderActions={setHeaderActions}
@@ -530,6 +551,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                 tool={toolForRendering}
                 serverId={props.serverId}
             />
+            <WorkflowDefinitionActionResultReference tool={toolForRendering} serverId={props.serverId} />
             <BrowserActionResultReference
                 tool={toolForRendering}
                 sessionId={sessionId}
@@ -548,6 +570,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
             {showPermissionPromptsInTranscript && isWaitingForPermission && toolForRendering.permission && sessionId && shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) && (
                 <PermissionFooter
                     permission={toolForRendering.permission}
+                    messageId={messageId}
                     sessionId={sessionId}
                     serverId={props.serverId}
                     toolName={normalizedToolName}

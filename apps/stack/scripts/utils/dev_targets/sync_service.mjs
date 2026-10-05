@@ -367,8 +367,12 @@ export async function inspectDevTargetSyncService(
     target: target.name,
     status: await inspectSync({ target, stackBaseDir, env }),
   })));
+  const independent = isMutagenProjectOwnedBy(project, INDEPENDENT_DEV_TARGET_SYNC_OWNER);
   return {
-    independent: isMutagenProjectOwnedBy(project, INDEPENDENT_DEV_TARGET_SYNC_OWNER),
+    independent,
+    state: independent && statuses.length > 0
+      && statuses.every(({ status }) => status.state === 'ready' || status.state === 'synchronizing')
+      ? 'ready' : 'failed',
     preparation,
     statuses,
   };

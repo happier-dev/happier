@@ -433,7 +433,6 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                 email={identity.email}
             />
             <AccountSubscriptionLine subscription={props.facts?.subscription ?? null} now={props.now} />
-            {account.fetchedAt !== null ? <SurfaceAsOfLabel at={account.fetchedAt} testID={`sidebar-usage-as-of-${account.key}`} /> : null}
             {stateLabel ? <Text style={styles.accountState}>{stateLabel}</Text> : (
                 <UsageMeterStack>
                     {account.windows.map((window) => (

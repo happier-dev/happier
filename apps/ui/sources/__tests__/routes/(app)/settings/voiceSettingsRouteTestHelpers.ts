@@ -66,7 +66,7 @@ export function installVoiceSettingsRouteModuleMocks(
             return await voiceSettingsRouteModuleState.options.textModule();
         }
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
+        return createTextModuleMock();
     });
 
     vi.mock('@/modal', async () => {
@@ -135,9 +135,11 @@ export function installVoiceSettingsRouteModuleMocks(
         }
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const defaults = settingsParse({});
         return createStorageModuleStub({
-            useSetting: () => null,
-            useSettings: () => settingsParse({}),
+            // The hub's Voice setup block reads the Home layout's dismissed steps; every other setting stays unset.
+            useSetting: (key: string) => (key === 'homeHubLayoutV1' ? defaults.homeHubLayoutV1 : null),
+            useSettings: () => defaults,
         });
     });
 }

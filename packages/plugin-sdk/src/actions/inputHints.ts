@@ -5,6 +5,13 @@ import {
   readActionInputOptionValue as canonicalReadActionInputOptionValue,
   resolveEffectiveActionInputFields as canonicalResolveEffectiveActionInputFields,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import {
+  readInputPath as canonicalReadInputPath,
+  writeInputPath as canonicalWriteInputPath,
+  resolveEffectiveInputFields as canonicalResolveEffectiveInputFields,
+  normalizeInputByFieldHints as canonicalNormalizeInputByFieldHints,
+  readInputTypePickerLaunchInput as canonicalReadInputTypePickerLaunchInput,
+} from '@happier-dev/protocol/inputs';
 
 import type {
   ActionInputFieldHint,
@@ -25,6 +32,24 @@ export type {
   ActionInputPredicate,
   EffectiveActionInputField,
 };
+
+/** Neutral fields used by Actions, Workflow declarations and widget inputs. */
+export type InputFieldHint = ActionInputFieldHint;
+export type InputHints = ActionInputHints;
+export type InputOption = ActionInputOption;
+export type InputOptionValue = ActionInputOptionValue;
+export type { InputPredicate } from './dtos/pluginActionDtoSupport.generated.js';
+export type EffectiveInputField = EffectiveActionInputField;
+export type InputTypePickerLaunchInputV1 = Readonly<{
+  inputType: Readonly<{ pluginId: string; localId: string }>; semantic: string;
+  value?: import('../identity.js').JsonValue; options?: readonly InputOption[];
+}>;
+export const readInputTypePickerLaunchInput: (value: unknown) => InputTypePickerLaunchInputV1 | null = projectProtocolValue(canonicalReadInputTypePickerLaunchInput);
+
+export const readInputPath: (input: unknown, path: string) => unknown = canonicalReadInputPath;
+export const writeInputPath: (input: Readonly<Record<string, unknown>>, path: string, value: unknown) => Record<string, unknown> = canonicalWriteInputPath;
+export const resolveEffectiveInputFields: (spec: Readonly<{ inputHints?: InputHints }>, input: unknown) => readonly EffectiveInputField[] = projectProtocolValue(canonicalResolveEffectiveInputFields);
+export const normalizeInputByFieldHints: (spec: Readonly<{ inputHints?: InputHints }>, input: Record<string, unknown>) => Record<string, unknown> = projectProtocolValue(canonicalNormalizeInputByFieldHints);
 
 /**
  * The normalized, author-visible Action form contract consumed by UI

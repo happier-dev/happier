@@ -1,84 +1,23 @@
 import * as React from 'react';
 
 import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol';
-import {
-  createHostPluginSettingsActionInvoker,
-  pluginJsonValuesEqual,
-  VoiceRealtimeJsonValueSchema,
-} from '@happier-dev/protocol';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { Item } from '@/components/ui/lists/Item';
-import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import type { VoiceProviderPresentation } from '@/voice/registry/voiceProviderPresentation';
 import { Modal } from '@/modal';
 import { log } from '@/log';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import { storage } from '@/sync/domains/state/storage';
-import {
-  readVoiceProviderSettingsConfig,
-  voiceSettingsParse,
-  writeVoiceProviderSettingsConfig,
-} from '@/sync/domains/settings/voiceSettings';
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import {
   getExternalVoiceProviderRegistration,
-  type ExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
-import { resolveVoiceProviderIdForSettingsAction } from '@/voice/settings/resolveVoiceProviderId';
-import {
-  areAccountSettingsScopesEqual,
-  type AccountSettingsScope,
-} from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
 
-export type VoiceProviderSettingsActionOwner = Readonly<{
-  defaultConfig: Readonly<Record<string, unknown>>;
-  parseConfig(value: unknown): Readonly<Record<string, unknown>> | null;
-}>;
-
-type ActionContext = Readonly<{
-  actionId: string;
-  providerId: string;
-  occurrenceId: string;
-  owner: VoiceProviderSettingsActionOwner;
-  registration: ExternalVoiceProviderRegistration;
-  settingsScope: AccountSettingsScope | null;
-}>;
-
-const SAFE_SETTINGS_ACTION_ERROR_CODES = new Set([
-  'invalid_parameters',
-  'credential_unavailable',
-  'credential_access_review_required',
-  'provider_unavailable',
-  'operation_unsupported',
-  'rate_limited',
-  'request_timeout',
-  'provider_response_invalid',
-  'internal_error',
-  // The provider refused a setting the user can change. An enum value is a
-  // structural fact, not provider prose, so it is admitted while the response
-  // text that carried it stays out of the projection.
-  'voice_not_found',
-  'voice_account_operation_unauthorized',
-  'voice_provider_settings_action_context_missing',
-  'voice_provider_settings_action_retired',
-  'voice_provider_settings_action_unavailable',
-  'voice_provider_settings_version_unavailable',
-  'voice_provider_settings_invalid',
-  'voice_provider_settings_action_patch_invalid',
-  'voice_provider_settings_action_conflict',
-  'voice_provider_settings_action_outcome_unknown',
-  'voice_provider_settings_action_confirmation_unavailable',
-  'voice_account_operation_cancelled',
-  // Host/protocol lifecycle constants. Allowlisted so a press that ends
-  // without applying anything can still name why in one bounded record.
-  'plugin_settings_action_generation_retired',
-  'plugin_settings_action_confirmation_declined',
-  'plugin_settings_action_cancelled',
-  'plugin_settings_action_busy',
-]);
+import { settingsActionInvoker, isContextCurrent, isPressedProviderSelected, readSafeSettingsActionErrorCode, type VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
+export type { VoiceProviderSettingsActionOwner } from '@/voice/settings/voiceProviderSettingsActionInvoker';
 
 const SAFE_RESPONSE_FAILURE_KINDS = new Set([
   'redirect',
@@ -126,9 +65,7 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 function projectSafeSettingsActionFailure(error: unknown): SafeSettingsActionFailureDiagnostic {
   const record = readRecord(error);
   if (!record) return Object.freeze({});
-  const code = typeof record.code === 'string' && SAFE_SETTINGS_ACTION_ERROR_CODES.has(record.code)
-    ? record.code
-    : null;
+  const code = readSafeSettingsActionErrorCode(error);
   const stage = typeof record.stage === 'string' && SAFE_STAGE_PATTERN.test(record.stage)
     ? record.stage
     : null;
@@ -204,166 +141,15 @@ function localized(value: string | Readonly<{ key: string; fallback: string }>):
   return typeof value === 'string' ? value : value.fallback;
 }
 
-function actionError(code: string): Error {
-  return Object.assign(new Error(code), { code });
-}
-
-/** The user moved to another Voice provider: the press was superseded by them. */
-function isPressedProviderSelected(context: ActionContext): boolean {
-  return resolveVoiceProviderIdForSettingsAction(
-    storage.getState().settings.voice,
-    context.providerId,
-  ) === context.providerId;
-}
-
-function isContextCurrent(context: ActionContext): boolean {
-  return getExternalVoiceProviderRegistration(context.providerId) === context.registration
-    && areAccountSettingsScopesEqual(storage.getState().settingsScope, context.settingsScope)
-    && isPressedProviderSelected(context);
-}
-
-const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContext, void>({
-  createError: actionError,
-  async confirm({ declaration, signal, context }) {
-    if (declaration.confirmation.kind !== 'required') return true;
-    if (!context) throw actionError('voice_provider_settings_action_context_missing');
-    const interactions = createAppShellTransientInteractions({
-      requester: {
-        pluginId: context.registration.pluginId,
-        contributionId: context.registration.localId,
-        occurrenceId: context.occurrenceId,
-        invocationId: context.actionId,
-      },
-      signal,
-      isCurrent: () => isContextCurrent(context),
-    });
-    const outcome = await interactions.confirm({
-      kind: 'confirmation',
-      title: localized(declaration.confirmation.title),
-      message: localized(declaration.confirmation.description),
-    }, {
-      presentationContext: {
-        confirmLabel: localized(declaration.confirmation.confirmLabel),
-      },
-    });
-    // A confirmation that could not be presented is a failure, not a decline:
-    // the user never saw the question, so the action must not end in silence.
-    if (outcome.status !== 'approved' && outcome.status !== 'declined' && outcome.status !== 'userCancelled') {
-      // The generic invoker owns the post-confirmation currentness check. Let
-      // it classify a retired invocation instead of relabeling that lifecycle
-      // fact as an unavailable dialog.
-      if (!isContextCurrent(context) || signal.aborted) return false;
-      throw actionError('voice_provider_settings_action_confirmation_unavailable');
-    }
-    return outcome.status === 'approved';
-  },
-  async snapshot({ signal, context }) {
-    if (!context) throw actionError('voice_provider_settings_action_context_missing');
-    throwIfAborted(signal);
-    await getSyncSingleton().prepareAccountSettingsForDaemonSpawn();
-    throwIfAborted(signal);
-    if (!isContextCurrent(context)) throw actionError('voice_provider_settings_action_retired');
-    // Read revision and values from one canonical storage projection after the
-    // Account Settings owner has flushed. A server update may settle while the
-    // preparation promise is pending, so its earlier hint must not be paired
-    // with settings from a later projection.
-    const accountSettingsSnapshot = storage.getState();
-    const version = accountSettingsSnapshot.settingsVersion;
-    if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
-      throw actionError('voice_provider_settings_version_unavailable');
-    }
-    const voice = voiceSettingsParse(accountSettingsSnapshot.settings.voice);
-    const config = context.owner.parseConfig(
-      readVoiceProviderSettingsConfig(voice, context.providerId),
-    ) ?? context.owner.parseConfig(context.owner.defaultConfig);
-    const parsed = VoiceRealtimeJsonValueSchema.safeParse(config);
-    if (!parsed.success || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
-      throw actionError('voice_provider_settings_invalid');
-    }
-    return Object.freeze({
-      values: Object.freeze(parsed.data as Readonly<Record<string, JsonValue>>),
-      revision: String(version),
-    });
-  },
-  async execute(input, context, { signal }) {
-    if (!context) throw actionError('voice_provider_settings_action_context_missing');
-    if (!isContextCurrent(context)) throw actionError('voice_provider_settings_action_retired');
-    const actions = context.registration.settingsActions;
-    if (!actions) throw actionError('voice_provider_settings_action_unavailable');
-    const settingsVersion = Number(input.settingsRevision);
-    if (!Number.isInteger(settingsVersion) || settingsVersion < 0) {
-      throw actionError('voice_provider_settings_version_unavailable');
-    }
-    return await actions.execute({ ...input, signal });
-  },
-  async applyPatch({ snapshot, patch, signal, context }) {
-    if (!context) throw actionError('voice_provider_settings_action_context_missing');
-    throwIfAborted(signal);
-    const expectedSettingsVersion = Number(snapshot.revision);
-    if (!Number.isInteger(expectedSettingsVersion) || expectedSettingsVersion < 0) {
-      throw actionError('voice_provider_settings_version_unavailable');
-    }
-    const mutateAtVersion = async (version: number) => await getSyncSingleton().mutateAccountSettingsOnce({
-      expectedSettingsScope: context.settingsScope,
-      expectedSettingsVersion: version,
-      mutate(raw) {
-        if (!isContextCurrent(context) || signal.aborted) {
-          throw actionError('voice_provider_settings_action_retired');
-        }
-        const voice = voiceSettingsParse(raw.voiceSettingsV1);
-        const currentConfig = context.owner.parseConfig(
-          readVoiceProviderSettingsConfig(voice, context.providerId),
-        ) ?? context.owner.parseConfig(context.owner.defaultConfig);
-        const nextConfig = currentConfig
-          ? context.owner.parseConfig({ ...currentConfig, ...patch })
-          : null;
-        if (!nextConfig) throw actionError('voice_provider_settings_action_patch_invalid');
-        const nextVoice = writeVoiceProviderSettingsConfig(voice, context.providerId, nextConfig);
-        return Object.freeze({
-          settings: { ...raw, voiceSettingsV1: nextVoice },
-          value: undefined,
-        });
-      },
-    });
-    let result = await mutateAtVersion(expectedSettingsVersion);
-    throwIfAborted(signal);
-    if (result.status === 'conflict') {
-      if (!isContextCurrent(context)) {
-        throw actionError('voice_provider_settings_action_retired');
-      }
-      const refreshedVoice = voiceSettingsParse(storage.getState().settings.voice);
-      const refreshedConfig = context.owner.parseConfig(
-        readVoiceProviderSettingsConfig(refreshedVoice, context.providerId),
-      ) ?? context.owner.parseConfig(context.owner.defaultConfig);
-      const actionReadFieldsAreUnchanged = refreshedConfig !== null
-        && Object.entries(snapshot.values).every(([fieldId, value]) => (
-          Object.hasOwn(refreshedConfig, fieldId)
-          && pluginJsonValuesEqual(value, refreshedConfig[fieldId] as JsonValue)
-        ));
-      if (!actionReadFieldsAreUnchanged) {
-        throw actionError('voice_provider_settings_action_outcome_unknown');
-      }
-      result = await mutateAtVersion(result.currentSettingsVersion);
-      throwIfAborted(signal);
-      if (result.status === 'conflict') {
-        throw actionError('voice_provider_settings_action_outcome_unknown');
-      }
-    }
-    if (result.status === 'outcomeUnknown') {
-      // The Account Settings owner already performed its only safe readback.
-      // A settings action must not report its provider patch as applied.
-      throw actionError('voice_provider_settings_action_outcome_unknown');
-    }
-  },
-});
-
 export function VoiceProviderSettingsActions(props: Readonly<{
   providerId: string;
   owner: VoiceProviderSettingsActionOwner;
   actions: readonly VoiceProviderSettingsActionDeclaration[];
   config?: Readonly<Record<string, unknown>>;
+  agentAction?: VoiceProviderPresentation['agentAction'];
   placement: Readonly<{ kind: 'afterField'; fieldId: string }> | Readonly<{ kind: 'contributionFooter' }>;
 }>) {
+  const settingRef = useVoiceContributedSettingRefs(props.providerId);
   const registration = getExternalVoiceProviderRegistration(props.providerId);
   const settingsScope = useAccountSettingsScope();
   const [busyActionIds, setBusyActionIds] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -384,11 +170,15 @@ export function VoiceProviderSettingsActions(props: Readonly<{
     return () => lifecycleRef.current.abort();
   }, [props.providerId, registration?.token]);
 
+  const agentAction = props.agentAction;
+  const agentConfigured = agentAction && typeof props.config?.[agentAction.settingId] === 'string'
+    && String(props.config[agentAction.settingId]).trim().length > 0;
   const actions = props.actions.filter((action) => (
     props.placement.kind === 'contributionFooter'
       ? action.placement.kind === 'contributionFooter'
       : action.placement.kind === 'afterField' && action.placement.fieldId === props.placement.fieldId
-  ));
+  )).filter((action) => !agentAction || (action.id !== agentAction.createActionId && action.id !== agentAction.updateActionId)
+    || action.id === (agentConfigured ? agentAction.updateActionId : agentAction.createActionId));
   if (!registration?.settingsActions || !registration.occurrenceId || actions.length === 0) return null;
   const occurrenceId = registration.occurrenceId;
 
@@ -399,14 +189,7 @@ export function VoiceProviderSettingsActions(props: Readonly<{
         : undefined;
       const enabled = !action.enabledWhen
         || (typeof enablingValue === 'string' && enablingValue.trim().length > 0);
-      return (
-        <Item
-          key={action.id}
-          testID={`voice-settings-action-${action.id}`}
-          title={localized(action.title)}
-          loading={busyActionIds.has(action.id)}
-          disabled={busyActionIds.has(action.id) || !enabled}
-          onPress={() => {
+      const invoke = () => {
             if (busyActionIds.has(action.id) || !enabled) return;
             const signal = lifecycleRef.current.signal;
             const context = Object.freeze({
@@ -466,9 +249,27 @@ export function VoiceProviderSettingsActions(props: Readonly<{
                 }
               }
             })(), { tag: `VoiceProviderSettingsActions.${action.id}` });
-          }}
+      };
+      const row = agentAction ? (
+        <Item key={action.id} title={tLoose(agentAction.titleKey)} subtitleLines={0} showChevron={false}
+          subtitle={busyActionIds.has(action.id) ? t('common.loading')
+            : tLoose(agentConfigured ? agentAction.configuredStateKey : agentAction.missingStateKey)}
+          rightElementOutsidePressable rightElement={<RoundButton testID={`voice-settings-action-${action.id}`}
+            title={t(agentConfigured ? 'common.update' : 'common.create')} display="secondary" size="small"
+            loading={busyActionIds.has(action.id)} disabled={busyActionIds.has(action.id) || !enabled} onPress={invoke} />} />
+      ) : (
+        <Item
+          key={action.id}
+          testID={`voice-settings-action-${action.id}`}
+          title={localized(action.title)}
+          loading={busyActionIds.has(action.id)}
+          disabled={busyActionIds.has(action.id) || !enabled}
+          onPress={invoke}
         />
       );
+      const settings = (agentAction ? [agentAction.createActionId, agentAction.updateActionId] : [action.id])
+        .flatMap((id) => { const setting = settingRef(`action.${id}`); return setting ? [setting] : []; });
+      return settings.length ? <SettingAnchor key={action.id} settings={settings}>{row}</SettingAnchor> : row;
     })}
   </>;
 }

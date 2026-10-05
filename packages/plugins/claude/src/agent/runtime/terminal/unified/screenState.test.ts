@@ -34,6 +34,24 @@ function ready(screen: string): boolean {
   return isClaudeScreenReadyForInput(parseClaudeScreenState(screen));
 }
 
+describe('parseClaudeScreenState — mode footer evidence', () => {
+  it('keeps a clipped permission footer unknown rather than inferring default or a historical mode', () => {
+    const screen = ['⏵⏵ auto mode on', '────────────────────', '❯ ', '────────────────────', '  Opus 5.5'].join('\n');
+    expect(parseClaudeScreenState(screen).modeMarker).toBeNull();
+  });
+
+  it.each([
+    ['⏸ manual', 'default'],
+    ['⏸ plan', 'plan'],
+    ['⏵⏵ accept edits', 'acceptEdits'],
+    ['⏵⏵ auto', 'auto'],
+    ['⏵⏵ bypass permissions', 'bypassPermissions'],
+  ] as const)('recognizes the compact Claude footer %s', (footer, mode) => {
+    const screen = ['────────────────────', '❯ ', '────────────────────', `  ${footer} · 1 background`].join('\n');
+    expect(parseClaudeScreenState(screen).modeMarker).toBe(mode);
+  });
+});
+
 describe('parseClaudeScreenState readiness', () => {
   it('recognizes an active usage-limit wait footer without treating historical notices as current', () => {
     const footer = [

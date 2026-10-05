@@ -7,55 +7,45 @@ import { TodoList } from '@/components/zen/lists/TodoList';
 import { useUnistyles } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import { storage } from '@/sync/domains/state/storage';
-import { toggleTodo as toggleTodoSync, reorderTodos as reorderTodosSync } from '@/sync/domains/todos/todoOps';
+import { toggleTodo as toggleTodoSync } from '@/sync/domains/todos/todoOps';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useShallow } from 'zustand/react/shallow';
-import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { t } from '@/text';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Text } from '@/components/ui/text/Text';
+import { useSharedValue } from 'react-native-reanimated';
 
 
 export const ZenHome = () => {
     const insets = useChromeSafeAreaInsets();
     const { theme } = useUnistyles();
     const auth = useAuth();
-    const voiceEnabled = useFeatureEnabled('voice');
+    const scrollRef = React.useRef<ScrollView>(null);
+    const offsetY = useSharedValue(0);
+    const contentHeight = useSharedValue(0);
+    const scrollMetrics = React.useMemo(() => ({ offsetY, contentHeight }), [offsetY, contentHeight]);
 
     // Get todos from storage
     const todoState = storage(useShallow(state => state.todoState));
     const todosLoaded = storage(state => state.todosLoaded);
 
     // Process todos
-    const { undoneTodos, doneTodos } = React.useMemo(() => {
+    const undoneTodos = React.useMemo(() => {
         if (!todoState) {
-            return { undoneTodos: [], doneTodos: [] };
+            return [];
         }
 
         const undone = todoState.undoneOrder
             .map(id => todoState.todos[id])
-            .filter(Boolean)
+            .filter(todo => todo && !todo.done)
             .map(todo => ({ id: todo.id, title: todo.title, done: todo.done }));
 
-        const done = todoState.doneOrder
-            .map(id => todoState.todos[id])
-            .filter(Boolean)
-            .map(todo => ({ id: todo.id, title: todo.title, done: todo.done }));
-
-        return { undoneTodos: undone, doneTodos: done };
+        return undone;
     }, [todoState]);
 
     // Handle toggle action
     const handleToggle = React.useCallback(async (id: string) => {
         if (auth?.credentials) {
             await toggleTodoSync(auth.credentials, id);
-        }
-    }, [auth?.credentials]);
-
-    // Handle reorder action
-    const handleReorder = React.useCallback(async (id: string, newIndex: number) => {
-        if (auth?.credentials) {
-            await reorderTodosSync(auth.credentials, id, newIndex, 'undone');
         }
     }, [auth?.credentials]);
 
@@ -89,8 +79,10 @@ export const ZenHome = () => {
     return (
         <>
             <ZenHeader />
-            {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
             <ScrollView
+                ref={scrollRef}
+                onScroll={event => { offsetY.value = event.nativeEvent.contentOffset.y; }}
+                onContentSizeChange={(_width, height) => { contentHeight.value = height; }}
                 style={{ flex: 1 }}
                 contentContainerStyle={{ flexGrow: 1 }}
                 showsVerticalScrollIndicator={false}
@@ -109,7 +101,7 @@ export const ZenHome = () => {
                                 </Text>
                             </View>
                         ) : (
-                            <TodoList todos={undoneTodos} onToggleTodo={handleToggle} onReorderTodo={handleReorder} />
+                            <TodoList todos={undoneTodos} onToggleTodo={handleToggle} scrollRef={scrollRef} scrollMetrics={scrollMetrics} />
                         )}
                     </View>
                 </View>

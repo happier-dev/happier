@@ -121,7 +121,7 @@ test('dependency readiness survives relocation of a byte-identical installed tre
   const sourceInspection = await inspectDependencyRefresh({ installDir: sourceRoot });
   assert.equal(sourceInspection.required, false);
   const marker = JSON.parse(await readFile(sourceInspection.markerPath, 'utf8'));
-  assert.equal(marker.version, 5);
+  assert.equal(marker.version, 6);
   assert.equal(Object.hasOwn(marker, 'installDir'), false);
   assert.equal(marker.inputs.every((input) => !input.path.includes(sourceRoot)), true);
   assert.equal(JSON.stringify(marker).includes(sourceRoot), false, 'symlink targets must be hashed instead of storing absolute paths');
@@ -138,7 +138,7 @@ test('dependency readiness survives relocation of a byte-identical installed tre
   assert.equal(refreshCount, 1, 'relocating a ready tree must not trigger another install');
 });
 
-test('dependency readiness rejects legacy v4 markers and a different toolchain identity', async (t) => {
+test('dependency readiness rejects legacy markers and a different toolchain identity', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dependency-identity-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -168,6 +168,12 @@ test('dependency readiness rejects legacy v4 markers and a different toolchain i
   );
 
   const marker = JSON.parse(await readFile(admitted.markerPath, 'utf8'));
+  await writeFile(admitted.markerPath, `${JSON.stringify({ ...marker, version: 5 })}\n`, 'utf8');
+  assert.equal(
+    (await inspectDependencyRefresh({ installDir: root, runtimeIdentity: armIdentity })).required,
+    true,
+    'v5 markers may have admitted scriptless installs as full installs and must be refreshed',
+  );
   await writeFile(admitted.markerPath, `${JSON.stringify({
     ...marker,
     version: 4,

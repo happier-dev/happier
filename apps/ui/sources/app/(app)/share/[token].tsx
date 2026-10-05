@@ -316,7 +316,7 @@ export default memo(function PublicShareViewerScreen() {
 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [errorKind, setErrorKind] = useState<'generic' | 'transcript_unavailable'>('generic');
+    const [errorKind, setErrorKind] = useState<'generic' | 'transcript_unavailable' | 'metadata_privacy_upgrade_required'>('generic');
     const [consentInfo, setConsentInfo] = useState<PublicShareConsentResponse | null>(null);
     const [dataset, setDataset] = useState<PublicShareDataset | null>(null);
     const loadGenerationRef = useRef(0);
@@ -365,6 +365,12 @@ export default memo(function PublicShareViewerScreen() {
             if (!response.ok) {
                 const data = await response.json().catch(() => null);
                 if (!isCurrentLoad()) return;
+                if (response.status === 409 && data?.code === 'metadata_privacy_upgrade_required') {
+                    setErrorKind('metadata_privacy_upgrade_required');
+                    setError(t('shareSheet.publicLink.ownerUpdateRequiredDescription'));
+                    setIsLoading(false);
+                    return;
+                }
                 if (data?.code === 'session_transcript_unavailable') {
                     setErrorKind('transcript_unavailable');
                     setError(t('externalSessions.sharingTranscriptUnavailable'));
@@ -624,11 +630,17 @@ export default memo(function PublicShareViewerScreen() {
     if (error) {
         return (
             <View style={[styles.center, { backgroundColor: theme.colors.background.canvas }]}>
-                <Icon name="warning-circle" size={64} color={theme.colors.state.danger.foreground} />
+                <Icon
+                    name={errorKind === 'metadata_privacy_upgrade_required' ? 'clock' : 'warning-circle'}
+                    size={64}
+                    color={errorKind === 'metadata_privacy_upgrade_required' ? theme.colors.text.secondary : theme.colors.state.danger.foreground}
+                />
                 <ItemList presentation="grouped">
                     <ItemGroup>
                         <Item
-                            title={errorKind === 'transcript_unavailable'
+                            title={errorKind === 'metadata_privacy_upgrade_required'
+                                ? t('shareSheet.publicLink.ownerUpdateRequired')
+                                : errorKind === 'transcript_unavailable'
                                 ? t('externalSessions.sharingTranscriptUnavailableTitle')
                                 : t('common.error')}
                             subtitle={error}

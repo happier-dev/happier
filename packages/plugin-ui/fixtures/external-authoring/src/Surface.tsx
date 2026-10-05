@@ -66,7 +66,11 @@ function ExternalAuthoringForm() {
         hints={{
           title: 'Example note',
           submitLabel: 'Save note',
-          fields: [{ path: 'note', title: 'Note', widget: 'text', required: true }],
+          fields: [
+            { path: 'note', title: 'Note', widget: 'text', required: true },
+            { path: 'repository', title: 'Repository', widget: 'select',
+              inputType: { pluginId: 'example.plugin-ui', localId: 'repository' } },
+          ],
         }}
         value={value}
         onChange={setValue}

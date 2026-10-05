@@ -108,7 +108,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
     quietLink: {
-        ...Typography.default('semiBold'),
+        ...Typography.default(),
         color: theme.colors.text.secondary,
         textDecorationLine: 'underline',
     },
@@ -125,10 +125,21 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     fullWidth: {
         alignSelf: 'stretch',
+        width: '100%',
     },
     liveAndActions: {
         alignItems: 'center',
         gap: 16,
+    },
+    inline: {
+        alignSelf: 'stretch',
+        gap: 4,
+    },
+    inlineFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
     },
 }));
 
@@ -153,10 +164,16 @@ export function SurfaceStateCard(props: Readonly<{
     kind: SurfaceStateKind;
     /** The container step; defaults to the enclosing `SurfaceStateSizeProvider`. */
     size?: SurfaceStateSize;
+    /** Existing inline anatomy for a state inside a sheet; whole-pane states stay centered. */
+    layout?: 'centered' | 'inline';
     /** Already-translated title: what is here, or what failed, in the person's words. */
     title: string;
+    /** Optional glyph decoration inside the existing title Text; semantic copy stays in `title`. */
+    titleContent?: React.ReactNode;
     /** Already-translated human explanation — the promise, or the cause (never a raw reason code). */
     reason?: string;
+    /** Optional glyph decoration inside the existing reason Text; semantic copy stays in `reason`. */
+    reasonContent?: React.ReactNode;
     /** Raw machine reason code — collapsed Details disclosure and testID marker only. */
     diagnosticCode?: string | null;
     /** Optional sanitized supplemental detail. Never pass a raw machine code. */
@@ -174,6 +191,10 @@ export function SurfaceStateCard(props: Readonly<{
      * long wait on its own ("Still waiting · 12 s") unless this is given.
      */
     live?: SurfaceStateLive;
+    /** Caller-owned domain summary, after copy/live and before actions. Compact line states omit it. */
+    body?: React.ReactNode;
+    /** Quiet context for the next action, after the domain summary. */
+    actionCaption?: string;
     /** Caller-owned glyph when a surface has a domain-specific icon. */
     icon?: React.ReactNode;
     /** Override the per-kind default glyph. */
@@ -259,14 +280,14 @@ export function SurfaceStateCard(props: Readonly<{
                             ) : null)}
                         </View>
                     )}
-                ><Text style={[styles.liveText, HAPPIER_STATE_LINE_METRICS.text]}>{props.title}{props.reason ? ` · ${props.reason}` : null}</Text></HappierStateLine>
+                ><Text style={[styles.liveText, HAPPIER_STATE_LINE_METRICS.text]}>{props.titleContent ?? props.title}{props.reason ? (props.reasonContent != null ? <>{' · '}{props.reasonContent}</> : ` · ${props.reason}`) : null}</Text></HappierStateLine>
                 {diagnosticMarker}
             </View>
         );
     }
 
     const metrics = size ? HAPPIER_STATE_SIZE_METRICS[size] : null;
-    const glyphSize = metrics?.glyphPx ?? 32;
+    const glyphSize = props.layout === 'inline' ? HAPPIER_STATE_LINE_METRICS.glyphPx : metrics?.glyphPx ?? 32;
     const icon = props.kind === 'loading' ? (
         <ActivitySpinner
             testID={props.testID ? `${props.testID}-loading-spinner` : undefined}
@@ -314,16 +335,15 @@ export function SurfaceStateCard(props: Readonly<{
     ) : null;
 
     const actions = props.action || props.secondaryAction ? (
-        <View style={[styles.actions, metrics?.fullWidthActions ? { flexDirection: 'column', alignItems: 'stretch' } : null]}>
+        <View style={[styles.actions, metrics?.fullWidthActions ? { flexDirection: 'column', alignItems: 'stretch', alignSelf: 'stretch' } : null]}>
             {props.action ? (
                 <RoundButton
                     testID={props.action.testID ?? (props.testID ? `${props.testID}-action` : undefined)}
                     disabled={props.action.disabled}
                     loading={props.action.busy}
-                    // Lab 0: an invitation's one primary is filled; a recovery is bordered. In a pane or
-                    // details drawer the primary steps down to the small button; a page or phone keeps the normal one.
-                    size={props.kind === 'empty' && (size === undefined || size === 'page' || size === 'phone') ? 'normal' : 'small'}
-                    display={props.kind === 'empty' ? undefined : 'secondary'}
+                    // Pointer panes keep a compact action; phone controls keep their touch-sized anatomy.
+                    size={size === 'phone' || size === undefined ? 'small' : 'mini'}
+                    display={props.kind === 'empty' || props.kind === 'success' ? undefined : 'secondary'}
                     title={props.action.label}
                     accessibilityLabel={props.action.label}
                     style={buttonStyle}
@@ -335,9 +355,10 @@ export function SurfaceStateCard(props: Readonly<{
                     testID={props.secondaryAction.testID ?? (props.testID ? `${props.testID}-secondary-action` : undefined)}
                     disabled={props.secondaryAction.disabled}
                     loading={props.secondaryAction.busy}
-                    size="small"
+                    size={size === 'phone' || size === undefined ? 'small' : 'mini'}
                     display="inverted"
                     title={props.secondaryAction.label}
+                    textStyle={Typography.default()}
                     accessibilityLabel={props.secondaryAction.label}
                     style={buttonStyle}
                     action={() => Promise.resolve(props.secondaryAction!.onPress())}
@@ -345,6 +366,46 @@ export function SurfaceStateCard(props: Readonly<{
             ) : null}
         </View>
     ) : undefined;
+
+    const iconSlot = (
+        <View
+            testID={props.testID ? `${props.testID}-icon` : undefined}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={styles.iconWrap}
+        >
+            {icon}
+        </View>
+    );
+    const actionCaption = props.actionCaption && actions ? <Text style={[styles.liveText, quietTextStyle]}>{props.actionCaption}</Text> : null;
+    const supplemental = <>
+        {props.detail ? <Text testID={props.testID ? `${props.testID}-detail` : undefined} style={styles.detail}>{props.detail}</Text> : null}
+        {quietLine}
+        {props.diagnosticCode ? (
+            props.kind === 'loading' || props.kind === 'empty' || props.kind === 'success' || props.kind === 'denied'
+                ? diagnosticMarker
+                : <SurfaceStateDiagnosticDetails testID={props.testID} diagnosticCode={props.diagnosticCode} />
+        ) : null}
+    </>;
+    if (props.layout === 'inline') {
+        return <View testID={props.testID} {...liveRegionProps} style={styles.inline}>
+            <EmptyState
+                layout="inline"
+                icon={iconSlot}
+                title={props.title}
+                titleContent={props.titleContent}
+                subtitle={props.reasonContent ?? props.reason}
+                titleTestID={props.testID ? `${props.testID}-title` : undefined}
+                subtitleTestID={props.testID && props.reason != null ? `${props.testID}-reason` : undefined}
+                paddingHorizontal={0}
+                paddingVertical={0}
+            />
+            {live ? <View style={{ alignItems: 'flex-start' }}>{live}</View> : null}
+            {props.body}
+            {actions ? <View style={[styles.inlineFooter, metrics?.fullWidthActions ? { flexDirection: 'column', alignItems: 'stretch' } : null]}>{actionCaption}{actions}</View> : null}
+            {supplemental}
+        </View>;
+    }
 
     return (
         <HappierSurfaceStateFrame
@@ -354,48 +415,29 @@ export function SurfaceStateCard(props: Readonly<{
         >
                 <EmptyState
                     size={metrics ? size : undefined}
-                    icon={(
-                        <View
-                            testID={props.testID ? `${props.testID}-icon` : undefined}
-                            accessibilityElementsHidden
-                            importantForAccessibility="no-hide-descendants"
-                            style={styles.iconWrap}
-                        >
-                            {icon}
-                        </View>
-                    )}
+                    icon={iconSlot}
                     title={props.title}
-                    subtitle={props.reason}
+                    titleContent={props.titleContent}
+                    subtitle={props.reasonContent ?? props.reason}
                     titleTestID={props.testID ? `${props.testID}-title` : undefined}
                     subtitleTestID={props.testID && props.reason != null ? `${props.testID}-reason` : undefined}
                     paddingHorizontal={metrics ? 0 : undefined}
                     // The present reads with the copy, before the way forward (lab 0: title · copy · live · action).
-                    action={live && actions ? (
+                    action={props.body ? (
+                        <View style={[styles.liveAndActions, styles.fullWidth]}>
+                            {live}
+                            <View style={styles.fullWidth}>{props.body}</View>
+                            {actionCaption}
+                            {actions}
+                        </View>
+                    ) : live && actions ? (
                         <View style={[styles.liveAndActions, metrics?.fullWidthActions ? styles.fullWidth : null]}>
                             {live}
                             {actions}
                         </View>
                     ) : live ?? actions}
                 />
-                {props.detail ? (
-                    <Text
-                        testID={props.testID ? `${props.testID}-detail` : undefined}
-                        style={styles.detail}
-                    >
-                        {props.detail}
-                    </Text>
-                ) : null}
-                {quietLine}
-                {props.diagnosticCode ? (
-                    props.kind === 'loading' || props.kind === 'empty' || props.kind === 'success' || props.kind === 'denied'
-                        ? diagnosticMarker
-                        : (
-                            <SurfaceStateDiagnosticDetails
-                                testID={props.testID}
-                                diagnosticCode={props.diagnosticCode}
-                            />
-                        )
-                ) : null}
+                {supplemental}
         </HappierSurfaceStateFrame>
     );
 }
@@ -464,12 +506,12 @@ function SurfaceStateDiagnosticDetails(props: Readonly<{
             label={label}
             details={props.diagnosticCode}
             renderToggle={(open) => <>
-                <Text accessible={false} style={styles.detailsToggleLabel}>{label}</Text>
                 <Icon
-                    name={open ? 'caret-up' : 'caret-down'}
+                    name={open ? 'caret-down' : 'caret-right'}
                     size={12}
                     color={theme.colors.text.secondary}
                 />
+                <Text accessible={false} style={styles.detailsToggleLabel}>{label}</Text>
             </>}
             renderDetails={(detail) => (
                 <Text

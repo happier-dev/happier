@@ -1,9 +1,9 @@
+import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 import {
-  encodeTerminalConnectLinkV4Payload,
   isLoopbackHostname,
   normalizeHostnameForLoopbackCheck,
-  type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/server/urls';
 
 export type TerminalConnectLinks = Readonly<{
   webUrl: string;
@@ -40,6 +40,13 @@ export type TerminalConnectUrlOnlyCompatibilityTarget = Readonly<{
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
+function terminalConnectWebUrl(webappUrl: string, fragment: string): string {
+  const url = new URL(webappUrl);
+  url.pathname = `${stripTrailingSlash(url.pathname)}/terminal/connect`;
+  url.hash = fragment;
+  return url.toString();
 }
 
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
@@ -99,7 +106,7 @@ function sanitizeServerUrlForMobileLink(raw: string): string | null {
 export function buildTerminalConnectUrlOnlyCompatibilityLinks(
   params: TerminalConnectUrlOnlyCompatibilityTarget,
 ): TerminalConnectLinks {
-  const webappUrl = stripTrailingSlash(String(params.webappUrl ?? '').trim());
+  const webappUrl = String(params.webappUrl ?? '').trim();
   const webServerUrl = sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
   const mobileServerUrl = sanitizeServerUrlForMobileLink(params.serverUrl);
   const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
@@ -131,9 +138,9 @@ export function buildTerminalConnectUrlOnlyCompatibilityLinks(
       : '';
 
   return {
-    webUrl: webServerUrl
-      ? `${webappUrl}/terminal/connect#key=${publicKeyB64Url}&server=${encodedWebServerUrl}${pairingSuffix}${tokenOnlyCapabilitySuffix}`
-      : `${webappUrl}/terminal/connect#key=${publicKeyB64Url}${pairingSuffix}${tokenOnlyCapabilitySuffix}`,
+    webUrl: terminalConnectWebUrl(webappUrl, webServerUrl
+      ? `key=${publicKeyB64Url}&server=${encodedWebServerUrl}${pairingSuffix}${tokenOnlyCapabilitySuffix}`
+      : `key=${publicKeyB64Url}${pairingSuffix}${tokenOnlyCapabilitySuffix}`),
     mobileUrl: mobileServerUrl
       ? `happier://terminal?key=${publicKeyB64Url}&server=${encodedMobileServerUrl}${pairingSuffix}${tokenOnlyCapabilitySuffix}`
       : `happier://terminal?key=${publicKeyB64Url}${pairingSuffix}${tokenOnlyCapabilitySuffix}`,
@@ -152,7 +159,7 @@ export function buildTerminalConnectLinks(
     return buildTerminalConnectUrlOnlyCompatibilityLinks(params);
   }
 
-  const webappUrl = stripTrailingSlash(String(params.webappUrl ?? '').trim());
+  const webappUrl = String(params.webappUrl ?? '').trim();
   const payload = encodeTerminalConnectLinkV4Payload({
     v: 4,
     publicKeyB64Url: params.publicKeyB64Url,
@@ -169,7 +176,7 @@ export function buildTerminalConnectLinks(
   const opaqueParameter = `v4=${payload}`;
 
   return {
-    webUrl: `${webappUrl}/terminal/connect#${opaqueParameter}`,
+    webUrl: terminalConnectWebUrl(webappUrl, opaqueParameter),
     mobileUrl: `happier://terminal?${opaqueParameter}`,
   };
 }
@@ -178,19 +185,21 @@ export function buildConfigureServerLinks(params: Readonly<{
   webappUrl: string;
   serverUrl: string;
 }>): ConfigureServerLinks {
-  const webappUrl = stripTrailingSlash(String(params.webappUrl ?? '').trim());
+  const webappUrl = String(params.webappUrl ?? '').trim();
   const webServerUrl = sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
   const mobileServerUrl = sanitizeServerUrlForMobileLink(params.serverUrl);
-  const encodedWebServerUrl = webServerUrl ? encodeURIComponent(webServerUrl) : '';
   const encodedMobileServerUrl = mobileServerUrl ? encodeURIComponent(mobileServerUrl) : '';
   if (!webServerUrl && !mobileServerUrl) {
     return { webUrl: webappUrl, mobileUrl: `happier://server` };
   }
 
+  const webUrl = new URL(webappUrl);
+  if (webServerUrl) webUrl.searchParams.set('server', webServerUrl);
+
   return {
     // Prefer setting the server on any screen via `?server=` so callers don't need to navigate
     // to a dedicated server selection route first.
-    webUrl: webServerUrl ? `${webappUrl}/?server=${encodedWebServerUrl}` : webappUrl,
+    webUrl: webServerUrl ? webUrl.toString() : webappUrl,
     mobileUrl: mobileServerUrl ? `happier://server?url=${encodedMobileServerUrl}` : `happier://server`,
   };
 }

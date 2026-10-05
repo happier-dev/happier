@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -7,6 +8,8 @@ import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { requireAgentCliCommand } from './requireAgentCliCommand';
 import { requireAgentCliLaunchSpec } from './requireAgentCliLaunchSpec';
 
@@ -34,6 +37,7 @@ describe('Agent CLI resolution from the admitted catalog', () => {
       contributes: createResolvedContributionRegistry({ agents: [], activationTargets: [] }),
       hookHandlersByHookId: new Map(), agentRuntimesByAgentId: new Map(), scmHostingProvidersById: new Map(),
       pluginDiagnosticsByPluginId: {}, activatedPluginIds: new Set<string>(),
+      resolveCaptureSource: unexpectedCaptureSourceResolution,
       activateContributionsOnDemand: async () => [], resolvePromptAssetBlocks: async () => [],
       createAgentInvocationServices: async () => { throw new Error('No plugin invocation in this catalog fixture'); },
       retireConsumers: () => {}, dispose: async () => {},
@@ -70,6 +74,20 @@ describe('Agent CLI resolution from the admitted catalog', () => {
       const options = { catalogSnapshot, processEnv: { PATH: '', HOME: home, USERPROFILE: home, HAPPIER_HOME_DIR: home } };
       expect(() => requireAgentCliLaunchSpec(agent.id, options)).toThrow(ReferenceError);
       expect(() => requireAgentCliCommand(agent.id, options)).toThrow(/not available from any configured source/);
+      for (const requireCli of [requireAgentCliCommand, requireAgentCliLaunchSpec]) {
+        let failure: unknown;
+        try { requireCli(agent.id, options); } catch (error) { failure = error; }
+        const issue = classifyPrimarySessionRuntimeIssue({
+          cause: 'status_error',
+          error: sanitizeNativeAgentSessionBoundaryError(failure, true),
+          occurredAt: 1_000,
+        });
+        expect(issue).toMatchObject({ code: 'agent_cli_missing', source: 'dependency_failure' });
+        expect(issue.sanitizedPreview).toMatch(/install.*CLI|CLI.*install/iu);
+        expect(issue.sanitizedPreview).not.toContain(agent.id);
+        expect(issue.sanitizedPreview).not.toContain(home);
+      }
+
     } finally {
       removeTempDirSync(home);
     }

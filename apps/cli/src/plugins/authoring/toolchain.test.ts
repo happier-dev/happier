@@ -1218,6 +1218,7 @@ describe('runPluginAuthorToolchain', () => {
     try {
       await mkdir(join(packageRoot, 'dist', 'ui', 'build'), { recursive: true });
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
         scripts: { build: 'happier plugins dev build .' },
       }), 'utf8');
       await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
@@ -1244,6 +1245,7 @@ describe('runPluginAuthorToolchain', () => {
     try {
       await mkdir(join(projectRoot, 'node_modules', '@happier-dev'), { recursive: true });
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
         scripts: {
           build: 'happier plugins dev build .',
           'build:ui': 'unrelated-company-ui-builder',

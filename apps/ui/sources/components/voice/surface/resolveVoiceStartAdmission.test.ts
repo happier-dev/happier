@@ -1,23 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveVoiceStartAdmission } from './resolveVoiceStartAdmission';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { BUILT_IN_VOICE_UI_ENTRIES } from '@/voice/registry/builtInEntries';
+import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 
-const settings = { providerId: 'fixture', providers: {} } as const;
-const entry = {
-    providerId: 'fixture',
-    roles: ['conversation'],
-    requirements: [],
-    supportedPlatforms: ['web'],
-} as const;
+const settings = voiceSettingsParse({ providerId: 'local_conversation' });
 
 function registry(supportedPlatforms: readonly ('web' | 'ios' | 'android')[]) {
-    const current = { ...entry, supportedPlatforms };
-    return {
-        get: (id: string) => id === 'fixture' ? current : null,
-        list: () => [current],
-        getRevision: () => 0,
-        subscribe: () => () => {},
-    } as never;
+    return createVoiceProviderRegistry({
+        builtIn: BUILT_IN_VOICE_UI_ENTRIES.map((entry) => entry.providerId === 'local_conversation'
+            ? { ...entry, supportedPlatforms }
+            : entry),
+    });
 }
 
 describe('resolveVoiceStartAdmission', () => {
@@ -27,7 +22,7 @@ describe('resolveVoiceStartAdmission', () => {
             daemonLocalVoiceUnavailable: false,
             globalStartAuthorized: true,
             platform: 'ios',
-            providerId: 'fixture',
+            providerId: 'local_conversation',
             providerSettings: null,
             registry: registry(['web']),
             startSessionId: null,
@@ -41,7 +36,7 @@ describe('resolveVoiceStartAdmission', () => {
             daemonLocalVoiceUnavailable: false,
             globalStartAuthorized: true,
             platform: 'web',
-            providerId: 'fixture',
+            providerId: 'local_conversation',
             providerSettings: null,
             registry: registry(['web']),
             startSessionId: null,

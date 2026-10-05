@@ -1,10 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { scheduleOnRN } from 'react-native-worklets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierAsOfTime, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import type {
     SessionBoardItemWidth,
@@ -15,37 +12,39 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { focusNativeAccessibilityTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import {
     HostedHtmlSurfaceAdapter,
     type CallerHostedHtmlRuntime,
 } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     resolveSessionBoardMountMode,
+    sessionBoardSourceRequiresExclusiveMount,
     type SessionBoardExecutableCurrentness,
     type SessionBoardItemProjection,
     type SessionBoardMountHost,
 } from '@/sync/domains/session/board';
 
 import { SessionBoardDeclarativeContent } from './SessionBoardDeclarativeContent';
-import { InstalledWidgetSurface } from '@/components/widgets/InstalledWidgetSurface';
+import { SessionWalkthroughWidgetContent } from './SessionWalkthroughWidgetContent';
+import { UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
+import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
+import { useSessionWidgetSurface, useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
+import { useWidgetDefinitionFlows, type WidgetDefinitionSessionItem } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
+import { WidgetSnapshotCaptureContext } from '@/components/widgets/definitions/widgetSnapshotCapture';
+import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveBoardWidgetProvenance } from '@/components/widgets/boardWidgetProvenance';
-import {
-    beginSessionCompanionDrag,
-    endSessionCompanionDrag,
-    hasSessionCompanionDropTarget,
-    moveSessionCompanionDrag,
-    useSessionCompanionDropTargetAvailable,
-} from '@/components/sessions/companion/drop/sessionCompanionDropStore';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import type { SessionBoardHostActionBinding } from './sessionBoardHostActions';
 import {
@@ -58,16 +57,7 @@ import {
     resolveSessionBoardItemHeight,
     type SessionBoardHeightBounds,
 } from './sessionBoardItemHeight';
-import {
-    advanceSessionBoardViewDropDwell,
-    resolveSessionBoardAnchoredPointerDrop,
-    resolveSessionBoardDragMove,
-    resolveSessionBoardDragOffset,
-    SessionBoardItemMoveHandle,
-    type SessionBoardAnchoredMove,
-    type SessionBoardItemRect,
-    type SessionBoardViewDropDwell,
-} from './SessionBoardItemMoveHandle';
+import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityTargetFeedback, useSessionSurfaceEntityDrag, type SessionSurfaceEntityBinding } from './SessionSurfaceEntityDrag';
 import { buildSessionBoardItemActions, type SessionBoardItemMenuInput } from './sessionBoardItemMenu';
 
 /**
@@ -92,7 +82,9 @@ export type SessionWidgetDensity =
     | 'preview';
 
 export type SessionWidgetHostProps = Readonly<{
+    entityDrag?: SessionSurfaceEntityBinding;
     sessionId: string;
+    serverId?: string | null;
     /** Exact Session projection captured by the route/shell owner. */
     session?: Session;
     item: SessionBoardItemProjection;
@@ -139,30 +131,23 @@ export type SessionWidgetHostProps = Readonly<{
     onPrepareEncryption?: () => void;
     /** Inline rename; commits on Enter/blur, Escape restores. Full density only. */
     onRename?: (title: string) => void;
+    /**
+     * A configured widget's Edit inputs… and in-card repair (lab `dashboards` dbind E): this copy's
+     * new bindings, through the Board's item owner. Editors only.
+     */
+    onSetInputs?: (bindings: WidgetInputBindingsV1) => Promise<WidgetSetupSubmitResult>;
     /** Edit content in place when the mounted Board controller publishes a real editor handler. */
     onEdit?: () => void;
     /** Persist one semantic Board width. Full density only. */
     onResize?: (width: SessionBoardItemWidth) => void;
     /** Persist one anchored move within the current Board view. */
     onMove?: (direction: 'before' | 'after') => void;
-    /** Commit a direct pointer drop through one semantic item anchor. */
-    onMoveAnchored?: (anchor: SessionBoardAnchoredMove) => void;
-    orderedMoveItemIds?: readonly string[];
-    moveItemRects?: ReadonlyMap<string, SessionBoardItemRect>;
     /** There is a sibling to anchor against. At a view's end the direction is omitted. */
     canMoveBefore?: boolean;
     canMoveAfter?: boolean;
-    /** One-based position in the active view, exposed by the move handle. */
-    movePosition?: number;
-    moveTotal?: number;
     /** Other shared Board views available to the same semantic move operation. */
     moveDestinations?: readonly Readonly<{ id: string; title: string }>[];
     onMoveToView?: (viewId: string) => void;
-    /** Resolve a translated card center against the viewer-local Board-view strip. */
-    resolveMoveToView?: (translationX: number, translationY: number) => string | null;
-    /** Viewer-local drag telemetry consumed by the incumbent bounded autoscroll owner. */
-    onDragActivityChange?: (active: boolean) => void;
-    onDragTranslation?: (translationX: number, translationY: number) => void;
     /**
      * Persist one semantic height intent. Height belongs to the item, not the
      * placement, so the same content keeps a coherent vertical intent on every
@@ -223,12 +208,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...happierPageTextMetrics('sectionTitle'),
         color: theme.colors.text.primary,
     },
-    titleInput: {
-        ...Typography.default('semiBold'),
-        ...happierPageTextMetrics('sectionTitle'),
-        color: theme.colors.text.primary,
-        paddingVertical: 2,
-    },
     provenance: {
         ...Typography.default(),
         ...happierPageTextMetrics('meta'),
@@ -279,44 +258,9 @@ function actionLabel(kind: SessionBoardItemActionKind): string {
     }
 }
 
-/**
- * Keep direct manipulation direct while making only the blocked same-view
- * ordering axis feel bounded. A cross-view target is a real destination, not a
- * same-view edge, so neither axis is resisted while the card is over one.
- */
-export function resolveSessionBoardDragVisualOffset(input: Readonly<{
-    translationX: number;
-    translationY: number;
-    canMoveBefore: boolean;
-    canMoveAfter: boolean;
-    crossViewTarget: boolean;
-}>): Readonly<{ x: number; y: number }> {
-    'worklet';
-
-    if (input.crossViewTarget) {
-        return { x: input.translationX, y: input.translationY };
-    }
-    const horizontalOrderingAxis = Math.abs(input.translationX) >= Math.abs(input.translationY);
-    return horizontalOrderingAxis
-        ? {
-            x: resolveSessionBoardDragOffset({
-                translation: input.translationX,
-                canMoveBefore: input.canMoveBefore,
-                canMoveAfter: input.canMoveAfter,
-            }),
-            y: input.translationY,
-        }
-        : {
-            x: input.translationX,
-            y: resolveSessionBoardDragOffset({
-                translation: input.translationY,
-                canMoveBefore: input.canMoveBefore,
-                canMoveAfter: input.canMoveAfter,
-            }),
-        };
-}
-
 export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactElement {
+    const viewerScope = useActiveServerAccountScope();
+    const appRuntime = useAppShellPluginUiProjection();
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const testID = props.testID ?? `session-board-item-${props.item.itemId}`;
@@ -336,234 +280,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         focusNativeAccessibilityTarget(target as FocusReturnTarget);
         props.onHeadingFocusHandled?.(requestId);
     }, [props.focusHeadingRequestId, props.onHeadingFocusHandled]);
-    const reduceMotion = useReducedMotionPreference();
-    const liftDurationMs = reduceMotion ? motionTokens.durationMs.instant : motionTokens.durationMs.fast;
-    const dragX = useSharedValue(0);
-    const dragY = useSharedValue(0);
-    const dragging = useSharedValue(0);
-    const dragCancelled = useSharedValue(0);
-    const crossViewTargetActive = useSharedValue(false);
-    const canMoveBefore = props.canMoveBefore === true;
-    const canMoveAfter = props.canMoveAfter === true;
-    const viewDropDwell = React.useRef<SessionBoardViewDropDwell | null>(null);
-    const pointerDragActive = React.useRef(false);
-    const pointerDragCancelled = React.useRef(false);
-    const updateViewDropDwell = React.useCallback((translationX: number, translationY: number) => {
-        const target = props.resolveMoveToView?.(translationX, translationY) ?? null;
-        crossViewTargetActive.value = target !== null;
-        if (target !== null) {
-            // Target geometry is viewer-local React state, so it is resolved on
-            // RN. Correct the same frame's provisional edge resistance as soon
-            // as that owner confirms a real cross-view destination.
-            dragX.value = translationX;
-            dragY.value = translationY;
-        }
-        viewDropDwell.current = advanceSessionBoardViewDropDwell(viewDropDwell.current, target, Date.now());
-    }, [crossViewTargetActive, dragX, dragY, props.resolveMoveToView]);
-    const resetViewDropDwell = React.useCallback(() => {
-        viewDropDwell.current = null;
-        crossViewTargetActive.value = false;
-    }, [crossViewTargetActive]);
-    const beginPointerDrag = React.useCallback(() => {
-        pointerDragActive.current = true;
-        pointerDragCancelled.current = false;
-        dragCancelled.value = 0;
-        resetViewDropDwell();
-    }, [dragCancelled, resetViewDropDwell]);
-    const cancelPointerDrag = React.useCallback(() => {
-        if (!pointerDragActive.current) return false;
-        pointerDragActive.current = false;
-        pointerDragCancelled.current = true;
-        dragCancelled.value = 1;
-        dragging.value = withTiming(0, { duration: liftDurationMs });
-        dragX.value = withTiming(0, { duration: liftDurationMs });
-        dragY.value = withTiming(0, { duration: liftDurationMs });
-        resetViewDropDwell();
-        props.onDragActivityChange?.(false);
-        return true;
-    }, [dragCancelled, dragX, dragY, dragging, liftDurationMs, props.onDragActivityChange, resetViewDropDwell]);
-    const finalizePointerDrag = React.useCallback(() => {
-        pointerDragActive.current = false;
-    }, []);
-    const commitDrag = React.useCallback((
-        translationX: number,
-        translationY: number,
-        succeeded: boolean,
-    ) => {
-        const cancelled = pointerDragCancelled.current;
-        pointerDragActive.current = false;
-        pointerDragCancelled.current = false;
-        if (!succeeded || cancelled) {
-            viewDropDwell.current = null;
-            return;
-        }
-        if (props.resolveMoveToView) {
-            const target = props.resolveMoveToView(translationX, translationY);
-            viewDropDwell.current = advanceSessionBoardViewDropDwell(viewDropDwell.current, target, Date.now());
-        }
-        const crossView = viewDropDwell.current;
-        viewDropDwell.current = null;
-        if (crossView?.armed) {
-            props.onMoveToView?.(crossView.viewId);
-            return;
-        }
-        if (props.onMoveAnchored && props.orderedMoveItemIds && props.moveItemRects) {
-            const anchor = resolveSessionBoardAnchoredPointerDrop({
-                draggedId: props.item.itemId,
-                orderedIds: props.orderedMoveItemIds,
-                itemRects: props.moveItemRects,
-                translationX,
-                translationY,
-                droppedInside: true,
-            });
-            if (anchor) props.onMoveAnchored(anchor);
-            return;
-        }
-        const direction = resolveSessionBoardDragMove({
-            translationX,
-            translationY,
-            canMoveBefore,
-            canMoveAfter,
-            succeeded: true,
-        });
-        if (direction) props.onMove?.(direction);
-    }, [
-        canMoveAfter,
-        canMoveBefore,
-        props.item.itemId,
-        props.moveItemRects,
-        props.onMove,
-        props.onMoveAnchored,
-        props.onMoveToView,
-        props.orderedMoveItemIds,
-        props.resolveMoveToView,
-    ]);
-    const moveGesture = React.useMemo(() => Gesture.Pan()
-        .minDistance(6)
-        .onStart(() => {
-            'worklet';
-            dragging.value = withTiming(1, { duration: liftDurationMs });
-            scheduleOnRN(beginPointerDrag);
-            if (props.onDragActivityChange) scheduleOnRN(props.onDragActivityChange, true);
-        })
-        .onUpdate((event) => {
-            'worklet';
-            if (dragCancelled.value > 0) return;
-            const visualOffset = resolveSessionBoardDragVisualOffset({
-                translationX: event.translationX,
-                translationY: event.translationY,
-                canMoveBefore,
-                canMoveAfter,
-                crossViewTarget: crossViewTargetActive.value,
-            });
-            dragX.value = visualOffset.x;
-            dragY.value = visualOffset.y;
-            scheduleOnRN(updateViewDropDwell, event.translationX, event.translationY);
-            if (props.onDragTranslation) scheduleOnRN(props.onDragTranslation, event.translationX, event.translationY);
-        })
-        // `success` is the ONLY thing separating a drop from a cancellation here;
-        // both arrive through this callback.
-        .onEnd((event, success) => {
-            'worklet';
-            // Escape is handled on RN while the pointer gesture finishes on the
-            // UI thread. Capture the shared cancellation fact before finalize
-            // resets it; otherwise a queued end callback can commit after the
-            // person has explicitly restored the item.
-            const shouldCommit = success && dragCancelled.value === 0;
-            scheduleOnRN(commitDrag, event.translationX, event.translationY, shouldCommit);
-        })
-        .onFinalize(() => {
-            'worklet';
-            dragCancelled.value = 0;
-            dragging.value = withTiming(0, { duration: liftDurationMs });
-            scheduleOnRN(finalizePointerDrag);
-            if (props.onDragActivityChange) scheduleOnRN(props.onDragActivityChange, false);
-            if (liftDurationMs === 0) {
-                dragX.value = 0;
-                dragY.value = 0;
-                return;
-            }
-            dragX.value = withSpring(0);
-            dragY.value = withSpring(0);
-        }), [
-            canMoveAfter,
-            canMoveBefore,
-            beginPointerDrag,
-            commitDrag,
-            crossViewTargetActive,
-            dragCancelled,
-            dragX,
-            dragY,
-            dragging,
-            finalizePointerDrag,
-            liftDurationMs,
-            updateViewDropDwell,
-            props.onDragActivityChange,
-            props.onDragTranslation,
-        ]);
-    // Keep beside your chat (lab CM, desktop web): a compact Board card the viewer can add to
-    // the Companion may be dragged onto the Companion rail. The menu's "Add to Companion"
-    // stays the canonical path; this is the same add, reached by hand. The detector is always
-    // mounted (stable topology) and enabled only where the drag can land.
-    const companionDropTargetAvailable = useSessionCompanionDropTargetAvailable(props.sessionId);
-    const keepDragAvailable = isHoverCapablePrimaryPointer()
-        && companionDropTargetAvailable
-        && props.density === 'compact'
-        && props.onAddToCompanion !== undefined
-        && props.inCompanion !== true;
-    const keepDragActive = React.useRef(false);
-    const beginKeepDrag = React.useCallback(() => {
-        if (!hasSessionCompanionDropTarget(props.sessionId)) return;
-        keepDragActive.current = true;
-        dragging.value = withTiming(1, { duration: liftDurationMs });
-        beginSessionCompanionDrag(props.sessionId, props.item.itemId);
-    }, [dragging, liftDurationMs, props.item.itemId, props.sessionId]);
-    const moveKeepDrag = React.useCallback((x: number, y: number, translationX: number, translationY: number) => {
-        if (!keepDragActive.current) return;
-        dragX.value = translationX;
-        dragY.value = translationY;
-        moveSessionCompanionDrag(props.sessionId, x, y);
-    }, [dragX, dragY, props.sessionId]);
-    const endKeepDrag = React.useCallback((x: number, y: number, succeeded: boolean) => {
-        if (!keepDragActive.current) return;
-        keepDragActive.current = false;
-        // The rail accepts the drop through the Companion's own add path.
-        endSessionCompanionDrag(props.sessionId, succeeded ? { x, y } : null);
-        dragging.value = withTiming(0, { duration: liftDurationMs });
-        dragX.value = liftDurationMs === 0 ? 0 : withSpring(0);
-        dragY.value = liftDurationMs === 0 ? 0 : withSpring(0);
-    }, [dragX, dragY, dragging, liftDurationMs, props.sessionId]);
-    const keepGesture = React.useMemo(() => Gesture.Pan()
-        .enabled(keepDragAvailable)
-        .minDistance(8)
-        .onStart(() => {
-            'worklet';
-            scheduleOnRN(beginKeepDrag);
-        })
-        .onUpdate((event) => {
-            'worklet';
-            scheduleOnRN(moveKeepDrag, event.absoluteX, event.absoluteY, event.translationX, event.translationY);
-        })
-        .onEnd((event, success) => {
-            'worklet';
-            scheduleOnRN(endKeepDrag, event.absoluteX, event.absoluteY, success);
-        })
-        .onFinalize(() => {
-            'worklet';
-            scheduleOnRN(endKeepDrag, 0, 0, false);
-        }), [beginKeepDrag, endKeepDrag, keepDragAvailable, moveKeepDrag]);
-    const dragStyle = useAnimatedStyle(() => ({
-        position: 'relative',
-        zIndex: dragging.value > 0 ? 20 : 0,
-        // Interpolated rather than switched, so the lift settles with the card
-        // instead of snapping a frame before it.
-        opacity: 1 - (dragging.value * 0.14),
-        transform: [
-            { translateX: dragX.value },
-            { translateY: dragY.value },
-            { scale: 1 + (dragging.value * 0.015) },
-        ],
-    }));
+    const entityDrag = useSessionSurfaceEntityDrag(props.entityDrag ?? null);
     const state = props.item.state;
     const mountMode = resolveSessionBoardMountMode({
         host: props.host,
@@ -618,14 +335,60 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         ...(state.kind === 'ready' && state.item.input !== undefined ? { input: state.item.input } : {}),
     }), [props.item.itemId, props.item.revision, props.sessionId, state]);
 
-    const [draftTitle, setDraftTitle] = React.useState<string | null>(null);
     const renameEnabled = props.density === 'full' && props.canEdit && props.onRename !== undefined;
-    const beginRename = React.useCallback(() => { setDraftTitle(title); }, [title]);
-    const commitRename = React.useCallback(() => {
-        const next = draftTitle?.trim() ?? '';
-        setDraftTitle(null);
-        if (next.length > 0 && next !== title) props.onRename?.(next);
-    }, [draftTitle, props, title]);
+    const onRename = props.onRename;
+    const rename = useWidgetFrameRename({
+        title,
+        testID,
+        // An empty or unchanged title keeps the one it had.
+        ...(renameEnabled ? { onRename: (next: string) => { if (next.length > 0 && next !== title) onRename?.(next); } } : {}),
+    });
+    const beginRename = rename.begin;
+
+    // A configured widget's inputs: Edit inputs… in the menu and the card's repair line open the
+    // same step, for this copy only. The Board fills "This session" with its own Session.
+    const widgetInstance = state.kind === 'ready' && state.item.source.kind === 'widget' ? state.item.source.instance : null;
+    const widgetDescriptor = React.useMemo(
+        () => (widgetInstance ? readWidgetDescriptor(appRuntime.pluginUiProjection, widgetInstance.definition) : null),
+        [appRuntime.pluginUiProjection, widgetInstance],
+    );
+    const boardSurface = useSessionWidgetSurface({ owner: 'sessionBoard', serverId: props.serverId, sessionId: props.sessionId, session: props.session ?? null });
+    const inputs = useWidgetInputsEditor({
+        instance: widgetInstance,
+        candidate: widgetDescriptor,
+        scope: boardSurface.scope,
+        context: boardSurface.context,
+        audience: 'shared',
+        ...(props.canEdit && props.onSetInputs ? { setInputs: props.onSetInputs } : {}),
+        testID,
+    });
+
+    // About this widget, Save as your widget and Post a snapshot (lab dagent G2/G3, dscope VS):
+    // one shared owner, anchored at the same ⋯ as Edit inputs.
+    const readyItem = state.kind === 'ready' ? state.item : null;
+    const sessionItem = React.useMemo((): WidgetDefinitionSessionItem | null => {
+        if (!readyItem || props.density === 'preview') return null;
+        const fields = widgetDescriptor?.inputs?.fields ?? [];
+        const bindings = readyItem.source.kind === 'widget' ? readyItem.source.instance.bindings : {};
+        return {
+            itemId: props.item.itemId,
+            title,
+            savable: readyItem.source.kind === 'widget' || readyItem.source.kind === 'declarative',
+            canEdit: props.canEdit,
+            converted: Object.entries(bindings).flatMap(([path, binding]) => (binding.kind === 'value' ? [] : [{
+                path, title: fields.find((field) => field.path === path)?.title ?? path, becomes: binding.kind,
+            }])),
+            sourceLabel: widgetDescriptor?.pluginName ?? title,
+        };
+    }, [props.canEdit, props.density, props.item.itemId, readyItem, title, widgetDescriptor]);
+    const definitionFlows = useWidgetDefinitionFlows({
+        instance: widgetInstance,
+        scope: boardSurface.scope,
+        anchorRef: inputs.anchorRef,
+        editInputs: inputs.editInputs,
+        sessionItem,
+        testID,
+    });
 
     // The menu is the card's published operation set, built the same way the
     // Companion builds its own: one entry per handler that genuinely exists.
@@ -639,6 +402,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         // Pressing the title opens the same editor for a pointer; this is how a
         // keyboard and a screen reader reach rename at all.
         onRename: renameEnabled ? beginRename : undefined,
+        editInputs: inputs.editInputs,
+        definition: { onAbout: definitionFlows.about, onSaveAsYours: definitionFlows.saveAsYours, onPostSnapshot: definitionFlows.postSnapshot },
         onMove: props.onMove,
         canMoveBefore: props.canMoveBefore,
         canMoveAfter: props.canMoveAfter,
@@ -657,6 +422,10 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         frame: props.frameOverride,
     }), [
         beginRename,
+        inputs.editInputs,
+        definitionFlows.about,
+        definitionFlows.saveAsYours,
+        definitionFlows.postSnapshot,
         props.canEdit,
         props.canMoveAfter,
         props.canMoveBefore,
@@ -726,7 +495,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
 
     const executablePaused = presentation.kind === 'content'
         && state.kind === 'ready'
-        && state.item.source.kind !== 'declarative'
+        && sessionBoardSourceRequiresExclusiveMount(state.item.source.kind)
         && props.executableCurrentness !== 'current';
     const executablePausedReason = props.executableCurrentness === 'offline'
         ? t('sessionBoard.board.offline')
@@ -771,11 +540,15 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 importantForAccessibility="no-hide-descendants"
             />
         )
+        : state.kind === 'ready' && state.item.source.kind === 'walkthrough'
+            ? <SessionWalkthroughWidgetContent sessionId={props.sessionId} serverId={props.serverId ?? null}
+                comparisonKind={state.item.source.comparison} interactive={presentation.kind === 'content'} testID={`${testID}-walkthrough`} />
         : state.kind === 'ready' && state.item.source.kind === 'declarative'
             ? (
                 <SessionBoardDeclarativeContent
                     testID={`${testID}-declarative`}
                     document={state.item.source.document}
+                    snapshot={state.item.snapshot !== undefined}
                     // A preview is inert: it renders the same native content with no
                     // dispatch path, so a background placement cannot cause effects.
                     actionBinding={presentation.kind === 'content' ? props.actionBinding ?? null : null}
@@ -783,9 +556,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
             )
             : presentation.kind === 'content'
                 && state.kind === 'ready'
-                && state.item.source.kind === 'installedSurface'
+                && state.item.source.kind === 'widget'
                 && props.item.revision !== null
-                && props.pluginRuntime
                 ? (
                     // Only a content presentation reaches here, so a preview or
                     // non-primary placement never instantiates an executable
@@ -794,23 +566,21 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                     // A Session projection that has not hydrated yet is that
                     // component's own loading state; naming it here would report
                     // an installed, projected widget as an unsupported renderer.
-                    <InstalledWidgetSurface
+                    viewerScope && viewerScope.serverId === props.serverId ? <WidgetSnapshotCaptureContext.Provider value={definitionFlows.snapshotSlot}><WidgetSurface
                         testID={testID}
-                        target={{
-                            kind: 'session',
-                            sessionId: props.sessionId,
-                            ...(props.session ? { session: props.session } : {}),
-                        }}
+                        scope={{ ...viewerScope, owner: { kind: 'sessionBoard', sessionId: props.sessionId } }}
+                        providedContext={{ session: [{ serverId: viewerScope.serverId, sessionId: props.sessionId }] }}
+                        instance={state.item.source.instance}
+                        descriptor={widgetDescriptor}
                         recordRevision={props.item.revision}
-                        source={state.item.source}
-                        {...(state.item.input === undefined ? {} : { input: state.item.input })}
                         // The embedded plugin presentation describes the actual
                         // host composition, not persisted outer card chrome.
                         presentation={embeddedPresentation}
-                        runtime={props.pluginRuntime}
+                        appRuntime={appRuntime}
                         onIntrinsicHeightChange={setHostedFrameReportedHeight}
                         {...(props.onManagePlugin ? { onManagePlugin: props.onManagePlugin } : {})}
-                    />
+                        {...(inputs.onRepairInputs ? { onRepairInputs: inputs.onRepairInputs } : {})}
+                    /></WidgetSnapshotCaptureContext.Provider> : <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_viewer_scope_mismatch' }} testID={testID} />
                 )
                 : presentation.kind === 'content'
                     && state.kind === 'ready' && state.item.source.kind === 'hostedHtml'
@@ -870,50 +640,13 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     const placement = section ? 'companion' as const : 'board' as const;
     const frameStyle = props.frameStyle ?? (section ? 'plain' : 'card');
 
-    const moveHandle = props.density === 'full'
-        && ((props.onMove && (props.canMoveBefore || props.canMoveAfter))
-            || (props.onMoveToView && (props.moveDestinations?.length ?? 0) > 0)) ? (
-            <SessionBoardItemMoveHandle
-                testID={`${testID}-move-handle`}
-                gesture={moveGesture}
-                onMove={props.onMove ?? (() => undefined)}
-                {...(props.onMoveAnchored ? { onMoveAnchored: props.onMoveAnchored } : {})}
-                itemId={props.item.itemId}
-                {...(props.orderedMoveItemIds ? { orderedItemIds: props.orderedMoveItemIds } : {})}
-                canMoveBefore={props.canMoveBefore === true}
-                canMoveAfter={props.canMoveAfter === true}
-                // Its own name, not the Board-views strip beside it:
-                // borrowing that label tells a screen-reader user
-                // they are on an entirely different control.
-                accessibilityLabel={t('sessionBoard.item.reorderA11y', { title })}
-                itemTitle={title}
-                onCancelPointerDrag={cancelPointerDrag}
-                {...(props.moveDestinations ? { moveDestinations: props.moveDestinations } : {})}
-                {...(props.onMoveToView ? { onMoveToView: props.onMoveToView } : {})}
-                {...(props.movePosition !== undefined && props.moveTotal !== undefined
-                    ? { position: props.movePosition, total: props.moveTotal }
-                    : {})}
-            />
-        ) : null;
+    const moveHandle = props.entityDrag ? (
+        <SessionSurfaceEntityDragHandle drag={entityDrag} title={title} testID={`${testID}-move-handle`} />
+    ) : null;
 
     const heading = (
-        <GestureDetector gesture={keepGesture}>
             <TitleFrame style={styles.titleWrap} {...titleFrameProps}>
-                {renameEnabled && draftTitle !== null ? (
-                    <TextInput
-                        testID={`${testID}-title-input`}
-                        style={styles.titleInput}
-                        value={draftTitle}
-                        autoFocus
-                        accessibilityLabel={t('sessionBoard.item.renameA11y')}
-                        onChangeText={setDraftTitle}
-                        onSubmitEditing={commitRename}
-                        onBlur={commitRename}
-                        onKeyPress={(event) => {
-                            if (event.nativeEvent.key === 'Escape') setDraftTitle(null);
-                        }}
-                    />
-                ) : (
+                {rename.field ?? (
                     <Text
                         ref={headingRef}
                         testID={`${testID}-title`}
@@ -927,13 +660,12 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                                 width: t(`sessionBoard.width.${props.width}`),
                             })
                             : title}
-                        {...(renameEnabled ? { onPress: beginRename } : {})}
+                        {...(beginRename ? { onPress: beginRename } : {})}
                     >
                         {title}
                     </Text>
                 )}
             </TitleFrame>
-        </GestureDetector>
     );
 
     // Shown at every density, including an inert preview: the source IS most of what a preview
@@ -952,6 +684,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
 
     // A Companion section identifies its shared Board record. Board cards keep their header
     // clear; Companion membership still controls drag admission and the menu's inverse action.
+    const snapshotAsOf = state.kind === 'ready' && state.item.snapshot ? Date.parse(state.item.snapshot.asOf) : null;
     const meta = section ? (
         <View
             testID={`${testID}-on-board-mark`}
@@ -962,10 +695,16 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         >
             <Icon name="squares-four" size={13} color={theme.colors.text.tertiary} />
         </View>
+    ) : snapshotAsOf !== null ? (
+        // A posted snapshot (lab VS) says when its numbers are from; it never updates.
+        <Text testID={`${testID}-snapshot-as-of`} style={styles.provenance} numberOfLines={1}>
+            {t('widgetDefinition.asOf', { time: formatHappierAsOfTime(snapshotAsOf) })}
+        </Text>
     ) : null;
 
     const controls = moveHandle || itemActions.length > 0 || props.headerAccessory ? (
-        <View style={styles.controls}>
+        // Edit inputs anchors here, at the ⋯.
+        <View style={styles.controls} ref={inputs.anchorRef} collapsable={false}>
             {moveHandle}
             {itemActions.length > 0 ? (
                 <ItemRowActions
@@ -983,7 +722,10 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     ) : null;
 
     return (
-        <Animated.View style={dragStyle}>
+        <View ref={entityDrag.ref} onLayout={entityDrag.onLayout} collapsable={false}>
+            <SessionSurfaceEntityTargetFeedback drag={entityDrag} testID={testID} />
+            {inputs.popover}
+            {definitionFlows.panel}
             {/*
               * No `accessible` wrapper here. Collapsing the card into one element
               * would hide Remove, the action menu, the renderer's own controls and
@@ -1034,7 +776,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
               * all sat behind an overflow, which reads as an invitation to
               * delete.
               */}
-        </Animated.View>
+        </View>
     );
 }
 
@@ -1042,9 +784,10 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
 function sessionWidgetMark(state: SessionBoardItemProjection['state']): IconName {
     if (state.kind !== 'ready') return 'squares-four';
     switch (state.item.source.kind) {
+        case 'walkthrough': return 'path';
         case 'declarative': return 'note';
         case 'hostedHtml': return 'squares-four';
-        case 'installedSurface': return 'puzzle-piece';
+        case 'widget': return 'puzzle-piece';
     }
 }
 

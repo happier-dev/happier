@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { View, RefreshControl, Platform, Pressable } from 'react-native';
-import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { useLocalSearchParams, useRouter, Stack } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -88,7 +88,8 @@ import {
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
@@ -875,9 +876,9 @@ export default function MachineDetailScreen() {
                         title={t('machineDetailPage.placeholderTitle')}
                         description={t('machineDetailPage.description')}
                         leading={(
-                            <PageHeaderMarkTile appearance="glyph">
+                            <PageHeaderMarkSlot>
                                 <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
-                            </PageHeaderMarkTile>
+                            </PageHeaderMarkSlot>
                         )}
                     />
                     <ItemGroup surface="none">
@@ -928,9 +929,9 @@ export default function MachineDetailScreen() {
                     title={machineName}
                     description={t('machineDetailPage.description')}
                     leading={(
-                        <PageHeaderMarkTile appearance="glyph">
+                        <PageHeaderMarkSlot>
                             <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
-                        </PageHeaderMarkTile>
+                        </PageHeaderMarkSlot>
                     )}
                     meta={headerMeta}
                     actions={(

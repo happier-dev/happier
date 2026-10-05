@@ -1,72 +1,51 @@
 import * as React from 'react';
+import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
-
-import {
-    resolvePluginSurfaceDestinationIcon,
-    resolvePluginSurfaceDestinationLabel,
-} from '@/components/plugins/surfaces/pluginSurfaceDestinations';
-import { useSessionPluginRuntime } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import { InstalledWidgetSurface } from '@/components/widgets/InstalledWidgetSurface';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
+import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
+import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
+import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { selectWidgetPlacementsBySurface } from '@/sync/domains/plugins/ui/widgetContract';
-import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionCompanionInstanceView } from '../SessionCompanionItemFrame';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
-/**
- * A plugin's compact glance in the Companion (lab WC3, bounded C3): the plugin's own session `widget`
- * body in the host frame. Only views that declared the `companion` placement reach the Companion's
- * references, so this host never squeezes a pane into the column. The body mounts only on a visible
- * Companion; a measuring pass draws the frame and starts no plugin.
- */
+/** The Companion retains its one frame; the universal body binds the exact configured target. */
 export function PluginGlance(props: Readonly<{
-    surface: PluginContributionIdentityV1;
+    instance: WidgetInstanceV1;
     sessionId: string;
+    session: Session;
     serverId: string | null;
     frameStyle: WidgetFrameStyle;
     menu?: React.ReactNode;
+    /** This copy's rename field (in its title's place) and the card's repair line. */
+    instanceView?: SessionCompanionInstanceView;
     measurementOnly: boolean;
     testID: string;
 }>) {
-    const address = React.useMemo(
-        () => normalizeSessionAddress(props.serverId, props.sessionId),
-        [props.serverId, props.sessionId],
-    );
-    const runtime = useSessionPluginRuntime({ address });
-    const projection = runtime.pluginUiProjection;
-    const identity = React.useMemo(() => {
-        const placements = projection ? selectWidgetPlacementsBySurface(projection, props.surface, 'session') : [];
-        const placement = placements.length === 1 ? placements[0]! : null;
-        const localize = createPluginLocalizedTextResolver({ projection });
-        return {
-            title: placement ? resolvePluginSurfaceDestinationLabel(placement, localize) : props.surface.localId,
-            icon: placement ? resolvePluginSurfaceDestinationIcon(placement) : 'puzzle-piece' as const,
-            source: projection?.installedPackagesById[props.surface.pluginId]?.displayName.trim() || props.surface.pluginId,
-        };
-    }, [projection, props.surface]);
-    const source = React.useMemo(() => ({ kind: 'installedSurface' as const, surface: props.surface }), [props.surface]);
-    return (
-        <WidgetFrame
-            testID={props.testID}
-            frameStyle={props.frameStyle}
-            placement="companion"
-            mark={identity.icon}
-            title={identity.title}
-            source={identity.source}
-            menu={props.menu}
-            body={{
-                kind: 'content',
-                children: props.measurementOnly ? null : (
-                    <InstalledWidgetSurface
-                        testID={`${props.testID}.surface`}
-                        target={{ kind: 'session', sessionId: props.sessionId }}
-                        recordRevision={`${props.surface.pluginId}/${props.surface.localId}`}
-                        source={source}
-                        presentation="content"
-                        runtime={runtime}
-                    />
-                ),
-            }}
-        />
-    );
+    const runtime = useAppShellPluginUiProjection();
+    const viewerScope = useActiveServerAccountScope();
+    const definition = props.instance.definition;
+    const installed = React.useMemo(() => readWidgetDescriptor(runtime.pluginUiProjection, definition), [runtime.pluginUiProjection, definition]);
+    const descriptor = useWidgetInstanceDescriptor(viewerScope?.serverId === props.serverId ? viewerScope : null, props.instance, installed);
+    // A copy is named by what it is bound to ("Fix settings modal remount"), in the source slot (lab dbind X).
+    const bindingLabel = useWidgetInstanceBindingLabel(props.instance, descriptor);
+    return <WidgetFrame
+        testID={props.testID} frameStyle={props.frameStyle} placement="companion"
+        mark={descriptor?.icon ?? 'puzzle-piece'}
+        title={props.instanceView?.titleEditor ?? props.instance.displayName ?? descriptor?.title ?? (definition.kind === 'installed' ? definition.surface.localId : props.instance.id)}
+        source={bindingLabel ?? descriptor?.pluginName ?? (definition.kind === 'installed' ? definition.surface.pluginId : undefined)}
+        menu={props.menu}
+        body={{ kind: 'content', children: props.measurementOnly ? null : viewerScope && viewerScope.serverId === props.serverId
+            ? <WidgetSurface testID={props.testID + '.surface'}
+                scope={{ ...viewerScope, owner: { kind: 'companion', sessionId: props.sessionId } }}
+                providedContext={{ session: [{ serverId: viewerScope.serverId, sessionId: props.sessionId }] }}
+                instance={props.instance} descriptor={descriptor} appRuntime={runtime} presentation="content"
+                recordRevision={stableJsonStringify(props.instance)}
+                {...(props.instanceView?.onRepairInputs ? { onRepairInputs: props.instanceView.onRepairInputs } : {})} />
+            : <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_viewer_scope_mismatch' }} testID={props.testID + '.surface'} /> }}
+    />;
 }

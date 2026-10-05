@@ -9,6 +9,7 @@ import {
   SessionInitialAccessUpdateRequiredError,
 } from './sessionCreationInitialAccess';
 import { isSessionCreationPlacementError } from './sessionCreationPlacementError';
+import { SessionCreationInitialTriggerError } from './sessionCreationInitialTriggerError';
 
 /**
  * The exact no-effect refusal a Session create-or-load failure carries to a
@@ -28,6 +29,9 @@ export function readSessionCreationTerminalSpawnErrorDetail(
   }
   if (error instanceof SessionInitialAccessServerError) {
     return { kind: 'session_creation_access_refused', code: error.code };
+  }
+  if (error instanceof SessionCreationInitialTriggerError) {
+    return { kind: 'session_creation_initial_trigger_refused', code: error.code };
   }
   if (error instanceof SessionInitialAccessUpdateRequiredError) {
     return SessionCreationTerminalSpawnErrorDetailSchema.safeParse(error.details).data ?? null;

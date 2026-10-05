@@ -5,6 +5,7 @@ import {
   WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema,
   SessionTriggerListRequestV1Schema, SessionTriggerAddRequestV1Schema,
   SessionTriggerUpdateRequestV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerListResultV1Schema,
+  WorkflowTriggerSummaryInputV1Schema,
 } from './triggers/workflowTriggerActionsV1.js';
 
 import { OPAQUE_CURSOR_SCHEMA } from '../automations/automationActionSpecsV1.js';
@@ -57,7 +58,7 @@ import {
 import { WorkflowInputNameSchema } from './workflowReferenceV1.js';
 import { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from './workflowDefinitionEditV1.js';
 import { WorkflowDefinitionRefV1StringSchema, parseWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
-import { WorkflowPluginSourceV1Schema } from './workflowPluginSourceV1.js';
+import { WorkflowPluginSourceV1Schema } from './workflowPluginSourceContractV1.js';
 export { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from './workflowDefinitionEditV1.js';
 
 const CursorSchema = OPAQUE_CURSOR_SCHEMA;
@@ -264,8 +265,12 @@ export const WorkflowRunAcceptedContextV1Schema = z.union([
 export type WorkflowRunAcceptedContextV1 = z.infer<typeof WorkflowRunAcceptedContextV1Schema>;
 export const WorkflowRunGetResultV1Schema = z.object({
   run: WorkflowRunSummaryV1Schema,
+  /** Effective caller capabilities from the server's live Run access owner. */
+  callerAccess: z.object({ canEdit: z.boolean() }).strict(),
   definition: WorkflowDefinitionV1Schema,
   acceptedContext: WorkflowRunAcceptedContextV1Schema,
+  /** Authenticated authored source before role/selection materialization; used for semantic rejoin. */
+  authoredDefinition: WorkflowDefinitionV1Schema,
   checkpoint: WorkflowCheckpointEnvelopeV1Schema.nullable(),
   result: StrictJsonValueSchema.optional(), usage: WorkflowUsageV1Schema.optional(),
   /** Authenticated exact producer record of `result`; neither field exists without the other. */
@@ -346,11 +351,18 @@ export const WorkflowRunDeleteRequestV1Schema = WorkflowRunPauseRequestV1Schema;
 export const WorkflowRunDeleteResultV1Schema = z.object({ deleted: z.literal(true), runId: WorkflowRunIdV1Schema }).strict();
 
 export const WorkflowDefinitionListRequestV1Schema = z.object({ cursor: CursorSchema.optional(), limit: PositivePagePreferenceSchema.optional() }).strict();
-export const WorkflowDefinitionListResultV1Schema = z.object({ definitions: z.array(WorkflowDefinitionArtifactHeaderV1Schema.extend({
+const WorkflowDefinitionLibraryHeaderV1Schema = WorkflowDefinitionArtifactHeaderV1Schema.extend({
   ownerAccountId: z.string().min(1).optional(), access: ArtifactCallerAccessV1Schema.optional(),
-}).strict()), pluginWorkflows: z.array(WorkflowPluginSourceV1Schema).optional(), nextCursor: CursorSchema.optional() }).strict();
+  triggers: z.array(WorkflowTriggerSummaryInputV1Schema),
+  /** Earliest enabled occurrence supplied by the Automation scheduler, never calculated by a reader. */
+  nextRunAt: z.number().int().nonnegative().safe().nullable(),
+}).strict();
+export const WorkflowDefinitionListResultV1Schema = z.object({ definitions: z.array(z.discriminatedUnion('contentStatus', [
+  WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('available'), stepCount: z.number().int().nonnegative().safe() }).strict(),
+  WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('unavailable'), stepCount: z.null() }).strict(),
+])), pluginWorkflows: z.array(WorkflowPluginSourceV1Schema).optional(), nextCursor: CursorSchema.optional() }).strict();
 export const WorkflowDefinitionGetRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict();
-export const WorkflowDefinitionGetResultV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, metadata: WorkflowDefinitionMetadataV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict();
+export const WorkflowDefinitionGetResultV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict();
 export const WorkflowDefinitionCreateRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict();
 export const WorkflowDefinitionCreateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
 export const WorkflowDefinitionUpdateRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, expectedRevision: WorkflowArtifactRevisionV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict();

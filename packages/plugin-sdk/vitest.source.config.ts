@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,6 +54,7 @@ export default defineConfig({
         'happier-plugin-sdk-source-workspace-package-sources',
     )],
     test: {
+        ...resolveVitestWorkers(),
         // Keep source validation rooted at the authored tree. Prepared API
         // publishers intentionally create complete package-local `.tmp.*`
         // copies, and a concurrent copy must never become a second test tree.

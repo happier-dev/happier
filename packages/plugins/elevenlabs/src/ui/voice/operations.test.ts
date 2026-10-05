@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getActionSpec, zodSchemaToJsonSchemaObject } from '@happier-dev/protocol';
 
 import {
   listElevenLabsVoicesWithAccountOperations,
@@ -68,6 +69,67 @@ const PREMADE_ACCOUNT_VOICE_CATALOG = Object.freeze({
 });
 
 describe('ElevenLabs public account operations', () => {
+  it('provisions and exactly reuses generated session.spawn_new tool metadata', async () => {
+    const spec = getActionSpec('session.spawn_new');
+    const tool = {
+      name: String(spec.bindings?.voiceClientToolName),
+      description: 'Create a session.',
+      parameters: zodSchemaToJsonSchemaObject(spec.inputSchema),
+    };
+    const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
+    let createdToolConfig: unknown;
+    const request = vi.fn(async (input: Readonly<{ operationId: string; parameters: unknown }>) => {
+      calls.push(input);
+      if (input.operationId === 'create-tool') {
+        // The provider-operation boundary captures the exact authored HTTP body.
+        createdToolConfig = (input.parameters as Readonly<{ body: { tool_config: unknown } }>).body.tool_config;
+      }
+      const body = input.operationId === 'voices'
+        ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'create-tool'
+          ? { id: 'tool_spawn' }
+          : input.operationId === 'create-agent'
+            ? { agent_id: 'agent_spawn' }
+            : input.operationId === 'agent'
+              ? { agent_id: 'agent_spawn', conversation_config: { agent: { prompt: { tool_ids: ['tool_spawn'] } } } }
+              : input.operationId === 'tools'
+                ? { tools: [{ id: 'tool_spawn', tool_config: createdToolConfig }], has_more: false, next_cursor: null }
+                : {};
+      return {
+        status: 200,
+        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify(body)),
+      };
+    });
+    const accountOperations = { request };
+    const configuration = { prompt: 'Create a Happier Voice agent.', tools: [tool], tts: createProvisionTtsSettings() };
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations,
+      request: { kind: 'create', ...configuration },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ ok: true, agentId: 'agent_spawn' });
+    expect(createdToolConfig).toEqual({
+      ...EXACT_SEND_MESSAGE_TOOL_CONFIG,
+      ...tool,
+      response_timeout_secs: 120,
+    });
+
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations,
+      request: { kind: 'update', agentId: 'agent_spawn', ...configuration },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ ok: true, updated: true });
+    expect(calls.map((call) => call.operationId)).toEqual([
+      'voices', 'create-tool', 'create-agent', 'voices', 'agent', 'tools', 'update-agent',
+    ]);
+    expect(calls.at(-1)?.parameters).toMatchObject({
+      agentId: 'agent_spawn',
+      body: { conversation_config: { agent: { prompt: { tool_ids: ['tool_spawn'] } } } },
+    });
+  });
+
   it('finds an existing Happier Voice agent on a later catalog page', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
     const request = vi.fn(async (input: Readonly<{
@@ -240,7 +302,7 @@ describe('ElevenLabs public account operations', () => {
           auth: { enable_auth: true },
           overrides: {
             conversation_config_override: {
-              agent: { language: true, prompt: { prompt: true } },
+              agent: { first_message: true, language: true, prompt: { prompt: true } },
               conversation: { text_only: true },
             },
           },
@@ -467,7 +529,7 @@ describe('ElevenLabs public account operations', () => {
         auth: { enable_auth: true },
         overrides: {
           conversation_config_override: {
-            agent: { language: true, prompt: { prompt: true } },
+            agent: { first_message: true, language: true, prompt: { prompt: true } },
             conversation: { text_only: true },
           },
         },

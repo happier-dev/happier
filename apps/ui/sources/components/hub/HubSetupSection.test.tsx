@@ -1,4 +1,5 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
@@ -7,10 +8,20 @@ import { HubSetupSection } from './HubSetupSection';
 import { AddPhoneSettingsView } from '@/components/settings/account/AddPhoneSettingsView';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { discardMachineAddFlowDraft } from '@/components/machines/add/machineAddFlowStore';
-import { getActiveServerId, removeServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerId, removeServerProfile, resolveServerProfileScopeIdForIdentifier, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { HomeHubLayoutValue } from './layout/homeHubLayout';
 import type { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,14 +33,16 @@ const state = vi.hoisted(() => ({
     window: { width: 1600, height: 900 },
     push: null as null | ((href: unknown) => void),
     params: {} as { setupStep?: string },
-    layout: { order: [], hidden: [] } as HomeHubLayoutValue,
-    layoutListeners: new Set<() => void>(),
-    writeLayout: null as null | ((next: HomeHubLayoutValue) => void),
+    layout: { order: [], hidden: [] } as Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'sections' | 'instances'>>,
     authenticated: true,
     featureSnapshot: vi.fn<typeof getServerFeaturesSnapshot>(async () => ({ status: 'error', reason: 'network' })),
     pairingCredentials: null as null | { token: string },
     request: vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
 }));
+installDisconnectedServerSocketBoundary();
+let artifact = createHomeHubArtifactHttpBoundary('account-setup');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let restoreActionLoader: (() => void) | undefined;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -61,38 +74,6 @@ vi.mock('@/modal', async () => {
     }) as never;
     return createModalModuleMock({ spies: { show } }).module;
 });
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const React = await import('react');
-    const { createStorageModuleMock, createUseSettingMutableMockFromReader } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({ importOriginal, overrides: {
-        // Preserve the real store and its live getters, including through import cycles.
-        // Only the inherited section fixtures below replace hooks.
-        useAllMachines: () => state.machines,
-        useIsActiveMachineListSettled: () => state.machineListSettled,
-        // The machine and pool lists the add-machine options read (empty: this Home has no pools).
-        useMachineListByServerId: () => ({}),
-        useMachineListStatusByServerId: () => ({}),
-        useMachinePoolListByServerId: () => ({}),
-        useMachinePoolListStatusByServerId: () => ({}),
-        useMachinePoolAccountIdByServerId: () => ({}),
-        // The Account's synced settings (the Home layout holds dismissed setup steps).
-        useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-            if (key !== 'homeHubLayoutV1') throw new Error(`unexpected setting ${key}`);
-            // The Account boundary has one shared snapshot; per-reader useState falsely made
-            // setup and its panel frame observe different layout writes.
-            const value = React.useSyncExternalStore((listener) => {
-                state.layoutListeners.add(listener);
-                return () => { state.layoutListeners.delete(listener); };
-            }, () => state.layout);
-            const write = React.useCallback((next: typeof state.layout) => {
-                state.layout = next;
-                for (const listener of state.layoutListeners) listener();
-            }, []);
-            state.writeLayout = write;
-            return [value, write] as const;
-        }),
-    } });
-});
 // The Home's feature probe (HTTP): no Home answers here, so a pairing code cannot be made.
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/api/capabilities/serverFeaturesClient')>(),
@@ -100,13 +81,14 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', async (importOriginal) =
     observeAuthenticatedServerFeaturesFresh: () => state.featureSnapshot({}),
 }));
 // Pairing HTTP and persisted credentials are system boundaries; the real QR lifecycle runs below them.
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: () => state.request,
-}));
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: state.authenticated, credentials: state.authenticated ? { token: 't', secret: 's' } : null }),
-}));
+vi.mock('@/sync/http/client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/http/client')>();
+    return { ...actual, createServerFetchAtEndpoint: (...args: Parameters<typeof actual.createServerFetchAtEndpoint>) => {
+        const request = actual.createServerFetchAtEndpoint(...args);
+        return (...requestArgs: Parameters<typeof request>) => requestArgs[0].startsWith('/v1/auth/pairing/') || requestArgs[0] === '/v1/auth/account/response'
+            ? state.request(requestArgs[0], requestArgs[1]) : request(...requestArgs);
+    } };
+});
 // Device storage for the recovery-key flag, and the server's feature answer (HTTP).
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
@@ -146,8 +128,14 @@ vi.mock('@/hooks/auth/useScannedAuthUrlProcessor', () => ({
     useScannedAuthUrlProcessor: () => ({ processAuthUrl: vi.fn() }),
 }));
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    vi.useRealTimers();
+    await connection?.dispose();
+    connection = undefined;
+    restoreActionLoader?.();
+    restoreActionLoader = undefined;
+    artifact = createHomeHubArtifactHttpBoundary('account-setup');
     discardMachineAddFlowDraft();
     state.authenticated = true;
     state.machines = [];
@@ -157,8 +145,6 @@ afterEach(() => {
     state.push = null;
     state.params = {};
     state.layout = { order: [], hidden: [] };
-    state.writeLayout = null;
-    state.layoutListeners.clear();
     state.featureSnapshot.mockReset();
     state.featureSnapshot.mockResolvedValue({ status: 'error', reason: 'network' });
     state.pairingCredentials = null;
@@ -172,12 +158,40 @@ afterEach(() => {
 });
 
 async function renderSection(presentation?: 'tiles' | 'checklist') {
+    if (!connection) {
+        artifact.seed({ v: 1, instances: [], ...state.layout });
+        await import('@/sync/syncEngine');
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
+        restoreActionLoader = await installRealActionExecutorModuleLoader();
+        const snapshot = getActiveServerSnapshot();
+        connection = await restoreServerAccountForTest({ serverUrl: snapshot.serverUrl || 'https://setup-layout.test', accountId: 'account-setup', request: (url, init) => {
+            if (new URL(String(url)).pathname === '/v1/machines') return Promise.resolve(Response.json(state.machines.map(machine => ({
+                ...machine, metadata: encodePlainMachineStoredContent(machine.metadata), daemonState: encodePlainMachineStoredContent(machine.daemonState),
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } satisfies FetchedMachineRow))));
+            return artifact.request(url, init);
+        } });
+    }
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(connection.home.id), accountId: 'account-setup' };
+    storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope, machines: Object.fromEntries(state.machines.map(machine => [machine.id, machine])),
+        machineListByServerId: { [scope.serverId]: state.machines }, machineListStatusByServerId: { [scope.serverId]: state.machineListSettled ? 'idle' : 'loading' } });
     // Both hubs are pages: the checklist's progress lives in the page section header.
     const screen = await renderScreen(
-        <ListPresentationProvider value="page"><HubSetupSection presentation={presentation} /></ListPresentationProvider>,
+        <AccountShell><ListPresentationProvider value="page"><HubSetupSection presentation={presentation} /></ListPresentationProvider></AccountShell>,
     );
     await flushHookEffects({ cycles: 3 });
     return screen;
+}
+
+function AccountShell({ children }: React.PropsWithChildren) {
+    return <InjectedAuthProvider credentials={state.authenticated ? connection!.credentials : null}>
+        <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, machineId: null, serverId: resolveServerProfileScopeIdForIdentifier(connection!.home.id), platform: 'web',
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+            {children}
+        </AppShellPluginUiProjectionValueProvider>
+    </InjectedAuthProvider>;
 }
 
 const phoneWindow = () => {
@@ -186,18 +200,10 @@ const phoneWindow = () => {
 };
 
 describe('HubSetupSection on Home (tiles)', () => {
-    // Recovery is a launch-lifetime singleton; exercise its pending → saved transition before
-    // later cases mount a runtime whose recovery flag is already handled.
-    it('offers saving the recovery key until it is saved or dismissed', async () => {
-        let onSaved: (() => Promise<void>) | null = null;
-        state.show = (options) => { onSaved = (options as { props: { onSaved: () => Promise<void> } }).props.onSaved; };
+    it('does not invent a recovery key for a plaintext Account', async () => {
         const screen = await renderSection();
-
-        await act(async () => { screen.pressByTestId('hub-setup.recoveryKey.action'); });
-        expect(onSaved).not.toBeNull();
-        await act(async () => { await onSaved!(); });
-        await flushHookEffects({ cycles: 2 });
         expect(screen.findByTestId('hub-setup.recoveryKey')).toBeNull();
+        expect(artifact.writes).toEqual([]);
     });
     it.each(['tiles', 'checklist'] as const)('completes phone setup only after successful pairing from %s and keeps completion in the existing synced layout', async (presentation) => {
         vi.useFakeTimers();
@@ -236,16 +242,20 @@ describe('HubSetupSection on Home (tiles)', () => {
             await act(async () => { screen.pressByTestId('settings-add-your-phone-shortcut.action'); });
             if (presentation === 'checklist') {
                 await screen.unmount();
-                screen = await renderScreen(<ListPresentationProvider value="page"><AddPhoneSettingsView /></ListPresentationProvider>);
+                screen = await renderScreen(<AccountShell><ListPresentationProvider value="page"><AddPhoneSettingsView /></ListPresentationProvider></AccountShell>);
             }
             await flushHookEffects({ cycles: 3 });
             const code = screen.tree.root.find((node) => typeof node.props.data === 'string' && parseHomeQrInviteDeepLink(node.props.data) !== null);
             const parsed = parseHomeQrInviteDeepLink(code.props.data);
             if (!parsed) throw new Error('Expected the real pairing invite');
-            expect(state.layout.hidden).toEqual(['usage']);
+            expect(artifact.layout().hidden).toEqual(['usage']);
             // An Account layout update while pairing is pending must not be overwritten by success.
             await act(async () => {
-                state.writeLayout?.({ ...state.layout, hidden: ['usage', 'machines'] });
+                const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                const result = await createDefaultActionExecutor().execute('home.hub.layout.update', { intent: { kind: 'visibility', sectionId: 'machines', hidden: true } }, {
+                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: connection!.home.id, expectedAccountId: 'account-setup',
+                });
+                expect(result.ok, JSON.stringify(result)).toBe(true);
             });
             const publicKey = new Uint8Array(32).fill(9);
             requested = {
@@ -261,9 +271,9 @@ describe('HubSetupSection on Home (tiles)', () => {
             await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
             await flushHookEffects({ cycles: 3 });
             expect(state.request.mock.calls.some(([path]) => path === '/v1/auth/account/response')).toBe(true);
-            expect(state.layout.hidden).toEqual(['usage', 'machines', 'setup:addPhone']);
-            expect(state.layout.order).toEqual(['setup', 'future-section']);
-            expect(state.layout.sections).toEqual({ setup: { frameStyle: 'plain' } });
+            expect([...artifact.layout().hidden].sort()).toEqual(['machines', 'setup:addPhone', 'usage']);
+            expect(artifact.layout().order.slice(0, 2)).toEqual(['setup', 'future-section']);
+            expect(artifact.layout().sections).toEqual({ setup: { frameStyle: 'plain' } });
             expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeNull();
             await act(async () => { screen.tree.unmount(); });
             const reopened = await renderSection();
@@ -303,9 +313,9 @@ describe('HubSetupSection on Home (tiles)', () => {
         expect(pushed).toEqual([]);
         expect(screen.findByTestId('hub-setup.pairing-panel')).toBeTruthy();
         // This fixture's Home probe fails; opening or closing an unsuccessful flow is not completion.
-        expect(state.layout.hidden).toEqual([]);
+        expect(artifact.layout().hidden).toEqual([]);
         await screen.unmount();
-        expect(state.layout.hidden).toEqual([]);
+        expect(artifact.layout().hidden).toEqual([]);
     });
 
     it('Another computer offers a Home pairing link first and keeps the terminal as an alternative', async () => {
@@ -351,16 +361,17 @@ describe('HubSetupSection on Home (tiles)', () => {
         await flushHookEffects({ cycles: 2 });
 
         expect(screen.findByTestId('hub-setup.addMachine')).toBeNull();
-        expect(state.layout.hidden).toEqual(['setup:addMachine']);
+        expect(artifact.layout().hidden).toEqual(['setup:addMachine', 'machines']);
         expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeTruthy();
         await act(async () => { screen.pressByTestId('settings-add-your-phone-shortcut.dismiss'); });
-        expect(state.layout.hidden).toEqual(['setup:addMachine', 'setup:addPhone']);
+        await flushHookEffects({ cycles: 3 });
+        expect(artifact.layout().hidden).toEqual(['setup:addMachine', 'machines', 'setup:addPhone']);
         expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeNull();
     });
 
     it('leaves Home once every step is done or dismissed', async () => {
         state.dismissed = true;
-        state.layout = { order: [], hidden: ['setup:addPhone', 'setup:addMachine', 'setup:installComputer'] };
+        state.layout = { order: [], hidden: ['setup:addPhone', 'setup:addMachine', 'setup:installComputer', 'setup:personalize'] };
         const screen = await renderSection();
 
         expect(screen.findByTestId('hub-setup.grid')).toBeNull();
@@ -379,5 +390,72 @@ describe('HubSetupSection on Home (tiles)', () => {
         await act(async () => { screen.pressByTestId('hub-setup.connectComputer.action'); });
         await flushHookEffects({ cycles: 2 });
         expect(screen.findByTestId('hub-setup.connect-computer-panel')).toBeTruthy();
+    });
+
+    describe('Personalize Happier', () => {
+        const SETUP_TILE_IDS = ['settings-add-your-phone-shortcut', 'hub-setup.connectComputer', 'hub-setup.addMachine', 'hub-setup.personalize'];
+        const tileOrder = (screen: Awaited<ReturnType<typeof renderSection>>) => screen
+            .findAll((node) => typeof node.type === 'string' && SETUP_TILE_IDS.includes(node.props?.testID))
+            .map((node) => node.props.testID as string)
+            .filter((id, index, ids) => ids.indexOf(id) === index);
+
+        afterEach(() => {
+            storage.getState().applyLocalSettings({ personalizeProgressV1: { savedSteps: [], resumeAt: null } });
+        });
+
+        it('comes after the phone and machine steps on a computer and opens step 1 in place', async () => {
+            state.dismissed = true;
+            const screen = await renderSection();
+            expect(tileOrder(screen)).toEqual(['settings-add-your-phone-shortcut', 'hub-setup.addMachine', 'hub-setup.personalize']);
+
+            await act(async () => { screen.pressByTestId('hub-setup.personalize.action'); });
+            await flushHookEffects({ cycles: 2 });
+            // Theme and the glass presets, then the rest of the flow: nothing is completed by opening it.
+            expect(screen.findByTestId('hub-setup.personalize-panel')).toBeTruthy();
+            expect(screen.findByTestId('hub-setup.personalize-panel-theme:dark')).toBeTruthy();
+            expect(screen.findByTestId('hub-setup.personalize-panel-glass:everywhere')).toBeTruthy();
+            expect(artifact.layout().hidden).toEqual([]);
+
+            await act(async () => { screen.pressByTestId('hub-setup.personalize-panel.not-now'); });
+            await flushHookEffects({ cycles: 2 });
+            expect(artifact.layout().hidden).toEqual([]);
+        });
+
+        it('comes first on a phone and opens the flow sheet', async () => {
+            state.dismissed = true;
+            phoneWindow();
+            const shown: unknown[] = [];
+            state.show = (options) => { shown.push(options); };
+            const screen = await renderSection();
+            expect(tileOrder(screen)[0]).toBe('hub-setup.personalize');
+
+            await act(async () => { screen.pressByTestId('hub-setup.personalize.action'); });
+            expect(shown).toEqual([expect.objectContaining({ chrome: expect.objectContaining({ phonePresentation: 'sheet' }) })]);
+        });
+
+        it('shows saved progress and picks up where this device left off', async () => {
+            state.dismissed = true;
+            const pushed: unknown[] = [];
+            state.push = (href) => { pushed.push(href); };
+            storage.getState().applyLocalSettings({ personalizeProgressV1: { savedSteps: ['look', 'conversation', 'tools'], resumeAt: 'work' } });
+            const screen = await renderSection();
+
+            // "3 of 6 choices saved. Pick up at Find your work." and Continue.
+            const texts = screen.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children as string);
+            expect(texts).toContain('personalize.cardProgress(saved=3,total=6,step=personalize.workName)');
+            expect(texts).toContain('personalize.cardContinue');
+            await act(async () => { screen.pressByTestId('hub-setup.personalize.action'); });
+            expect(pushed).toEqual(['/personalize']);
+            expect(screen.findByTestId('hub-setup.personalize-panel')).toBeNull();
+        });
+
+        it('dismissing hides setup:personalize on the Account layout', async () => {
+            state.dismissed = true;
+            const screen = await renderSection();
+            await act(async () => { screen.pressByTestId('hub-setup.personalize.dismiss'); });
+            await flushHookEffects({ cycles: 2 });
+            expect(artifact.layout().hidden).toEqual(['setup:personalize', 'machines']);
+            expect(screen.findByTestId('hub-setup.personalize')).toBeNull();
+        });
     });
 });

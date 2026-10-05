@@ -88,6 +88,7 @@ function NewSessionScreenInner(props: Readonly<{
                 temporaryComputerLaunch={model.temporaryComputerLaunch}
                 onRequestClose={model.launchOnRequestClose}
                 overlayPresentation={model.overlayPresentation}
+                presentation={props.presentation}
                 focusReturnRef={model.overlayFocusReturnRef}
                 overlayAccessibilityLabel={model.overlayAccessibilityLabel}
             >
@@ -106,6 +107,7 @@ function NewSessionScreenInner(props: Readonly<{
             temporaryComputerLaunch={model.temporaryComputerLaunch}
             onRequestClose={model.launchOnRequestClose}
             overlayPresentation={model.overlayPresentation}
+            presentation={props.presentation}
             focusReturnRef={model.overlayFocusReturnRef}
             overlayAccessibilityLabel={model.overlayAccessibilityLabel}
         >

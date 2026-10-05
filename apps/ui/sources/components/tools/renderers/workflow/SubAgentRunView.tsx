@@ -3,15 +3,16 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ToolViewProps } from '@/components/tools/renderers/core/_registry';
-import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
+import { StructuredResultView, projectStructuredResultDisplayText } from '@/components/tools/renderers/system/StructuredResultView';
 import type { Message } from "@happier-dev/session-core/messages";
 import {
     deriveTranscriptExecutionRunStatus,
     valueHasRequestInterruptedSignal,
 } from '@/sync/domains/session/subagents/executionRuns/executionRunSubagentStatus';
-import { SubAgentSummarySection } from './SubAgentSummarySection';
-import { Text } from '@/components/ui/text/Text';
+import { SubAgentSummarySection, projectSubAgentSummaryDisplayText } from './SubAgentSummarySection';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 
 
 type FindingsDigest = Readonly<{
@@ -32,13 +33,14 @@ type FindingsDigest = Readonly<{
 function getFindingsDigest(toolResult: unknown): FindingsDigest | null {
     if (!toolResult || typeof toolResult !== 'object' || Array.isArray(toolResult)) return null;
     const record = toolResult as Record<string, unknown>;
-    const digest = record.findingsDigest as any;
+    const digest = record.findingsDigest;
     if (!digest || typeof digest !== 'object' || Array.isArray(digest)) return null;
-    if (typeof digest.total !== 'number' || !Number.isFinite(digest.total) || digest.total < 0) return null;
-    if (!Array.isArray(digest.items)) return null;
-    const items: FindingsDigest['items'] = digest.items
-        .filter((i: any) => i && typeof i === 'object' && !Array.isArray(i))
-        .map((i: any) => ({
+    const digestRecord = digest as Record<string, unknown>;
+    if (typeof digestRecord.total !== 'number' || !Number.isFinite(digestRecord.total) || digestRecord.total < 0) return null;
+    if (!Array.isArray(digestRecord.items)) return null;
+    const items: FindingsDigest['items'] = digestRecord.items
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+        .map((i) => ({
             id: typeof i.id === 'string' ? i.id : '',
             title: typeof i.title === 'string' ? i.title : '',
             severity: typeof i.severity === 'string' ? i.severity : '',
@@ -47,28 +49,51 @@ function getFindingsDigest(toolResult: unknown): FindingsDigest | null {
             ...(typeof i.startLine === 'number' ? { startLine: i.startLine } : {}),
             ...(typeof i.endLine === 'number' ? { endLine: i.endLine } : {}),
         }))
-        .filter((i: any) => i.id.length > 0 && i.title.length > 0 && i.severity.length > 0 && i.category.length > 0);
+        .filter((i) => i.id.length > 0 && i.title.length > 0 && i.severity.length > 0 && i.category.length > 0);
 
     if (items.length === 0) return null;
-    return { total: digest.total, items };
+    return { total: digestRecord.total, items };
 }
 
-function coerceTextMessages(messages: readonly Message[]): readonly string[] {
-    const out: string[] = [];
-    for (const m of messages) {
-        if (!m) continue;
-        if (m.kind !== 'agent-text' && m.kind !== 'user-text') continue;
-        const text = typeof (m as any).text === 'string' ? String((m as any).text) : '';
-        if (text.trim()) out.push(text);
-    }
-    return out;
+function shouldRenderInterruptedSidechain(tool: ToolViewProps['tool'], messages: readonly Message[]): boolean {
+    return deriveTranscriptExecutionRunStatus(tool) === 'unknown'
+        && valueHasRequestInterruptedSignal(tool.result) && messages.length > 0;
 }
+
+function readString(value: unknown, key: string): string | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const text = (value as Record<string, unknown>)[key];
+    return typeof text === 'string' ? text : null;
+}
+
+export const projectSubAgentRunDisplayText: ToolDisplayTextProjector = (tool, _metadata, context) => {
+    if (tool.state === 'running') return projectSubAgentSummaryDisplayText(tool, null, context);
+    if (shouldRenderInterruptedSidechain(tool, context?.messages ?? [])) {
+        return projectSubAgentSummaryDisplayText({ ...tool, state: 'running', result: null }, null, context);
+    }
+    if (tool.state === 'error') return projectStructuredResultDisplayText({ ...tool, state: 'completed' });
+    if (tool.state !== 'completed' || !tool.result) return [];
+    const digest = getFindingsDigest(tool.result);
+    if (digest) return [
+        ...toolTextBlock('tool-digest-title', t('tools.subAgentRunView.reviewDigestTitle')),
+        ...digest.items.flatMap((item, index) => toolTextBlock(`tool-finding-${index}`, item.title)),
+    ];
+    const intent = readString(tool.input, 'intent') ?? readString(tool.result, 'intent');
+    return [
+        ...(intent === 'plan' || intent === 'delegate' ? [
+            ...toolTextBlock('tool-intent-title', t(intent === 'plan' ? 'tools.subAgentRunView.planTitle' : 'tools.subAgentRunView.delegateTitle')),
+            ...toolTextBlock('tool-summary', readString(tool.result, 'summary')),
+        ] : []),
+        ...projectStructuredResultDisplayText(tool),
+    ];
+};
 
 export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel, sessionId, serverId, messageId, interaction }) => {
+    const find = useToolFindState(messageId);
     if (tool.state === 'running') {
         return (
             <SubAgentSummarySection
-                tool={tool as any}
+                tool={tool}
                 metadata={null}
                 messages={messages ?? []}
                 detailLevel={detailLevel}
@@ -89,13 +114,11 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
     // it: a reported outcome outranks the marker there, and a second copy of that precedence here is
     // how the two surfaces silently drifted into showing the same run as finished and as running.
     if (
-        deriveTranscriptExecutionRunStatus(tool) === 'unknown'
-        && valueHasRequestInterruptedSignal(tool.result)
-        && (messages?.length ?? 0) > 0
+        shouldRenderInterruptedSidechain(tool, messages ?? [])
     ) {
         return (
             <SubAgentSummarySection
-                tool={{ ...tool, state: 'running', result: null } as any}
+                tool={{ ...tool, state: 'running', result: null }}
                 metadata={null}
                 messages={messages ?? []}
                 detailLevel={detailLevel}
@@ -113,6 +136,7 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
             return (
                 <StructuredResultView
                     tool={{ ...tool, state: 'completed' }}
+                    messageId={messageId}
                     metadata={null}
                     messages={[]}
                 />
@@ -123,47 +147,40 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
     if (tool.state !== 'completed') return null;
     if (!tool.result) return null;
 
-    const intent =
-        typeof (tool as any).input?.intent === 'string'
-            ? String((tool as any).input.intent)
-            : typeof (tool.result as any)?.intent === 'string'
-                ? String((tool.result as any).intent)
-                : null;
+    const intent = readString(tool.input, 'intent') ?? readString(tool.result, 'intent');
 
     const digest = getFindingsDigest(tool.result);
     if (!digest || digest.items.length === 0) {
         if (intent === 'plan') {
-            const summary = typeof (tool.result as any)?.summary === 'string' ? String((tool.result as any).summary) : '';
+            const summary = readString(tool.result, 'summary') ?? '';
             return (
                 <View style={styles.container}>
-                    <Text style={styles.title}>{t('tools.subAgentRunView.planTitle')}</Text>
-                    {summary ? <Text style={styles.line}>{summary}</Text> : null}
-                    <StructuredResultView tool={tool} metadata={null} messages={[]} />
+                    <ToolFindText messageId={messageId} blockId="tool-intent-title" text={t('tools.subAgentRunView.planTitle')} style={styles.title} />
+                    {summary ? <ToolFindText messageId={messageId} blockId="tool-summary" text={summary} style={styles.line} /> : null}
+                    <StructuredResultView tool={tool} messageId={messageId} metadata={null} messages={[]} />
                 </View>
             );
         }
 
         if (intent === 'delegate') {
-            const summary = typeof (tool.result as any)?.summary === 'string' ? String((tool.result as any).summary) : '';
+            const summary = readString(tool.result, 'summary') ?? '';
             return (
                 <View style={styles.container}>
-                    <Text style={styles.title}>{t('tools.subAgentRunView.delegateTitle')}</Text>
-                    {summary ? <Text style={styles.line}>{summary}</Text> : null}
-                    <StructuredResultView tool={tool} metadata={null} messages={[]} />
+                    <ToolFindText messageId={messageId} blockId="tool-intent-title" text={t('tools.subAgentRunView.delegateTitle')} style={styles.title} />
+                    {summary ? <ToolFindText messageId={messageId} blockId="tool-summary" text={summary} style={styles.line} /> : null}
+                    <StructuredResultView tool={tool} messageId={messageId} metadata={null} messages={[]} />
                 </View>
             );
         }
 
-        return <StructuredResultView tool={tool} metadata={null} messages={[]} />;
+        return <StructuredResultView tool={tool} messageId={messageId} metadata={null} messages={[]} />;
     }
 
     return (
         <View style={styles.container}>
-            <Text style={styles.title}>{t('tools.subAgentRunView.reviewDigestTitle')}</Text>
-            {digest.items.slice(0, 20).map((item, idx) => (
-                <Text key={item.id || String(idx)} style={styles.line}>
-                    {item.title}
-                </Text>
+            <ToolFindText messageId={messageId} blockId="tool-digest-title" text={t('tools.subAgentRunView.reviewDigestTitle')} style={styles.title} />
+            {(find.active ? digest.items : digest.items.slice(0, 20)).map((item, idx) => (
+                <ToolFindText key={item.id || String(idx)} messageId={messageId} blockId={`tool-finding-${idx}`} text={item.title} style={styles.line} />
             ))}
         </View>
     );

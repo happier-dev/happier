@@ -63,13 +63,15 @@ function withCommands(
  * Selection is read only through the aggregate action-target owner. Display
  * facts come only from the canonical row projection, while command locations
  * are built and preflighted only by the route owner. The resulting commands
- * are declarative `openSurface` data; this module owns no callback, resolver,
+ * are declarative `openSurface`/`executeAction` data; this module owns no callback, resolver,
  * navigation effect, Voice hook or currentness store.
  */
 export function projectTriageCurrentUiContextV1(input: Readonly<{
   surface: TriageSurfaceStateV1;
   visibleRows: readonly TriageListRowV1[];
   formatOpenEntryTitle: (title: string) => string;
+  mountedCommands?: readonly CurrentUiCommandDeclarationV1[];
+  mountedAction?: Readonly<{ action: Readonly<{ pluginId: string; localId: string }>; mountId: string }>;
 }>): PluginUiContextEnrichmentV1 {
   const target = resolveTriageActionTargetV1(input.surface);
   const selectedKey = target.kind === 'entry'
@@ -123,7 +125,7 @@ export function projectTriageCurrentUiContextV1(input: Readonly<{
       });
 
   const lens = readTriageRouteLensV1(input.surface);
-  const commands: CurrentUiCommandDeclarationV1[] = [];
+  const commands: CurrentUiCommandDeclarationV1[] = [...(input.mountedCommands ?? [])];
   const seen = new Set<string>();
   let routeOmitted = false;
   for (const { row, display } of displayedRows) {
@@ -144,7 +146,8 @@ export function projectTriageCurrentUiContextV1(input: Readonly<{
     }));
   }
 
-  const complete = withCommands(base, detail, commands, routeOmitted || selectionHasNoDisplay);
+  const mountedDetail = input.mountedAction === undefined ? detail : { ...detail, mountedAction: input.mountedAction };
+  const complete = withCommands(base, mountedDetail, commands, routeOmitted || selectionHasNoDisplay);
   if (!routeOmitted
     && commands.length <= CURRENT_UI_CONTEXT_MAX_COMMANDS_V1
     && utf8Bytes(complete) <= CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1) {
@@ -154,8 +157,8 @@ export function projectTriageCurrentUiContextV1(input: Readonly<{
   const bounded: CurrentUiCommandDeclarationV1[] = [];
   for (const command of commands) {
     if (bounded.length >= CURRENT_UI_CONTEXT_MAX_COMMANDS_V1) break;
-    const candidate = withCommands(base, detail, [...bounded, command], true);
+    const candidate = withCommands(base, mountedDetail, [...bounded, command], true);
     if (utf8Bytes(candidate) <= CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1) bounded.push(command);
   }
-  return withCommands(base, detail, bounded, true);
+  return withCommands(base, mountedDetail, bounded, true);
 }

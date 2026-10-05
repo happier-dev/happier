@@ -193,6 +193,7 @@ import {
 } from '@/components/autocomplete/composerSuggestionKinds';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { resolveNewSessionFileSuggestionScope } from '@/components/sessions/new/modules/resolveNewSessionFileSuggestionScope';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import {
     projectAiLaunchProfileForLegacyUi,
@@ -1806,6 +1807,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setSessionPrompt,
         automationDraft,
         automationRequestedByRoute,
+        initialTriggers,
+        setInitialTriggers,
     } = useNewSessionPromptAutomationState({
         prompt,
         dataId,
@@ -1813,6 +1816,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         persistedDraftEntryIntent: scopedPersistedDraft?.entryIntent,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
+        initialTriggersDraftKey: `${draftScope?.serverId ?? ''}:${draftScope?.accountId ?? ''}:${draftId ?? ''}`,
         exactTurnRetargetRequest: input?.automationExactTurnRetarget ?? null,
         readExactTurn,
         handOffLegacyAutomation: automationFeatureEnabled ? handOffLegacyAutomation : null,
@@ -1867,6 +1871,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const [pendingLaunchAttempt, setPendingLaunchAttempt] = React.useState<NewSessionLaunchAttempt | null>(null);
     const newSessionComposerCanSubmitRef = React.useRef(false);
     const newSessionRouteIsFocused = useIsFocused();
+    const newSessionLayoutPresented = useLayoutPresentationActive();
+    const newSessionComposerPresentedRef = React.useRef(false);
+    newSessionComposerPresentedRef.current = newSessionRouteIsFocused && newSessionLayoutPresented;
     const newSessionComposerDocument = useNewSessionComposerDocument({
         draftId,
         draftScope,
@@ -1916,6 +1923,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
         targetServerId,
     ]);
     newSessionComposerReferenceHostRef.current = newSessionComposerReferenceHost;
+    const newSessionComposerDropHost = React.useMemo<ComposerReferenceSearchHost | null>(() => (
+        newSessionComposerReferenceHost ? {
+            ...newSessionComposerReferenceHost,
+            isCurrent: () => newSessionComposerReferenceHostRef.current === newSessionComposerReferenceHost
+                && newSessionComposerDocument.isCurrent() && newSessionComposerPresentedRef.current,
+        } : null
+    ), [newSessionComposerDocument.isCurrent, newSessionComposerReferenceHost, newSessionLayoutPresented, newSessionRouteIsFocused]);
+    const newSessionComposerFileScope = React.useMemo(() => resolveNewSessionFileSuggestionScope({
+        targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath,
+    }), [selectedMachineHomeDir, selectedMachineId, selectedPath, targetServerId]);
 
     // Routed through the registry like every other composer host: the eligible-kind
     // subset is the only thing that decides which triggers resolve here (INV-1),
@@ -2360,6 +2377,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         zenTaskSource: persistedDraft?.zenTaskSource,
         automationDraft,
         automationFeatureEnabled,
+        initialTriggers,
         hostBoundMachineId,
         selectedMachineId,
         targetServerId,
@@ -3430,6 +3448,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         automationFeatureEnabled,
         automationDraft,
         onOpenAutomationEditor: openAutomationEditorWithComposedDraft,
+        showInitialTriggers: automationFeatureEnabled,
+        initialTriggers,
+        onInitialTriggersChange: setInitialTriggers,
         repoScmSnapshot,
         checkoutChipModel,
         organizationPlacementActionChips: organizationPlacementState.actionChips,
@@ -3684,6 +3705,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         footer: {
             promptStore,
             composerDocument: newSessionComposerDocument,
+            composerReferenceHost: newSessionComposerDropHost,
+            composerFileScope: newSessionComposerFileScope,
             setSessionPrompt,
             handleCreateSession,
             registerTemporaryComputerReplacementLaunch,
@@ -3736,6 +3759,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         creation: {
             promptStore,
             composerDocument: newSessionComposerDocument,
+            composerReferenceHost: newSessionComposerDropHost,
+            composerFileScope: newSessionComposerFileScope,
             setSessionPrompt,
             handleCreateSession,
             registerTemporaryComputerReplacementLaunch,

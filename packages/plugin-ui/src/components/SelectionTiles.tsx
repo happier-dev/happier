@@ -27,6 +27,10 @@ export type SelectionTilesOption<T extends string = string> = Readonly<{
   subtitleKey?: string;
   /** A glyph from the public icon set (card tiles). Without one a card tile shows its selection mark. */
   icon?: IconName;
+  mark?: ReactNode;
+  badge?: string;
+  badgeKey?: string;
+  testID?: string;
   /**
    * What this option looks like (visual tiles): render the real component at
    * static props — never a drawn replica — so the preview cannot drift from
@@ -44,6 +48,13 @@ type SelectionTilesBaseProps<T extends string> = Readonly<{
    * `preview` with its label beneath.
    */
   variant?: 'card' | 'visual';
+  tileSizing?: 'natural' | 'fill';
+  density?: 'regular' | 'compact';
+  minimumColumns?: number;
+  maximumColumns?: number;
+  minimumTileWidth?: number;
+  subtitleLines?: number;
+  renderOptionFooter?: (input: Readonly<{ option: SelectionTilesOption<T>; selected: boolean; disabled: boolean }>) => ReactNode;
   /** The group's accessible name: the setting it chooses. */
   accessibilityLabel: string;
   accessibilityLabelKey?: string;
@@ -126,18 +137,31 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
   const options = useMemo(() => props.options.map((option): HappierSelectionTileOption<T, IconName> => {
     const subtitle = resolveAuthorText(translate, option.subtitle, option.subtitleKey);
     return {
+      ...option,
       id: option.id,
       title: resolveAuthorText(translate, option.title, option.titleKey) ?? option.title,
       ...(subtitle === undefined ? {} : { subtitle }),
       ...(option.icon === undefined ? {} : { icon: option.icon }),
       ...(option.preview === undefined ? {} : { preview: option.preview }),
       ...(option.disabled === undefined ? {} : { disabled: option.disabled }),
+      ...(option.mark === undefined ? {} : { mark: option.mark }),
+      ...(option.testID === undefined ? {} : { testID: option.testID }),
+      ...(option.badge === undefined && option.badgeKey === undefined ? {} : {
+        badge: resolveAuthorText(translate, option.badge, option.badgeKey),
+      }),
     };
   }), [props.options, translate]);
 
   const shared = {
     options,
     variant: props.variant ?? 'card',
+    tileSizing: props.tileSizing,
+    density: props.density,
+    minimumColumns: props.minimumColumns,
+    maximumColumns: props.maximumColumns,
+    minimumTileWidth: props.minimumTileWidth,
+    subtitleLines: props.subtitleLines,
+    renderOptionFooter: props.renderOptionFooter,
     accessibilityLabel: resolveAuthorText(translate, props.accessibilityLabel, props.accessibilityLabelKey) ?? props.accessibilityLabel,
     ...(props.testID === undefined ? {} : { testIdPrefix: props.testID }),
     colors,

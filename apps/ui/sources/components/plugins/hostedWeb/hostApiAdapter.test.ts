@@ -14,9 +14,12 @@ import {
     PluginUiSelectActionInputResultV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
 import { describe, expect, it, vi } from 'vitest';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createPluginWidgetAreaHostPortV1, PluginUiJsonValueV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1 } from '@happier-dev/protocol/widgets';
 
 import { createPluginHostedWebHostApiBridgeHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
-import { createPluginSurfaceActionHostApi } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 
 const surface: PluginUiSurfaceContextV1 = {
@@ -93,6 +96,34 @@ function createEnvelope(
 }
 
 describe('hosted web plugin host API adapter', () => {
+    it('refuses host widget-area embedding before reading or mutating the shared area', async () => {
+        const scope = { serverId: 'home', accountId: 'viewer' };
+        let reads = 0;
+        const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1({ read: async () => { reads += 1; return null; },
+            create: async () => { throw new Error('Unexpected write'); }, update: async () => { throw new Error('Unexpected write'); } },
+            { surface: ref, isCurrent: () => true }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area } }));
+        const port = createPluginWidgetAreaHostPortV1({ scope, pluginId: surface.pluginId, pageId: surface.contributionId,
+            declarations: [{ name: 'pinned', contextSchema: { type: 'object', additionalProperties: false } }], isCurrent: () => true,
+            execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui' }) });
+        const owner = createPluginSurfaceHostApi({ surfaceContext: surface,
+            handlers: { widgetArea: async request => PluginUiJsonValueV1Schema.parse(await port.execute(request.payload)) } });
+        const handler = createPluginHostedWebHostApiBridgeHandler({ surface, requestIdPrefix: 'hosted-area', identity: canonicalIdentity,
+            canonicalHostApi: { identity: canonicalIdentity, surface: canonicalSurface, methods: owner.installedMethods }, handleRequest: owner.handleRequest });
+        await handler(createEnvelope('ready', { ready: true }));
+        const negotiated = await handler(createEnvelope('hostApi', { wireVersion: 1, kind: 'negotiate', identity: canonicalIdentity, apiRange: '^1.0.0' }));
+        expect(negotiated).toMatchObject({ kind: 'result', payload: { kind: 'negotiated', methods: ['context'] } });
+        const payload = { area: 'pinned', operation: { actionId: 'widgets.instance.list' } };
+        const request = (body: PluginUiJsonValueV1, requestId: string) => handler(createEnvelope('hostApi', {
+            wireVersion: 1, kind: 'request', identity: canonicalIdentity, requestId, method: 'widgetArea', payload: body }));
+        await expect(request(payload, 'area-list')).resolves.toMatchObject({
+            kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
+        await expect(request({ ...payload, accountId: 'other' }, 'area-forged')).resolves.toMatchObject({
+            kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
+        await expect(request({ area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } }, 'area-remove'))
+            .resolves.toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
+        expect(reads).toBe(0);
+    });
     it('negotiates, delivers, and retires an exact Composer observation through the existing host subscription bridge', async () => {
         const postToFrame = vi.fn();
         const requests: PluginUiHostApiRequestEnvelopeV1[] = [];
@@ -914,6 +945,7 @@ describe('hosted web plugin host API adapter', () => {
     });
 
     it('accepts targeted execution only after selection and forwards the host-owned selected operation', async () => {
+        const { createPluginSurfaceActionHostApi } = await import('@/components/plugins/surfaces/pluginSurfaceActionDispatch');
         const targetedOperation = {
             point: { pointId: 'connection', protocol: { id: 'connection', version: 1 } },
             contributor: {
@@ -1211,7 +1243,7 @@ describe('hosted web plugin host API adapter', () => {
                 contributor: {
                     pluginId: operation.contributor.pluginId,
                     contributionId: operation.contributor.contributionId,
-                    sourceCustody: providerSourceCustody,
+                    sourceCustody: scmSourceCustody,
                 },
             },
             connectedAccount: { kind: 'none' },

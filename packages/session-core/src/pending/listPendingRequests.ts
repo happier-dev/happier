@@ -2,7 +2,7 @@ import type { Message } from "../messages/messageTypes.js";
 import type { AgentState } from "../state/agentState.js";
 import { isRequestInterruptedPlaceholder } from "./requestInterruptedPlaceholder.js";
 import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
-import { SessionPublicCompletedRequestV1Schema, resolveAgentRequestKind, type AgentRequestKind, type SessionActionConfirmationsV1 } from '@happier-dev/protocol';
+import { SessionPublicCompletedRequestV1Schema, isSessionActionConfirmationRequest, resolveAgentRequestKind, resolvePendingRequestAttentionReasonV1, type AgentRequestKind, type SessionActionConfirmationsV1 } from '@happier-dev/protocol';
 
 export type PendingRequestFacts = Readonly<{
     sessionId: string;
@@ -30,6 +30,29 @@ export type SessionPendingRequest = Readonly<{
     createdAt: number | null;
     permissionSuggestions?: unknown;
 }>;
+
+/** Request age never falls back to session activity; unknown dates follow known dates. */
+export function comparePendingRequestsByAge(
+    left: Pick<SessionPendingRequest, 'id' | 'createdAt'>,
+    right: Pick<SessionPendingRequest, 'id' | 'createdAt'>,
+): number {
+    if (left.createdAt !== right.createdAt) {
+        if (left.createdAt === null) return 1;
+        if (right.createdAt === null) return -1;
+        return left.createdAt - right.createdAt;
+    }
+    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+export function selectOldestPendingRequest<T extends Pick<SessionPendingRequest, 'id' | 'createdAt'>>(
+    requests: readonly T[],
+): T | null {
+    let oldest: T | null = null;
+    for (const request of requests) {
+        if (oldest === null || comparePendingRequestsByAge(request, oldest) < 0) oldest = request;
+    }
+    return oldest;
+}
 
 export type PendingRequestFlags = Readonly<{
     hasPendingPermissionRequests: boolean;
@@ -339,8 +362,8 @@ export function derivePendingRequestFlagsFromAgentState(agentState: AgentState |
         return EMPTY_PENDING_REQUEST_FLAGS;
     }
     return {
-        hasPendingPermissionRequests: requests.some((request) => request.kind !== 'user_action'),
-        hasPendingUserActionRequests: requests.some((request) => request.kind === 'user_action'),
+        hasPendingPermissionRequests: requests.some((request) => resolvePendingRequestAttentionReasonV1(request) === 'permission_required'),
+        hasPendingUserActionRequests: requests.some((request) => resolvePendingRequestAttentionReasonV1(request) === 'user_action_required'),
     };
 }
 
@@ -612,7 +635,9 @@ export function derivePendingRequestFlags(
             const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState);
             return {
                 hasPendingPermissionRequests:
-                    projectedFlags.hasPendingPermissionRequests || actionFlags.hasPendingPermissionRequests,
+                    projectedFlags.hasPendingPermissionRequests
+                    || listPendingAgentStateRequests(facts.agentState).some(isSessionActionConfirmationRequest)
+                    || actionFlags.hasPendingPermissionRequests,
                 hasPendingUserActionRequests:
                     projectedFlags.hasPendingUserActionRequests
                     || agentStateFlags.hasPendingUserActionRequests
@@ -626,10 +651,10 @@ export function derivePendingRequestFlags(
         }
         return {
             hasPendingPermissionRequests:
-                pendingTranscriptRequests.some((request) => request.kind !== 'user_action')
+                pendingTranscriptRequests.some((request) => resolvePendingRequestAttentionReasonV1(request) === 'permission_required')
                 || actionFlags.hasPendingPermissionRequests,
             hasPendingUserActionRequests:
-                pendingTranscriptRequests.some((request) => request.kind === 'user_action')
+                pendingTranscriptRequests.some((request) => resolvePendingRequestAttentionReasonV1(request) === 'user_action_required')
                 || actionFlags.hasPendingUserActionRequests,
         };
     }
@@ -651,7 +676,7 @@ export function derivePendingRequestFlags(
     }
 
     return {
-        hasPendingPermissionRequests: requests.some((request) => request.kind !== 'user_action'),
-        hasPendingUserActionRequests: requests.some((request) => request.kind === 'user_action'),
+        hasPendingPermissionRequests: requests.some((request) => resolvePendingRequestAttentionReasonV1(request) === 'permission_required'),
+        hasPendingUserActionRequests: requests.some((request) => resolvePendingRequestAttentionReasonV1(request) === 'user_action_required'),
     };
 }

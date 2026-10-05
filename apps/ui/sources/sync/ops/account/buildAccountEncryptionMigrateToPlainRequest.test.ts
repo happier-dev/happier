@@ -326,6 +326,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
         { id: 'auto_sensitive', templateVersion: 3, templateCiphertext: sensitiveTemplateCiphertext },
         { id: 'auto_safe', templateVersion: 5, templateCiphertext: safeTemplateCiphertext },
       ],
+      resolveSession: async (sessionId) => ({ sessionId, encryptionMode: sessionId === 's1' ? 'e2ee' : 'plain' }),
       fetchConnectedServiceCredentialSealed: async () => ({
         revisionSemantics: 'revisioned',
         credentialRevision: CREDENTIAL_REVISION,

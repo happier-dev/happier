@@ -1,9 +1,97 @@
 import { describe, expect, it } from 'vitest';
 import { createWorkBoardArtifactBoundary } from './workBoardArtifactV1.testkit.js';
 import { createWorkBoardArtifactPortV1, readWorkBoardArtifactV1 } from './workBoardArtifactV1.js';
-import { buildWorkBoardItemKeyV1, createWorkBoardV1 } from './workBoardV1.js';
+import { buildWorkBoardItemKeyV1, createWorkBoardV1, WorkBoardIntentV1Schema } from './workBoardV1.js';
+import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 
 describe('one Artifact per Board', () => {
+    it('replays widget inputs/width/order with concurrent work positions and reloads only its own Board', async () => {
+        const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'workBoard', boardId: 'one' } } as const;
+        const instance = { v: 1, id: 'copy-a', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
+        const ref = { surface, instanceId: instance.id };
+        const b = createWorkBoardArtifactBoundary([createWorkBoardV1({ id: 'one', name: 'One' }), createWorkBoardV1({ id: 'two', name: 'Two' })]);
+        const port = createWorkBoardArtifactPortV1(b.transport);
+        const other = b.rows.get('two');
+        await port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_add', boardId: 'one', ref, instance, position: { x: 12, y: 24 } }));
+        await port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_add', boardId: 'one', ref: { surface, instanceId: 'copy-b' }, instance: { ...instance, id: 'copy-b' } }));
+        const workKey = buildWorkBoardItemKeyV1({ kind: 'session', qualifiedId: { serverId: 'home', id: 's1' } });
+        await Promise.all([
+            port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_inputs', boardId: 'one', ref, bindings: { count: { kind: 'value', value: 7 } } })),
+            port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_width', boardId: 'one', ref, width: 2 })),
+            port.apply({ kind: 'add_items', boardId: 'one', refs: [{ kind: 'session', qualifiedId: { serverId: 'home', id: 's1' } }], positionsByItemRef: { [workKey]: { x: 36, y: 48 } } }),
+        ]);
+        await port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_move', boardId: 'one', ref, nativeIndex: 2 }));
+        const board = await createWorkBoardArtifactPortV1(b.transport).readBoard('one');
+        expect(board?.widgets).toMatchObject([{ instance: { id: 'copy-a', bindings: { count: { kind: 'value', value: 7 } } }, width: 2 }, { instance: { id: 'copy-b', bindings: {} }, width: 1 }]);
+        expect(board?.itemOrder?.[2]).toBe(JSON.stringify(['widget', 'home', 'account', 'one', 'copy-a']));
+        expect(board?.positionsByItemRef).toEqual({ [workKey]: { x: 36, y: 48 }, [JSON.stringify(['widget', 'home', 'account', 'one', 'copy-a'])]: { x: 12, y: 24 } });
+        expect(b.rows.get('two')).toBe(other);
+        const controller = new AbortController(); controller.abort();
+        await expect(port.apply(WorkBoardIntentV1Schema.parse({ kind: 'widget_remove', boardId: 'one', ref }), controller.signal)).rejects.toThrow();
+        expect((await port.readBoard('one'))?.widgets).toHaveLength(2);
+    });
+    it('persists explicit source clears without clearing the other setting or picked custody', async () => {
+        const filter = normalizeSessionListFilterV1();
+        const picked = [{ kind: 'session', qualifiedId: { serverId: 'a', id: 'picked' } }] as const;
+        const b = createWorkBoardArtifactBoundary([{ ...createWorkBoardV1({ id: 'one', name: 'One' }),
+            source: { sections: ['running'], filter, picked } }]);
+        const port = createWorkBoardArtifactPortV1(b.transport);
+        await port.apply(WorkBoardIntentV1Schema.parse({ kind: 'update', boardId: 'one', patch: { source: { filter: null } } }));
+        expect((await port.readBoard('one'))?.source).toEqual({ sections: ['running'], picked });
+        await port.apply(WorkBoardIntentV1Schema.parse({ kind: 'update', boardId: 'one', patch: { source: { filter, sections: null } } }));
+        expect((await port.readBoard('one'))?.source).toEqual({ filter, picked });
+    });
+
+    it.each(['filter_first', 'sections_first'] as const)('replays independent source edits on the CAS winner (%s)', async order => {
+        const initialFilter = normalizeSessionListFilterV1();
+        const changedFilter = normalizeSessionListFilterV1({ homeServerIds: ['home-b'] });
+        const b = createWorkBoardArtifactBoundary([{ ...createWorkBoardV1({ id: 'one', name: 'One' }),
+            source: { sections: ['running'], filter: initialFilter, picked: [] } }]);
+        let conflicts = 0;
+        const transport = { ...b.transport, update: async (input: Parameters<typeof b.transport.update>[0]) => {
+            const result = await b.transport.update(input);
+            if (!result.ok && result.errorCode === 'version_mismatch') conflicts++;
+            return result;
+        } };
+        const first = createWorkBoardArtifactPortV1(transport);
+        const second = createWorkBoardArtifactPortV1(transport);
+        const filterEdit = { kind: 'update', boardId: 'one', patch: { source: { filter: changedFilter } } } as const;
+        const sectionsEdit = { kind: 'update', boardId: 'one', patch: { source: { sections: ['needs_you'] } } } as const;
+        await Promise.all(order === 'filter_first'
+            ? [first.apply(filterEdit), second.apply(sectionsEdit)]
+            : [first.apply(sectionsEdit), second.apply(filterEdit)]);
+        expect(conflicts).toBeGreaterThan(0);
+        expect((await first.readBoard('one'))?.source).toEqual({ sections: ['needs_you'], filter: changedFilter, picked: [] });
+    });
+
+    it('isolates malformed JSON, preserves its bytes, and refuses its mutation while publishing a readable neighbor', async () => {
+        const valid = createWorkBoardV1({ id: 'valid', name: 'Valid' });
+        const b = createWorkBoardArtifactBoundary([createWorkBoardV1({ id: 'broken', name: 'Broken' }), valid]);
+        const broken = { ...b.rows.get('broken')!, body: '{ "id": "broken",\n invalid' };
+        b.rows.set('broken', broken);
+        const port = createWorkBoardArtifactPortV1(b.transport);
+        expect(await port.read()).toEqual({ v: 1, boards: [valid], unreadable: [broken.body] });
+        expect(await port.readBoard('broken')).toBeNull();
+        for (const kind of ['update', 'delete', 'create'] as const) {
+            const intent = kind === 'update' ? { kind, boardId: 'broken', patch: { name: 'Overwrite' } }
+                : kind === 'delete' ? { kind, boardId: 'broken' } : { kind, board: { id: 'broken', name: 'Overwrite' } };
+            await expect(port.apply(intent)).rejects.toMatchObject({ code: 'invalid_board_record' });
+        }
+        expect(b.rows.get('broken')).toBe(broken);
+        await port.apply({ kind: 'update', boardId: 'valid', patch: { name: 'Renamed' } });
+        expect(b.rows.get('broken')).toBe(broken);
+    });
+
+    it.each(['transport_unavailable', 'authentication_required', 'encryption_mode_mismatch', 'decryption_failed'])('propagates %s without classifying it as unreadable content', async code => {
+        const b = createWorkBoardArtifactBoundary([createWorkBoardV1({ id: 'one', name: 'One' })]);
+        const failure = Object.assign(new Error(code), { code });
+        const port = createWorkBoardArtifactPortV1({ ...b.transport, read: async () => { throw failure; } });
+        await expect(port.read()).rejects.toBe(failure);
+        await expect(port.readBoard('one')).rejects.toBe(failure);
+        await expect(port.apply({ kind: 'update', boardId: 'one', patch: { name: 'Overwrite' } })).rejects.toBe(failure);
+        expect(b.updates).toEqual([]);
+    });
+
     it('acknowledges the actual winner when exact-id create returns a raced existing Board', async () => {
         const b = createWorkBoardArtifactBoundary();
         const port = createWorkBoardArtifactPortV1({ ...b.transport, create: async input => {

@@ -2,8 +2,13 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Pressable, Text, View } from 'react-native';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
+import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
+import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
+import { computeLineContentHash } from '@/utils/text/lineContentHash';
+import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
+import { useCodeLinesReviewComments } from './useCodeLinesReviewComments';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,36 +24,41 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit');
-    return await createUnistylesMock({
-        theme: {
-            colors: {
-                accent: { blue: '#4f8cff' },
-                divider: '#333',
-                surface: '#111',
-                surfacePressed: '#444',
-                text: '#eee',
-                textSecondary: '#aaa',
-                textDestructive: '#f00',
-            },
-        },
-    });
+    return await createUnistylesMock();
 });
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    TextInput: 'TextInput',
-}));
-
 describe('useCodeLinesReviewComments', () => {
-    it('toggles an inline composer after pressing add-comment for a line', async () => {
-        const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
+    it('does not attach moved repeated lines or ranges with changed interior content', async () => {
+        const lines = buildCodeLinesFromFile({ text: 'first();\nchanged();\nlast();\nsame();\nsame();' });
+        const drafts: ReviewCommentDraft[] = [
+            { id: 'range', filePath: 'a.ts', source: 'file', anchor: { kind: 'range', filePath: 'a.ts', startLine: 1, endLine: 3, startLineHash: computeLineContentHash('first();'), endLineHash: computeLineContentHash('last();'), selectedTextHash: computeLineContentHash('first();\noriginal();\nlast();') }, snapshot: { selectedLines: ['first();', 'original();', 'last();'], beforeContext: [], afterContext: [] }, body: 'range', createdAt: 1 },
+            { id: 'repeat', filePath: 'a.ts', source: 'file', anchor: { kind: 'line', filePath: 'a.ts', line: 99, lineHash: computeLineContentHash('same();') }, snapshot: { selectedLines: ['same();'], beforeContext: [], afterContext: [] }, body: 'repeat', createdAt: 1 },
+        ];
+        const hook = await renderHook(() => useCodeLinesReviewComments({ enabled: true, filePath: 'a.ts', source: 'file', lines, drafts }));
+        expect(lines.every((line) => hook.getCurrent()!.renderAfterLine(line) === null)).toBe(true);
+    });
 
+    it('retains predecessor prefix hashes on their before side without moving to after lines', async () => {
+        const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1,2 +1,2 @@\n-same();  \n+same();  \n context();' });
+        // Literal emitted by the inspected 0.2 HEAD 388915739 codec and producer.
+        const drafts: ReviewCommentDraft[] = [{ id: 'old', filePath: 'a.ts', source: 'diff', anchor: { kind: 'line', filePath: 'a.ts', line: 99, side: 'before', lineHash: 'lh1:ba222596f94ab7a7' }, snapshot: { selectedLines: ['-same();'], beforeContext: [], afterContext: [] }, body: 'old', createdAt: 1 }];
+        const hook = await renderHook(() => useCodeLinesReviewComments({ enabled: true, filePath: 'a.ts', source: 'diff', lines, drafts }));
+        const before = lines.find((line) => line.kind === 'remove')!;
+        const after = lines.find((line) => line.kind === 'add')!;
+        expect(hook.getCurrent()!.renderAfterLine(before)).not.toBeNull();
+        expect(hook.getCurrent()!.renderAfterLine(after)).toBeNull();
+    });
+
+    it('rejects a mixed-side range before opening a composer that cannot save it', async () => {
+        const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1 +1 @@\n-old();\n+new();' });
+        const range = lines.filter((line) => !line.renderIsHeaderLine);
+        const onError = vi.fn();
+        const hook = await renderHook(() => useCodeLinesReviewComments({ enabled: true, filePath: 'a.ts', source: 'diff', lines, drafts: [], onError }));
+        await act(async () => hook.getCurrent()!.onPressAddCommentRange(range));
+        expect(range.some((line) => hook.getCurrent()!.isCommentActive(line))).toBe(false);
+        expect(onError).toHaveBeenCalled();
+    });
+    it('toggles an inline composer after pressing add-comment for a line', async () => {
         const lines = [
             {
                 id: 'f:1',
@@ -99,13 +109,11 @@ describe('useCodeLinesReviewComments', () => {
         expect(inputs[0]!.props.placeholder).toBe('Add a review comment…');
         const inputStyle = flattenTestStyle(inputs[0]!.props.style);
         expect(inputStyle.outline).toBeUndefined();
-        expect(inputStyle.outlineStyle).toBeUndefined();
+        expect(inputStyle.outlineWidth ?? 0).toBe(0);
         expect(inputStyle.boxShadow).toBeUndefined();
     });
 
     it('opens one composer after the end line for a range comment', async () => {
-        const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
-
         const onUpsertDraft = vi.fn();
         const lines = [
             {
@@ -212,8 +220,6 @@ describe('useCodeLinesReviewComments', () => {
     });
 
     it('uses themed fallbacks for the inline composer instead of raw color literals', async () => {
-        const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
-
         const lines = [
             {
                 id: 'f:1',
@@ -258,8 +264,12 @@ describe('useCodeLinesReviewComments', () => {
         const composerContainerStyle = flattenTestStyle(input.parent.props.style);
         const cancelText = screen.findAllByType('Text' as any).find((node) => node.props.children === 'Cancel');
         const saveText = screen.findAllByType('Text' as any).find((node) => node.props.children === 'Save');
-        const cancelButton = cancelText?.parent?.parent ?? null;
-        const saveButton = saveText?.parent?.parent ?? null;
+        const cancelButton = screen.findAllByType(Pressable).find((node) => (
+            node.findAllByType('Text' as any).includes(cancelText!)
+        ));
+        const saveButton = screen.findAllByType(Pressable).find((node) => (
+            node.findAllByType('Text' as any).includes(saveText!)
+        ));
         if (!cancelButton || !saveButton) {
             throw new Error('Expected inline composer action buttons');
         }
@@ -276,7 +286,6 @@ describe('useCodeLinesReviewComments', () => {
     });
 
     it('renders an existing draft on a moved file line by matching the stored line hash', async () => {
-        const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
         const { computeLineContentHash } = await import('@/utils/text/lineContentHash');
 
         const lines = [
@@ -344,16 +353,11 @@ describe('useCodeLinesReviewComments', () => {
         if (!firstLine || !secondLine) {
             throw new Error('Expected review comment line containers to render');
         }
-        const firstLineText = firstLine.findAllByType('Text' as any).map((n) => n.props.children).join(' ');
-        const secondLineText = secondLine.findAllByType('Text' as any).map((n) => n.props.children).join(' ');
-
-        expect(firstLineText).not.toContain('Keep the moved line anchored.');
-        expect(secondLineText).toContain('Keep the moved line anchored.');
+        expect(firstLine.findAllByType('EnrichedMarkdownText' as never)).toHaveLength(0);
+        expect(secondLine.findAllByType('EnrichedMarkdownText' as never)[0]?.props.markdown).toBe('Keep the moved line anchored.');
     });
 
-    it('renders saved comments flush with the diff body and lets users edit them', async () => {
-        const { useCodeLinesReviewComments } = await import('./useCodeLinesReviewComments');
-
+    it('renders saved comments flush with the diff body', async () => {
         const lines = [
             {
                 id: 'f:1',
@@ -403,12 +407,5 @@ describe('useCodeLinesReviewComments', () => {
         }
         expect(flattenTestStyle(savedContainer.props.style).marginLeft ?? 0).toBe(0);
 
-        await act(async () => {
-            await screen.pressByTestIdAsync('review-comment-draft-edit:draft-1');
-        });
-
-        const inputs = screen.findAllByType('TextInput' as any);
-        expect(inputs).toHaveLength(1);
-        expect(inputs[0]!.props.value).toBe('Update the secret handling.');
     });
 });

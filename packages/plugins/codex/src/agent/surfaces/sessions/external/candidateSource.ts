@@ -2,7 +2,10 @@ import {
   deriveExternalSessionActivity,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
+import { searchCodexExternalTranscript } from './transcriptSource.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
+import { findExternalSessionContentMatchRange } from '@happier-dev/protocol';
 
 import {
   createCodexNativeAppServerClient,
@@ -512,6 +515,7 @@ async function listRolloutCandidateOrdering(params: Readonly<{
   env: NodeJS.ProcessEnv;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
+  searchTarget?: 'metadata' | 'content';
   scan: CodexExternalSessionRolloutScanState;
 }> & CodexExternalSessionInvocationBounds): Promise<Readonly<{
   rows: CodexMergedOrderingRow[];
@@ -524,6 +528,7 @@ async function listRolloutCandidateOrdering(params: Readonly<{
   const searchTerm = normalizeCodexRolloutCandidateSearchTerm(params.searchTerm);
   if (
     (params.scan.kind === 'auto' || params.scan.kind === 'filenameSelection')
+    && params.searchTarget !== 'content'
     && searchTerm
     && canSearchCodexRolloutFilename(searchTerm)
   ) {
@@ -610,7 +615,7 @@ async function listRolloutCandidateOrdering(params: Readonly<{
   );
   const filtered = filterCodexRolloutCandidatesBySearchTerm({
     candidates: built,
-    searchTerm: params.searchTerm ?? '',
+    searchTerm: params.searchTarget === 'content' ? '' : params.searchTerm ?? '',
   });
   return {
     rows: filtered.map(toCodexMergedOrderingCandidateRow),
@@ -960,6 +965,14 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
   });
 }
 
+type CodexCandidateListPage = Readonly<{
+  candidates: CodexExternalSessionCandidate[];
+  nextCursor: string | null;
+  searchIncomplete?: boolean;
+  preparation?: Readonly<{ kind: 'building_candidate_index'; scanned: number }>;
+  contentCoverage?: 'complete' | 'partial' | 'unsupported';
+}>;
+
 export async function listCodexSessionCandidates(params: Readonly<{
   source: CodexExternalSessionSource;
   activeServerDir?: string;
@@ -969,23 +982,22 @@ export async function listCodexSessionCandidates(params: Readonly<{
   limit: number;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
+  searchTarget?: 'metadata' | 'content';
+  ripgrep?: AgentExternalSessionsInvocation['ripgrep'];
+  resultBudget?: Readonly<{ fits(page: CodexCandidateListPage): boolean }>;
   /** Include internal threads (approval reviewers, spawned sub-agents). Absent: top-level sessions only. */
   includeThreads?: boolean;
-}> & CodexExternalSessionInvocationBounds): Promise<Readonly<{
-  candidates: CodexExternalSessionCandidate[];
-  nextCursor: string | null;
-  searchIncomplete?: boolean;
-  preparation?: Readonly<{ kind: 'building_candidate_index'; scanned: number }>;
-}>> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexCandidateListPage> {
   throwIfCodexExternalSessionInvocationStopped(params);
-  const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
+  const searchTerm = typeof params.searchTerm === 'string' ? (params.searchTarget === 'content' ? params.searchTerm : params.searchTerm.trim()).toLowerCase() : '';
+  const search = { target: params.searchTarget === 'content' ? 'content' as const : 'metadata' as const, term: searchTerm };
   const limit = Math.max(1, Math.trunc(params.limit));
   // Every unsearched browse — the ordinary mounted machine Browse included —
   // builds the host candidate index from bounded scan chunks. An empty query
   // has nothing to search. Real searches run the merged ordering against one
   // bounded searched window per request (`listRolloutCandidateOrdering`), so
   // no request walks the whole corpus.
-  if (!searchTerm) {
+  if (!searchTerm && params.searchTarget !== 'content') {
     return await scanBoundedRolloutCandidateChunk({
       source: params.source,
       activeServerDir: params.activeServerDir,
@@ -1001,12 +1013,15 @@ export async function listCodexSessionCandidates(params: Readonly<{
     ? decodeCodexExternalSessionIndexCursor(params.cursor)
     : createInitialCodexExternalSessionIndexCursor();
   if (!cursor) throw new CodexExternalSessionCandidateSourceChangedError();
+  if (params.cursor && (cursor.search?.term !== search.term || (cursor.search?.target ?? 'metadata') !== search.target)) throw new CodexExternalSessionCandidateSourceChangedError();
+  if (search.target === 'content' && !params.ripgrep) return { candidates: [], nextCursor: null, contentCoverage: 'unsupported' };
   const rolloutOrdering = await listRolloutCandidateOrdering({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
     searchTerm,
     searchMode: params.searchMode,
+    searchTarget: params.searchTarget,
     scan: cursor.rolloutScan,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
@@ -1038,11 +1053,12 @@ export async function listCodexSessionCandidates(params: Readonly<{
           suppressedRolloutIds: Object.freeze([]),
           active: terminalNativeCandidateCursorState(),
           archived: terminalNativeCandidateCursorState(),
+          search,
         }))
         : null,
     };
   };
-  const exactRolloutIdMatch = Boolean(searchTerm)
+  const exactRolloutIdMatch = search.target === 'metadata' && Boolean(searchTerm)
     && rolloutOrdering.rows.some((row) => row.remoteSessionId.toLowerCase() === searchTerm)
     && rolloutOrdering.searchIncomplete !== true;
   if (exactRolloutIdMatch) {
@@ -1053,7 +1069,7 @@ export async function listCodexSessionCandidates(params: Readonly<{
     });
   }
 
-  const appServerListing = params.searchMode === 'fast'
+  const appServerListing = params.searchMode === 'fast' && search.target !== 'content'
     ? {
       active: null,
       archived: null,
@@ -1064,14 +1080,14 @@ export async function listCodexSessionCandidates(params: Readonly<{
       activeServerDir: params.activeServerDir,
       env: params.env,
       exec: params.exec,
-      searchTerm,
+      searchTerm: search.target === 'content' ? '' : searchTerm,
       active: cursor.active,
       archived: cursor.archived,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
     });
   throwIfCodexExternalSessionInvocationStopped(params);
-  const nativeCursor = params.searchMode === 'fast'
+  const nativeCursor = params.searchMode === 'fast' && search.target !== 'content'
     ? Object.freeze({
       ...cursor,
       active: terminalNativeCandidateCursorState(),
@@ -1093,11 +1109,57 @@ export async function listCodexSessionCandidates(params: Readonly<{
     || appServerListing.incomplete === true
     || (Boolean(searchTerm) && page.hasPendingNativeContinuation);
 
-  return {
-    candidates: await buildCodexMergedOrderingPage(page.rows, params),
+  const built = await buildCodexMergedOrderingPage(page.rows, params);
+  let candidates = built;
+  let contentPartial = page.hasMore || appServerListing.incomplete;
+  if (search.target === 'content' && params.ripgrep) {
+    candidates = [];
+    for (const candidate of built) {
+      const result = await searchCodexExternalTranscript({ ...params, remoteSessionId: candidate.remoteSessionId, query: searchTerm, ripgrep: params.ripgrep });
+      contentPartial ||= result.partial || result.unsearchable;
+      if (result.match) candidates.push({ ...candidate, match: result.match });
+      else if (result.unsearchable) candidates.push(candidate);
+    }
+  }
+  const result: CodexCandidateListPage = {
+    candidates,
     nextCursor: page.hasMore
-      ? encodeCodexExternalSessionIndexCursor(page.cursor)
+      ? encodeCodexExternalSessionIndexCursor({ ...page.cursor, search })
       : null,
     ...(searchIncomplete ? { searchIncomplete: true } : {}),
+    ...(search.target === 'content' ? { contentCoverage: contentPartial ? 'partial' as const : 'complete' as const } : {}),
   };
+  if (search.target === 'content' && params.resultBudget && !params.resultBudget.fits(result)) {
+    const original = [...candidates];
+    const contextSnippet = (text: string, context: number) => {
+      const hit = findExternalSessionContentMatchRange(text, searchTerm);
+      if (!hit) return text;
+      let start = Math.max(0, hit.start - context);
+      let end = Math.min(text.length, hit.end + context);
+      if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start]!)) start -= 1;
+      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]!)) end += 1;
+      return text.slice(start, end);
+    };
+    // First preserve every hit's phrase; then allocate remaining payload space
+    // to context through the producer's real serialized-envelope predicate.
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = original[index]!;
+      if (candidate.match) candidates[index] = { ...candidate, match: { ...candidate.match, snippet: contextSnippet(candidate.match.snippet, 0) } };
+    }
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = original[index]!;
+      if (!candidate.match) continue;
+      const match = candidate.match;
+      let lower = 0;
+      let upper = match.snippet.length;
+      while (lower < upper) {
+        const middle = Math.ceil((lower + upper) / 2);
+        candidates[index] = { ...candidate, match: { ...match, snippet: contextSnippet(match.snippet, middle) } };
+        if (params.resultBudget.fits(result)) lower = middle;
+        else upper = middle - 1;
+      }
+      candidates[index] = { ...candidate, match: { ...match, snippet: contextSnippet(match.snippet, lower) } };
+    }
+  }
+  return result;
 }

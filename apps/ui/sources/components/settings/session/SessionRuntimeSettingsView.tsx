@@ -12,7 +12,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SESSION_RUNTIME_SETTINGS } from '@/components/settings/session/sessionRuntimeSettings';
 
 export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSettingsView() {
@@ -30,59 +30,61 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <SettingsPageHeader description={t('settingsSessionPages.runtime.pageDescription')} />
-            <ItemGroup title={t('settingsSessionPages.runtime.terminalSection')}>
-                <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.host}>
-                    <SegmentedChoiceItem<'none' | 'tmux' | 'zellij' | 'herdr'>
-                        testID="settings-session-terminal-host-item"
-                        testIDPrefix="settings-session-terminal-host"
-                        title={t(SESSION_RUNTIME_SETTINGS.settings.host.titleKey)}
-                        options={[
-                            { id: 'none', label: t('settingsSessionPages.runtime.terminalHostNone') },
-                            { id: 'tmux', label: 'tmux' },
-                            { id: 'zellij', label: 'Zellij' },
-                            { id: 'herdr', label: 'Herdr' },
-                        ]}
-                        value={selectedTerminalHost}
-                        onChange={(next) => {
-                            applySettings({ sessionTerminalHost: next, sessionUseTmux: next === 'tmux' });
-                        }}
-                    />
-                </SettingAnchor>
-                {selectedTerminalHost === 'tmux' && <>
-                    <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.sessionName}>
-                        <FieldItem label={t('profiles.tmuxSession')} supportingText={t('common.optional')}>
-                            <FieldTextInput
-                                testID="settings-session-tmux-name"
-                                accessibilityLabel={t('profiles.tmuxSession')}
-                                placeholder={t('profiles.tmux.sessionNamePlaceholder')}
-                                value={tmuxSessionName}
-                                onChangeText={(value) => applySettings({ sessionTmuxSessionName: value })}
-                                autoCapitalize="none" monospace
-                            />
-                        </FieldItem>
-                    </SettingAnchor>
-                    <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.isolated}>
-                        <Item title={t('profiles.tmux.isolatedServerTitle')}
-                            subtitle={tmuxIsolated ? t('profiles.tmux.isolatedServerEnabledSubtitle') : t('profiles.tmux.isolatedServerDisabledSubtitle')}
-                            showChevron={false}
-                            rightElement={<Switch testID="settings-session-tmux-isolated" value={tmuxIsolated}
-                                onValueChange={(value) => applySettings({ sessionTmuxIsolated: value })} />}
+            <SettingSection section={SESSION_RUNTIME_SETTINGS.sectionRefs.terminal}>
+                <ItemGroup title={t('settingsSessionPages.runtime.terminalSection')}>
+                    <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.host}>
+                        <SegmentedChoiceItem<'none' | 'tmux' | 'zellij' | 'herdr'>
+                            testID="settings-session-terminal-host-item"
+                            testIDPrefix="settings-session-terminal-host"
+                            title={t(SESSION_RUNTIME_SETTINGS.settings.host.titleKey)}
+                            options={[
+                                { id: 'none', label: t('settingsSessionPages.runtime.terminalHostNone') },
+                                { id: 'tmux', label: 'tmux' },
+                                { id: 'zellij', label: 'Zellij' },
+                                { id: 'herdr', label: 'Herdr' },
+                            ]}
+                            value={selectedTerminalHost}
+                            onChange={(next) => {
+                                applySettings({ sessionTerminalHost: next, sessionUseTmux: next === 'tmux' });
+                            }}
                         />
                     </SettingAnchor>
-                    {tmuxIsolated && <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.tmpDir}>
-                        <FieldItem label={t('profiles.tmuxTempDir')} supportingText={t('common.optional')}>
-                            <FieldTextInput
-                                testID="settings-session-tmux-tmpdir"
-                                accessibilityLabel={t('profiles.tmuxTempDir')}
-                                placeholder={t('profiles.tmux.tempDirPlaceholder')}
-                                value={tmuxTmpDir ?? ''}
-                                onChangeText={(value) => applySettings({ sessionTmuxTmpDir: value.trim().length > 0 ? value : null })}
-                                autoCapitalize="none" monospace
+                    {selectedTerminalHost === 'tmux' && <>
+                        <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.sessionName}>
+                            <FieldItem label={t('profiles.tmuxSession')} supportingText={t('common.optional')}>
+                                <FieldTextInput
+                                    testID="settings-session-tmux-name"
+                                    accessibilityLabel={t('profiles.tmuxSession')}
+                                    placeholder={t('profiles.tmux.sessionNamePlaceholder')}
+                                    value={tmuxSessionName}
+                                    onChangeText={(value) => applySettings({ sessionTmuxSessionName: value })}
+                                    autoCapitalize="none" monospace
+                                />
+                            </FieldItem>
+                        </SettingAnchor>
+                        <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.isolated}>
+                            <Item title={t('profiles.tmux.isolatedServerTitle')}
+                                subtitle={tmuxIsolated ? t('profiles.tmux.isolatedServerEnabledSubtitle') : t('profiles.tmux.isolatedServerDisabledSubtitle')}
+                                showChevron={false}
+                                rightElement={<Switch testID="settings-session-tmux-isolated" value={tmuxIsolated}
+                                    onValueChange={(value) => applySettings({ sessionTmuxIsolated: value })} />}
                             />
-                        </FieldItem>
-                    </SettingAnchor>}
-                </>}
-            </ItemGroup>
+                        </SettingAnchor>
+                        {tmuxIsolated && <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.tmpDir}>
+                            <FieldItem label={t('profiles.tmuxTempDir')} supportingText={t('common.optional')}>
+                                <FieldTextInput
+                                    testID="settings-session-tmux-tmpdir"
+                                    accessibilityLabel={t('profiles.tmuxTempDir')}
+                                    placeholder={t('profiles.tmux.tempDirPlaceholder')}
+                                    value={tmuxTmpDir ?? ''}
+                                    onChangeText={(value) => applySettings({ sessionTmuxTmpDir: value.trim().length > 0 ? value : null })}
+                                    autoCapitalize="none" monospace
+                                />
+                            </FieldItem>
+                        </SettingAnchor>}
+                    </>}
+                </ItemGroup>
+            </SettingSection>
         </ItemList>
     );
 });

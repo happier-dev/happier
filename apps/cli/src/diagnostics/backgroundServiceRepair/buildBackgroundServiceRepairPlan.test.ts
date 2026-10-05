@@ -55,7 +55,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       writeFileSync(path, prior.files[0]!.content);
       const plan = buildBackgroundServiceRepairPlan({
         currentReleaseChannel: 'preview', currentServerId: 'company', preferredMode: 'user',
-        services: [{ serverId: 'company', name: 'Company', installed: true, path, platform, mode: 'user',
+        services: [{ serverId: 'company', name: 'Company', verification: 'verified' as const, installed: true, path, platform, mode: 'user',
           releaseChannel: 'preview', label: 'happier-daemon.preview.company', targetMode: 'pinned' }],
       });
       const preserved = { autostart: 'on-demand', bundleId: 'dev.happier.preview', managedBy: 'desktop' };
@@ -76,7 +76,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.preview.company.service',
         platform: 'linux',
         mode: 'user',
@@ -112,7 +112,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -122,7 +122,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.company.service',
         platform: 'linux',
         mode: 'user',
@@ -152,7 +152,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -181,7 +181,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'default',
         name: 'Legacy default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/test/.config/systemd/user/happier-daemon.service',
         platform: 'linux',
         mode: 'user',
@@ -220,7 +220,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/test/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -230,7 +230,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/etc/systemd/system/happier-daemon.default.service',
         platform: 'linux',
         mode: 'system',
@@ -262,7 +262,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.company.service',
         platform: 'linux',
         mode: 'user',
@@ -273,7 +273,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'partner',
         name: 'Partner',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.partner.service',
         platform: 'linux',
         mode: 'user',
@@ -310,7 +310,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.preview.company.service',
         platform: 'linux',
         mode: 'user',
@@ -321,7 +321,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -370,7 +370,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.preview.company.service',
         platform: 'linux',
         mode: 'user',
@@ -381,7 +381,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'company',
         name: 'Foreign pinned company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.preview.company.service',
         platform: 'linux',
         mode: 'user',
@@ -407,7 +407,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -447,7 +447,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.preview.company.service',
         platform: 'linux',
         mode: 'user',
@@ -471,7 +471,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'company',
         name: 'Company',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.preview.company.service',
         platform: 'win32',
         mode: 'user',
@@ -482,7 +482,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/tmp/happier-daemon.default.ps1',
         platform: 'win32',
         mode: 'user',
@@ -512,7 +512,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       services: [{
         serverId: 'default',
         name: 'Legacy default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/test/.config/systemd/user/happier-daemon.stable.default.service',
         platform: 'linux',
         mode: 'user',
@@ -522,7 +522,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
       }, {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: '/home/test/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux',
         mode: 'user',
@@ -575,7 +575,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
           services: [{
             serverId: 'default',
             name: 'Legacy default background service',
-            installed: true,
+            verification: 'verified' as const, installed: true,
             path: installedPath,
             platform,
             mode: 'user',
@@ -643,7 +643,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
         services: [{
           serverId: 'company',
           name: 'Current Home pinned service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: localPath,
           platform: 'linux',
           mode: 'user',
@@ -654,7 +654,7 @@ describe('buildBackgroundServiceRepairPlan', () => {
         }, {
           serverId: 'default',
           name: 'Foreign Home default service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: foreignPath,
           platform: 'linux',
           mode: 'user',

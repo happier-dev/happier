@@ -113,6 +113,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     ProtocolComposerReferenceResolutionV1Schema: 'feature-protocol',
     ProtocolJsonValue: 'feature-protocol',
     ProtocolJsonValueOptions: 'feature-protocol',
+    ProtocolLaunchProfileIdV2Schema: 'feature-protocol',
     ProtocolNumberOptions: 'feature-protocol',
     ProtocolObjectEvolutionPolicy: 'feature-protocol',
     ProtocolObjectOptions: 'feature-protocol',
@@ -208,6 +209,11 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
     [`${SDK_PACKAGE_NAME}/connected-accounts`]: new Set([
         'QualifiedConnectedAccountRef',
         'QualifiedConnectedAccountRefSchema',
+    ]),
+    [`${SDK_PACKAGE_NAME}/scm`]: new Set([
+        'ScmComparisonSource',
+        'ScmComparisonSourceSchema',
+        'ScmComparisonSourceProtocolSchema',
     ]),
     // The Collection revision ceiling is a portable numeric schema fact, and
     // SDK `/collections` is its public owner. A feature protocol that declares

@@ -7,7 +7,8 @@ import {
 } from '../../workflows/workflowDefinitionV1.js';
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema,
   type WorkflowDefinitionListResultV1 } from '../../workflows/actionsV1.js';
-import { applyWorkflowDefinitionEditsV1, type WorkflowDefinitionEditRequestV1 } from '../../workflows/workflowDefinitionEditV1.js';
+import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, type WorkflowDefinitionEditRequestV1 } from '../../workflows/workflowDefinitionEditV1.js';
+import type { createWorkflowTriggerActions } from './workflowTriggerActions.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowDefinitionV1, WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
@@ -18,17 +19,19 @@ import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/artifactSharingV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';
+import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 
 export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number; updatedAt: number;
   ownerAccountId: string; access: ArtifactCallerAccessV1;
+  body?: ArtifactBodyV1 | null; bodyVersion?: number;
 }>;
 export type WorkflowDefinitionArtifactOperations = Readonly<{
   read: (artifactId: string, options?: Readonly<{ signal?: AbortSignal }>) => Promise<Readonly<{
     artifactId: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null; revision: WorkflowArtifactRevisionV1;
     ownerAccountId: string; access: ArtifactCallerAccessV1;
   }> | null>;
-  list: (options: Readonly<{ limit?: number; cursor?: string; signal?: AbortSignal }>) => Promise<Readonly<{
+  list: (options: Readonly<{ limit?: number; cursor?: string; includeBody?: boolean; signal?: AbortSignal }>) => Promise<Readonly<{
     items: readonly WorkflowDefinitionArtifactHeaderRow[]; nextCursor?: string;
   }>>;
   create: (input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; signal?: AbortSignal }>) => Promise<unknown>;
@@ -84,12 +87,25 @@ function headerMatchesArtifact(
   });
 }
 
+function openDefinitionBody(body: ArtifactBodyV1 | null | undefined): WorkflowDefinitionV1 {
+  const unavailable = () => Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
+  if (typeof body !== 'string') throw unavailable();
+  let candidate: unknown;
+  try { candidate = JSON.parse(body); } catch { throw unavailable(); }
+  const parsedBody = WorkflowDefinitionArtifactBodyV1Schema.safeParse(candidate);
+  if (!parsedBody.success) throw unavailable();
+  const validation = validateWorkflowDefinition(parsedBody.data.definition);
+  if (!validation.valid || !validation.normalizedDefinition) throw unavailable();
+  return validation.normalizedDefinition;
+}
+
 export function createWorkflowDefinitionActions(params: Readonly<{
   artifactStore: Store;
   encodeListCursor: (row: WorkflowDefinitionArtifactHeaderRow) => string;
   assertDefinitionWriteAllowed: (definition: WorkflowDefinitionV1, context?: WorkflowIngressContextV1, caller?: DefinitionCaller) => void | Promise<void>;
   removeWorkflowTriggers?: (definitionId: string) => Promise<void>;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
+  readWorkflowTriggerSummaries?: ReturnType<typeof createWorkflowTriggerActions>['readWorkflowSummaries'];
 }>) {
   const readPluginWorkflows: WorkflowPluginSourceReaderV1 = params.readPluginWorkflows ?? (() => []);
   const get = async ({ definitionId, signal }: Readonly<{ definitionId: string; signal?: AbortSignal }>) => {
@@ -103,18 +119,10 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     }, parsedHeader.data) || typeof artifact.body !== 'string') {
       throw Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
     }
-    let candidate: unknown;
-    try { candidate = JSON.parse(artifact.body); } catch { throw Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' }); }
-    const parsedBody = WorkflowDefinitionArtifactBodyV1Schema.safeParse(candidate);
-    if (!parsedBody.success) throw Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
-    const validation = validateWorkflowDefinition(parsedBody.data.definition);
-    if (!validation.valid || !validation.normalizedDefinition) {
-      throw Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
-    }
-    return { definitionId, revision: artifact.revision, definition: validation.normalizedDefinition, metadata: parsedHeader.data.metadata,
+    return { definitionId, revision: artifact.revision, definition: openDefinitionBody(artifact.body), metadata: parsedHeader.data.metadata, access: artifact.access,
       ...(parsedHeader.data.savedBy ? { savedBy: parsedHeader.data.savedBy } : {}) };
   };
-  const save = async (input: Pick<UpdateInput, 'definitionId' | 'expectedRevision' | 'metadata'>, definition: WorkflowDefinitionV1, caller?: DefinitionCaller) => {
+  const save = async (input: Pick<UpdateInput, 'definitionId' | 'expectedRevision' | 'metadata'>, definition: WorkflowDefinitionV1, access: ArtifactCallerAccessV1, caller?: DefinitionCaller) => {
     const nextRevision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
     const result = await params.artifactStore.update({ artifactId: input.definitionId,
       expectedRevision: input.expectedRevision, header: header(input.definitionId, nextRevision, input.metadata, caller),
@@ -123,14 +131,15 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       code: result.errorCode === 'version_mismatch' ? 'currentness_conflict' : 'content_unavailable',
     });
     const actor = savedBy(caller);
-    return { definitionId: input.definitionId, revision: result.revision, definition, metadata: input.metadata,
+    return { definitionId: input.definitionId, revision: result.revision, definition, metadata: input.metadata, access,
       ...(actor ? { savedBy: actor } : {}) };
   };
   return {
     readPluginWorkflows,
     list: async ({ limit, cursor: inputCursor }: Readonly<{ cursor?: string; limit?: number }>): Promise<WorkflowDefinitionListResultV1> => {
       const sources = await readPluginWorkflows();
-      const definitions: Array<ArtifactHeader & Readonly<{ ownerAccountId: string; access: ArtifactCallerAccessV1 }>> = [];
+      const definitions: WorkflowDefinitionListResultV1['definitions'] = [];
+      let triggerSummaries: Awaited<ReturnType<NonNullable<typeof params.readWorkflowTriggerSummaries>>> | undefined;
       const pluginPage = (start: number) => {
         const pluginWorkflows: WorkflowPluginSourceV1[] = [];
         for (let index = start; index < sources.length; index += 1) {
@@ -161,7 +170,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       do {
         let page: Awaited<ReturnType<Store['list']>>;
         try {
-          page = await params.artifactStore.list({ limit: 500, cursor });
+          page = await params.artifactStore.list({ limit: 500, cursor, includeBody: true });
         } catch (error) {
           if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'invalid_cursor') {
             throw Object.assign(new Error('workflow_definition_cursor_invalid'), { code: 'invalid_input' });
@@ -173,9 +182,28 @@ export function createWorkflowDefinitionActions(params: Readonly<{
           if (!parsed.success || !headerMatchesArtifact({
             artifactId: artifact.artifactId,
             headerVersion: artifact.headerVersion,
+            bodyVersion: artifact.bodyVersion,
           }, parsed.data)) continue;
-          const definition = { ...parsed.data,
-            ownerAccountId: artifact.ownerAccountId, access: artifact.access };
+          if (!triggerSummaries) {
+            if (!params.readWorkflowTriggerSummaries) {
+              throw Object.assign(new Error('workflow_trigger_summary_unavailable'), { code: 'target_unavailable' });
+            }
+            triggerSummaries = await params.readWorkflowTriggerSummaries();
+          }
+          let opened: WorkflowDefinitionV1 | null = null;
+          try {
+            if (artifact.bodyVersion !== undefined) opened = openDefinitionBody(artifact.body);
+          } catch (error) {
+            // Only this record's validated content failure is isolated. Transport,
+            // authorization, currentness and Account-mode errors stay at their owners.
+            if (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'content_unavailable') throw error;
+          }
+          const summary = triggerSummaries.get(artifact.artifactId);
+          const definition: WorkflowDefinitionListResultV1['definitions'][number] = { ...parsed.data,
+            ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+            triggers: [...(summary?.triggers ?? [])], nextRunAt: summary?.nextRunAt ?? null,
+            ...(opened ? { contentStatus: 'available', stepCount: countWorkflowStepsV1(opened.blocks) }
+              : { contentStatus: 'unavailable', stepCount: null }) };
           const isExhaustedAtPageEnd = page.items.at(-1)?.artifactId === artifact.artifactId && !page.nextCursor;
           const rowCursor = params.encodeListCursor(artifact);
           // Size the exact page this row could close, inside the complete public
@@ -238,7 +266,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       await params.assertDefinitionWriteAllowed(definition, context, caller);
       const existing = await get({ definitionId: input.definitionId });
       assertRevisionMatches(existing.revision, input.expectedRevision);
-      return save(input, definition, caller);
+      return save(input, definition, existing.access, caller);
     },
     edit: async (input: WorkflowDefinitionEditRequestV1, context?: WorkflowIngressContextV1, caller?: DefinitionCaller) => {
       const existing = await get({ definitionId: input.definitionId });
@@ -253,8 +281,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       const definition = normalize(candidate, context);
       await params.assertDefinitionWriteAllowed(definition, context, caller);
       const saved = await save({ definitionId: input.definitionId, expectedRevision: input.expectedRevision,
-        metadata: { ...existing.metadata, title: name } }, definition, caller);
-      return { definition: saved.definition, revision: saved.revision, changedBlockIds: [...edited.changedBlockIds] };
+        metadata: { ...existing.metadata, title: name } }, definition, existing.access, caller);
+      return { definition: saved.definition, revision: saved.revision, metadata: saved.metadata, changedBlockIds: [...edited.changedBlockIds] };
     },
     delete: async ({ definitionId }: Readonly<{ definitionId: string }>) => {
       const artifact = await params.artifactStore.read(definitionId);

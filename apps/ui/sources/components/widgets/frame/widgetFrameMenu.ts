@@ -27,13 +27,15 @@ export function buildWidgetFrameStyleActions(input: Readonly<{
     override: WidgetFrameStyle | null | undefined;
     onSet: (style: WidgetFrameStyle | null) => void;
     group?: ItemAction['group'];
+    /** The surface's own name when it is not one of the placements' ("this page", "this project"). */
+    surfaceLabel?: string;
 }>): ItemAction[] {
     const toggle = resolveWidgetFrameStyleToggle({
         placement: input.placement,
         surfaceDefault: input.surfaceDefault,
         override: input.override ?? null,
     });
-    const surface = widgetFrameSurfaceLabel(input.placement);
+    const surface = input.surfaceLabel ?? widgetFrameSurfaceLabel(input.placement);
     const group = input.group ? { group: input.group } : {};
     const actions: ItemAction[] = [{
         id: 'frameStyle',
@@ -56,4 +58,67 @@ export function buildWidgetFrameStyleActions(input: Readonly<{
         });
     }
     return actions;
+}
+
+/**
+ * A configured copy's own entries in its ⋯ (lab `dashboards` dbind E), the same on every personal
+ * surface: Edit inputs… repeating the current binding, then Rename. Each exists only when the surface
+ * supplied its write, so a control never appears without a producer behind it.
+ */
+export function buildWidgetInstanceActions(input: Readonly<{
+    editInputs?: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
+    onRename?: (() => void) | undefined;
+    /** About this widget, for a copy of one of the Account's own widgets. */
+    onAbout?: (() => void) | undefined;
+}>): ItemAction[] {
+    return [
+        ...buildWidgetDefinitionActions({ onAbout: input.onAbout }),
+        ...(input.editInputs ? [{
+            id: 'editInputs',
+            title: t('widgetAdd.editInputs'),
+            ...(input.editInputs.binding ? { subtitle: input.editInputs.binding } : {}),
+            icon: 'sliders-horizontal' as const,
+            onPress: input.editInputs.onPress,
+        }] : []),
+        ...(input.onRename ? [{ id: 'rename', title: t('common.rename'), icon: 'text-aa' as const, onPress: input.onRename }] : []),
+    ];
+}
+
+/**
+ * A widget's width where its surface has the one width step (lab `dashboards` dlayout Q8: Home and
+ * plugin areas, half | full): half sits two to a row, full takes the row. The current width is checked.
+ */
+export function buildWidgetWidthActions(input: Readonly<{
+    width: 'half' | 'full';
+    onSet: (width: 'half' | 'full') => void;
+}>): ItemAction[] {
+    return (['half', 'full'] as const).map((width) => ({
+        id: `width-${width}`,
+        title: width === 'half' ? t('widgetAdd.widthHalf') : t('widgetAdd.widthFull'),
+        icon: width === 'half' ? 'square-split-horizontal' as const : 'square' as const,
+        selected: input.width === width,
+        group: { id: 'width', title: t('widgetAdd.width') },
+        onPress: () => { if (input.width !== width) input.onSet(width); },
+    }));
+}
+
+/**
+ * A widget definition's own entries (lab `dashboards` dagent G2/G3, dscope VS), the same in every
+ * ⋯: About this widget; on a Session Board card, Save as your widget and Post a snapshot. Each exists
+ * only when its flow can succeed here.
+ */
+export function buildWidgetDefinitionActions(input: Readonly<{
+    onAbout?: (() => void) | undefined;
+    onSaveAsYours?: (() => void) | undefined;
+    onPostSnapshot?: (() => void) | undefined;
+    group?: ItemAction['group'];
+}>): ItemAction[] {
+    const group = input.group ? { group: input.group } : {};
+    return [
+        ...(input.onAbout ? [{ id: 'about', title: t('widgetDefinition.aboutMenu'), icon: 'info' as const, onPress: input.onAbout, ...group }] : []),
+        ...(input.onSaveAsYours ? [{ id: 'saveAsYours', title: t('widgetDefinition.saveMenu'), subtitle: t('widgetDefinition.saveMenuSubtitle'),
+            icon: 'floppy-disk' as const, onPress: input.onSaveAsYours, ...group }] : []),
+        ...(input.onPostSnapshot ? [{ id: 'postSnapshot', title: t('widgetDefinition.snapshotMenu'), subtitle: t('widgetDefinition.snapshotMenuSubtitle'),
+            icon: 'cloud' as const, onPress: input.onPostSnapshot, ...group }] : []),
+    ];
 }

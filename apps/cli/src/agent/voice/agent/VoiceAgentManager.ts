@@ -9,6 +9,11 @@ import {
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import {
   extractVoiceActionsFromAssistantText,
+  canAppendVoiceAgentOutputEventsV1,
+  createVoiceAgentOutputTurnV1,
+  fitVoiceAgentOutputTextV1,
+  ingestVoiceAgentOutputEventV1,
+  VOICE_OUTPUT_INCOMPLETE_TEXT,
   readBackendTargetRefV2,
   type BackendTargetRefV1,
   type ProviderBoundModelRef,
@@ -325,7 +330,9 @@ export class VoiceAgentManager {
             (next) => {
               if (typeof next.deltaHold === 'string') activeStream.deltaHold = next.deltaHold;
               if (typeof next.outputSpeechBuffer === 'string') activeStream.outputSpeechBuffer = next.outputSpeechBuffer;
-              if (typeof next.outputSpeechChars === 'number') activeStream.outputSpeechChars = next.outputSpeechChars;
+              if (typeof next.outputSpeechText === 'string') activeStream.outputSpeechText = next.outputSpeechText;
+              if (next.outputBudget) activeStream.outputBudget = next.outputBudget;
+              if (typeof next.outputIncomplete === 'boolean') activeStream.outputIncomplete = next.outputIncomplete;
               if (typeof next.suppressActionDeltas === 'boolean') activeStream.suppressActionDeltas = next.suppressActionDeltas;
               if (typeof next.outputSeq === 'number') activeStream.outputSeq = next.outputSeq;
               if (typeof next.outputSegmentIndex === 'number') activeStream.outputSegmentIndex = next.outputSegmentIndex;
@@ -676,6 +683,10 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
           : {}),
         initialContext: params.initialContext,
+        ...(params.voicePolicy ? { voicePolicy: {
+          assistantLanguage: params.voicePolicy.assistantLanguage,
+          welcome: { ...params.voicePolicy.welcome },
+        } } : {}),
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
         disabledActionIds,
         memoryRecallGuidanceEnabled,
@@ -727,6 +738,7 @@ export class VoiceAgentManager {
           verbosity: instance.verbosity,
           initialContext: shouldDeferInitialContextUntilFirstTurn ? '' : instance.initialContext,
           mode: 'ready_handshake',
+          voicePolicy: instance.voicePolicy,
           disabledActionIds: instance.disabledActionIds,
           memoryRecallGuidanceEnabled: instance.memoryRecallGuidanceEnabled,
           systemAppendBlocks: instance.systemAppendBlocks,
@@ -743,7 +755,8 @@ export class VoiceAgentManager {
         }
         instance.clearChatBuffer();
         instance.chatSessionSeeded = !shouldDeferInitialContextUntilFirstTurn;
-        instance.welcomed = !shouldDeferInitialContextUntilFirstTurn;
+        // A readiness handshake is not a greeting to the user.
+        instance.welcomed = false;
       }
 
       ensureCurrentStart();
@@ -820,6 +833,8 @@ export class VoiceAgentManager {
                 verbosity: voiceAgent.verbosity,
                 initialContext: voiceAgent.initialContext,
                 history: voiceAgent.history,
+                voicePolicy: voiceAgent.voicePolicy,
+                welcomeAlreadyDelivered: voiceAgent.welcomed,
                 userText: params.userText,
                 disabledActionIds: voiceAgent.disabledActionIds,
                 memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
@@ -875,6 +890,7 @@ export class VoiceAgentManager {
         verbosity: voiceAgent.verbosity,
         initialContext: voiceAgent.initialContext,
         mode: 'welcome',
+        voicePolicy: voiceAgent.voicePolicy,
         welcomeText: params.welcomeText,
         disabledActionIds: voiceAgent.disabledActionIds,
         memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
@@ -909,6 +925,7 @@ export class VoiceAgentManager {
   async startTurnStream(params: Readonly<{
     voiceAgentId: string;
     userText: string;
+    speechSegmentTargetChars?: number;
     durableUserTranscriptLocalId?: string;
     causalPermissionAuthority?: import('@happier-dev/protocol').SessionInputCausalPermissionAuthorityV1;
     onTurnFinal?: (assistantText: string) => Promise<void> | void;
@@ -933,10 +950,13 @@ export class VoiceAgentManager {
       cancelled: false,
       deltaHold: '',
       outputSpeechBuffer: '',
-      outputSpeechChars: 0,
+      outputSpeechText: '',
+      outputBudget: createVoiceAgentOutputTurnV1(streamId),
+      outputIncomplete: false,
       suppressActionDeltas: false,
       outputSeq: 0,
       outputSegmentIndex: 0,
+      targetChars: params.speechSegmentTargetChars,
       eventWaiters,
       onEventsChanged: () => { for (const wake of eventWaiters) wake(); },
     };
@@ -970,6 +990,8 @@ export class VoiceAgentManager {
               verbosity: voiceAgent.verbosity,
               initialContext: voiceAgent.initialContext,
               history: voiceAgent.history,
+              voicePolicy: voiceAgent.voicePolicy,
+              welcomeAlreadyDelivered: voiceAgent.welcomed,
               userText: params.userText,
               disabledActionIds: voiceAgent.disabledActionIds,
               memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
@@ -1011,7 +1033,9 @@ export class VoiceAgentManager {
         finalizeVoiceAgentStreamingSpeech(stream, (next) => {
           if (typeof next.deltaHold === 'string') stream.deltaHold = next.deltaHold;
           if (typeof next.outputSpeechBuffer === 'string') stream.outputSpeechBuffer = next.outputSpeechBuffer;
-          if (typeof next.outputSpeechChars === 'number') stream.outputSpeechChars = next.outputSpeechChars;
+          if (typeof next.outputSpeechText === 'string') stream.outputSpeechText = next.outputSpeechText;
+          if (next.outputBudget) stream.outputBudget = next.outputBudget;
+          if (typeof next.outputIncomplete === 'boolean') stream.outputIncomplete = next.outputIncomplete;
           if (typeof next.outputSeq === 'number') stream.outputSeq = next.outputSeq;
           if (typeof next.outputSegmentIndex === 'number') stream.outputSegmentIndex = next.outputSegmentIndex;
         });
@@ -1019,7 +1043,51 @@ export class VoiceAgentManager {
         if (settleCancelled()) return;
         const assistantText = voiceAgent.chatBuffer.trim();
         const extracted = extractVoiceActionsFromAssistantText(assistantText);
-        const cleanText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions).slice(0, 65_536);
+        const desiredText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
+        const finalCandidate = { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: desiredText } as const;
+        let cleanText = fitVoiceAgentOutputTextV1(stream.outputBudget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
+        if (cleanText.length < desiredText.length) {
+          stream.outputIncomplete = true;
+        }
+        if (stream.outputIncomplete) {
+          // Speech already consumed is retained in the terminal transcript even
+          // when a later provider fullText changes its wording.
+          if (stream.outputSpeechText && !cleanText.startsWith(stream.outputSpeechText.trimEnd())) {
+            cleanText = stream.outputSpeechText.trimEnd();
+          }
+        }
+        const admittedActions: VoiceAssistantAction[] = [];
+        const actionEvents: VoiceAgentTurnStreamState['events'] = [];
+        let plannedBudget = stream.outputBudget;
+        let plannedSeq = stream.outputSeq;
+        for (const [actionIndex, action] of extracted.actions.entries()) {
+          const output = {
+            v: 1, kind: 'side_effect', turnId: stream.id, seq: plannedSeq,
+            effectId: `${stream.id}:effect:${actionIndex}`, action,
+          } as const;
+          if (!canAppendVoiceAgentOutputEventsV1(plannedBudget, [
+            output, { ...finalCandidate, seq: plannedSeq + 1, text: `${cleanText}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },
+          ]) || !canAppendVoiceAgentOutputEventsV1(plannedBudget, [
+            output, { ...finalCandidate, seq: plannedSeq + 1, text: `${stream.outputSpeechText.trimEnd()}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },
+          ])) {
+            stream.outputIncomplete = true;
+            break;
+          }
+          admittedActions.push(action);
+          actionEvents.push({ t: 'voice_output', output });
+          plannedBudget = ingestVoiceAgentOutputEventV1(plannedBudget, output).state;
+          plannedSeq += 1;
+        }
+        if (admittedActions.length !== extracted.actions.length) {
+          cleanText = fitVoiceAgentOutputTextV1(plannedBudget, {
+            ...finalCandidate, seq: plannedSeq,
+            text: this.normalizeAssistantTextForActions(extracted.assistantText, admittedActions),
+          }, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
+          if (stream.outputSpeechText && !cleanText.startsWith(stream.outputSpeechText.trimEnd())) {
+            cleanText = stream.outputSpeechText.trimEnd();
+          }
+        }
+        if (stream.outputIncomplete) cleanText += VOICE_OUTPUT_INCOMPLETE_TEXT;
         if (settleCancelled()) return;
         appendVoiceAgentHistoryTurn(voiceAgent.history, {
           userText: params.userText,
@@ -1032,20 +1100,9 @@ export class VoiceAgentManager {
         if (settleCancelled()) return;
         await params.onTurnFinal?.(cleanText);
         if (settleCancelled()) return;
-        for (const [actionIndex, action] of extracted.actions.entries()) {
-          stream.events.push({
-            t: 'voice_output',
-            output: {
-              v: 1,
-              kind: 'side_effect',
-              turnId: stream.id,
-              seq: stream.outputSeq,
-              effectId: `${stream.id}:effect:${actionIndex}`,
-              action,
-            },
-          });
-          stream.outputSeq += 1;
-        }
+        stream.events.push(...actionEvents);
+        stream.outputBudget = plannedBudget;
+        stream.outputSeq = plannedSeq;
         stream.events.push({
           t: 'voice_output',
           output: { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: cleanText },

@@ -97,7 +97,7 @@ export function VoiceEnergyAppProvider(props: Readonly<{
 
     return (
         <VoiceInputSourceActivityContext.Provider value={inputSourceActive}>
-            <VoiceEnergyProvider state={energyState} activation={activation} sourceActivity={sourceActivity}>
+            <VoiceEnergyProvider state={energyState} activation={activation}>
                 {props.children}
             </VoiceEnergyProvider>
         </VoiceInputSourceActivityContext.Provider>

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import type { ScmMutationResponse } from '@/scm/operations/runSessionScmMutation';
 import type { ScmRemoteInfo, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -13,11 +14,6 @@ import {
     SourceControlUpdateSection,
     type SourceControlUpdateTheme,
 } from './SourceControlUpdateControls';
-
-type ScmUiOperationResponse = Readonly<{
-    success: boolean;
-    error?: string;
-}>;
 
 type RemoteAddRequest = Readonly<{
     name: string;
@@ -40,10 +36,9 @@ export function SourceControlRemotesSection(props: Readonly<{
     snapshot: ScmWorkingSnapshot | null;
     disabled?: boolean;
     writeEnabled?: boolean;
-    onAddRemote: (request: RemoteAddRequest) => Promise<ScmUiOperationResponse>;
-    onSetRemoteUrl: (request: RemoteSetUrlRequest) => Promise<ScmUiOperationResponse>;
-    onRemoveRemote: (name: string) => Promise<ScmUiOperationResponse>;
-    onRefresh: () => Promise<void>;
+    onAddRemote: (request: RemoteAddRequest) => Promise<ScmMutationResponse>;
+    onSetRemoteUrl: (request: RemoteSetUrlRequest) => Promise<ScmMutationResponse>;
+    onRemoveRemote: (name: string) => Promise<ScmMutationResponse>;
 }>) {
     const remotes = props.snapshot?.repo.remotes ?? [];
     const capabilities = props.snapshot?.capabilities;
@@ -89,8 +84,8 @@ export function SourceControlRemotesSection(props: Readonly<{
         updatePushUrl(remote.pushUrl ?? '');
     }, [updateFetchUrl, updateName, updatePushUrl]);
 
-    const showFailure = React.useCallback((fallback: string, response: ScmUiOperationResponse) => {
-        if (response.success) return;
+    const showFailure = React.useCallback((fallback: string, response: ScmMutationResponse) => {
+        if (response.outcome || response.success) return;
         Modal.alert(t('common.error'), response.error || fallback);
     }, []);
 
@@ -116,12 +111,8 @@ export function SourceControlRemotesSection(props: Readonly<{
                         fetchUrl: trimmedFetchUrl,
                         ...(trimmedPushUrl ? { pushUrl: trimmedPushUrl } : {}),
                     });
-                    if (!response.success) {
-                        showFailure(t('files.sourceControlOperations.update.remotes.errors.addFailed'), response);
-                        return;
-                    }
-                    beginAdd();
-                    await props.onRefresh();
+                    showFailure(t('files.sourceControlOperations.update.remotes.errors.addFailed'), response);
+                    if (response.outcome?.kind === 'succeeded') beginAdd();
                     return;
                 }
 
@@ -130,12 +121,8 @@ export function SourceControlRemotesSection(props: Readonly<{
                     fetchUrl: trimmedFetchUrl,
                     pushUrl: trimmedPushUrl || null,
                 });
-                if (!response.success) {
-                    showFailure(t('files.sourceControlOperations.update.remotes.errors.saveFailed'), response);
-                    return;
-                }
-                beginAdd();
-                await props.onRefresh();
+                showFailure(t('files.sourceControlOperations.update.remotes.errors.saveFailed'), response);
+                if (response.outcome?.kind === 'succeeded') beginAdd();
             } finally {
                 setBusy(false);
             }
@@ -156,12 +143,8 @@ export function SourceControlRemotesSection(props: Readonly<{
             setBusy(true);
             try {
                 const response = await props.onRemoveRemote(remote.name);
-                if (!response.success) {
-                    showFailure(t('files.sourceControlOperations.update.remotes.errors.removeFailed'), response);
-                    return;
-                }
-                beginAdd();
-                await props.onRefresh();
+                showFailure(t('files.sourceControlOperations.update.remotes.errors.removeFailed'), response);
+                if (response.outcome?.kind === 'succeeded') beginAdd();
             } finally {
                 setBusy(false);
             }

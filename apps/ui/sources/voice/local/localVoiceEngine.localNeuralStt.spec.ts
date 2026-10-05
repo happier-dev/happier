@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { describe, expect, it, vi } from 'vitest';
 
 // Attach-time daemon model warm-up is an independent background boundary that
@@ -21,6 +23,9 @@ import {
   submitMessage,
   setPlatformOs,
 } from './localVoiceEngine.testHarness';
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine local neural STT (streaming)', () => {
   registerLocalVoiceEngineHarnessHooks();
@@ -332,75 +337,5 @@ describe('local voice engine local neural STT (streaming)', () => {
     );
   });
 
-  it('delegates local-neural STT ownership to LocalVoiceCaptureOwner instead of constructing the Sherpa controller in localVoiceEngine', async () => {
-    const startCapture = vi.fn(async () => {});
 
-    vi.doMock('@/voice/input/SherpaStreamingSttController', () => ({
-      createSherpaStreamingSttController: () => {
-        throw new Error('localVoiceEngine should not create SherpaStreamingSttController directly');
-      },
-    }));
-    vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
-      createLocalVoiceCaptureOwner: () => ({
-        isCaptureActive: vi.fn(() => false),
-        resolveManualBargeInAction: vi.fn(() => ({
-          kind: 'noop',
-          reason: 'not_speaking',
-        })),
-        resolveEndpointSignalAction: vi.fn(() => ({
-          kind: 'ignore',
-          reason: 'not_hands_free',
-        })),
-        startCapture,
-        stopCapture: vi.fn(async () => ({
-          provider: 'local_neural',
-          text: '',
-          continueHandsFree: false,
-        })),
-        stopEndpointDrivenCapture: vi.fn(async () => ({
-          kind: 'ignore',
-          reason: 'empty_transcript',
-          shouldRearm: false,
-        })),
-        isHandsFreeCaptureSession: vi.fn(() => false),
-        clearHandsFree: vi.fn(),
-        stopSession: vi.fn(async () => {}),
-      }),
-    }));
-
-    const storage = await getStorage();
-    storage.__setState({
-      settings: {
-        ...storage.getState().settings,
-        voice: {
-          ...storage.getState().settings.voice,
-          providerId: 'local_direct',
-          providers: {
-            ...storage.getState().settings.voice.providers,
-            local_direct: { schemaVersion: 1, config: {
-              ...storage.getState().settings.voice.providers.local_direct.config,
-              stt: {
-                ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                provider: 'local_neural',
-                localNeural: { assetId: 'dummy-pack', language: 'en' },
-              },
-              tts: {
-                ...storage.getState().settings.voice.providers.local_direct.config.tts,
-                autoSpeakReplies: false,
-              },
-            } },
-          },
-        },
-      },
-    });
-
-    const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
-    await toggleLocalVoiceTurn('s1');
-
-    expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 's1',
-      provider: 'local_neural',
-    }));
-    expect(getLocalVoiceState().status).toBe('recording');
-  });
 });

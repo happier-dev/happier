@@ -32,6 +32,12 @@ const validSourceDeclaration = {
 } as const;
 
 describe('PluginBackendExternalSessionSourceDeclarationV1Schema', () => {
+  it('admits explicit source-specific content search without inferring support when absent', () => {
+    expect(PluginBackendExternalSessionSourceDeclarationV1Schema.parse({ ...validSourceDeclaration, contentSearch: true })).toMatchObject({ contentSearch: true });
+    expect(PluginBackendExternalSessionSourceDeclarationV1Schema.parse({ ...validSourceDeclaration, contentSearch: false })).toMatchObject({ contentSearch: false });
+    expect(PluginBackendExternalSessionSourceDeclarationV1Schema.parse(validSourceDeclaration)).not.toHaveProperty('contentSearch');
+    expect(PluginBackendExternalSessionSourceDeclarationV1Schema.safeParse({ ...validSourceDeclaration, contentSearch: 'true' }).success).toBe(false);
+  });
   it('admits an explicit resume-only source without implying link or follow support', () => {
     expect(PluginBackendExternalSessionSourceDeclarationV1Schema.parse({
       ...validSourceDeclaration,

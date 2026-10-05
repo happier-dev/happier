@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../index.js';
+import * as scm from './index.js';
 
 type ZodLikeSchema<TValue = unknown> = {
   parse: (value: unknown) => TValue;
   safeParse: (value: unknown) => { success: boolean };
 };
 
-function readProtocolSchema<TValue = unknown>(name: string): ZodLikeSchema<TValue> {
-  const value = (protocol as Record<string, unknown>)[name];
+function readProtocolSchema<TValue = unknown>(name: string, entrypoint: object = protocol): ZodLikeSchema<TValue> {
+  const value = (entrypoint as Record<string, unknown>)[name];
   expect(value).toMatchObject({
     parse: expect.any(Function),
     safeParse: expect.any(Function),
@@ -20,7 +21,9 @@ describe('SCM repository clone protocol contracts', () => {
   it('requires an explicit destination parent, safe child name, protocol preference, and user authorization', () => {
     const schema = readProtocolSchema<protocol.ScmRepositoryCloneInput>(
       'ScmRepositoryCloneInputSchema',
+      scm,
     );
+    expect(schema).toBe(protocol.ScmRepositoryCloneInputSchema);
 
     const parsed = schema.parse({
       provider: {

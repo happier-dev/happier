@@ -108,7 +108,7 @@ describe('plugin invocation ActionsService', () => {
     it.each([
         { name: 'autonomous background', initiatingActionCaller: undefined, startedBy: 'trigger' },
         { name: 'host', initiatingActionCaller: { kind: 'host' }, startedBy: 'user' },
-        { name: 'Session agent', initiatingActionCaller: { kind: 'session', sessionId: 'session-origin' }, startedBy: 'agent' },
+        { name: 'Session agent', initiatingActionCaller: { kind: 'session', sessionId: 'session-origin', starterDepth: 1, turnDepth: 2 }, startedBy: 'agent' },
         { name: 'nested host', initiatingActionCaller: { kind: 'plugin', pluginId: 'acme.outer', initiatingCaller: { kind: 'host' } }, startedBy: 'user' },
         { name: 'nested Session agent', initiatingActionCaller: { kind: 'plugin', pluginId: 'acme.outer', initiatingCaller: { kind: 'session', sessionId: 'session-origin', starterDepth: 1, turnDepth: 2 } }, startedBy: 'agent' },
         { name: 'manual automation', initiatingActionCaller: { kind: 'automationRun', runId: 'automation-run', automationId: 'automation-1', cause: { kind: 'manual', invokedAt: 1 } }, startedBy: 'user' },
@@ -119,7 +119,7 @@ describe('plugin invocation ActionsService', () => {
                     occurrenceKey: 'A'.repeat(43), occurredAt: 1, evidence: { scheduledFor: 1 } }) }, startedBy: 'trigger' },
         { name: 'Workflow', initiatingActionCaller: { kind: 'workflowRun', runId: 'workflow-origin', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } }, startedBy: 'agent' },
         { name: 'committed host', initiatingActionCaller: { kind: 'host' }, startedBy: 'user', viaCommitted: true },
-        { name: 'committed Session agent', initiatingActionCaller: { kind: 'session', sessionId: 'session-origin' }, startedBy: 'agent', viaCommitted: true },
+        { name: 'committed Session agent', initiatingActionCaller: { kind: 'session', sessionId: 'session-origin', starterDepth: 1, turnDepth: 2 }, startedBy: 'agent', viaCommitted: true },
         { name: 'committed Workflow', initiatingActionCaller: { kind: 'workflowRun', runId: 'workflow-origin', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } }, startedBy: 'agent', viaCommitted: true },
     ] as const)('freezes $name starter through the real host Actions service without changing plugin authority', async (scenario) => {
         const runId = '99999999-9999-4999-8999-999999999999';

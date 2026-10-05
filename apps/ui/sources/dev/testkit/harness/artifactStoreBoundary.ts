@@ -1,4 +1,5 @@
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { Buffer } from 'buffer';
 
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 
@@ -129,6 +130,32 @@ export function createArtifactStoreBoundary(params: Readonly<{
     return Object.freeze({
         handle(path: string, init?: RequestInit): Promise<Response> | null {
             const method = (init?.method ?? 'GET').toUpperCase();
+            const url = new URL(path, 'https://artifact-boundary.example');
+            if (url.pathname === ARTIFACTS_PATH && method === 'GET') {
+                if (!params.ownerAccountId()) return Promise.resolve(json({ error: 'Not authenticated' }, 401));
+                const limit = Number(url.searchParams.get('limit') ?? 500);
+                if (!Number.isInteger(limit) || limit < 1 || limit > 500) return Promise.resolve(json({ error: 'Failed to get artifacts' }, 400));
+                let cursor: { updatedAt: number; id: string } | null = null;
+                const encodedCursor = url.searchParams.get('cursor');
+                if (encodedCursor) {
+                    try {
+                        const decoded: unknown = JSON.parse(Buffer.from(encodedCursor, 'base64url').toString('utf8'));
+                        if (decoded && typeof decoded === 'object' && 'id' in decoded && typeof decoded.id === 'string' && 'updatedAt' in decoded) {
+                            const updatedAt = new Date(Number(decoded.updatedAt)).getTime();
+                            if (Number.isFinite(updatedAt)) cursor = { updatedAt, id: decoded.id };
+                        }
+                    } catch { /* Malformed cursors are rejected just as by the Home route. */ }
+                    if (!cursor) return Promise.resolve(json({ error: 'Failed to get artifacts' }, 400));
+                }
+                const inventory = [...rows.values()].filter(row => row.ownerAccountId === params.ownerAccountId()
+                    && (!cursor || row.updatedAt < cursor.updatedAt || (row.updatedAt === cursor.updatedAt && row.id < cursor.id)))
+                    .sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? 1 : left.id > right.id ? -1 : 0));
+                return Promise.resolve(json(inventory.slice(0, limit).map(row => {
+                    if (url.searchParams.get('includeBody') === 'true') return row;
+                    const { body: _body, bodyVersion: _bodyVersion, ...header } = row;
+                    return header;
+                })));
+            }
             if (path === ARTIFACTS_PATH) {
                 return method === 'POST' ? Promise.resolve(create(parseBody(init))) : null;
             }

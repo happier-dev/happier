@@ -85,6 +85,7 @@ import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/res
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { resolveConnectedServiceRegistryEntryDisplayName } from '../model/resolveConnectedServiceDisplayName';
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
+import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { rankConnectedAccountSetupModes } from '../setup/rankConnectedAccountSetupModes';
 import { ConnectedServiceSetupFlowActions, ConnectedServiceSetupFlowBody } from '../setup/ConnectedServiceSetupFlowBody';
 import {
@@ -308,6 +309,10 @@ const ConnectedAccountServiceController = React.memo(
         setServiceConfigurationStatusByModeId,
     ] = React.useState<ServiceConfigurationStatusByModeId>({});
     const [attempt, setAttempt] = React.useState<ConnectedAccountAttemptResponse | null>(null);
+    // Pending replies omit the already issued code. Keep only that display projection for the
+    // same attempt; the daemon response remains the lifecycle authority.
+    const deviceCodeRef = React.useRef<Extract<ConnectedAccountAttemptResponse, { status: 'awaitingDeviceAuthorization' }> | null>(null);
+    const draftDisplayNameRef = React.useRef<string | null>(null);
     const [configuration, setConfiguration] = React.useState<ConfigurationDescription | null>(null);
     const [
         configurationContinuationAttemptId,
@@ -630,9 +635,13 @@ const ConnectedAccountServiceController = React.memo(
             }
             return;
         }
+        if (response.status === 'awaitingDeviceAuthorization') deviceCodeRef.current = response;
+        else if (response.status !== 'pending' || deviceCodeRef.current?.attemptId !== response.attemptId) deviceCodeRef.current = null;
         setAttempt(response);
         if (isTerminalAttempt(response)) {
-            setPendingIntent(null);
+            if (response.status === 'connected' || response.status === 'cancelled') {
+                setPendingIntent(null);
+            }
             setConfigurationContinuationAttemptId(null);
         }
         if (response.status === 'configurationRequired') {
@@ -643,6 +652,14 @@ const ConnectedAccountServiceController = React.memo(
             return;
         }
         if (response.status === 'connected') {
+            if (draftDisplayNameRef.current) {
+                applySettings({ connectedServicesProfileLabelByKey: updateQualifiedConnectedAccountLabel({
+                    service: response.account.service, legacyServiceId, accountId: response.account.accountId,
+                    label: draftDisplayNameRef.current,
+                    labelsByKey: getStorage().getState().settings.connectedServicesProfileLabelByKey,
+                }) });
+            }
+            draftDisplayNameRef.current = null;
             panelRef.current?.onConnected(response.account);
             setAttempt(null);
             setConfiguration(null);
@@ -661,7 +678,7 @@ const ConnectedAccountServiceController = React.memo(
         } else if (!options?.retainUnresolvedError) {
             setErrorCode(null);
         }
-    }, [cancelDiscardedAttempt, isControllerCurrent, readConfiguration, refreshDescription]);
+    }, [applySettings, cancelDiscardedAttempt, isControllerCurrent, legacyServiceId, readConfiguration, refreshDescription]);
 
     React.useEffect(() => {
         if (!description || !service || !serverId || !machineId || attempt || busy) return;
@@ -720,59 +737,6 @@ const ConnectedAccountServiceController = React.memo(
             }
         };
     }, [acceptAttemptResponse, attempt, busy, description, expectedActiveServer, isControllerCurrent, lifecycleSignal, machineId, serverId, service]);
-
-    const retryDescription = React.useCallback(async () => {
-        if (!isControllerCurrent() || retryingDescription) return;
-        setRetryingDescription(true);
-        try {
-            // An effectful authentication command can settle in the daemon after
-            // its reply is lost. The daemon owns the attempt outcome, so this
-            // user-driven recovery performs exactly one exact read of that
-            // attempt instead of resubmitting the command or polling; anything
-            // else falls back to refreshing the surrounding description.
-            const recoverableAttemptId = attempt && 'attemptId' in attempt
-                ? attempt.attemptId
-                : null;
-            if (recoverableAttemptId && serverId && machineId) {
-                const requestEpoch = setupAttemptEpochRef.current;
-                const response = await runConnectedAccountAuthenticationCommand({
-                    serverId,
-                    machineId,
-                    ...(expectedActiveServer ? { expectedActiveServer } : {}),
-                    command: { operation: 'read', attemptId: recoverableAttemptId },
-                    signal: lifecycleSignal,
-                });
-                if (!isControllerCurrent()) return;
-                // Only a materially advanced phase or a terminal outcome resolves the
-                // lost reply. An unchanged non-terminal read proves nothing, so
-                // clearing the error there would re-enable the same effectful action
-                // and let the user submit it twice.
-                await acceptAttemptResponse(response, requestEpoch, {
-                    retainUnresolvedError: !isTerminalAttempt(response)
-                        && attempt !== null
-                        && response.status === attempt.status,
-                });
-                return;
-            }
-            await refreshDescription();
-        } catch {
-            if (isControllerCurrent()) {
-                setErrorCode('connected_account_daemon_unavailable');
-            }
-        } finally {
-            if (isControllerCurrent()) setRetryingDescription(false);
-        }
-    }, [
-        acceptAttemptResponse,
-        attempt,
-        expectedActiveServer,
-        isControllerCurrent,
-        lifecycleSignal,
-        machineId,
-        refreshDescription,
-        retryingDescription,
-        serverId,
-    ]);
 
     const runAuthentication = React.useCallback(async (
         command: Parameters<typeof runConnectedAccountAuthenticationCommand>[0]['command'],
@@ -841,6 +805,44 @@ const ConnectedAccountServiceController = React.memo(
         });
     }, [isControllerCurrent, runAuthentication, visibleAccounts]);
 
+    const retryDescription = React.useCallback(async () => {
+        if (!isControllerCurrent() || retryingDescription) return;
+        setRetryingDescription(true);
+        try {
+            // A known rejection is finished. Retry starts the same intent with a fresh form;
+            // uncertain transport outcomes still recover the exact existing attempt below.
+            if (pendingIntent && attempt && (isTerminalAttempt(attempt) || attempt.status === 'reconnectRequired')) {
+                await beginIntent(pendingIntent);
+                return;
+            }
+            const recoverableAttemptId = attempt && 'attemptId' in attempt
+                ? attempt.attemptId
+                : null;
+            if (recoverableAttemptId && serverId && machineId) {
+                const requestEpoch = setupAttemptEpochRef.current;
+                const response = await runConnectedAccountAuthenticationCommand({
+                    serverId,
+                    machineId,
+                    ...(expectedActiveServer ? { expectedActiveServer } : {}),
+                    command: { operation: 'read', attemptId: recoverableAttemptId },
+                    signal: lifecycleSignal,
+                });
+                if (!isControllerCurrent()) return;
+                // An unchanged non-terminal read does not resolve a lost effectful reply.
+                await acceptAttemptResponse(response, requestEpoch, {
+                    retainUnresolvedError: !isTerminalAttempt(response) && attempt !== null && response.status === attempt.status,
+                });
+                return;
+            }
+            await refreshDescription();
+        } catch {
+            if (isControllerCurrent()) setErrorCode('connected_account_daemon_unavailable');
+        } finally {
+            if (isControllerCurrent()) setRetryingDescription(false);
+        }
+    }, [acceptAttemptResponse, attempt, beginIntent, expectedActiveServer, isControllerCurrent, lifecycleSignal,
+        machineId, pendingIntent, refreshDescription, retryingDescription, serverId]);
+
     const activeMode: PluginConnectedAccountAuthenticationModeV2 | null =
         description?.descriptor.authentication.modes.find(
             (candidate) => candidate.id === activeModeId,
@@ -851,16 +853,20 @@ const ConnectedAccountServiceController = React.memo(
         if (!attempt || busy) return;
         const attemptId = 'attemptId' in attempt ? attempt.attemptId : undefined;
         if (!attemptId) return;
-        if (attempt.status !== 'starting' && attempt.status !== 'pending') return;
+        if (attempt.status !== 'starting' && attempt.status !== 'pending' && attempt.status !== 'awaitingDeviceAuthorization') return;
+        if (attempt.status === 'awaitingDeviceAuthorization' && (attempt.pollIntervalMs === undefined || (attempt.expiresAtMs !== undefined && attempt.expiresAtMs <= Date.now()))) return;
+        if (attempt.status === 'pending' && activeModeKind === 'oauthDeviceCode' && deviceCodeRef.current?.expiresAtMs !== undefined && deviceCodeRef.current.expiresAtMs <= Date.now()) return;
         if (attempt.status === 'pending' && activeModeKind === null) return;
-        const delayMs = attempt.status === 'pending'
+        const delayMs = attempt.status === 'awaitingDeviceAuthorization'
+            ? attempt.pollIntervalMs
+            : attempt.status === 'pending'
             ? Math.max(250, attempt.retryAfterMs)
             : 250;
         const timeout = setTimeout(() => {
             void runAuthentication(
-                attempt.status === 'pending'
+                attempt.status === 'awaitingDeviceAuthorization' || attempt.status === 'pending'
                     ? {
-                        operation: activeModeKind === 'oauthDeviceCode'
+                        operation: attempt.status === 'awaitingDeviceAuthorization' || activeModeKind === 'oauthDeviceCode'
                             ? 'pollDevice'
                             : 'reconcile',
                         attemptId,
@@ -1176,6 +1182,8 @@ const ConnectedAccountServiceController = React.memo(
         setConfigurationContinuationAttemptId(null);
         setErrorCode(null);
         setAttempt(null);
+        deviceCodeRef.current = null;
+        draftDisplayNameRef.current = null;
         setBusy(false);
         if (attemptId && attempt && !isTerminalAttempt(attempt)) {
             cancelDiscardedAttempt(attemptId);
@@ -1198,6 +1206,10 @@ const ConnectedAccountServiceController = React.memo(
      * runs inside the setup panel (`embedded`); reconnecting and configuring an existing
      * account or the service run as page sections.
      */
+    const visibleDeviceCode = attempt?.status === 'awaitingDeviceAuthorization' ? attempt
+        : attempt?.status === 'pending' && activeModeKind === 'oauthDeviceCode' && deviceCodeRef.current?.attemptId === attempt.attemptId ? deviceCodeRef.current : null;
+    const setupPresentation = service ? getConnectedServiceSetupPresentation(service) : null;
+    const manualGuide = setupPresentation && 'manual' in setupPresentation ? setupPresentation.manual : null;
     const renderFlow = (embedded: boolean) => (
         <>
             {attempt?.status === 'awaitingManual' && activeMode?.kind === 'manual' ? (
@@ -1207,14 +1219,15 @@ const ConnectedAccountServiceController = React.memo(
                     title={resolveProjectedLocalizedText(activeMode.title, localizeServiceText) || title}
                     localize={localizeServiceText}
                     fields={activeMode.fields}
+                    guided={manualGuide ? { consoleUrl: manualGuide.consoleUrl, createKeyTitle: t(manualGuide.createKeyTitleKey),
+                        billingNote: t(manualGuide.billingNoteKey), shapePattern: manualGuide.shapePattern, shapeHint: t(manualGuide.shapeHintKey) } : undefined}
                     submitting={busy}
                     navigation={navigation}
                     onCancel={panelCancel}
-                    onSubmit={({ fields }) => runAuthentication({
-                        operation: 'submitManual',
-                        attemptId: attempt.attemptId,
-                        fields,
-                    })}
+                    onSubmit={({ fields, displayName }) => {
+                        draftDisplayNameRef.current = displayName ?? null;
+                        return runAuthentication({ operation: 'submitManual', attemptId: attempt.attemptId, fields });
+                    }}
                 />
             ) : null}
 
@@ -1235,27 +1248,28 @@ const ConnectedAccountServiceController = React.memo(
                 />
             ) : null}
 
-            {attempt?.status === 'awaitingDeviceAuthorization' ? (
+            {visibleDeviceCode ? (
                 <ConnectedAccountDeviceForm
                     embedded={embedded}
-                    key={attempt.attemptId}
-                    verificationUri={attempt.verificationUri}
-                    verificationUriComplete={attempt.verificationUriComplete}
-                    userCode={attempt.userCode}
-                    expiresAtMs={attempt.expiresAtMs}
+                    key={visibleDeviceCode.attemptId}
+                    verificationUri={visibleDeviceCode.verificationUri}
+                    verificationUriComplete={visibleDeviceCode.verificationUriComplete}
+                    userCode={visibleDeviceCode.userCode}
+                    expiresAtMs={visibleDeviceCode.expiresAtMs}
                     serviceTitle={title}
                     busy={busy}
+                    automaticPolling={visibleDeviceCode.pollIntervalMs !== undefined || attempt?.status === 'pending'}
                     onCancel={panelCancel}
                     onPoll={async () => {
                         await runAuthentication({
                             operation: 'pollDevice',
-                            attemptId: attempt.attemptId,
+                            attemptId: visibleDeviceCode.attemptId,
                         });
                     }}
                     onResume={async () => {
                         await runAuthentication({
                             operation: 'resumeDevice',
-                            attemptId: attempt.attemptId,
+                            attemptId: visibleDeviceCode.attemptId,
                         });
                     }}
                 />
@@ -1400,38 +1414,6 @@ const ConnectedAccountServiceController = React.memo(
                 </ConnectedAccountFormSection>
             ) : null}
 
-            {(
-                pendingIntent
-                && attempt
-                && (
-                    attempt.status === 'reconnectRequired'
-                    || attempt.status === 'rejected'
-                    || attempt.status === 'unavailable'
-                    || attempt.status === 'conflict'
-                )
-            ) ? (panelCancel ? (
-                <ConnectedServiceSetupFlowActions
-                    onCancel={panelCancel}
-                    primary={{
-                        testID: 'connected-account:retry',
-                        label: t('common.retry'),
-                        disabled: busy,
-                        onPress: () => void beginIntent(pendingIntent),
-                    }}
-                />
-            ) : (
-                <ConnectedAccountFormSection embedded={embedded} title={t('connectedServices.detail.actionsGroupTitle')}>
-                    <Item
-                        testID="connected-account:retry"
-                        title={t('common.retry')}
-                        disabled={busy}
-                        onPress={() => {
-                            void beginIntent(pendingIntent);
-                        }}
-                    />
-                </ConnectedAccountFormSection>
-            )) : null}
-
             {/* A setup panel cancels locally, from the flow's own footer (`panelCancel`). */}
             {!panelCancel && attemptId && attempt && !isTerminalAttempt(attempt) ? (
                 <ConnectedAccountFormSection embedded={embedded} title={t('connectedServices.detail.actionsGroupTitle')}>
@@ -1459,7 +1441,10 @@ const ConnectedAccountServiceController = React.memo(
                 state={description === null && !errorCode ? 'preparing' : 'ready'}
                 methods={ranked.length > 1 ? ranked.map((entry) => ({
                     id: entry.mode.id,
-                    title: resolveConnectedAccountModeTitle(entry.mode, localizeServiceText),
+                    title: entry.mode.kind === 'oauthAuthorizationCode' ? t('connectedServicesSettings.methodBrowser')
+                        : entry.mode.kind === 'oauthDeviceCode' ? t('connectedServicesSettings.methodCode')
+                            : setupPresentation && 'manualMethodTitleKey' in setupPresentation ? t(setupPresentation.manualMethodTitleKey)
+                            : resolveConnectedAccountModeTitle(entry.mode, localizeServiceText),
                     recommended: entry.recommended,
                 })) : []}
                 activeMethodId={activeModeId}

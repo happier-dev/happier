@@ -18,24 +18,15 @@ function canonicalEntryId(item: CanonicalVoiceTranscriptItem): string {
   });
 }
 
-export function mergeVoiceSurfaceTranscriptEntries(
+function mergedEntries(
   persisted: readonly (VoiceTranscriptEntry | VoiceSurfaceTranscriptEntry)[],
   canonical: readonly CanonicalVoiceTranscriptItem[],
-): readonly VoiceSurfaceTranscriptEntry[] {
-  const entries = new Map<string, VoiceSurfaceTranscriptEntry>();
+): ReadonlyMap<string, VoiceTranscriptEntry | VoiceSurfaceTranscriptEntry> {
+  const entries = new Map<string, VoiceTranscriptEntry | VoiceSurfaceTranscriptEntry>();
   let latestCreatedAt = 0;
   for (const entry of persisted) {
     latestCreatedAt = Math.max(latestCreatedAt, entry.createdAt);
-    entries.set(entry.id, {
-      ...entry,
-      transcriptState: 'transcriptState' in entry
-        ? entry.transcriptState
-        : entry.interrupted
-          ? 'interrupted'
-          : 'final',
-      announce: 'announce' in entry ? entry.announce : false,
-      announcementId: 'announcementId' in entry ? entry.announcementId : `voice-persisted:${entry.id}`,
-    });
+    entries.set(entry.id, entry);
   }
   for (const item of canonical) {
     const id = canonicalEntryId(item);
@@ -51,9 +42,36 @@ export function mergeVoiceSurfaceTranscriptEntries(
       announcementId: `${id}:${item.revision}`,
     });
   }
-  return Object.freeze([...entries.values()].sort((left, right) => (
-    left.createdAt === right.createdAt
-      ? left.id.localeCompare(right.id)
-      : left.createdAt - right.createdAt
-  )));
+  return entries;
+}
+
+function compareEntries(left: VoiceTranscriptEntry, right: VoiceTranscriptEntry): number {
+  return left.createdAt === right.createdAt
+    ? left.id.localeCompare(right.id)
+    : left.createdAt - right.createdAt;
+}
+
+export function mergeVoiceSurfaceTranscriptEntries(
+  persisted: readonly (VoiceTranscriptEntry | VoiceSurfaceTranscriptEntry)[],
+  canonical: readonly CanonicalVoiceTranscriptItem[],
+): readonly VoiceSurfaceTranscriptEntry[] {
+  const entries = [...mergedEntries(persisted, canonical).values()].map((entry): VoiceSurfaceTranscriptEntry => ({
+    ...entry,
+    transcriptState: 'transcriptState' in entry ? entry.transcriptState : entry.interrupted ? 'interrupted' : 'final',
+    announce: 'announce' in entry ? entry.announce : false,
+    announcementId: 'announcementId' in entry ? entry.announcementId : `voice-persisted:${entry.id}`,
+  }));
+  return Object.freeze(entries.sort(compareEntries));
+}
+
+/** Same overlay/order semantics as the detail feed, without sorting or building a detail array. */
+export function resolveVoiceSurfaceLatestTranscriptText(
+  persisted: readonly (VoiceTranscriptEntry | VoiceSurfaceTranscriptEntry)[],
+  canonical: readonly CanonicalVoiceTranscriptItem[],
+): string | null {
+  let latest: VoiceTranscriptEntry | null = null;
+  for (const entry of mergedEntries(persisted, canonical).values()) {
+    if (!latest || compareEntries(latest, entry) < 0) latest = entry;
+  }
+  return latest?.text ?? null;
 }

@@ -6,6 +6,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
@@ -27,6 +31,7 @@
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/peer-mediation": "0.0.0",
     "@happier-dev/protocol": "0.0.0"
   },

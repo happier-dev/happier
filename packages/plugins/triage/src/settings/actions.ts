@@ -7,6 +7,7 @@ import {
     defineProtocolObject,
     defineProtocolString,
     defineProtocolUnion,
+    ProtocolLaunchProfileIdV2Schema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -66,12 +67,6 @@ import type { TriageCatalogStoreV1 } from './accountKvCatalogStore.js';
 /** The one versioned Account KV key this document owns. */
 export const TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 = 'triage.actions';
 
-/**
- * `LaunchProfileV2.id` is bounded at 256 characters
- * (`packages/protocol/src/profiles/v2/schema.ts`); a profile id this record
- * would accept but the profile owner would refuse could never resolve.
- */
-export const MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1 = 256;
 /**
  * The whole serialized `triage.actions` value, measured over the complete value
  * rather than per member, because a set of individually valid actions is exactly
@@ -240,11 +235,7 @@ const triageActionLabelSchema = defineProtocolString({
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
-const triageActionProfileIdSchema = defineProtocolString({
-    minLength: 1,
-    maxLength: MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1,
-    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
-});
+const triageNullableActionProfileIdSchema = ProtocolLaunchProfileIdV2Schema.nullable();
 
 /**
  * The Prompt Library's own STABLE invocation id, carried as a reference.
@@ -351,7 +342,7 @@ export const TRIAGE_ACTION_DRAFT_MEMBERS_V1 = {
     label: triageActionLabelSchema,
     enabled: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
     appliesTo: TriageActionAppliesToV1Schema,
-    profileId: defineProtocolUnion([triageActionProfileIdSchema, defineProtocolLiteral(null)]),
+    profileId: triageNullableActionProfileIdSchema,
     workspaceMode: TriageActionWorkspaceModeV1Schema,
     target: TriageActionMutableTargetV1Schema,
 } as const;
@@ -826,9 +817,8 @@ function readAction(actionId: string, draft: Readonly<{
     if (typeof draft.enabled !== 'boolean') return { ok: false, reason: 'enabled' };
     const appliesTo = readAppliesTo(draft.appliesTo);
     if (!appliesTo.ok) return appliesTo;
-    const profileId = draft.profileId === null
-        ? null
-        : readBoundedString(draft.profileId, MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1);
+    const parsedProfileId = triageNullableActionProfileIdSchema.safeParse(draft.profileId);
+    const profileId = parsedProfileId.success ? parsedProfileId.data : null;
     if (profileId === null && draft.profileId !== null) return { ok: false, reason: 'profileId' };
     const workspaceMode = readWorkspaceMode(draft.workspaceMode);
     if (workspaceMode === null) return { ok: false, reason: 'workspaceMode' };

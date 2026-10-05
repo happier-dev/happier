@@ -23,6 +23,7 @@ import {
   sameAutomationAccountCurrentnessWitnessV1,
   toAutomationRunExecutionInputV1Origin,
   validateAutomationRunExecutionRecipeOuterV1,
+  readAutomationTemplateStoredEnvelopeV1,
   type AutomationAccountCurrentnessWitnessV1,
   type AutomationRunCause,
   type AutomationRunExecutionInputV1,
@@ -46,6 +47,7 @@ import {
 import { isAuthoritativeAutomationRunCancellation } from './automationRunCancellation';
 import { runAutomationAgainstExistingSession } from './automationRunExistingSession';
 import { runAutomationAsNewSession } from './automationRunNewSession';
+import { resolveAutomationTemplateRetainedSession } from './automationRetainedSession';
 import {
   parseAutomationTemplateExecution,
   type ParsedAutomationExecution,
@@ -1211,10 +1213,15 @@ async function executeRetainedTemplateInputOnCurrentLifecycle(params: Readonly<{
     accountEncryption: AvailableAutomationAccountEncryptionV1,
   ) => void;
 }>): Promise<void> {
+  const stored = readAutomationTemplateStoredEnvelopeV1(params.input.templateCiphertext);
+  const retainedSession = params.encryptionAtOpen.witness.mode === 'plain' && params.input.targetType === 'existing_session'
+    && stored?.legacyExistingSessionId && params.credentials
+    ? await resolveAutomationTemplateRetainedSession({ credentials: params.credentials,
+      sessionId: stored.legacyExistingSessionId, signal: params.signal }) : undefined;
   const template = parseAutomationTemplateExecution(params.input,
     isAvailableE2eeAutomationAccountEncryptionV1(params.encryptionAtOpen)
     ? params.encryptionAtOpen.material.material
-    : undefined, params.encryptionAtOpen.witness.mode);
+    : undefined, params.encryptionAtOpen.witness.mode, retainedSession ?? undefined);
   if (!template.ok) {
     await failV3ClaimedRunBeforeStart({
       machineId: params.machineId,

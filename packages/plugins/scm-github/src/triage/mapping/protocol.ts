@@ -14,9 +14,15 @@ import type {
   TriageSourceScanEvidenceV1,
   TriageSourceScanObservationV1,
   TriageSourceViewerFactsV1,
+  TriageGetResultV1,
+  TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1 } from '../configuration.js';
+import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
+import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../contribution.js';
+import { GITHUB_CHANGED_FILES_PAGE_SIZE_V1 } from '../detail/routes.js';
+import { buildGithubRepositoryKey, parseGithubRoutingToken } from '../locator.js';
 
 import type {
   GithubTriageEntryLocalRefV1,
@@ -256,6 +262,48 @@ export function toTriageObservation(
         failure: toTriageFailure(observation.failure),
       });
   }
+}
+
+/**
+ * Only an authoritative get returns executable comparison routing. The same
+ * response owns its immutable endpoints; the configured instance belongs to
+ * this invocation and never enters the persisted row projection above.
+ */
+export function toTriageGetResult(
+  observation: GithubTriageObservationV1,
+  instance: TriageConfiguredSourceInstanceV1,
+): TriageGetResultV1 {
+  const projected = toTriageObservation(observation);
+  if (observation.kind !== 'present' || projected.kind !== 'present' || observation.localRef.kindId !== 'pull-request') return projected;
+  const revision = observation.snapshot.reviewRevision;
+  const route = parseGithubRoutingToken(observation.locator.routingToken);
+  const repository = route === null ? null : buildGithubRepositoryKey(route);
+  const number = Number(observation.localRef.entryId);
+  if (revision === undefined || repository === null || !Number.isSafeInteger(number) || number < 1) return projected;
+  return Object.freeze({
+    ...projected,
+    comparisonSource: Object.freeze({
+      kind: 'pullRequest' as const,
+      locator: Object.freeze({
+        providerId: 'github',
+        repository,
+        number,
+        baseOid: revision.baseSha,
+        headOid: revision.headSha,
+        sourceAction: Object.freeze({
+          action: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles }),
+          input: Object.freeze({
+            v: 1,
+            instance,
+            localRef: toTriageLocalRef(observation.localRef),
+            routingToken: repository,
+            limit: GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
+            comparison: true,
+          }),
+        }),
+      }),
+    }),
+  });
 }
 
 export function toTriageScanObservation(

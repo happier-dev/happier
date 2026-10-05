@@ -24,6 +24,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     if (authority.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (!await authority.isCurrent()) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     if (getActionSpec(operation.actionId).executionPlacement !== 'account'
+      && getActionSpec(operation.actionId).executionPlacement !== 'client'
       && !(Object.hasOwn(RoleActionInputSchemasV1, operation.actionId) && operation.actionId.startsWith('session.'))) {
       return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     }
@@ -36,7 +37,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     const executor = params.createExecutor((turnId) =>
       !turnId || turnId === witness.turnId ? witness.workDepth : undefined, () => authority.isCurrent());
     return await executor.execute(operation.actionId, operation.input, {
-      surface: 'agent', authority: 'account_automation', serverId: params.serverId,
+      surface: operation.surface ?? 'agent', authority: 'account_automation', serverId: params.serverId,
       actionCaller: caller.data,
       defaultSessionId: authority.sessionId, actionRequestId: operation.requestId,
       callerPermissionMode: witness.callerPermissionMode ?? null,

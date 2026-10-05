@@ -1,10 +1,6 @@
-import { useSetting } from '@/sync/domains/state/storage';
-
-const BLUR_INTENSITY: Record<'light' | 'regular' | 'strong', number> = {
-    light: 25,
-    regular: 50,
-    strong: 80,
-};
+import { useGlassMaterialSettings } from './useGlassMaterialSettings';
+import { GLASS_BLUR_INTENSITY, resolveGlassSurfaceMaterial, type GlassSurfaceGroup } from './glassMaterial';
+import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 
 export type GlassBlurSetting = Readonly<{
     blurEnabled: boolean;
@@ -17,11 +13,13 @@ export type GlassBlurSetting = Readonly<{
  * …). The single place that knows the underlying setting keys, so generalizing
  * or migrating them touches only this hook.
  */
-export function useGlassBlurSetting(): GlassBlurSetting {
-    const blurEnabled = useSetting('glassBlurEnabled');
-    const intensitySetting = useSetting('glassBlurIntensity');
+export function useGlassBlurSetting(group: GlassSurfaceGroup = 'floating'): GlassBlurSetting {
+    const settings = useGlassMaterialSettings();
+    const environment = useGlassRuntimeEnvironment();
+    const intensitySetting = settings.glassBlurIntensity;
+    const { material } = resolveGlassSurfaceMaterial(settings, group, environment);
     return {
-        blurEnabled,
-        blurIntensity: BLUR_INTENSITY[intensitySetting] ?? BLUR_INTENSITY.regular,
+        blurEnabled: material.blur !== 'off',
+        blurIntensity: material.blur === 'off' ? GLASS_BLUR_INTENSITY[intensitySetting ?? 'regular'] : GLASS_BLUR_INTENSITY[material.blur],
     };
 }

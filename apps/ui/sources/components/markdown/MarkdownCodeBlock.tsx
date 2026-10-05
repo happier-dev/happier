@@ -10,6 +10,7 @@ import { buildDiffBlocks, buildDiffFileEntries, type DiffFileEntry } from '@/com
 import { useSetting } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { t } from '@/text';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 function normalizeFenceLanguage(language: string | null | undefined): string | null {
     const raw = typeof language === 'string' ? language.trim().toLowerCase() : '';
@@ -25,6 +26,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
     content: string;
     language: string | null;
     selectable: boolean;
+    findRanges?: readonly FindTextRange[];
 }>) => {
     const normalizedLanguage = normalizeFenceLanguage(props.language);
     const tokenizationMaxBytesSetting = useSetting('filesDiffTokenizationMaxBytes');
@@ -72,7 +74,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
         defaultExpanded: files.length <= 1,
     });
 
-    if (!canRenderDiff) {
+    if (!canRenderDiff || props.findRanges?.length) {
         return (
             <CodeBlockView
                 code={props.content}
@@ -81,6 +83,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
                 wrap={false}
                 showCopyButton={true}
                 scrollTestID="markdown-code-block-scroll"
+                findRanges={props.findRanges}
             />
         );
     }

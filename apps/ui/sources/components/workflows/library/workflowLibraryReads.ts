@@ -374,6 +374,8 @@ async function loadMoreRunWindow(windowId: WorkflowRunListWindowId): Promise<voi
 const EMPTY_RUN_IDS: readonly string[] = Object.freeze([]);
 
 export type WorkflowRunWindow = Readonly<{
+    /** The exact Home serving this Account window; null until its first answer or after retirement. */
+    serverId: string | null;
     status: WorkflowLibraryReadStatus;
     failure: WorkflowProblemPresentation | null;
     /** The window's rows, in its order, from the one Account-scoped Run store. */
@@ -394,7 +396,8 @@ export type WorkflowRunWindow = Readonly<{
  */
 export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options: Readonly<{ enabled?: boolean }> = {}): WorkflowRunWindow {
     const enabled = options.enabled !== false;
-    const scopeKey = useActiveScopeKey();
+    const scope = useActiveServerAccountScope();
+    const scopeKey = scope === null ? null : serverAccountScopeKeySuffix(scope);
     const statuses = React.useSyncExternalStore(
         enabled ? runWindowStatusCell.subscribe : subscribeInactiveDefinitions,
         enabled ? runWindowStatusCell.get : readInactiveRunStatuses,
@@ -425,6 +428,7 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
     const retry = React.useCallback(() => { void refreshRunWindow(windowId, true); }, [windowId]);
     const loadMore = React.useCallback(() => { void loadMoreRunWindow(windowId); }, [windowId]);
     return {
+        serverId: enabled && owned && status.knownAt !== null ? scope?.serverId ?? null : null,
         status: owned ? status.status : 'loading',
         failure: owned ? status.failure : null,
         rows,

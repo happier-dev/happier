@@ -1,7 +1,7 @@
 import { activeReviewFileKeyForSession, openChangedFileFromList } from '@/components/workspaces/scm/review/activeReviewFile';
 import * as React from 'react';
 import { SessionRightPanelGitCommitTab } from '@/components/sessions/panes/git/SessionRightPanelGitCommitTab';
-import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
+import { ScmCommitSelectionToggleButton, ScmCommitSelectionCheckGlyph } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
@@ -23,6 +23,13 @@ import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionRightPanelGitCommitSelection } from './useSessionRightPanelGitCommitSelection';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
+import { useSessionCommitPlan } from '@/components/sessions/files/commits/useSessionCommitPlan';
+import { reconcileScmCommitPlanGroupSelection, selectScmCommitPlanGroupIntent, type ScmCommitPlanGroupSelection } from '@/sync/domains/scm/diffSummary/commitPlanSelection';
+import { View } from 'react-native';
+import { t } from '@/text';
+import { GitProposedCommitsCard } from './GitProposedCommitsCard';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { GitProposalHighlight } from './SessionRightPanelGitCommitTab';
 
 export type SessionRightPanelGitCommitTabContentProps = Readonly<{
     theme: any;
@@ -61,6 +68,14 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
     active?: boolean;
     onOpenFilesSidebar: (revealPath?: string) => void;
     onOpenReviewAllChanges: () => void;
+    /** Opens the Commits view of pending changes, at a proposed commit when one is named. */
+    onOpenCommitPlan?: (groupId?: string) => void;
+    /** Opens the Walkthrough of pending changes (the proposal's Review in walkthrough). */
+    onOpenWalkthrough?: () => void;
+    /** Phones draw the proposal as the pane's bottom bar (lab WT4-C2p). */
+    phone?: boolean;
+    agentId?: React.ComponentProps<typeof SessionRightPanelGitCommitTab>['agentId'];
+    completedOperationId?: string | null;
     onOpenStashDetails: () => void;
     openFileInDetails: (fullPath: string) => void;
     openFileInDetailsPinned: (fullPath: string) => void;
@@ -76,6 +91,36 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
 export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRightPanelGitCommitTabContentProps) => {
     const copyFeedback = useTemporaryCopyFeedback();
     const commitSelectionUiEnabled = props.commitSelectionUiEnabled === true;
+    const branch = props.scmSnapshot?.branch?.detached ? null : props.scmSnapshot?.branch?.head ?? null;
+    const commitPlan = useSessionCommitPlan({ sessionId: props.sessionId, serverId: props.serverId, enabled: props.active !== false, branch });
+    const analysis = commitPlan.binding.viewModel;
+    const plan = analysis?.outputs?.commitPlan?.value;
+    const proposal = React.useMemo(() => analysis?.resultId && analysis.comparison && plan
+        ? { resultId: analysis.resultId, comparison: analysis.comparison, plan } : null,
+    [analysis?.resultId, analysis?.comparison, plan]);
+    // A finished run gives the commit card back; until then the proposal stands in its place (lab WT4-C2).
+    const proposalShown = commitPlan.proposal && commitPlan.proposal.outcome?.kind !== 'complete' ? commitPlan.proposal : null;
+    const [storedProposedSelection, setProposedSelection] = React.useState<ScmCommitPlanGroupSelection | null>(null);
+    const selectedProposedGroup = proposal ? reconcileScmCommitPlanGroupSelection(storedProposedSelection, proposal) : null;
+    React.useEffect(() => {
+        if (props.active !== false && storedProposedSelection && !selectedProposedGroup) setProposedSelection(null);
+    }, [props.active, storedProposedSelection, selectedProposedGroup]);
+    const selectProposedGroup = React.useCallback((groupId: string) => {
+        if (!proposal) return;
+        const intent = selectScmCommitPlanGroupIntent(selectedProposedGroup, { ...proposal, groupId });
+        if (intent.kind === 'open') props.onOpenCommitPlan?.(groupId);
+        else if (intent.kind === 'select') setProposedSelection(intent.selection);
+    }, [proposal, selectedProposedGroup, props.onOpenCommitPlan]);
+    // The selected commit's exact changes light up in the list; a split file says which part belongs.
+    const proposalHighlight = React.useMemo<GitProposalHighlight | null>(() => {
+        const group = selectedProposedGroup ? commitPlan.proposal?.groups.find((candidate) => candidate.id === selectedProposedGroup.groupId) : null;
+        if (!group) return null;
+        return {
+            paths: new Set(group.changes.map((change) => change.path)),
+            notes: new Map(group.changes.flatMap((change) => change.part ? [[change.path, t('commitProposal.part', change.part)] as const] : [])),
+            groupNumber: group.number,
+        };
+    }, [commitPlan.proposal, selectedProposedGroup]);
     const sessionAddress = React.useMemo(
         () => normalizeSessionAddress(props.serverId, props.sessionId),
         [props.serverId, props.sessionId],
@@ -144,11 +189,12 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         commitSelectionPaths: props.commitSelectionPaths,
         commitSelectionPatches: props.commitSelectionPatches,
         changedFiles: visibleRepositoryChangedFiles,
+        proposedGroupSelection: selectedProposedGroup,
     });
 
     // Lab G1: the checkbox column is part of every row whenever commit selection is available —
     // the name-first row has room for it, and the commit card sums what is checked.
-    const selectionModeActive = commitSelectionUiEnabled;
+    const selectionModeActive = commitSelectionUiEnabled && !selectedProposedGroup;
 
     const selectedRepositoryChangedFiles = React.useMemo(() => {
         return visibleRepositoryChangedFiles.filter((file) => isSelectedForCommit(file));
@@ -229,7 +275,10 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
 
     // Git lab C3/SX: a landed commit is said once, by the pane's outcome line, and lands on the timeline as the
     // newest node ("just now"); the list simply loses the committed rows.
-    const onCommitFromMessage = props.onCommitFromMessage;
+    const onCommitFromMessage = React.useCallback((message: string) => {
+        if (selectedProposedGroup) { props.onOpenCommitPlan?.(selectedProposedGroup.groupId); return undefined; }
+        return props.onCommitFromMessage(message);
+    }, [selectedProposedGroup, props.onOpenCommitPlan, props.onCommitFromMessage]);
     const noopFile = React.useCallback((_file: ScmFileStatus) => {}, []);
 
     const revealInTree = React.useCallback((fullPath: string) => {
@@ -271,7 +320,9 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
     }, [copyFeedback, currentRepositoryFileByPath, props.scmCommitStrategy, props.scmSnapshot, props.scmWriteEnabled, props.sessionId, props.serverId, props.sessionPath, revealInTree]);
 
     const renderFileActions = React.useCallback((file: ScmFileStatus) => {
+        if (file.status === 'conflicted') return null;
         const currentFile = currentRepositoryFileByPath.get(file.fullPath);
+        if (currentFile && selectedProposedGroup) return <ScmCommitSelectionCheckGlyph state={isSelectedForCommit(currentFile) ? 'checked' : 'unchecked'} />;
         if (!currentFile || !selectionModeActive || !props.scmWriteEnabled) return null;
         return (
             <ScmCommitSelectionToggleButton
@@ -296,6 +347,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         props.scmWriteEnabled,
         props.sessionId, props.serverId,
         props.sessionPath,
+        selectedProposedGroup,
     ]);
 
     // With Review on screen a tap brings the file into Review; otherwise it opens the file.
@@ -308,7 +360,25 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         props.openFileInDetailsPinned(file.fullPath);
     }, [props.openFileInDetailsPinned]);
 
+    const onOpenCommitPlan = props.onOpenCommitPlan;
+    const clearProposedSelection = React.useCallback(() => setProposedSelection(null), []);
+    const compactProposal = proposalShown && onOpenCommitPlan ? (
+        <GitProposedCommitsCard
+            proposal={proposalShown}
+            selectedGroupId={selectedProposedGroup?.groupId ?? null}
+            onSelectGroup={selectProposedGroup}
+            onClearSelection={clearProposedSelection}
+            onOpenGroup={onOpenCommitPlan}
+            onReview={props.onOpenWalkthrough ?? (() => onOpenCommitPlan())}
+            onCreate={commitPlan.actions.onCreate}
+            createBusy={commitPlan.busy}
+            onDiscard={commitPlan.actions.onDiscard}
+            onRegenerate={commitPlan.actions.onRegenerate}
+            phone={props.phone === true}
+        />
+    ) : null;
     return (
+        <View style={{ flex: 1 }}>
         <SessionRightPanelGitCommitTab
             theme={props.theme}
             sessionId={props.sessionId}
@@ -323,7 +393,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             scmOperationStatus={props.scmOperationStatus}
             hasGlobalOperationInFlight={props.hasGlobalOperationInFlight}
             inFlightScmOperation={props.inFlightScmOperation}
-            commitAllowed={props.commitAllowedForComposer}
+            commitAllowed={props.commitAllowedForComposer && !selectedProposedGroup}
             commitBlockedMessage={props.commitBlockedMessageForComposer}
             changedFilesViewMode={scopedChangedFilesViewMode}
             sessionAttribution={changed.sessionAttribution}
@@ -331,6 +401,8 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
 
             allRepositoryChangedFiles={changed.allRepositoryChangedFiles}
             selectedRepositoryChangedFiles={selectedRepositoryChangedFiles}
+            proposedGroupSelected={Boolean(selectedProposedGroup)}
+            proposalHighlight={proposalHighlight}
             turnAttributedFiles={changed.turnAttributedFiles}
             turnAgentReportedFiles={changed.turnAgentReportedFiles}
             turnCheckpointFiles={changed.turnCheckpointFiles}
@@ -346,13 +418,13 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             showSelectedViewToggle={showSelectedViewToggle}
             onChangedFilesViewMode={setRequestedChangedFilesViewMode}
             repositorySelectedCount={repositorySelectedCount}
-            onSelectAll={commitSelectionUiEnabled ? bulkSelectCurrentScope : noop}
-            onSelectNone={commitSelectionUiEnabled ? bulkSelectNone : noop}
-            disableSelectAll={commitSelectionUiEnabled ? disableSelectAll || currentScopeChangedFiles.length === 0 : true}
-            disableSelectNone={commitSelectionUiEnabled ? disableSelectNone : true}
+            onSelectAll={selectionModeActive ? bulkSelectCurrentScope : noop}
+            onSelectNone={selectedProposedGroup ? () => setProposedSelection(null) : commitSelectionUiEnabled ? bulkSelectNone : noop}
+            disableSelectAll={selectionModeActive ? disableSelectAll || currentScopeChangedFiles.length === 0 : true}
+            disableSelectNone={selectedProposedGroup ? false : commitSelectionUiEnabled ? disableSelectNone : true}
             onFilePress={onFilePress}
             onFilePressPinned={onFilePressPinned}
-            onToggleSelectionForFile={commitSelectionUiEnabled ? toggleCommitSelectionForFile : noopFile}
+            onToggleSelectionForFile={selectionModeActive ? toggleCommitSelectionForFile : noopFile}
             renderFileActions={renderFileActions}
             renderFileTrailingActions={renderTrailingActions}
             commitDraftMessage={props.commitDraftMessage}
@@ -364,15 +436,26 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             commitSelectionAvailable={false}
             selectionModeActive={selectionModeActive}
             scmStatusFiles={changed.scmStatusFiles}
-            onToggleGroupSelection={commitSelectionUiEnabled ? toggleGroupSelection : undefined}
-            showCommitComposer={props.commitWriteEnabled}
+            onToggleGroupSelection={selectionModeActive ? toggleGroupSelection : undefined}
+            showCommitComposer={props.commitWriteEnabled && !compactProposal}
             onOpenReviewAllChanges={props.onOpenReviewAllChanges}
             onOpenStashDetails={props.onOpenStashDetails}
             listFooter={props.listFooter}
+            phone={props.phone}
+            agentId={props.agentId}
+            completedOperationId={props.completedOperationId}
             emptyState={props.emptyState}
             scopeAccessory={props.scopeAccessory}
             changesLayout={props.changesLayout}
             machineId={props.machineId}
         />
+        {compactProposal}
+        {!compactProposal && commitPlan.undoDiscard ? (
+            <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+                <SurfaceStateCard testID="git-proposed-commits-discarded" size="line" kind="success" title={t('commitProposal.discarded')}
+                    action={{ label: t('commitProposal.undo'), onPress: commitPlan.undoDiscard }} accessibilitySemantics="status" />
+            </View>
+        ) : null}
+        </View>
     );
 });

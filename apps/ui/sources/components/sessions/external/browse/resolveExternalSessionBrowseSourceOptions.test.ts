@@ -144,6 +144,44 @@ function createOpenCodeProjection(): PluginProjectionV2 {
 }
 
 describe('resolveExternalSessionBrowseSourceOptions', () => {
+    it('requires a current positive capability for the exact source before content search', async () => {
+        const { resolveExternalSessionBrowseContentSearchCapability, resolveExternalSessionBrowseContentSearchSupported } = await externalSessionBrowseModulePromise;
+        const projection = createProjection(['codex']);
+        const source = { kind: 'codexHome', home: 'user' } as const;
+        expect(resolveExternalSessionBrowseContentSearchSupported({ providerId: 'codex', source, projection })).toBe(false);
+        expect(resolveExternalSessionBrowseContentSearchCapability({ providerId: 'codex', source, projection })).toBeUndefined();
+        const supported = PluginProjectionV2Schema.parse({
+            ...projection,
+            agentsById: {
+                ...projection.agentsById,
+                codex: {
+                    ...projection.agentsById.codex,
+                    externalSessions: {
+                        ...projection.agentsById.codex!.externalSessions,
+                        sources: [{ ...CODEX_SOURCE_DECLARATION, contentSearch: true }],
+                    },
+                },
+            },
+        });
+        expect(resolveExternalSessionBrowseContentSearchSupported({ providerId: 'codex', source, projection: supported })).toBe(true);
+        const unsupported = PluginProjectionV2Schema.parse({
+            ...supported,
+            agentsById: {
+                ...supported.agentsById,
+                codex: {
+                    ...supported.agentsById.codex,
+                    externalSessions: {
+                        ...supported.agentsById.codex!.externalSessions,
+                        sources: [{ ...CODEX_SOURCE_DECLARATION, contentSearch: false }],
+                    },
+                },
+            },
+        });
+        expect(resolveExternalSessionBrowseContentSearchCapability({ providerId: 'codex', source, projection: unsupported })).toBe(false);
+        expect(resolveExternalSessionBrowseContentSearchSupported({ providerId: 'codex', source: { kind: 'unknown' }, projection: supported })).toBe(false);
+        expect(resolveExternalSessionBrowseContentSearchSupported({ providerId: 'codex', source, projection: { ...supported, generation: 18 } })).toBe(false);
+    });
+
     it('offers resume-only sources only to the remote-session-id picker', async () => {
         const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
         const projection = createProjection(['fx'], new Set(['fx']));

@@ -25,7 +25,10 @@ import {
     warmMachineFileBrowserRoots,
 } from '@/sync/domains/input/machineFileBrowser';
 import { machineCreateDirectory } from '@/sync/ops/machines';
-import { machineWorkspaceFileList } from '@/sync/ops/machineWorkspaceFileList';
+import { useWorkspaceFileQuery } from '@/sync/domains/workspaces/files/useWorkspaceFileQuery';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -270,9 +273,6 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const [showHidden, setShowHidden] = React.useState(true);
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
     const [deepSearchReloadNonce, setDeepSearchReloadNonce] = React.useState(0);
-    const [deepSearchNodes, setDeepSearchNodes] = React.useState<FilesystemBrowserNode[] | null>(null);
-    const [deepSearchLoading, setDeepSearchLoading] = React.useState(false);
-    const [deepSearchError, setDeepSearchError] = React.useState<string | null>(null);
     const initialPath = React.useMemo(() => normalizeAbsolutePath(props.initialPath ?? null), [props.initialPath]);
     const includeFiles = props.includeFiles === true || props.selectionMode === 'file';
     const selectionMode = props.selectionMode ?? 'directory';
@@ -475,115 +475,35 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const deepSearchEnabled = deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
     const enableRowLongPressContextMenu = enableContextMenu && Platform.OS !== 'web';
 
-    React.useEffect(() => {
-        if (!deepSearchEnabled) {
-            setDeepSearchNodes(null);
-            setDeepSearchLoading(false);
-            setDeepSearchError(null);
-            return;
-        }
-
-        const trimmedQuery = searchQuery.trim();
-        if (!trimmedQuery) {
-            setDeepSearchNodes(null);
-            setDeepSearchLoading(false);
-            setDeepSearchError(null);
-            return;
-        }
-
-        let cancelled = false;
-        setDeepSearchLoading(true);
-        setDeepSearchError(null);
-
-        const DEEP_SEARCH_DEBOUNCE_MS = 200;
-        const handle = setTimeout(() => {
-            void (async () => {
-                const result = await machineWorkspaceFileList(
-                    props.machineId,
-                    {
-                        rootPath: deepSearchRootDirectoryPath,
-                        query: trimmedQuery,
-                        includeHidden: showHidden,
-                    },
-                    { serverId: props.serverId },
-                );
-                if (cancelled) return;
-
-                if (!result.ok) {
-                    setDeepSearchNodes([]);
-                    setDeepSearchError(t('errors.unknownError'));
-                    setDeepSearchLoading(false);
-                    return;
-                }
-
-                const lines = result.paths;
-
-                const absoluteFiles = lines.map((relative) => joinMachinePath(deepSearchRootDirectoryPath, relative));
-                const fileNodes: FilesystemBrowserNode[] = absoluteFiles.map((absPath, index) => ({
-                    type: 'file',
-                    path: absPath,
-                    name: lines[index] ?? getPathBrowserDisplayName(absPath),
-                    depth: 0,
-                    isExpanded: false,
-                    isLoadingChildren: false,
-                    parentDirectoryPath: deepSearchRootDirectoryPath,
-                    source: 'remote' as const,
-                }));
-
-                if (selectionMode === 'file') {
-                    setDeepSearchNodes(fileNodes);
-                    setDeepSearchLoading(false);
-                    return;
-                }
-
-                const directoryPaths = new Set<string>();
-                directoryPaths.add(deepSearchRootDirectoryPath);
-                for (const absPath of absoluteFiles) {
-                    const relative = absPath.slice(deepSearchRootDirectoryPath.length).replace(/^[\\/]+/g, '');
-                    const segments = relative.split(/[\\/]+/g).filter(Boolean);
-                    let current = deepSearchRootDirectoryPath;
-                    for (let i = 0; i < segments.length - 1; i += 1) {
-                        current = joinMachinePath(current, segments[i] ?? '');
-                        directoryPaths.add(current);
-                    }
-                }
-
-                const directoryNodes: FilesystemBrowserNode[] = Array.from(directoryPaths)
-                    .filter((path) => path !== deepSearchRootDirectoryPath)
-                    .map((path) => ({
-                        type: 'directory',
-                        path,
-                        name: getPathBrowserDisplayName(path),
-                        depth: 0,
-                        isExpanded: false,
-                        isLoadingChildren: false,
-                        parentDirectoryPath: deepSearchRootDirectoryPath,
-                        source: 'remote' as const,
-                    }));
-
-                setDeepSearchNodes(directoryNodes);
-                setDeepSearchLoading(false);
-            })();
-        }, DEEP_SEARCH_DEBOUNCE_MS);
-
-        return () => {
-            cancelled = true;
-            clearTimeout(handle);
+    const activeServer = useActiveServerSnapshot(props.serverId == null);
+    const deepSearchServerId = props.serverId ?? activeServer.serverId;
+    const deepSearchScope = React.useMemo(() => ({
+        machineId: props.machineId, serverId: deepSearchServerId, rootPath: deepSearchRootDirectoryPath,
+    }), [props.machineId, deepSearchServerId, deepSearchRootDirectoryPath]);
+    const { binding: deepSearchAccountLifetime } = useServerCredentialAccountScopeBinding(deepSearchServerId);
+    const deepSearch = useWorkspaceFileQuery({
+        scope: deepSearchScope, query: searchQuery,
+        enabled: deepSearchEnabled && deepSearchAccountLifetime?.isCurrent() === true, mode: 'glob',
+        accountLifetime: deepSearchAccountLifetime ?? undefined,
+        includeHidden: showHidden, resultType: selectionMode === 'file' ? 'file' : 'folder',
+        reloadToken: deepSearchReloadNonce,
+    });
+    const deepSearchLoading = deepSearch.isSearching;
+    const deepSearchError = deepSearch.error ? t('errors.unknownError') : null;
+    const deepSearchNodes = React.useMemo((): FilesystemBrowserNode[] => deepSearch.items.map((item) => {
+        const relative = item.fullPath.replace(/\/+$/, '');
+        return {
+            type: item.fileType === 'file' ? 'file' : 'directory',
+            path: joinMachinePath(deepSearchRootDirectoryPath, relative),
+            name: item.fileType === 'file' ? relative : item.fileName.replace(/\/+$/, ''),
+            depth: 0, isExpanded: false, isLoadingChildren: false,
+            parentDirectoryPath: deepSearchRootDirectoryPath, source: 'remote',
         };
-    }, [
-        deepSearchEnabled,
-        deepSearchReloadNonce,
-        deepSearchRootDirectoryPath,
-        props.machineId,
-        props.serverId,
-        searchQuery,
-        selectionMode,
-        showHidden,
-    ]);
+    }), [deepSearch.items, deepSearchRootDirectoryPath]);
 
     const nodes = React.useMemo(() => {
         if (deepSearchEnabled) {
-            return deepSearchNodes ?? [];
+            return deepSearchNodes;
         }
         const q = searchQuery.trim().toLowerCase();
         const base = showHidden
@@ -1069,6 +989,13 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     overflowTriggerTestID="path-browser-more"
                 />
 
+                {deepSearchEnabled && nodes.length > 0 ? (
+                    deepSearchLoading ? <SurfaceStateCard size="line" kind="loading" title={t('files.searching')} />
+                        : deepSearchError ? <SurfaceStateCard testID="path-browser-search-error" size="line" kind="unavailable"
+                            title={deepSearchError} action={{ label: t('common.retry'), onPress: deepSearch.retry }} />
+                        : deepSearch.hasMore ? <SurfaceStateCard testID="path-browser-search-incomplete" size="line" kind="warning"
+                            title={t('universalSearch.moreResultsAvailable')} /> : null
+                ) : null}
                 <FilesystemBrowser
                     nodes={nodes}
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
@@ -1077,7 +1004,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     loadingLabel={t('common.loading')}
                     loadingLabelCentered={t('common.loading')}
                     inlineRetryLabel={t('common.retry')}
-                    emptyLabel={t('newSession.pathPicker.emptySuggested')}
+                    emptyLabel={deepSearchEnabled && deepSearch.hasMore ? t('universalSearch.moreResultsAvailable') : t('newSession.pathPicker.emptySuggested')}
+                    emptyTestID={deepSearchEnabled && deepSearch.hasMore ? 'path-browser-search-incomplete' : undefined}
                     style={browserStyle}
                     contentContainerStyle={browserContentContainerStyle}
                     listRef={browserListRef}

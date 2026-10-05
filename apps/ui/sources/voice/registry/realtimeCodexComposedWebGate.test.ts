@@ -6,15 +6,19 @@ import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
   PluginProjectionV2Schema,
+  FeaturesResponseSchema,
 } from '@happier-dev/protocol';
 import type { BundledVoiceRuntimeContribution } from '@/voice/session/types';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import {
-  installVoiceWebRtcBrowserBoundary,
-  createSessionFixture,
-} from '@/dev/testkit';
+import { installVoiceWebRtcBrowserBoundary } from '@/dev/testkit/harness/voiceWebRtcHarness';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { encodeBase64 } from '@/encryption/base64';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+
+installDisconnectedServerSocketBoundary();
 
 const rpcBoundary = vi.hoisted(() => ({
   sessionRpc: vi.fn(),
@@ -52,9 +56,11 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
@@ -193,7 +199,26 @@ describe('realtime_codex normal web composed gate', () => {
   let activeServerId: string;
   let nextTranscriptSeq: number;
   let persistenceCleanup: (() => void) | null;
+  let restoreExecutorModuleLoader: (() => void) | null;
   let transcriptRequest: ReturnType<typeof vi.fn>;
+  let globalCreationAccount: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null;
+
+  const restoreGlobalCreationAccount = async () => {
+    globalCreationAccount = await restoreServerAccountForTest({
+      serverUrl: getActiveServerSnapshot().serverUrl,
+      accountId: 'codex-composed-account',
+      request: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/health') return Response.json({});
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} }));
+        if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: storage.getState().settings }, version: 1 });
+        return Response.json({}, { status: 404 });
+      },
+    });
+    activeServerId = globalCreationAccount.home.id;
+  };
 
   const transcriptPostCount = (): number => transcriptRequest.mock.calls.filter(
     ([input]) => String(input).endsWith(
@@ -245,6 +270,8 @@ describe('realtime_codex normal web composed gate', () => {
     storage.setState((current) => ({ ...current, profileScope: null }));
     nextTranscriptSeq = 0;
     persistenceCleanup = null;
+    globalCreationAccount = null;
+    restoreExecutorModuleLoader = null;
     transcriptRequest = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
@@ -296,7 +323,9 @@ describe('realtime_codex normal web composed gate', () => {
     installDirectSessionState();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await globalCreationAccount?.dispose();
+    restoreExecutorModuleLoader?.();
     persistenceCleanup?.();
     resetRuntimeFetch();
     sync.encryption = originalSyncEncryption;
@@ -717,9 +746,11 @@ describe('realtime_codex normal web composed gate', () => {
         error: { message: 'Bearer private-token; private session context', code: 'private-code' },
       }));
       await vi.waitFor(() => expect(runtime.adapter.getSnapshot()).toMatchObject({
-        status: 'error',
-        errorCode: 'upstream_rejected',
+        status: 'disconnected',
+        errorCode: 'provider_error',
         errorMessage: 'upstream_rejected',
+        errorRecoveryAction: 'retry',
+        errorPresentation: 'notice',
       }));
       expect(browser.peer.close).toHaveBeenCalledTimes(1);
       expect(browser.micSession.teardown).toHaveBeenCalledTimes(1);
@@ -844,6 +875,8 @@ describe('realtime_codex normal web composed gate', () => {
   });
 
   it('projects a retryable global binding preflight failure before microphone or WebRTC acquisition', async () => {
+    await restoreGlobalCreationAccount();
+    restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
     const connectedServices = {
       v: 1 as const,
       bindingsByServiceId: {
@@ -887,7 +920,7 @@ describe('realtime_codex normal web composed gate', () => {
     });
     storage.setState((current) => ({
       ...current,
-      settings: { ...settingsDefaults, voice },
+      settings: { ...settingsDefaults, ...normalizeVoiceSettingsLocalDelta({ voice }, settingsDefaults) },
       machines: {
         ...current.machines,
         [globalMachine.id]: globalMachine,
@@ -909,9 +942,6 @@ describe('realtime_codex normal web composed gate', () => {
             isBuiltIn: true,
             capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true, startupInstructions: { versions: [1] } } },
           },
-        },
-        backendsById: {
-          codex: { id: 'codex', agentId: 'codex' },
         },
         familiesById: {},
       }),
@@ -1172,6 +1202,8 @@ describe('realtime_codex normal web composed gate', () => {
   );
 
   it('composes Global through the real hidden-session owner before exact hidden-session inspection', async () => {
+    await restoreGlobalCreationAccount();
+    restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
     const connectedServices = {
       v: 1 as const,
       bindingsByServiceId: {
@@ -1217,7 +1249,7 @@ describe('realtime_codex normal web composed gate', () => {
       ...current,
       settings: {
         ...settingsDefaults,
-        voice,
+        ...normalizeVoiceSettingsLocalDelta({ voice }, settingsDefaults),
       },
       machines: {
         ...current.machines,
@@ -1270,10 +1302,6 @@ describe('realtime_codex normal web composed gate', () => {
               isBuiltIn: false,
             },
           },
-          backendsById: {
-            codex: { id: 'codex', agentId: 'codex' },
-            'acme-codex': { id: 'acme-codex', agentId: 'acme.codex' },
-          },
           familiesById: {},
         }),
       };
@@ -1296,7 +1324,7 @@ describe('realtime_codex normal web composed gate', () => {
             encryptionMode: 'plain',
             metadata: {
               machineId: input.machineId,
-              path: input.payload.directory,
+              path: input.payload.directory.path,
               host: 'global.test.local',
               backendTarget: { kind: 'backend', backendId: 'codex' },
               connectedServices,

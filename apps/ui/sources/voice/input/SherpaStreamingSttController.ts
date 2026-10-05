@@ -33,7 +33,7 @@ type SherpaSttHandle = {
   sessionId: string;
   jobId: string;
   capture: VoicePcmCapture;
-  captureLease: VoicePcmCaptureLease;
+  captureLease: Promise<VoicePcmCaptureLease> | null;
   transcript: string;
   abortController: AbortController;
   audioStarted: boolean;
@@ -90,8 +90,9 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       // registry mark that runs while a decode is in flight, so this is what makes
       // the awaits below return promptly instead of what delays them.
       const cancelled = cancelRecognizer(current);
-      await current.captureLease.release().catch(() => {});
-      await current.captureLease.waitForDrain().catch(() => {});
+      const lease = await current.captureLease?.catch(() => null);
+      await lease?.release().catch(() => {});
+      await lease?.waitForDrain().catch(() => {});
       await cancelled;
     })();
     clearHandleAttempt = attempt;
@@ -117,16 +118,16 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       return;
     }
 
-    let startupLease: VoicePcmCaptureLease | null = null;
+    let startupHandle: SherpaSttHandle | null = null;
     let startupRecognizerJobId: string | null = null;
     let abortCleanup = (): void => {};
     const abortController = new AbortController();
     const releaseStartupResources = async (): Promise<void> => {
       abortCleanup();
-      const lease = startupLease;
-      startupLease = null;
-      await lease?.release().catch(() => {});
-      await lease?.waitForDrain().catch(() => {});
+      if (startupHandle) {
+        await clearHandle(startupHandle);
+        startupHandle = null;
+      }
       if (startupRecognizerJobId) {
         await sherpa.cancel({ jobId: startupRecognizerJobId }).catch(() => {});
         startupRecognizerJobId = null;
@@ -152,7 +153,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         // Abort remains cancellation even while graceful finish is draining a
         // native decode: mark the job and discard queued frames immediately.
         void cancelRecognizer(current);
-        void current.captureLease.release().catch(() => {});
+        void current.captureLease?.then((lease) => lease.release()).catch(() => {});
         if (!stopping) void clearHandle(current).catch(() => {});
       };
       signal.addEventListener('abort', abortFromExternalSignal, { once: true });
@@ -164,7 +165,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       await releaseStartupResources();
       return;
     }
-    const { packId, language } = resolveLocalNeuralSttCaptureSettings(deps.getSettings());
+    const { packId, language } = resolveLocalNeuralSttCaptureSettings(deps.getSettings(), capturePurpose);
     if (!packId) {
       await releaseStartupResources();
       sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_pack_missing' }));
@@ -211,6 +212,24 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         return;
       }
 
+      const current: SherpaSttHandle = {
+        sessionId: normalizedSessionId,
+        jobId,
+        capture,
+        captureLease: null,
+        transcript: '',
+        abortController,
+        audioStarted: false,
+        abortCleanup,
+        nativeCancellation: null,
+      };
+      // Shared capture can deliver preserved native-start PCM before acquire
+      // resolves. Admit its exact consumer and endpoint session first.
+      handle = current;
+      startupHandle = current;
+      startupRecognizerJobId = null;
+      endpointController.startSession(normalizedSessionId);
+
       const processFrame = async (frame: AudioStreamFrameEvent): Promise<void> => {
         const active = handle;
         if (!active || active.sessionId !== normalizedSessionId || active.jobId !== jobId || active.abortController.signal.aborted) return;
@@ -242,7 +261,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         }
       };
 
-      startupLease = await capture.acquire({
+      current.captureLease = capture.acquire({
         ownerId: `sherpa-streaming-stt:${normalizedSessionId}`,
         format: { sampleRate, channels, frameMs: 20 },
         audioSession: resolveVoicePcmCaptureAudioSession(capturePurpose),
@@ -264,7 +283,8 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
           });
         },
       });
-      if (abortController.signal.aborted) {
+      await current.captureLease;
+      if (abortController.signal.aborted || handle !== current) {
         await releaseStartupResources();
         return;
       }
@@ -273,25 +293,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       throw error;
     }
 
-    const captureLease = startupLease;
-    if (!captureLease) {
-      await releaseStartupResources();
-      throw new Error('local_neural_audio_capture_lease_missing');
-    }
-    handle = {
-      sessionId: normalizedSessionId,
-      jobId,
-      capture,
-      captureLease,
-      transcript: '',
-      abortController,
-      audioStarted: false,
-      abortCleanup,
-      nativeCancellation: null,
-    };
-    startupLease = null;
-    startupRecognizerJobId = null;
-    endpointController.startSession(normalizedSessionId);
+    startupHandle = null;
   };
 
   const stop = async (): Promise<SttStopResult> => {
@@ -304,9 +306,12 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       return { finalText: '' };
     }
     const pending = (async (): Promise<SttStopResult> => {
+      let lease: VoicePcmCaptureLease | null = null;
       try {
         endpointController.clearSession(current.sessionId);
-        await current.captureLease.finish();
+        lease = await current.captureLease;
+        if (!lease) throw new Error('local_neural_audio_capture_lease_missing');
+        await lease.finish();
         if (current.abortController.signal.aborted) throw new Error('local_neural_stt_aborted');
 
         const sherpa = getOptionalSherpaNativeModule();
@@ -326,7 +331,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         // A finalized empty transcript is silence, which is a successful result.
         return { finalText: current.transcript.trim() };
       } catch {
-        await current.captureLease.release().catch(() => {});
+        await lease?.release().catch(() => {});
         await cancelRecognizer(current);
         return {
           error: createVoiceMachineError({

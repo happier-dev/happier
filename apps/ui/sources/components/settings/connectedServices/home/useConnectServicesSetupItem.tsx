@@ -54,6 +54,7 @@ export function buildConnectServicesSetupItem(input: Readonly<{
     setTarget: (target: ConnectedServiceSetupTarget | null) => void;
     dismiss: (stepId: string) => void;
     renderServiceFlow?: ConnectedServiceSetupPanelProps['renderServiceFlow'];
+    targetSelection?: ConnectedServiceSetupPanelProps['targetSelection'];
 }>): SetupBlockItem | null {
     const { offer, layout, target, setTarget, dismiss } = input;
     const services = offer.kind === 'none' ? [] : offer.kind === 'next' ? [offer.service] : offer.services;
@@ -114,6 +115,7 @@ export function buildConnectServicesSetupItem(input: Readonly<{
                     onClose={finish}
                     onConnected={finish}
                     renderServiceFlow={input.renderServiceFlow}
+                    targetSelection={input.targetSelection}
                 />
             );
         },

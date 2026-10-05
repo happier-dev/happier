@@ -12,6 +12,7 @@ import {
 import { codexExternalSessionsContribution } from '@happier-dev/plugins-codex';
 import type {
     AgentExternalSessionsManagedEndpointRead,
+    AgentExternalSessionsRipgrep,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
@@ -55,6 +56,9 @@ const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
         throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
     };
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+const unavailableRipgrep: AgentExternalSessionsRipgrep = {
+    run: async () => { throw new Error('Ripgrep is unavailable in this exact file-backed identity fixture'); },
+};
 const source = () => ({
     kind: 'codexHome' as const,
     home: 'user' as const,
@@ -147,6 +151,7 @@ describe('qualified External Session hook durable lookup composition', () => {
                 maxSerializedBytes: 262_144,
                 managedEndpointRead: unavailableManagedEndpointRead,
                 exec: unavailableInvocationExec,
+                ripgrep: unavailableRipgrep,
             });
         if (!linkedIdentity.ok) {
             throw new Error('Expected the real Codex linked identity');

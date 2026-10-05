@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
@@ -34,6 +35,7 @@ function runtimeRegistry(
     pluginDiagnosticsByPluginId: Object.freeze({}),
     activatedPluginIds: new Set(),
     activateContributionsOnDemand,
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: (_pluginId, disposable) => disposable,
     createAgentInvocationServices: async () => createUnavailablePluginServices(),

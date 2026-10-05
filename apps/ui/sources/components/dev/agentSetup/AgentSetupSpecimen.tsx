@@ -13,7 +13,7 @@ import { FirstAgentSetupBlock } from '@/components/machines/agents/FirstAgentSet
 import { MachineAgentSetupPaneView } from '@/components/machines/agents/MachineAgentSetupPane';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
@@ -65,9 +65,9 @@ function MachinePage(props: Readonly<{ children: React.ReactNode }>) {
                 title="devbox"
                 description="Linux · x86_64 · online"
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
             />
             {props.children}

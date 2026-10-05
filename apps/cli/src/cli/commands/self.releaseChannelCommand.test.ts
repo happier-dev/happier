@@ -73,7 +73,7 @@ function createInstalledDefaultFollowingService(
     return {
         serverId: 'default',
         name: 'Default background service',
-        installed: true,
+        verification: 'verified' as const, installed: true,
         path: mode === 'system'
             ? '/etc/systemd/system/happier-daemon.default.service'
             : '/tmp/happier-daemon.default.service',

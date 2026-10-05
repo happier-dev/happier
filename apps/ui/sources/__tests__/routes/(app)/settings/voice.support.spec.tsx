@@ -1,4 +1,6 @@
 import React from 'react';
+import { useRouter } from 'expo-router';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -7,7 +9,12 @@ import {
 } from '@/dev/testkit';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { voiceSettingsParse, writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
+import { storage } from '@/sync/domains/state/storage';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import {
     getVoiceSettingsRouteModalMockRef,
     getVoiceSettingsRouteParamsRef,
@@ -19,14 +26,26 @@ import { VoiceConversationsSettingsScreen } from '@/voice/settings/screens/Voice
 import { VoiceDictationSettingsScreen } from '@/voice/settings/screens/VoiceDictationSettingsScreen';
 import { VoicePrivacySettingsScreen } from '@/voice/settings/screens/VoicePrivacySettingsScreen';
 import type { VoiceSettingsIntent } from '@/voice/settings/voiceSettingsIntents';
+import { VOICE_ADVANCED_SETTINGS, VOICE_CONVERSATIONS_SETTINGS, VOICE_DICTATION_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { getVoiceContributedSettingsDeclarations } from '@/voice/settings/voiceContributedSettingsDeclarations';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 function VoiceSettingsIntentDetailsScreen(props: Readonly<{ intent: VoiceSettingsIntent }>) {
+    const navigation = useRouter();
+    // Workspace destinations carry scalar query values; Expo also admits malformed/array focus fixtures.
+    const params = Object.fromEntries(Object.entries(routeParamsRef.current)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    let screen: React.ReactElement;
     switch (props.intent) {
-        case 'dictation': return <VoiceDictationSettingsScreen />;
-        case 'conversations': return <VoiceConversationsSettingsScreen />;
-        case 'privacy': return <VoicePrivacySettingsScreen />;
-        case 'advanced': return <VoiceAdvancedSettingsScreen />;
+        case 'dictation': screen = <VoiceDictationSettingsScreen />; break;
+        case 'conversations': screen = <VoiceConversationsSettingsScreen />; break;
+        case 'privacy': screen = <VoicePrivacySettingsScreen />; break;
+        case 'advanced': screen = <VoiceAdvancedSettingsScreen />; break;
     }
+    return <DestinationInstanceHost tabId="voice-support" ref={{ kind: 'settings', params }}
+        pathname={`/settings/voice/${props.intent}`} focused visible navigation={navigation}>
+        {screen}
+    </DestinationInstanceHost>;
 }
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -34,18 +53,17 @@ function VoiceSettingsIntentDetailsScreen(props: Readonly<{ intent: VoiceSetting
 type SettingsScreen = Awaited<ReturnType<typeof renderSettingsView>>;
 
 /**
- * Types into an inline value row (`FieldValueItem`) and leaves the field, which commits the value.
- * `Item` is a host element in this suite, so the row's field is its `rightElement`.
+ * Types into the real inline field and leaves it, exercising its draft and commit owner.
  */
 async function commitInlineField(
     screen: SettingsScreen,
-    matchesRow: (row: { props: Record<string, any> }) => boolean,
+    fieldTestID: string,
     text: string,
 ): Promise<void> {
     const field = () => {
-        const row = screen.findAll((node) => (node.type as unknown) === 'Item' && matchesRow(node))[0];
-        if (!row?.props.rightElement?.props?.onChangeText) throw new Error('Missing the inline field row');
-        return row.props.rightElement.props;
+        const input = screen.findByTestId(fieldTestID);
+        if (!input?.props.onChangeText || !input.props.onBlur) throw new Error('Missing the inline field input');
+        return input.props;
     };
     await act(async () => {
         field().onChangeText(text);
@@ -65,11 +83,15 @@ const routeParamsRef = getVoiceSettingsRouteParamsRef();
 const scrollToMockRef = getVoiceSettingsRouteScrollToMockRef();
 
 installVoiceSettingsRouteModuleMocks({
-    storageModule: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: () => null,
-            useSettings: () => settingsParse({}),
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        const defaults = settingsParse({});
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: createUseSettingMock({ fallback: (key) => defaults[key] }),
+                useSettings: () => defaults,
+            },
         });
     },
 });
@@ -89,16 +111,6 @@ vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => false,
 }));
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
-}));
-
-vi.mock('@/constants/Languages', () => ({
-    LANGUAGES: [{ code: 'en', name: 'English' }],
-    findLanguageByCode: () => ({ code: 'en', name: 'English' }),
-    getLanguageDisplayName: () => 'English',
-}));
-
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],
 }));
@@ -113,20 +125,18 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
     }),
 }));
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => ({
-    ...(await importOriginal()),
-    useAllMachines: () => [],
-    useActiveServerAccountScope: () => null,
-    useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
-    useProfile: () => profileDefaults,
-    useSettings: () => settingsParse({ voice: voiceState }),
-    useSettingsVersion: () => 0,
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
-    subscribeActiveServer: () => () => {},
-}));
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const { createStableStorageReader } = await import('@/dev/testkit/mocks/storage');
+    return {
+        ...(await importOriginal()),
+        useAllMachines: () => [],
+        useActiveServerAccountScope: () => null,
+        useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
+        useProfile: () => profileDefaults,
+        useSettings: createStableStorageReader(() => settingsParse({ voice: voiceState })),
+        useSettingsVersion: () => 0,
+    };
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: null }),
@@ -146,7 +156,15 @@ vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
     useVoiceSettingsMutable: () => [voiceSettingsParse(voiceState), (next: any) => setVoice(next)],
 }));
 
-beforeEach(() => {
+beforeEach(async () => {
+    // Feature policy remains real. Only the advertised server capabilities cross HTTP.
+    await upsertAndActivateServer({ serverUrl: 'https://voice-support.example.test', scope: 'tab' });
+    resetServerFeaturesClientForTests();
+    setRuntimeFetch(vi.fn(async () => Response.json(buildServerFeaturesResponse({ voiceEnabled: true }))));
+    storage.setState({ settings: settingsParse({
+        experiments: true,
+        featureToggles: { 'voice.agent': true, 'execution.runs': true },
+    }) });
     routeParamsRef.current = {};
     scrollToMockRef.current?.mockClear();
     voiceState = createVoiceState();
@@ -200,24 +218,94 @@ async function chooseOtherSegmentedOption(
     });
 }
 
+/** Opens "Advanced agent behaviour" on the Conversations page (lifecycle, commit and streaming rows). */
+async function openAdvancedAgent(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
+    const disclosure = screen.findAll((node) => node.props?.testID === 'settings.voice.local.advancedAgent'
+        && typeof node.props?.onExpandedChange === 'function')[0];
+    expect(disclosure).toBeTruthy();
+    await act(async () => {
+        disclosure!.props.onExpandedChange(true);
+    });
+}
+
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
     it('keeps Happier Voice visible but disabled without destroying the unavailable hosted selection', async () => {
         voiceState.providerId = ' happier.voice.elevenlabs/realtime-elevenlabs ';
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
-        expect(screen.findRowByTitle('settingsVoice.mode.off')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsVoice.mode.local')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsVoice.mode.byo')).toBeTruthy();
-        const hostedRow = screen.findRowByTitle('settingsVoice.mode.happier');
-        expect(hostedRow).toBeTruthy();
-        expect(hostedRow?.props.disabled).toBe(true);
-        expect(hostedRow?.props.onPress).toBeUndefined();
+        expect(screen.findByTestId('settings.voice.provider.off')).toBeTruthy();
+        // One ElevenLabs service; who pays is its own choice, and the hosted option says why it is unavailable.
+        const payWith = screen.findAll((node) => node.props?.testIDPrefix === 'settings.voice.provider.payWith')[0];
+        expect(payWith).toBeTruthy();
+        const hosted = payWith!.props.options.find((option: { id: string }) => option.id === 'happier');
+        expect(hosted?.unavailableReason).toBeTruthy();
+        expect(payWith!.props.options.find((option: { id: string }) => option.id === 'byo')).toBeTruthy();
         expect(setVoice).not.toHaveBeenCalled();
     });
 });
 
 describe('VoiceSettingsScreen (voice settings UX)', () => {
+    it.each(['silenceMs', 'assistantLanguage', 'greeting'] as const)('reveals a searched %s preference while conversations are off without selecting a service', async (id) => {
+        voiceState.providerId = 'off';
+        const setting = VOICE_CONVERSATIONS_SETTINGS.settings[id];
+        routeParamsRef.current = { setting: setting.anchor };
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        const prerequisite = screen.findByTestId('settings.voice.searchPrerequisite');
+        expect(prerequisite?.props.disabled).toBe(true);
+        expect(prerequisite?.props.subtitle).toBe(id === 'silenceMs'
+            ? 'settingsVoice.pages.search.select(choice=settingsVoice.mode.local,control=settingsVoice.providerSectionTitle)'
+            : 'settingsVoice.pages.search.chooseService');
+        expect(screen.findByTestId(`setting-reveal.${setting.anchor}`)).toBeTruthy();
+        expect(setVoice).not.toHaveBeenCalled();
+    });
+
+    it('reveals the named prerequisite for a searched unselected contributed service field', async () => {
+        voiceState.providerId = 'off';
+        const declaration = getVoiceContributedSettingsDeclarations().find((page) => page.pageId === 'voiceConversations'
+            && page.sections['provider.happier.voice.elevenlabs/realtime-elevenlabs']);
+        const setting = declaration?.settings['provider.happier.voice.elevenlabs/realtime-elevenlabs.agentId'];
+        expect(setting).toBeTruthy();
+        routeParamsRef.current = { setting: setting!.anchor };
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(screen.findByTestId('settings.voice.searchPrerequisite')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('settings.voice.searchPrerequisite')?.props.subtitle).toContain('ElevenLabs');
+        expect(screen.findByTestId(`setting-reveal.${setting!.anchor}`)).toBeTruthy();
+        expect(setVoice).not.toHaveBeenCalled();
+    });
+
+    it('reveals the speech engine prerequisite for a searched dictation model without changing its engine', async () => {
+        voiceState.dictation.sttBinding = 'explicit';
+        voiceState.dictation.stt.provider = 'device';
+        routeParamsRef.current = { setting: VOICE_DICTATION_SETTINGS.settings.sttAssetId.anchor };
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="dictation" />);
+        expect(screen.findByTestId('settings.voice.searchPrerequisite')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('settings.voice.searchPrerequisite')?.props.subtitle).toContain('choice=settingsVoice.local.localNeuralStt.provider.title');
+        expect(screen.findByTestId(`setting-reveal.${VOICE_DICTATION_SETTINGS.settings.sttAssetId.anchor}`)).toBeTruthy();
+        expect(setVoice).not.toHaveBeenCalled();
+    });
+
+    it('reveals the account choice for a searched provider field hidden by hosted billing', async () => {
+        const declaration = getVoiceContributedSettingsDeclarations().find((page) => page.pageId === 'voiceConversations'
+            && page.sections['provider.happier.voice.elevenlabs/realtime-elevenlabs']);
+        const setting = declaration?.settings['provider.happier.voice.elevenlabs/realtime-elevenlabs.agentId'];
+        expect(setting).toBeTruthy();
+        routeParamsRef.current = { setting: setting!.anchor };
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(screen.findByTestId('settings.voice.searchPrerequisite')?.props.subtitle).toContain('control=settingsVoice.pages.conversations.payWithTitle');
+        expect(screen.findByTestId(`setting-reveal.${setting!.anchor}`)).toBeTruthy();
+        expect(setVoice).not.toHaveBeenCalled();
+    });
+
+    it('reveals the selectable Local service before an agent preference retained under local direct', async () => {
+        voiceState.providerId = 'local_direct';
+        routeParamsRef.current = { setting: VOICE_CONVERSATIONS_SETTINGS.settings.maxWarmRoots.anchor };
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(screen.findByTestId('settings.voice.searchPrerequisite')?.props.subtitle).toContain('choice=settingsVoice.mode.local,control=settingsVoice.providerSectionTitle');
+        expect(setVoice).not.toHaveBeenCalled();
+    });
+
+
     it('scrolls the stable Privacy section into view once for the validated route focus', async () => {
         routeParamsRef.current = { focus: 'privacy' };
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
@@ -281,8 +369,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
-        expect(screen.findRowByTitle('settingsVoice.local.conversationMode')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsVoice.local.ttsProvider')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.pages.conversations.talkToTitle')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.pages.conversations.voiceEngineTitle')).toBeTruthy();
     });
 
     it('shows local TTS settings even in direct-to-session conversation mode', async () => {
@@ -291,7 +379,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
-        expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.ttsProvider')).toBeTruthy();
+        expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.pages.conversations.voiceEngineTitle')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.local.autoSpeak')).toBeTruthy();
     });
 
@@ -339,20 +427,6 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         }
     });
 
-    it('does not show navigation chevrons for voice mode selection rows', async () => {
-        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        const modeItems = [
-            screen.findRowByTitle('settingsVoice.mode.off'),
-            screen.findRowByTitle('settingsVoice.mode.byo'),
-            screen.findRowByTitle('settingsVoice.mode.local'),
-        ].filter(Boolean);
-
-        expect(modeItems.length).toBeGreaterThan(0);
-        for (const item of modeItems as any[]) {
-            expect(item.props.showChevron).toBe(false);
-        }
-    });
-
     it('does not render ineffective privacy toggles (file paths/tool args) as interactive settings', async () => {
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
 
@@ -363,18 +437,20 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     it('renders only the selected intent detail on each destination', async () => {
         const dictation = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="dictation" />);
         expect(dictation.findByTestId('settings.voice.section.dictation')).toBeTruthy();
-        expect(dictation.findRowByTitle('settingsVoice.mode.off')).toBeNull();
+        expect(dictation.findByTestId('settings.voice.provider.off')).toBeNull();
         standardCleanup();
 
         const conversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        expect(conversations.findRowByTitle('settingsVoice.mode.off')).toBeTruthy();
+        expect(conversations.findByTestId('settings.voice.provider.off')).toBeTruthy();
         expect(conversations.findByTestId('settings.voice.section.dictation')).toBeNull();
-        expect(conversations.findRowByTitle('settingsVoice.ui.orbEnabled')).toBeNull();
+        expect(conversations.findRowByTitle(VOICE_ADVANCED_SETTINGS.settings.presenceContainer.titleKey)).toBeNull();
         standardCleanup();
 
         const advanced = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="advanced" />);
-        expect(advanced.findRowByTitle('settingsVoice.ui.orbEnabled')).toBeTruthy();
-        expect(advanced.findRowByTitle('settingsVoice.mode.off')).toBeNull();
+        const presence = advanced.findRowByTitle(VOICE_ADVANCED_SETTINGS.settings.presenceContainer.titleKey);
+        expect(presence).toBeTruthy();
+        expect(presence?.props.rightElement.props.testIdPrefix).toBe('settings.voice.ui.presenceContainer');
+        expect(advanced.findByTestId('settings.voice.provider.off')).toBeNull();
     });
 
     it('shows the shared execution-machine selector on exactly the intent that requires it', async () => {
@@ -393,25 +469,16 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         };
 
         const dictation = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="dictation" />);
-        expect(findDropdownByItemTriggerTitle(
-            dictation,
-            'settingsVoice.local.executionMachine.title',
-        )).toBeTruthy();
+        expect(dictation.findByTestId('settings.voice.executionMachine.chip')).toBeTruthy();
         standardCleanup();
 
         const conversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        expect(findDropdownByItemTriggerTitle(
-            conversations,
-            'settingsVoice.local.executionMachine.title',
-        )).toBeNull();
+        expect(conversations.findByTestId('settings.voice.executionMachine.chip')).toBeNull();
         standardCleanup();
 
         voiceState.providerId = 'local_direct';
         const localConversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        expect(findDropdownByItemTriggerTitle(
-            localConversations,
-            'settingsVoice.local.executionMachine.title',
-        )).toBeTruthy();
+        expect(localConversations.findByTestId('settings.voice.executionMachine.chip')).toBeTruthy();
     });
 
     it('keeps the selected provider disclosure in Privacy & data and the policy entry last', async () => {
@@ -443,7 +510,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         // Two short, always-visible options: choosing one is a single tap on a segmented row.
-        await chooseOtherSegmentedOption(screen, 'settingsVoice.local.conversationMode');
+        await chooseOtherSegmentedOption(screen, 'settingsVoice.pages.conversations.talkToTitle');
 
         expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
@@ -472,12 +539,13 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providers.local_conversation.config.conversationMode = 'agent';
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        await openAdvancedAgent(screen);
 
         await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorAgentSource');
-        await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorPermissionPolicy');
+        await chooseOtherSegmentedOption(screen, 'settingsVoice.pages.conversations.itMayTitle');
         await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorChatModelSource');
         await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorCommitModelSource');
-        await chooseOtherSegmentedOption(screen, 'settingsVoice.local.mediatorVerbosity');
+        await chooseOtherSegmentedOption(screen, 'settingsVoice.pages.conversations.repliesTitle');
 
         expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
@@ -490,13 +558,11 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providers.local_conversation.config.agent.agentId = 'unknown-agent';
         voiceState.providers.local_conversation.config.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
-        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
-        const resumabilityDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'provider_resume'));
-        expect(resumabilityDropdown).toBeTruthy();
-
-        const providerResumeItem = resumabilityDropdown!.props.items.find((i: any) => i?.id === 'provider_resume');
-        expect(providerResumeItem?.disabled).toBe(true);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
+        const restore = screen.findAll((node) => node.props?.testIDPrefix === 'settings.voice.memory.restore')[0];
+        expect(restore).toBeTruthy();
+        const providerResume = restore!.props.options.find((option: { id: string }) => option.id === 'provider_resume');
+        expect(providerResume?.unavailableReason).toBeTruthy();
     });
 
     it('can toggle voice agent commit isolation', async () => {
@@ -505,6 +571,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providers.local_conversation.config.agent.commitIsolation = false;
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        await openAdvancedAgent(screen);
         expect(screen.findRowByTitle('settingsVoice.local.conversation.commitIsolation.title')).toBeTruthy();
 
         await act(async () => {
@@ -526,6 +593,17 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         );
     });
 
+    it('does not offer commit isolation when the Agent prerequisite is disabled', async () => {
+        storage.getState().applySettingsLocal({ featureToggles: { 'voice.agent': false, 'execution.runs': true } });
+        voiceState.providerId = 'local_conversation';
+        voiceState.providers.local_conversation.config.conversationMode = 'agent';
+
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        await openAdvancedAgent(screen);
+        expect(screen.findRowByTitle('settingsVoice.local.conversation.commitIsolation.title')).toBeNull();
+        expect(setVoice).not.toHaveBeenCalled();
+    });
+
     it('can reset persistent local voice agent state and bumps the transcript epoch', async () => {
         await import('@/modal');
 
@@ -536,13 +614,16 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         resetGlobalVoiceAgentPersistenceSpy.mockClear();
         modalMockRef.current.spies.confirm.mockResolvedValueOnce(true);
 
-        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        expect(screen.findRowByTitle('settingsVoice.local.conversation.resetVoiceAgent.title')).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
+        const forget = screen.findRowByTitle('settingsVoice.pages.privacy.forgetTitle')?.props.rightElement;
+        expect(forget?.props.testID).toBe('settings.voice.memory.forget');
 
         await act(async () => {
-            await screen.pressRowByTitle('settingsVoice.local.conversation.resetVoiceAgent.title');
+            forget!.props.onPress();
         });
+        await act(async () => {});
 
+        expect(modalMockRef.current.spies.confirm).toHaveBeenCalledTimes(1);
         expect(resetGlobalVoiceAgentPersistenceSpy).toHaveBeenCalledTimes(1);
         expect(setVoice).not.toHaveBeenCalled();
     });
@@ -554,9 +635,10 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providers.local_conversation.config.conversationMode = 'agent';
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        await openAdvancedAgent(screen);
         expect(screen.findRowByTitle('settingsVoice.local.mediatorIdleTtl')).toBeTruthy();
 
-        await commitInlineField(screen, (row) => row.props.title === 'settingsVoice.local.mediatorIdleTtl', '999999');
+        await commitInlineField(screen, 'settings.voice.local.idleTtlSeconds.field', '999999');
 
         expect(setVoice).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -575,6 +657,15 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await import('@/modal');
 
         voiceState.providerId = 'local_direct';
+        // Device speech is the default engine and has no format; the OpenAI-compatible engine does.
+        voiceState.providers.local_direct.config.tts = {
+            ...voiceState.providers.local_direct.config.tts,
+            provider: 'happier.voice.openai-compat/tts',
+        };
+        const providerId = voiceState.providers.local_direct.config.tts.provider;
+        const settingsOwner = createDefaultVoiceProviderRegistry().get(providerId)?.providerSettings;
+        expect(settingsOwner).toBeTruthy();
+        voiceState = writeVoiceProviderSettingsConfig(voiceState, providerId, settingsOwner!.defaultConfig);
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.local.ttsFormat')).toBeTruthy();
@@ -582,24 +673,49 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await act(async () => {
             await screen.pressRowByTitle('settingsVoice.local.ttsFormat');
         });
+        const format = findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.ttsFormat');
+        expect(format).toBeTruthy();
+        await act(async () => { format!.props.onSelect('wav'); });
 
         expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
+        const written = setVoice.mock.calls.at(-1)?.[0];
+        expect(written.providers[providerId].config.format).toBe('wav');
+        expect(written.providerId).toBe('local_direct');
     });
 
-    it('does not use prompt modals for voice assistant language selection', async () => {
+    it('keeps Reply in apart from the language the speech model listens for', async () => {
         await import('@/modal');
 
-        voiceState.providerId = 'off';
+        voiceState.providerId = 'local_direct';
         voiceState.assistantLanguage = null;
+        const stt = voiceState.providers.local_direct.config.stt;
+        voiceState.providers.local_direct.config.stt = {
+            ...stt,
+            provider: 'local_neural',
+            localNeural: { ...stt.localNeural, language: 'fr' },
+        };
 
         const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
-        expect(screen.findRowByTitle('settingsVoice.preferredLanguage')).toBeTruthy();
+        // I speak reads the speech model's own language; Reply in is the reply preference.
+        expect(screen.findByTestId('settings.voice.language.iSpeak')?.props.detail).toBe('fr');
+        const replyIn = findDropdownByItemTriggerTitle(screen, 'settingsVoice.pages.conversations.replyInTitle');
+        expect(replyIn?.props.selectedId).toBe('same');
 
         await act(async () => {
-            await screen.pressRowByTitle('settingsVoice.preferredLanguage');
+            replyIn!.props.onSelect('en');
         });
 
         expect(modalMockRef.current.spies.prompt).not.toHaveBeenCalled();
+        const written = setVoice.mock.calls.at(-1)?.[0];
+        expect(written.assistantLanguage).toBe('en');
+        expect(written.providers.local_direct.config.stt.localNeural.language).toBe('fr');
+        expect(written.providers.local_direct.config.stt.provider).toBe('local_neural');
+    });
+
+    it('has no Language section while conversations are off', async () => {
+        voiceState.providerId = 'off';
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.pages.conversations.replyInTitle')).toBeNull();
     });
 
     it('wires ElevenLabs voice dropdown selection into settings (BYO)', async () => {
@@ -638,7 +754,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         await commitInlineField(
             screen,
-            (row) => row.props.testID === 'voice-realtime-field-tts-voiceSettings-similarityBoost',
+            'voice-realtime-field-tts-voiceSettings-similarityBoost.field',
             '0.65',
         );
 

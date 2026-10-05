@@ -479,7 +479,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         // `sync` is a module singleton the suite reaches into; without this the
         // applied transport Home a case sets leaks into every later case and
         // silently changes which Home the scope owners address.
-        Reflect.set((await import('./sync')).sync, 'appliedServerTarget', null);
+        Reflect.set((await import('./syncEngine')).sync, 'appliedServerTarget', null);
     });
 
     afterEach(() => {
@@ -497,7 +497,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         // local row `fetchMessages` returns at its deleted-session guard and the
         // unresolved-owner branch is never reached.
         storage.getState().applySessions([createSession(sessionId)]);
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const syncInternals = sync as unknown as {
             hasFetchedSessionsSnapshotForActiveServer: boolean;
             activeServerSessionIds: Set<string>;
@@ -1040,7 +1040,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const previousDebugFlag = process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC;
 
         try {
-            const { sync } = await import('./sync');
+            const { sync } = await import('./syncEngine');
             await (sync as any).activateAccountSettingsScopeForCredentials({
                 token: buildTokenWithSub('account-settings-user'),
                 secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),

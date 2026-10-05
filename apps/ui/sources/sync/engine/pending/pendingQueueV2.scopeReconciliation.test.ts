@@ -401,6 +401,8 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
             isOutboxScopeCurrent: async () => {
                 scopeCheckCount += 1;
                 if (scopeCheckCount === 3) {
+                    // A newer receipt changes the snapshot basis while this check is awaiting.
+                    storage.getState().applySessions([{ ...storage.getState().sessions[sessionId]!, pendingVersion: 1 }]);
                     newerRefresh = fetchAndApplyPendingMessagesV2({
                         sessionId,
                         encryption,

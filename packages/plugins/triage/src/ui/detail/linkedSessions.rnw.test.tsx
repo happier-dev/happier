@@ -16,6 +16,7 @@ const calls: Array<Readonly<{ action: string; input: unknown }>> = [];
 let openFails = false;
 let releaseOpen: (() => void) | null = null;
 let blockOpen = false;
+let selectedSessionId: string | null = null;
 
 const renderHeader = defineUiSurface(function LinkedSessionHeader(_context: RenderContext): React.ReactElement {
   return (
@@ -25,6 +26,7 @@ const renderHeader = defineUiSurface(function LinkedSessionHeader(_context: Rend
         { sessionId: 'session-other', displayTitle: 'Parser cleanup' },
       ]}
       hasMore
+      onSelect={(sessionId) => { selectedSessionId = sessionId; }}
       onLoadMore={() => {}}
     />
   );
@@ -37,6 +39,7 @@ async function mountHeader() {
   openFails = false;
   releaseOpen = null;
   blockOpen = false;
+  selectedSessionId = null;
   const fixture = await createPluginUiTestkit({
     identity: { instanceId: 'fixture-instance-175', mountNonce: 'fixture-mount-175' },
     authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -63,7 +66,7 @@ afterEach(async () => {
 });
 
 describe('common-header linked Sessions', () => {
-  it('opens the exact linked Session and renders a local retryable failure', async () => {
+  it('selects the inline Session independently from the explicit Open operation and its retryable failure', async () => {
     const header = await mountHeader();
     openFails = true;
 
@@ -71,6 +74,12 @@ describe('common-header linked Sessions', () => {
 
     await act(async () => {
       await header.press(await header.getByRole('button', { name: 'Route repair' }));
+    });
+
+    expect(selectedSessionId).toBe('session-linked');
+    expect(calls).toEqual([]);
+    await act(async () => {
+      await header.press(await header.getByRole('button', { name: 'Open session Route repair' }));
     });
 
     expect(calls).toEqual([{ action: 'session.open', input: { sessionId: 'session-linked' } }]);
@@ -83,7 +92,7 @@ describe('common-header linked Sessions', () => {
 
     openFails = false;
     await act(async () => {
-      await header.press(await header.getByRole('button', { name: 'Route repair' }));
+      await header.press(await header.getByRole('button', { name: 'Open session Route repair' }));
     });
     expect(calls).toHaveLength(2);
     await expect(header.queryByText('This Session could not be opened.')).resolves.toBeUndefined();
@@ -94,7 +103,7 @@ describe('common-header linked Sessions', () => {
     blockOpen = true;
 
     await act(async () => {
-      await header.press(await header.getByRole('button', { name: 'Route repair' }));
+      await header.press(await header.getByRole('button', { name: 'Open session Route repair' }));
       await Promise.resolve();
     });
 

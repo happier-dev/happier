@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
 
 function normalizeServerUrl(url) {
   return String(url ?? '').trim().replace(/\/+$/, '');

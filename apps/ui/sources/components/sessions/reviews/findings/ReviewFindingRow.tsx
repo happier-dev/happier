@@ -18,7 +18,9 @@ import {
     type ReviewFindingThreadEntryView,
 } from '@/components/sessions/reviews/findings/ReviewFindingThread';
 import type { ReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
-import { formatReviewFindingLocation, isHighReviewSeverity, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { useReviewSeverityColors } from '@/components/sessions/reviews/findings/useReviewSeverityColors';
+import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
 
 export type ReviewFindingDecision = 'accept' | 'reject' | 'defer';
 export const REVIEW_FINDING_DECISIONS: readonly ReviewFindingDecision[] = ['accept', 'reject', 'defer'];
@@ -37,6 +39,29 @@ function decisionLabel(decision: ReviewFindingDecision): string {
     }
 }
 
+/** Accept · Defer · Reject: the one triage control wherever a finding is decided (transcript, Run page, walkthrough). */
+export const ReviewFindingDecisionControl = React.memo(function ReviewFindingDecisionControl(props: Readonly<{
+    testIDPrefix: string;
+    decision: ReviewFindingDecision | 'undecided';
+    disabled: boolean;
+    onDecide: (decision: ReviewFindingDecision) => void;
+}>) {
+    const tabs = React.useMemo(() => REVIEW_FINDING_DECISIONS.map((decision) => ({ id: decision, label: decisionLabel(decision) })), []);
+    return (
+        <SegmentedTabBar<ReviewFindingDecision>
+            role="radiogroup"
+            tabs={tabs}
+            activeTabId={props.decision as ReviewFindingDecision}
+            onSelectTab={props.onDecide}
+            disabled={props.disabled}
+            compact
+            segmentSizing="content"
+            accessibilityLabel={t('runPage.review.triageLabel')}
+            testIDPrefix={props.testIDPrefix}
+        />
+    );
+});
+
 /** One finding: severity, what and where, what changed after a question, your decision, its thread. */
 export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Readonly<{
     /** The row's id within its review: what its controls and callbacks are keyed by. */
@@ -47,6 +72,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     /** The finding as first reported, when a reviewer's answer changed it. */
     original: ReviewFinding | null;
     density: ReviewFindingRowDensity;
+    findBlockPrefix?: string;
     divided: boolean;
     /** `null` hides the decision (a read-only transcript). */
     decision: ReviewFindingDecision | 'undecided' | null;
@@ -68,31 +94,23 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     const { theme } = useUnistyles();
     const { finding, rowId, onAsk, onDecide, onToggleThread } = props;
     const location = formatReviewFindingLocation(finding);
-    const high = isHighReviewSeverity(finding.severity);
-    const severityColor = high ? theme.colors.state.danger.foreground : theme.colors.text.tertiary;
-    const severityTextColor = high ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
+    // One severity colour wherever a finding is drawn (Walkthrough lab WT5): high red, medium amber, low blue, nit quiet.
+    const severityColor = useReviewSeverityColors(finding.severity).foreground;
+    const severityTextColor = severityColor;
     const updated = props.original !== null;
     const severityChanged = props.original !== null && props.original.severity !== finding.severity;
     const replyCount = props.threadEntries.length;
     const askDisabled = props.followUp !== null && !props.followUp.available;
-    const decisionTabs = React.useMemo(
-        () => REVIEW_FINDING_DECISIONS.map((decision) => ({ id: decision, label: decisionLabel(decision) })),
-        [],
-    );
     const ask = React.useCallback((message: string) => onAsk(rowId, message), [onAsk, rowId]);
+    const decide = React.useCallback((next: ReviewFindingDecision) => onDecide(rowId, next), [onDecide, rowId]);
 
     const decisionControl = props.decision !== null ? (
         <View style={props.density === 'card' ? styles.decisionAside : styles.decision}>
-            <SegmentedTabBar<ReviewFindingDecision>
-                role="radiogroup"
-                tabs={decisionTabs}
-                activeTabId={props.decision as ReviewFindingDecision}
-                onSelectTab={(next) => onDecide(rowId, next)}
-                disabled={props.decisionDisabled}
-                compact
-                segmentSizing="content"
-                accessibilityLabel={t('runPage.review.triageLabel')}
+            <ReviewFindingDecisionControl
                 testIDPrefix={`review-finding-triage:${rowId}`}
+                decision={props.decision}
+                disabled={props.decisionDisabled}
+                onDecide={decide}
             />
         </View>
     ) : null;
@@ -108,9 +126,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
             style={styles.ask}
         >
             <Icon name="chat" size={ICON_SIZE.xs} color={askDisabled && replyCount === 0 ? theme.colors.text.tertiary : theme.colors.text.secondary} />
-            <Text style={[styles.askText, askDisabled && replyCount === 0 ? styles.askTextDisabled : null]}>
-                {replyCount > 0 ? t('runPage.review.replies', { count: replyCount }) : t('runPage.review.askAboutThis')}
-            </Text>
+            <StructuredFindText blockId={`${props.findBlockPrefix}:thread-toggle`} text={replyCount > 0 ? t('runPage.review.replies', { count: replyCount }) : t('runPage.review.askAboutThis')} style={[styles.askText, askDisabled && replyCount === 0 ? styles.askTextDisabled : null]} />
             {replyCount > 0 ? (
                 <Icon name={props.threadOpen ? 'caret-up' : 'caret-down'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
             ) : null}
@@ -121,15 +137,15 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
         <View testID={`review-finding:${rowId}`} style={[styles.finding, props.divided ? styles.divided : null]}>
             <View style={styles.severity}>
                 <View style={[styles.severityDot, { backgroundColor: severityColor }]} />
-                <Text style={[styles.severityText, { color: severityTextColor }]}>{reviewSeverityLabel(finding.severity)}</Text>
+                <StructuredFindText blockId={`${props.findBlockPrefix}:severity`} text={reviewSeverityLabel(finding.severity)} style={[styles.severityText, { color: severityTextColor }]} />
             </View>
             <View style={styles.body}>
                 <View style={props.density === 'card' ? styles.headRow : null}>
                     <View style={styles.head}>
-                        <Text style={styles.title}>{finding.title}</Text>
+                        <StructuredFindText blockId={`${props.findBlockPrefix}:title`} text={finding.title} style={styles.title} />
                         {location || props.attribution ? (
                             <View style={styles.placeRow}>
-                                {location ? <Text selectable numberOfLines={1} style={styles.location}>{location}</Text> : null}
+                                {location ? <StructuredFindText blockId={`${props.findBlockPrefix}:location`} text={location} selectable numberOfLines={1} style={styles.location} /> : null}
                                 {props.attribution ? (
                                     <View testID={`review-finding-attribution:${rowId}`} style={styles.attribution}>
                                         {props.attribution.backendIds.map((backendId) => (hasAgentIconMark(backendId, theme)
@@ -146,16 +162,14 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
                 {updated ? (
                     <View testID={`review-finding-updated:${rowId}`} style={styles.updated}>
                         <Icon name="arrows-clockwise" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-                        <Text style={styles.updatedText}>{t('runPage.review.updatedAfterQuestion')}</Text>
+                        <StructuredFindText blockId={`${props.findBlockPrefix}:updated`} text={t('runPage.review.updatedAfterQuestion')} style={styles.updatedText} />
                         {severityChanged && props.original ? (
-                            <Text style={styles.updatedDelta}>
-                                {`${reviewSeverityLabel(props.original.severity)} → ${reviewSeverityLabel(finding.severity)}`}
-                            </Text>
+                            <StructuredFindText blockId={`${props.findBlockPrefix}:updated-severity`} text={`${reviewSeverityLabel(props.original.severity)} → ${reviewSeverityLabel(finding.severity)}`} style={styles.updatedDelta} />
                         ) : null}
                     </View>
                 ) : null}
                 {props.density === 'page' ? <Text selectable style={styles.summary}>{finding.summary}</Text> : null}
-                {props.decision !== null && props.decisionNote ? <Text style={styles.note}>{props.decisionNote}</Text> : null}
+                {props.decision !== null && props.decisionNote ? <StructuredFindText blockId={`${props.findBlockPrefix}:decision-note`} text={props.decisionNote} style={styles.note} /> : null}
                 {props.density === 'page' ? (
                     <View style={styles.actions}>
                         {decisionControl}
@@ -171,9 +185,10 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
                             pendingQuestion={props.pendingQuestion}
                             askContext={props.askContext}
                             onAsk={ask}
+                            findBlockPrefix={props.findBlockPrefix}
                         />
                     ) : (
-                        <ReviewFindingThreadHistory entries={props.threadEntries} />
+                        <ReviewFindingThreadHistory entries={props.threadEntries} findBlockPrefix={props.findBlockPrefix} />
                     )
                 ) : null}
             </View>
@@ -182,14 +197,14 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
 });
 
 /** Replies stay readable after a review stops taking questions. */
-function ReviewFindingThreadHistory(props: Readonly<{ entries: readonly ReviewFindingThreadEntryView[] }>) {
+function ReviewFindingThreadHistory(props: Readonly<{ entries: readonly ReviewFindingThreadEntryView[]; findBlockPrefix?: string }>) {
     return (
         <View style={styles.history}>
             {props.entries.map((entry, index) => (
                 <View key={`${entry.threadId}:${index}`} style={styles.historyEntry}>
-                    <Text style={styles.summary}>{entry.requestMarkdown}</Text>
-                    <Text style={styles.historyAuthor}>{entry.reviewerLabel}</Text>
-                    <Text style={styles.summary}>{entry.answerMarkdown}</Text>
+                    <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:request`} text={entry.requestMarkdown} style={styles.summary} />
+                    <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:reviewer`} text={entry.reviewerLabel} style={styles.historyAuthor} />
+                    <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:answer`} text={entry.answerMarkdown} style={styles.summary} />
                 </View>
             ))}
         </View>

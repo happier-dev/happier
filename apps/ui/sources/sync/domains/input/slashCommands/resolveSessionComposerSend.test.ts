@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionComposerSend } from './resolveSessionComposerSend';
 
 describe('resolveSessionComposerSend', () => {
+    it('admits session-only invocations only for an addressed session', () => {
+        const promptInvocationsV1 = { v: 1 as const, entries: [{ id: 'local', token: '/local', title: 'Local', target: { kind: 'doc' as const, artifactId: 'doc' }, behavior: 'insert' as const, allowArgs: false, availableIn: 'session_only' as const }] };
+        expect(resolveSessionComposerSend({ input: '/local', executionRunsEnabled: true, promptInvocationsV1, sessionId: null })).toEqual({ kind: 'send', text: '/local' });
+        expect(resolveSessionComposerSend({ input: '/local', executionRunsEnabled: true, promptInvocationsV1, sessionId: 'session' })).toMatchObject({ kind: 'template', invocationId: 'local' });
+    });
     it('passes through normal input unchanged', () => {
         expect(resolveSessionComposerSend({ input: 'hello', executionRunsEnabled: true })).toEqual({
             kind: 'send',

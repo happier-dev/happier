@@ -1,213 +1,51 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import Animated, {
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
-    useDerivedValue,
-    SharedValue,
-} from 'react-native-reanimated';
-import { runOnJS, runOnUI, scheduleOnRN } from 'react-native-worklets';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { TODO_HEIGHT, TodoView } from '@/components/zen/views/TodoView';
+import { View, type ScrollView } from 'react-native';
+import type { SharedValue } from 'react-native-reanimated';
+import { resolveAnchoredListMoveV1 } from '@happier-dev/protocol';
+import { entityDragScopesEqualV1, type EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
+import { t } from '@/text';
 
-export type TodoListProps = {
-    todos: { id: string, title: string, done: boolean }[];
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { TodoView } from '@/components/zen/views/TodoView';
+import { EntityFlatReorderList, EntityFlatReorderRow, entityReorderPreview, entityReorderRefused, executeEntityReorderAction, type EntityFlatReorderBinding } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+
+export type TodoListProps = Readonly<{
+    todos: readonly Readonly<{ id: string; title: string; done: boolean }>[];
     onToggleTodo?: (id: string) => void;
-    onReorderTodo?: (id: string, newIndex: number) => void;
-}
+    scrollRef?: React.RefObject<ScrollView | null>;
+    scrollMetrics?: Readonly<{ offsetY: SharedValue<number>; contentHeight: SharedValue<number> }>;
+    /** Developer samples receive the same semantic effect at their local model boundary. */
+    reorderFixture?: Readonly<{ scope: EntityDragScopeV1; execute: EntityFlatReorderBinding['execute'] }>;
+}>;
 
-type AnimatedTodoItemProps = {
-    todo: { id: string, title: string, done: boolean };
-    index: number;
-    positions: SharedValue<Record<string, number>>;
-    scrollY: SharedValue<number>;
-    onToggle?: () => void;
-    onReorder?: (id: string, newIndex: number) => void;
-}
-
-const ITEM_SPACING = 12;
-
-function getPosition(index: number) {
-    'worklet';
-    return index * TODO_HEIGHT + index * ITEM_SPACING;
-}
-
-function getOrder(y: number) {
-    'worklet';
-    return Math.round(y / (TODO_HEIGHT + ITEM_SPACING));
-}
-
-const AnimatedTodoItem = React.memo<AnimatedTodoItemProps>(({
-    todo,
-    index,
-    positions,
-    scrollY,
-    onToggle,
-    onReorder
-}) => {
-    const isDragging = useSharedValue(false);
-    const dragY = useSharedValue(0);
-    const scale = useSharedValue(1);
-    const opacity = useSharedValue(1);
-    const zIndex = useSharedValue(0);
-    const startDragY = useSharedValue(0);
-    const hasDragged = useSharedValue(false);
-
-    // Derive the current position from the shared positions object
-    const position = useDerivedValue(() => {
-        return positions.value[todo.id] ?? index;
-    });
-
-    const translateY = useDerivedValue(() => {
-        if (isDragging.value) {
-            return dragY.value;
-        }
-        return withSpring(getPosition(position.value));
-    });
-
-    const panGesture = Gesture.Pan()
-        .activateAfterLongPress(500)
-        .onStart((e) => {
-            'worklet';
-            isDragging.value = true;
-            hasDragged.value = true;
-            const currentPos = getPosition(position.value);
-            // Store where we started dragging from
-            startDragY.value = currentPos;
-            // Keep the item at its current position initially (no jump)
-            dragY.value = currentPos;
-            scale.value = withSpring(1.1);
-            opacity.value = withSpring(0.5);
-            zIndex.value = 1000;
-        })
-        .onUpdate((e) => {
-            'worklet';
-            // Move based on translation from where we started
-            dragY.value = startDragY.value + e.translationY;
-
-            // Calculate which position we're over based on current drag position
-            const newOrder = getOrder(dragY.value);
-            const currentOrder = position.value;
-
-            // Get the total number of items
-            const totalItems = Object.keys(positions.value).length;
-
-            // If we've moved to a new position, update all positions
-            if (newOrder !== currentOrder && newOrder >= 0 && newOrder < totalItems) {
-                const newPositions = Object.assign({}, positions.value);
-
-                // Shift all items between old and new position
-                for (const key in newPositions) {
-                    const pos = newPositions[key];
-                    if (newOrder > currentOrder) {
-                        // Moving down
-                        if (pos > currentOrder && pos <= newOrder) {
-                            newPositions[key] = pos - 1;
-                        }
-                    } else {
-                        // Moving up
-                        if (pos < currentOrder && pos >= newOrder) {
-                            newPositions[key] = pos + 1;
-                        }
-                    }
-                }
-
-                // Set the dragged item to new position
-                newPositions[todo.id] = newOrder;
-                positions.value = newPositions;
-            }
-        })
-        .onEnd(() => {
-            'worklet';
-            const finalPosition = position.value;
-            isDragging.value = false;
-            scale.value = withSpring(1);
-            opacity.value = withSpring(1);
-            zIndex.value = withSpring(0);
-
-            // Call the reorder callback with the final position
-            if (onReorder && finalPosition !== index) {
-                scheduleOnRN(onReorder, todo.id, finalPosition);
-            }
-        })
-        .onFinalize(() => {
-            'worklet';
-            isDragging.value = false;
-            scale.value = withSpring(1);
-            opacity.value = withSpring(1);
-            zIndex.value = withSpring(0);
-            // Keep the hasDragged flag true for a moment to block the press
-            // if (hasDragged.value) {
-            //     scheduleOnRN(() => { setTimeout(() => { hasDragged.value = false; }, 200); });
-            // }
-        });
-
-    const animatedStyle = useAnimatedStyle(() => {
-        return {
-            transform: [
-                { translateY: translateY.value },
-                { scale: scale.value },
-            ],
-            opacity: opacity.value,
-            zIndex: zIndex.value,
-        };
-    });
-
-    return (
-        <GestureDetector gesture={panGesture}>
-            <Animated.View
-                style={[
-                    {
-                        position: 'absolute',
-                        top: 0,
-                        left: 8,
-                        right: 8,
-                    },
-                    animatedStyle,
-                ]}
-            >
-                <TodoView
-                    id={todo.id}
-                    done={todo.done}
-                    value={todo.title}
-                    onToggle={onToggle}
-                    // hasDragged={hasDragged}
-                />
-            </Animated.View>
-        </GestureDetector>
-    );
-});
-
-export const TodoList = React.memo<TodoListProps>((props) => {
-    const positions = useSharedValue<Record<string, number>>({});
-    const scrollY = useSharedValue(0);
-
-    // Initialize positions
-    React.useEffect(() => {
-        const newPositions: Record<string, number> = {};
-        props.todos.forEach((todo, index) => {
-            newPositions[todo.id] = index;
-        });
-        positions.value = newPositions;
-    }, [props.todos]);
-
-    return (
-        <View style={{
-            height: TODO_HEIGHT * props.todos.length + ITEM_SPACING * (props.todos.length - 1),
-            position: 'relative'
-        }}>
-            {props.todos.map((todo, index) => (
-                <AnimatedTodoItem
-                    key={todo.id}
-                    todo={todo}
-                    index={index}
-                    positions={positions}
-                    scrollY={scrollY}
-                    onToggle={() => props.onToggleTodo?.(todo.id)}
-                    onReorder={props.onReorderTodo}
-                />
-            ))}
-        </View>
-    );
+/** Undone membership is live; completion never becomes a reorder/status-transfer operation. */
+export const TodoList = React.memo<TodoListProps>(function TodoList(props) {
+    const accountScope = useActiveServerAccountScope();
+    const scope = props.reorderFixture?.scope ?? accountScope;
+    const todos = props.todos.filter(todo => !todo.done);
+    const binding: EntityFlatReorderBinding = {
+        scope, kind: 'todo', items: todos,
+        getItem: id => scope && todos.some(todo => todo.id === id) ? { kind: 'todo', scope, todoId: id } : null,
+        getSourceId: item => item.kind === 'todo' && scope && entityDragScopesEqualV1(item.scope, scope) ? item.todoId : null,
+        resolve: (sourceId, position) => {
+            if (!scope) return entityReorderRefused('todo_scope_unavailable');
+            const ids = todos.map(todo => todo.id);
+            const next = resolveAnchoredListMoveV1(ids, sourceId, position);
+            if (!next) return entityReorderRefused('todo_reorder_stale');
+            if (next.every((id, index) => id === ids[index])) return entityReorderRefused('same-position');
+            return { status: 'allowed', effect: {
+                actionId: 'todos.reorder', input: { scope, sourceId, position },
+                preview: entityReorderPreview(position, todos),
+            } };
+        },
+        execute: effect => props.reorderFixture ? props.reorderFixture.execute(effect)
+            : scope ? executeEntityReorderAction(effect, scope) : Promise.resolve({ status: 'refused', reason: { code: 'todo_scope_unavailable', message: t('entityDragDrop.reasons.gone') } }),
+    };
+    return <EntityFlatReorderList binding={binding} testID="zen.todos" scrollRef={props.scrollRef} scrollMetrics={props.scrollMetrics}>
+        {todos.map(todo => <EntityFlatReorderRow key={todo.id} id={todo.id}>
+            {({ renderHandle }) => <View style={{ marginHorizontal: 8, marginBottom: 12 }}>
+                <TodoView id={todo.id} done={false} value={todo.title} onToggle={() => props.onToggleTodo?.(todo.id)} reorderHandle={renderHandle(`zen.todos.${todo.id}.move`)} />
+            </View>}
+        </EntityFlatReorderRow>)}
+    </EntityFlatReorderList>;
 });

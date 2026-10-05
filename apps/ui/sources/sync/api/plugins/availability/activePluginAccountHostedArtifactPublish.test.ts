@@ -130,8 +130,9 @@ describe('active Account package Asset publisher', () => {
         });
         expect(envelope).not.toBeNull();
         expect(await openAccountArtifactStoredEnvelope({ mode: mode === 'plain' ? 'e2ee' : 'plain', envelope: body.artifact })).toBeNull();
+        if (typeof envelope?.body.body !== 'string') throw new Error('Expected text Package Asset archive');
         const opened = openPackageAssetArchiveV1({ expectedDescriptor: archive.descriptor,
-            header: envelope?.header, body: decodePackageAssetArchiveBodyV1(envelope?.body.body ?? ''),
+            header: envelope.header, body: decodePackageAssetArchiveBodyV1(envelope.body.body),
         });
         expect(opened?.resources.get('mark')).toEqual(entryBytes);
     });
@@ -262,9 +263,9 @@ describe('active Account-hosted plugin Artifact publisher', () => {
             kind: 'plugin.ui.archive',
             artifactGraph,
         });
-        const archiveBody = openedEnvelope?.body.body === null
-            ? null
-            : decodePluginUiArtifactArchiveBodyV1(openedEnvelope?.body.body ?? '');
+        const archiveBody = typeof openedEnvelope?.body.body === 'string'
+            ? decodePluginUiArtifactArchiveBodyV1(openedEnvelope.body.body)
+            : null;
         const openedArchive = archiveBody && openedEnvelope
             ? openPluginUiArtifactArchiveV1({
                 pluginId: release.pluginId,
@@ -422,9 +423,9 @@ describe('active Account-hosted plugin Artifact publisher', () => {
                 await encryption.decryptEncryptionKey(encryptedDataKey)
             ),
         });
-        const archiveBody = openedEnvelope?.body.body === null
-            ? null
-            : decodePluginUiArtifactArchiveBodyV1(openedEnvelope?.body.body ?? '');
+        const archiveBody = typeof openedEnvelope?.body.body === 'string'
+            ? decodePluginUiArtifactArchiveBodyV1(openedEnvelope.body.body)
+            : null;
         const openedArchive = archiveBody && openedEnvelope
             ? openPluginUiArtifactArchiveV1({
                 pluginId: release.pluginId,

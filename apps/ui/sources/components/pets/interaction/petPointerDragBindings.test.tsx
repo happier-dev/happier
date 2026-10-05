@@ -8,7 +8,7 @@ import {
     type CompanionPointerDragMove,
     type CompanionPointerDragSelectors,
 } from '@/components/companion/interaction/useCompanionPointerDragSession';
-import { VOICE_ORB_POINTER_DRAG_SELECTORS } from '@/components/voice/orb/voiceOrbGeometry';
+import { VOICE_ORB_POINTER_DRAG_SELECTORS } from '@/components/voice/presence/voicePresenceGeometry';
 
 import { PET_POINTER_DRAG_SELECTORS } from './petPointerDragBindings';
 

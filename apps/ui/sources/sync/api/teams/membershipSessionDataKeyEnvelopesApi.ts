@@ -15,7 +15,7 @@ import {
 import {
     runSessionDataKeyPreparationDetached,
     type SessionDataKeyPreparationProgress,
-} from '@/sync/encryption/sessionDataKeyPreparationPass';
+} from '@happier-dev/protocol';
 import {
     runWithServerRequestAuthorityForServerAccountScope,
     type ServerAccountRequestAuthority,

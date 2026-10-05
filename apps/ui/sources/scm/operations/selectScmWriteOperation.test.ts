@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
-import { selectScmWriteOperation } from './selectScmWriteOperation';
+import { selectScmWriteOperation, selectLastSuccessfulScmPushAt } from './selectScmWriteOperation';
 import type { ScmOperationOutcome } from '@happier-dev/protocol/scm';
 
 function failedEntry(errorCode: ScmProjectOperationLogEntry['errorCode'], detail: string): ScmProjectOperationLogEntry {
@@ -9,6 +9,18 @@ function failedEntry(errorCode: ScmProjectOperationLogEntry['errorCode'], detail
 }
 
 describe('selectScmWriteOperation', () => {
+    it('retains the actual successful push time across later commits and uncertain remote outcomes', () => {
+        const pushed: ScmProjectOperationLogEntry = { id: 'p', sessionId: 'session', operation: 'push', status: 'success', timestamp: 7 };
+        const committed: ScmProjectOperationLogEntry = { ...pushed, id: 'c', operation: 'commit', timestamp: 9 };
+        const uncertain: ScmProjectOperationLogEntry = { ...pushed, id: 'u', timestamp: 10, outcome: { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN', reconciliation: { kind: 'remote_ref', remote: 'origin' }, nextActions: [{ kind: 'refresh' }] } };
+        expect(selectLastSuccessfulScmPushAt([committed, uncertain, pushed])).toBe(7);
+        expect(selectLastSuccessfulScmPushAt([committed, uncertain])).toBeNull();
+        const target = { remote: 'origin', branch: 'v0.3' };
+        const targeted: ScmProjectOperationLogEntry = { ...pushed, outcome: { v: 1, kind: 'succeeded', effect: { kind: 'remote', ...target }, nextActions: [] } };
+        const anotherBranch: ScmProjectOperationLogEntry = { ...targeted, id: 'other', timestamp: 8, outcome: { v: 1, kind: 'succeeded', effect: { kind: 'remote', remote: 'origin', branch: 'dev' }, nextActions: [] } };
+        expect(selectLastSuccessfulScmPushAt([anotherBranch, pushed, targeted], target)).toBe(7);
+        expect(selectLastSuccessfulScmPushAt([anotherBranch, pushed], target)).toBeNull();
+    });
     it('projects canonical codes without inferring outcome from error prose or current reachability', () => {
         const read = (entry: ScmProjectOperationLogEntry, machineReachable = true) => selectScmWriteOperation({
             inFlight: null, log: [entry], machine: 'Studio Mac', provider: 'GitHub', machineReachable,

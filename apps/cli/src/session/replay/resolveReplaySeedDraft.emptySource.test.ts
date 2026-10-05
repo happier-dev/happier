@@ -1,10 +1,15 @@
 import { createServer, type Server } from 'node:http';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { SessionMessageV1 } from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { respondTranscriptMessagesQueryRejection } from '@/testkit/transcript/transcriptMessagesRouteContract';
+import { reloadConfiguration } from '@/configuration';
+
+import { buildBoundedActivationBrief } from '../agentTransition/buildSessionAgentTransitionActivationBrief';
+import { resolveReplaySeedDraft } from './resolveReplaySeedDraft';
 
 const SESSION_ID = 'sess_empty_source';
 const CREDENTIALS = {
@@ -12,7 +17,7 @@ const CREDENTIALS = {
   encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
 };
 
-type SourceMode = 'empty' | 'failed' | 'unreadable' | 'whitespace' | 'dialog';
+type SourceMode = 'empty' | 'failed' | 'unreadable' | 'malformed_text' | 'whitespace' | 'dialog';
 
 function respondAccountEncryptionCurrentness(url: URL, res: import('node:http').ServerResponse): boolean {
   if (url.pathname !== '/v1/account/encryption/currentness') return false;
@@ -28,8 +33,8 @@ function respondAccountEncryptionCurrentness(url: URL, res: import('node:http').
   return true;
 }
 
-function replayRows(mode: SourceMode): readonly Record<string, unknown>[] {
-  const contentFor = (text: string) => ({
+function replayRows(mode: SourceMode): readonly SessionMessageV1[] {
+  const contentFor = (text: string): SessionMessageV1['content'] => ({
     t: 'plain',
     v: { role: 'user', content: { type: 'text', text } },
   });
@@ -38,11 +43,13 @@ function replayRows(mode: SourceMode): readonly Record<string, unknown>[] {
     case 'failed':
       return [];
     case 'unreadable':
-      return [{ seq: 7, createdAt: 7, content: { t: 'plain', v: null } }];
+      return [{ id: 'message-7', seq: 7, createdAt: 7, content: { t: 'plain', v: null } }];
+    case 'malformed_text':
+      return [{ id: 'message-7', seq: 7, createdAt: 7, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 42 } } } }];
     case 'whitespace':
-      return [{ seq: 7, createdAt: 7, content: contentFor('   ') }];
+      return [{ id: 'message-7', seq: 7, createdAt: 7, content: contentFor('   ') }];
     case 'dialog':
-      return [{ seq: 7, createdAt: 7, content: contentFor('hello there') }];
+      return [{ id: 'message-7', seq: 7, createdAt: 7, content: contentFor('hello there') }];
   }
 }
 
@@ -109,7 +116,6 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
       HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
       HAPPIER_HOME_DIR: happyHomeDir,
     });
-    const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
   });
 
@@ -122,12 +128,10 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
     server = null;
     if (happyHomeDir) await removeTempDir(happyHomeDir);
     envScope.restore();
-    const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
   });
 
   async function resolve() {
-    const { resolveReplaySeedDraft } = await import('./resolveReplaySeedDraft');
     return await resolveReplaySeedDraft({
       credentials: CREDENTIALS,
       cwd: '/workspace',
@@ -148,6 +152,8 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
   it('reports an empty dialog with an unreadable transcript row as unavailable', async () => {
     sourceMode = 'unreadable';
     expect((await resolve()).status).toBe('unavailable');
+    sourceMode = 'malformed_text';
+    expect((await resolve()).status).toBe('unavailable');
   });
 
   it('reports rows that yield no usable prompt text as an empty source', async () => {
@@ -156,7 +162,6 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
   });
 
   it('composes the real activation brief as available with no seed for an empty Session', async () => {
-    const { buildBoundedActivationBrief } = await import('../agentTransition/buildSessionAgentTransitionActivationBrief');
     await expect(buildBoundedActivationBrief({
       credentials: CREDENTIALS,
       sessionId: SESSION_ID,

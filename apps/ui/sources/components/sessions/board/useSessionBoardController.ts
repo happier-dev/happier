@@ -8,11 +8,11 @@ import {
     useSessionBoardContinuity,
 } from './SessionBoardContinuity';
 
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import { editSessionBoardWidgetItemV1, type WidgetDefinitionRefV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 import {
     readSessionSurfaceNoteTextV1,
     SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
-    sessionBoardPlacedWidthRetainsPlacementV1,
+    sessionBoardPlacedDestinationRetainsPlacementV1,
     SessionSurfaceItemV1Schema,
     type SessionBoardActionFailureV1,
     type SessionBoardActionRecoveryEvidenceV1,
@@ -79,9 +79,9 @@ import {
 
 /**
  * What this Board can add. `fromPlugins` is an availability fact only: the Add popover lists the
- * installed widgets itself and creates one through `item.addInstalled`.
+ * widgets itself and creates one through `item.addWidget`.
  */
-export type SessionBoardAddIntent = 'note' | 'interactiveView' | 'fromPlugins' | 'askAgent';
+export type SessionBoardAddIntent = 'note' | 'walkthrough' | 'interactiveView' | 'fromPlugins' | 'askAgent';
 
 export type SessionBoardCommand =
     | Readonly<{ kind: 'add'; intent: Exclude<SessionBoardAddIntent, 'fromPlugins'> }>
@@ -92,12 +92,16 @@ export type SessionBoardCommand =
      * generation, renderer, origin and Artifact are resolved at every mount.
      */
     | Readonly<{
-        kind: 'item.addInstalled';
-        surface: PluginContributionIdentityV1;
+        kind: 'item.addWidget';
+        definition: Exclude<WidgetDefinitionRefV1, { kind: 'artifact' }>;
+        bindings?: WidgetInputBindingsV1;
         title: string;
     }>
     | Readonly<{ kind: 'item.edit'; itemId: string }>
+    /** A configured widget's name follows its title, so the copy keeps it wherever it goes. */
     | Readonly<{ kind: 'item.rename'; itemId: string; title: string }>
+    /** One configured widget copy's bindings (Edit inputs, in-card repair). */
+    | Readonly<{ kind: 'item.inputs'; itemId: string; bindings: WidgetInputBindingsV1 }>
     | Readonly<{ kind: 'item.resize'; itemId: string; width: SessionBoardItemWidth }>
     | Readonly<{ kind: 'item.frameStyle'; itemId: string; frameStyle: SessionBoardItemFrameStyle | null }>
     /** Height is item content, not placement: it stays coherent across every view. */
@@ -267,7 +271,7 @@ export type SessionBoardController = Readonly<{
     supports: (kind: SessionBoardCommandKind) => boolean;
     /** Exact item-level Edit handler truth, including source runtime admission. */
     supportsItemEdit: (itemId: string) => boolean;
-    run: (command: SessionBoardCommand) => Promise<void>;
+    run: (command: SessionBoardCommand) => Promise<SessionBoardCommandOutcome | null | void>;
     resolveSourceAvailability: SessionBoardSourceAvailabilityResolver;
 }>;
 
@@ -390,8 +394,8 @@ function boardCommandNoticeTarget(command: SessionBoardCommand): string | null {
     if ('itemId' in command) return command.itemId;
     if ('viewId' in command) return command.viewId;
     if (command.kind === 'add') return command.intent;
-    if (command.kind === 'item.addInstalled') {
-        return JSON.stringify([command.surface.pluginId, command.surface.localId]);
+    if (command.kind === 'item.addWidget') {
+        return JSON.stringify(command.definition);
     }
     return null;
 }
@@ -458,7 +462,7 @@ function isRetainedSessionBoardMutationApplied(
         const view = snapshot.views.find((candidate) => candidate.id === (placement.tabId ?? SESSION_BOARD_OVERVIEW_VIEW_ID));
         const currentPlacement = view?.placements.find((candidate) => candidate.itemId === submission.input.itemId);
         return currentPlacement !== undefined
-            && sessionBoardPlacedWidthRetainsPlacementV1(currentPlacement.width, placement)
+            && sessionBoardPlacedDestinationRetainsPlacementV1(currentPlacement, placement)
             && isAnchoredAt(placedItemIds(view), submission.input.itemId, placement.anchor);
     }
 
@@ -698,7 +702,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
     const callerHostedHtmlAvailable = input.callerHostedHtmlAvailable === true;
     const addIntents = React.useMemo((): readonly SessionBoardAddIntent[] => {
         const intents: SessionBoardAddIntent[] = [];
-        if (mutationsBlockedReason === null) intents.push('note');
+        if (mutationsBlockedReason === null) intents.push('note', 'walkthrough');
         if (mutationsBlockedReason === null && callerHostedHtmlAvailable) intents.push('interactiveView');
         // **From plugins…** appears only when this Session's exact projection
         // actually admits a `widget`.
@@ -720,6 +724,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
             && (mutationsBlockedReason === null || mutationsBlockedReason === 'offline');
         switch (kind) {
             case 'item.rename':
+            case 'item.inputs':
             case 'item.resize':
             case 'item.frameStyle':
             case 'item.height':
@@ -733,7 +738,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
             case 'view.rename':
             case 'view.move':
             case 'view.remove':
-            case 'item.addInstalled':
+            case 'item.addWidget':
                 return writable;
             case 'item.edit':
                 return draftable;
@@ -939,7 +944,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
     const runInternal = React.useCallback(async (
         command: SessionBoardCommand,
         retryingRetainedMutation: boolean,
-    ): Promise<void> => {
+    ): Promise<SessionBoardCommandOutcome | null | void> => {
         const current = stable.current;
         const live = current.binding.status === 'ready' ? current.binding.snapshot : null;
         if (!live) return;
@@ -975,6 +980,26 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 return;
 
             case 'add': {
+                if (command.intent === 'walkthrough') {
+                    await submit(command, (p) => p.upsertItem({
+                        sessionId: current.sessionId,
+                        itemId: randomUUID(),
+                        expectedItemRevision: null,
+                        item: {
+                            v: 1,
+                            title: t('walkthrough.eyebrow'),
+                            frame: 'card',
+                            height: { mode: 'auto', fallback: 'compact' },
+                            source: { kind: 'walkthrough', comparison: 'session' },
+                        },
+                        placement: {
+                            tabId: view.synthetic ? SESSION_BOARD_OVERVIEW_VIEW_ID : view.id,
+                            tabTitle: viewTitle(view),
+                            width: SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
+                        },
+                    }));
+                    return;
+                }
                 if (command.intent === 'askAgent') {
                     current.onAskAgent?.();
                     return;
@@ -1026,14 +1051,14 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 return;
             }
 
-            case 'item.addInstalled': {
+            case 'item.addWidget': {
                 // Creation is atomic: the item record and its first placement
                 // land in ONE aggregate mutation, so a Board never keeps an
                 // unplaced installed widget after a partial write.
                 const title = command.title.trim();
                 const itemId = randomUUID();
                 const target = view;
-                await submit(command, (p) => p.upsertItem({
+                return await submit(command, (p) => p.upsertItem({
                     sessionId: current.sessionId,
                     itemId,
                     expectedItemRevision: null,
@@ -1045,9 +1070,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         title,
                         frame: 'card',
                         height: { mode: 'auto', fallback: 'regular' },
-                        // Stable qualified identity ONLY: no version, generation,
-                        // renderer, machine, Artifact or placement is persisted.
-                        source: { kind: 'installedSurface', surface: command.surface },
+                        source: { kind: 'widget', instance: { v: 1, id: itemId, definition: command.definition, bindings: command.bindings ?? {} } },
                     },
                     placement: {
                         tabId: !target || target.synthetic ? SESSION_BOARD_OVERVIEW_VIEW_ID : target.id,
@@ -1055,7 +1078,6 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         width: SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
                     },
                 }));
-                return;
             }
 
             case 'item.edit': {
@@ -1131,17 +1153,25 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 return;
             }
 
-            case 'item.rename': {
+            case 'item.rename':
+            case 'item.inputs': {
                 const projected = live.itemsById.get(command.itemId);
                 if (!projected || projected.revision === null || projected.state.kind !== 'ready') return;
-                const next: SessionSurfaceItemV1 = { ...projected.state.item, title: command.title };
-                await submit(command, (p) => p.upsertItem({
+                const opened = projected.state.item;
+                // A configured widget's own edits go through the one Board widget edit, so its
+                // name travels with the copy and its bindings change for this copy alone.
+                const next: SessionSurfaceItemV1 | null = opened.source.kind === 'widget'
+                    ? editSessionBoardWidgetItemV1(opened, command.kind === 'item.inputs'
+                        ? { kind: 'inputs', bindings: command.bindings }
+                        : { kind: 'rename', displayName: command.title })
+                    : command.kind === 'item.rename' ? { ...opened, title: command.title } : null;
+                if (!next) return;
+                return await submit(command, (p) => p.upsertItem({
                     sessionId: current.sessionId,
                     itemId: command.itemId,
                     expectedItemRevision: projected.revision as string,
                     item: next,
                 }));
-                return;
             }
 
             case 'item.resize':
@@ -1164,7 +1194,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 const index = view.placements.findIndex((placement) => placement.itemId === command.itemId);
                 const anchor = command.direction === 'before' ? view.placements[index - 1] : view.placements[index + 1];
                 if (!anchor) return;
-                await submit(command, (p) => p.updateLayout({
+                return await submit(command, (p) => p.updateLayout({
                     sessionId: current.sessionId,
                     expectedLayoutRevision: live.layoutRevision,
                     operation: {
@@ -1183,7 +1213,6 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         { title: title?.kind === 'ready' ? title.item.title : command.itemId },
                     ));
                 });
-                return;
             }
 
             case 'item.moveAnchored': {
@@ -1195,7 +1224,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                     && destination.placements.some((placement) => placement.itemId === command.itemId)) return;
                 if (command.anchor?.itemId === command.itemId
                     || (command.anchor && !destination.placements.some((placement) => placement.itemId === command.anchor?.itemId))) return;
-                await submit(command, (p) => p.updateLayout({
+                return await submit(command, (p) => p.updateLayout({
                     sessionId: current.sessionId,
                     expectedLayoutRevision: live.layoutRevision,
                     operation: {
@@ -1215,7 +1244,6 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                             view: viewTitle(destination),
                         }));
                 });
-                return;
             }
 
             case 'item.moveToView': {
@@ -1227,7 +1255,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                     // must never collapse or duplicate that independent placement.
                     || destination.placements.some((placement) => placement.itemId === command.itemId)) return;
                 const last = destination.placements[destination.placements.length - 1];
-                await submit(command, (p) => p.updateLayout({
+                return await submit(command, (p) => p.updateLayout({
                     sessionId: current.sessionId,
                     expectedLayoutRevision: live.layoutRevision,
                     operation: {
@@ -1245,7 +1273,6 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         view: viewTitle(destination),
                     }));
                 });
-                return;
             }
 
             case 'item.pin': {
@@ -1526,8 +1553,8 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
         supportsItemEdit,
     ]);
 
-    const run = React.useCallback(async (command: SessionBoardCommand): Promise<void> => {
-        await runInternal(command, false);
+    const run = React.useCallback(async (command: SessionBoardCommand): Promise<SessionBoardCommandOutcome | null | void> => {
+        return await runInternal(command, false);
     }, [runInternal]);
     const retryLastMutation = React.useCallback(async (): Promise<void> => {
         const retained = retainedMutationRef.current;

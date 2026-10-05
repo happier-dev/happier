@@ -4,12 +4,19 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
+import { primeRepositoryUploadBrowserFixture } from '@/components/workspaces/files/repositoryTree/repositoryUploadBrowserTestFixture';
+import { invokeRepositoryUploadPick } from '@/components/workspaces/files/repositoryTree/repositoryUploadActionRuntime';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const startUploadsSpy = vi.fn(async () => ({ ok: true }));
+const machineRpcSpy = vi.hoisted(() => vi.fn(async (_params: unknown) => ({ success: true, exists: false })));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(machineRpcSpy as typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc').machineRpcWithServerScope);
+});
 
 function flattenRnStyle(style: any): React.CSSProperties | undefined {
     if (style == null) return undefined;
@@ -115,18 +122,7 @@ installSessionFilesViewCommonModuleMocks({
                 React.createElement('span', { 'data-testid': testID, ...props }),
         });
     },
-    storage: async () => {
-        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        const storageStore = createStorageStoreMock({
-            setSessionRepositoryTreeExpandedPaths: vi.fn(),
-        } as any);
-        return createStorageModuleStub({
-            storage: storageStore,
-            useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
-            useSessionRepositoryTreeExpandedPaths: () => [],
-            useSessionProjectScmSnapshot: () => null,
-        });
-    },
+    storage: (importOriginal) => importOriginal(),
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -194,23 +190,10 @@ vi.mock('@/hooks/ui/useWebFileDropZone', () => ({
     useWebFileDropZone: () => ({}),
 }));
 
-vi.mock('@/utils/files/webDroppedEntries', () => ({
-    readWebDroppedEntries: vi.fn(async () => []),
-}));
+vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppedEntries.web'));
 
 vi.mock('@/utils/files/nativePickFiles', () => ({
     nativePickFiles: vi.fn(async () => []),
-}));
-
-vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
-    useWorkspaceFileTransfers: () => ({
-        uploadState: { status: 'idle' },
-        downloadState: { status: 'idle' },
-        startUploads: startUploadsSpy,
-        cancelUploads: vi.fn(),
-        startDownload: vi.fn(async () => ({ ok: true })),
-        cancelDownload: vi.fn(),
-    }),
 }));
 
 vi.mock('@/components/sessions/files/repositoryTree/showUploadConflictResolutionDialog', () => ({
@@ -252,18 +235,25 @@ vi.mock('@/scm/scmStatusSync', () => ({
 }));
 
 describe('SessionRepositoryTreeBrowserView web folder upload input', () => {
+    beforeEach(async () => {
+        vi.stubGlobal('SharedWorker', class SharedWorker {});
+        await primeRepositoryUploadBrowserFixture();
+        machineRpcSpy.mockClear();
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
     it('starts web uploads from the hidden file input change event', async () => {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
-        startUploadsSpy.mockClear();
 
         try {
             await act(async () => {
                 root.render(
                     <SessionRepositoryTreeBrowserView
                         sessionId="s1"
+                        serverId="server"
                         searchQuery="initial"
                         onOpenFile={vi.fn()}
                     />,
@@ -276,6 +266,13 @@ describe('SessionRepositoryTreeBrowserView web folder upload input', () => {
             }
             const file = new File(['uploaded from test'], 'upload-source.txt', { type: 'text/plain' });
 
+            // The input can only acquire files after the mounted owner opens its exact-scope picker.
+            expect(await invokeRepositoryUploadPick({
+                scope: { serverId: 'server', accountId: 'account' },
+                workspace: { serverId: 'server', machineId: 'm1', rootPath: '/repo' },
+                kind: 'files', destinationDir: '',
+            })).toEqual({ status: 'requested' });
+
             await act(async () => {
                 Object.defineProperty(fileInput, 'files', {
                     configurable: true,
@@ -284,16 +281,10 @@ describe('SessionRepositoryTreeBrowserView web folder upload input', () => {
                 fileInput.dispatchEvent(new Event('change', { bubbles: true }));
             });
 
-            expect(startUploadsSpy).toHaveBeenCalledWith({
-                entries: [
-                    {
-                        kind: 'web',
-                        file,
-                        relativePath: 'upload-source.txt',
-                    },
-                ],
-                destinationDir: '',
-            });
+            expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+                serverId: 'server', machineId: 'm1', method: RPC_METHODS.STAT_FILE,
+                payload: { path: '/repo/upload-source.txt' },
+            }));
         } finally {
             await act(async () => {
                 root.unmount();

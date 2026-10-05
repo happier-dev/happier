@@ -1,4 +1,4 @@
 <resources>
   <string name="happier_voice_foreground_notification_channel">Conversazione vocale</string>
-  <string name="happier_voice_foreground_notification_text">La conversazione vocale è attiva</string>
+  <string name="happier_voice_foreground_notification_text">La voce sta usando il microfono. Tocca per aprire Happier.</string>
 </resources>

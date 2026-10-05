@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,6 +58,7 @@ export default defineConfig({
   resolve: { alias: reactNativeWebAliases, dedupe: ['react', 'react-dom'] },
   plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     exclude: ['node_modules/**', 'dist/**'],

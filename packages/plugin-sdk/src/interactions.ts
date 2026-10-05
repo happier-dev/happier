@@ -43,47 +43,17 @@ export type {
     InteractionTransientResultV1,
 } from '@happier-dev/protocol';
 
-export type SessionCompanionPresentationItem =
-    | { kind: 'builtin'; id: 'session_summary' | 'agent_plan' | 'changes' | 'local_services'; frameStyle?: 'card' | 'plain' }
-    | { kind: 'widget'; widgetId: string; frameStyle?: 'card' | 'plain' }
-    | { kind: 'pane'; paneId: string; frameStyle?: 'card' | 'plain' }
-    | { kind: 'plugin'; surface: { pluginId: string; localId: string }; frameStyle?: 'card' | 'plain' };
-
 /**
- * Reversible viewer-local presentation intent for the exact mounted Session.
- * Protocol owns validation and transport; this structural projection keeps the
- * public Plugin SDK declaration graph self-contained.
+ * Reversible author presentation for the exact mounted Session. Companion
+ * widget instances are host-internal; authors use qualified widgets.* Actions.
+ * Protocol owns the author subset; its neutral DTO keeps declarations self-contained.
  */
-export type CurrentSessionPresentationIntentV1 =
-    | { kind: 'chat.return' }
-    | { kind: 'board.open'; mode: 'beside_chat' | 'focus' }
-    | { kind: 'board.view.select'; viewId: string }
-    | { kind: 'board.item.reveal'; widgetId: string; viewId?: string }
-    | { kind: 'companion.show' }
-    | { kind: 'companion.hide' }
-    | {
-        kind: 'companion.item.add';
-        item: SessionCompanionPresentationItem;
-        index?: number;
-    }
-    | {
-        kind: 'companion.item.remove';
-        item: SessionCompanionPresentationItem;
-    }
-    | {
-        kind: 'companion.item.move';
-        item: SessionCompanionPresentationItem;
-        toIndex: number;
-    }
-    | {
-        kind: 'companion.item.frameStyle.set';
-        item: SessionCompanionPresentationItem;
-        frameStyle: 'card' | 'plain' | null;
-    }
-    | { kind: 'companion.edge.set'; edge: 'leading' | 'trailing' }
-    | { kind: 'companion.collapse.set'; collapsed: boolean }
-    | { kind: 'companion.density.set'; density: 'compact' | 'comfortable' }
-    | { kind: 'companion.open_full' };
+import type {
+    CurrentSessionPresentationIntentV1 as CanonicalCurrentSessionPresentationIntentV1,
+    SessionCompanionPresentationItem as CanonicalSessionCompanionPresentationItem,
+} from './actions/dtos/pluginActionDtoSupport.generated.js';
+export type CurrentSessionPresentationIntentV1 = CanonicalCurrentSessionPresentationIntentV1;
+export type SessionCompanionPresentationItem = CanonicalSessionCompanionPresentationItem;
 
 export type InteractionOptions = PluginCancellationOptions & Readonly<{
     /** Defaults to the active turn. Native asynchronous questions may live until their occurrence retires. */

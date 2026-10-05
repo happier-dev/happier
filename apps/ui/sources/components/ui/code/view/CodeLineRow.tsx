@@ -10,6 +10,12 @@ import { ReviewCommentLineAffordance } from '@/components/ui/code/reviewComments
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
+import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+
+/** Shared base row metric for code display and pre-paint layout estimates. */
+export const CODE_LINE_BASE_HEIGHT = 22;
 
 export type CodeLinePressEvent = GestureResponderEvent & Readonly<{
     shiftKey?: boolean;
@@ -32,6 +38,19 @@ const resolveMonoTypography = (): TextStyle => (
         : { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }
 );
 
+function mapTextOffsets<T>(values: readonly T[], text: (value: T) => string, render: (value: T, index: number, offset: number) => React.ReactNode) {
+    let offset = 0;
+    return values.map((value, index) => {
+        const node = render(value, index, offset);
+        offset += text(value).length;
+        return node;
+    });
+}
+
+function renderFindText(text: string, ranges?: readonly FindTextRange[]) {
+    return ranges?.length ? <FindHighlightedText text={text} ranges={ranges} /> : text;
+}
+
 export function CodeLineRow(props: {
     line: CodeLine;
     selected: boolean;
@@ -53,6 +72,7 @@ export function CodeLineRow(props: {
         maxLineLength: number;
     }>;
     advancedTokens?: readonly Readonly<{ text: string; color: string }>[];
+    findRanges?: readonly FindTextRange[];
 }) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -190,7 +210,7 @@ export function CodeLineRow(props: {
                     styles.rowHighlighted,
                     { borderLeftColor: theme.colors.text.link ?? theme.colors.text.secondary },
                 ] : null,
-                { backgroundColor },
+                { backgroundColor: glassSurfaceBackgroundColor(backgroundColor, 'content') },
                 selected ? [
                     styles.rowSelected,
                     { borderLeftColor: theme.colors.state.success.foreground },
@@ -240,13 +260,13 @@ export function CodeLineRow(props: {
                         style={[styles.codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles.noWrap : null]}
                     >
                         {(props.syntaxHighlighting?.mode === 'advanced' && props.advancedTokens && !line.renderIsHeaderLine)
-                            ? props.advancedTokens.map((token, idx) => (
+                            ? mapTextOffsets(props.advancedTokens, (token) => token.text, (token, idx, offset) => (
                                 <Text key={idx} style={{ color: token.color }}>
-                                    {token.text}
+                                    {renderFindText(token.text, sliceFindRanges(props.findRanges, offset, token.text.length))}
                                 </Text>
                             ))
                             : intraLineTokensBySegment
-                                ? intraLineTokensBySegment.map(({ segment, tokens }, segIndex) => {
+                                ? mapTextOffsets(intraLineTokensBySegment, ({ segment }) => segment.text, ({ segment, tokens }, segIndex, segmentOffset) => {
                                     const segmentBg = segment.kind === 'added'
                                         ? theme.colors.diff.inlineAdded.background
                                         : segment.kind === 'removed'
@@ -263,10 +283,10 @@ export function CodeLineRow(props: {
                                         <Text
                                             key={segIndex}
                                             selectable={line.selectable}
-                                            style={segment.kind === 'context' ? null : { backgroundColor: segmentBg, borderRadius: 3 }}
+                                            style={segment.kind === 'context' ? null : { backgroundColor: glassSurfaceBackgroundColor(segmentBg, 'content'), borderRadius: 3 }}
                                         >
                                             {Array.isArray(tokens)
-                                                ? tokens.map((tok, tokIndex) => (
+                                                ? mapTextOffsets(tokens, (token) => token.text, (tok, tokIndex, offset) => (
                                                     <Text
                                                         key={tokIndex}
                                                         selectable={line.selectable}
@@ -275,19 +295,19 @@ export function CodeLineRow(props: {
                                                             fontWeight: tok.type === 'keyword' ? '600' : '400',
                                                         }}
                                                     >
-                                                        {tok.text}
+                                                        {renderFindText(tok.text, sliceFindRanges(props.findRanges, segmentOffset + offset, tok.text.length))}
                                                     </Text>
                                                 ))
                                                 : (
                                                     <Text selectable={line.selectable} style={{ color: segmentFg }}>
-                                                        {segment.text}
+                                                        {renderFindText(segment.text, sliceFindRanges(props.findRanges, segmentOffset, segment.text.length))}
                                                     </Text>
                                                 )}
                                         </Text>
                                     );
                                 })
                             : simpleTokens
-                                ? simpleTokens.map((token, idx) => (
+                                ? mapTextOffsets(simpleTokens, (token) => token.text, (token, idx, offset) => (
                                     <Text
                                         key={idx}
                                         style={{
@@ -295,10 +315,10 @@ export function CodeLineRow(props: {
                                             fontWeight: token.type === 'keyword' ? '600' : '400',
                                         }}
                                     >
-                                        {token.text}
+                                        {renderFindText(token.text, sliceFindRanges(props.findRanges, offset, token.text.length))}
                                     </Text>
                                 ))
-                                : (line.renderCodeText || ' ')}
+                                : renderFindText(line.renderCodeText || ' ', props.findRanges)}
                     </Text>
                 </View>
             </Pressable>
@@ -331,7 +351,7 @@ const stylesheet = StyleSheet.create({
         flexShrink: 0,
         alignItems: 'center',
         justifyContent: 'center',
-        minHeight: 22,
+        minHeight: CODE_LINE_BASE_HEIGHT,
     },
     codeContainer: {
         flexDirection: 'row',

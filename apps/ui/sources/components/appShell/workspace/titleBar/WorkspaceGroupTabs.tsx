@@ -21,9 +21,16 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
 import { createWorkspaceEmptyTab, type WorkspaceGroup } from '../workspaceState';
 import { createWorkspaceSplit } from '../workspaceSplit';
-import { decodeWorkspaceDragData, encodeWorkspaceDragData, resolveWorkspaceTabStripDrop, setWorkspaceTabDragActive } from '../workspaceDragData';
-import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
+import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
+import { executeWorkspaceEntityDrop, resolveWorkspaceEntityDrop, WORKSPACE_ENTITY_KINDS } from '../workspaceEntityDrop';
+import type { DocumentTabEntityDragDrop } from '@/components/ui/navigation/DocumentTabStrip';
 import { useDestinationInstanceTabPresentations } from './useDestinationInstanceTabPresentations';
+import { splitCanvasEntityTargetId } from '@/components/appShell/splitCanvas/hooks/useSplitCanvasDnD';
+import { presentPaneDropAdmission } from '@/components/appShell/splitCanvas/presentation/paneDropPresentation';
+import { usePaneDropStripCue } from '@/components/appShell/splitCanvas/presentation/usePaneDropStripCue';
+import { createWorkspaceDropScene } from '../workspaceDropScene';
 
 type WorkspaceDocumentTab = DocumentTabItem & Readonly<{ icon: IconName }>;
 type MenuState = Readonly<{ tabId: string; anchor: PopoverAnchor | undefined }>;
@@ -74,6 +81,9 @@ export function WorkspaceGroupTabs(props: Readonly<{
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { workspace, group } = props;
+    const scope = useActiveServerAccountScope();
+    const workspaceRefs = useSetting('workspaceRefsV1');
+    const runtime = useEntityDragDropRuntime();
     const safeGroup = toTestIdSafeValue(group.id);
     const shortcutLabels = React.useContext(KeyboardShortcutLabelsContext);
     const [widthPx, setWidthPx] = React.useState<number | null>(null);
@@ -161,7 +171,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
                 icon: glyph('arrows-out'), shortcut: shortcutLabels['workspace.toggleMaximize'],
             }] : []),
             { id: 'close', testID: 'workspace-tab-menu-close', title: t('workspaceBar.closeTab'), icon: glyph('x') },
-            ...(hasRecentlyClosed ? [{ id: 'reopen', testID: 'workspace-tab-menu-reopen', title: t('workspaceTabs.reopenTab'), shortcut: shortcutLabels['workspace.tab.reopen'], icon: glyph('arrow-counter-clockwise') }] : []),
+            ...(hasRecentlyClosed ? [{ id: 'reopen', testID: 'workspace-tab-menu-reopen', title: t('workspaceTabs.reopenTab'), shortcut: shortcutLabels['workspace.tab.reopen'], icon: glyph('clock-counter-clockwise') }] : []),
             ...(hasOthers ? [{ id: 'closeOthers', testID: 'workspace-tab-menu-close-others', title: t('workspaceBar.closeOtherTabs') }] : []),
             ...(hasRight ? [{ id: 'closeRight', testID: 'workspace-tab-menu-close-right', title: t('workspaceBar.closeTabsToRight') }] : []),
         ];
@@ -181,11 +191,11 @@ export function WorkspaceGroupTabs(props: Readonly<{
             case 'close': workspace.closeTab(group.id, tabId); break;
             case 'reopen': workspace.dispatch({ type: 'reopenTab' }); break;
             case 'closeOthers':
-                for (const id of group.tabIds) if (id !== tabId && !workspace.state.tabs[id]?.pinned) workspace.closeTab(group.id, id);
+                workspace.closeTabs(group.id, group.tabIds.filter((id) => id !== tabId));
                 break;
             case 'closeRight': {
                 const index = group.tabIds.indexOf(tabId);
-                for (const id of group.tabIds.slice(index + 1)) if (!workspace.state.tabs[id]?.pinned) workspace.closeTab(group.id, id);
+                workspace.closeTabs(group.id, group.tabIds.slice(index + 1));
                 break;
             }
         }
@@ -203,33 +213,49 @@ export function WorkspaceGroupTabs(props: Readonly<{
         id: `closed:${entry.tab.id}`, testID: `workspace-reopen-tab-${toTestIdSafeValue(entry.tab.id)}`,
         title: liveTitles.get(`closed:${entry.tab.id}`) ?? entry.fallbackTitle ?? t('common.unavailable'),
         category: t('workspaceTabs.recentlyClosed'),
-        icon: <Icon name="arrow-counter-clockwise" size={16} color={theme.colors.text.secondary} />,
+        icon: <Icon name="clock-counter-clockwise" size={16} color={theme.colors.text.secondary} />,
         ...(index === 0 ? { shortcut: shortcutLabels['workspace.tab.reopen'] } : {}),
     }))], [group.activeTabId, group.tabIds, hasRecentlyClosed, liveTitles, shortcutLabels, tabs, theme.colors.text.secondary, workspace.state.recentlyClosed]);
 
-    // A tab dropped on a tab lands before it; on the strip's free space, at the end. A destination
-    // dragged from a row opens here as a kept tab (workspace lab O/D).
-    const drop = React.useCallback((payload: string, beforeTabId: string | null) => {
-        setWorkspaceTabDragActive(false);
-        const data = decodeWorkspaceDragData(payload);
-        if (!data) return;
-        if (data.kind === 'href') {
-            workspace.openHref(data.href, { mode: 'newTab', groupId: group.id });
-            return;
-        }
-        for (const action of resolveWorkspaceTabStripDrop(workspace.state, { tabId: data.tabId, groupId: group.id, beforeTabId })) {
-            workspace.dispatch(action);
-        }
-    }, [group.id, workspace]);
-    const stripDropProps = React.useMemo(() => ({
-        onDragOver: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
-        onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData?: (type: string) => string } | null }) => {
-            const payload = event.dataTransfer?.getData?.('text/plain') ?? '';
-            if (!decodeWorkspaceDragData(payload)) return;
-            event.preventDefault?.();
-            drop(payload, null);
-        },
-    }), [drop]);
+    const entityDragDrop: DocumentTabEntityDragDrop | undefined = scope ? {
+        runtime, id: `workspace-tabs:${group.id}`, scope, acceptedKinds: WORKSPACE_ENTITY_KINDS,
+        isCurrent: () => workspace.active && Boolean(workspace.state.groups[group.id])
+            && !workspace.phone && (!workspace.state.maximizedGroupId || workspace.state.maximizedGroupId === group.id),
+        getItem: tabId => workspace.state.tabs[tabId] && workspace.state.groups[group.id]?.tabIds.includes(tabId)
+            ? { kind: 'workspace-tab', scope, tabId } : null,
+        resolve: ({ item, beforeTabId }) => presentPaneDropAdmission(resolveWorkspaceEntityDrop({
+            workspace, scope, item, beforeTabId, target: { leafId: group.id, placement: 'center' },
+            catalog: props.catalog, workspaceRefs,
+        }), createWorkspaceDropScene(workspace.state, props.catalog, { paneId: group.id, beforeTabId })),
+        execute: effect => executeWorkspaceEntityDrop(effect, scope),
+    } : undefined;
+    const latestEntity = React.useRef(entityDragDrop);
+    latestEntity.current = entityDragDrop;
+    const stripHost = React.useRef<HTMLElement | null>(null);
+    const dropHostRef = useEntityDropDomBinding(runtime);
+    const attachStrip = React.useCallback((node: unknown) => {
+        stripHost.current = node as HTMLElement | null;
+        dropHostRef(node);
+    }, [dropHostRef]);
+    React.useEffect(() => {
+        if (!scope) return;
+        return runtime.registerTarget({
+            id: `workspace-strip:${group.id}`, scope, acceptedKinds: WORKSPACE_ENTITY_KINDS,
+            isCurrent: () => latestEntity.current?.scope.serverId === scope.serverId
+                && latestEntity.current.scope.accountId === scope.accountId && latestEntity.current.isCurrent?.() !== false,
+            getBounds: () => {
+                const rect = stripHost.current?.getBoundingClientRect?.();
+                return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
+            },
+            listDestinations: () => [{ destination: { beforeTabId: null }, label: t('workspaceBar.tabsLabel') }],
+            resolve: ({ item, input }) => latestEntity.current!.resolve({ item, beforeTabId: null, input }),
+            execute: effect => latestEntity.current!.execute(effect),
+        });
+    }, [runtime, group.id, scope?.serverId, scope?.accountId]);
+
+    // The pane centre (shell canvas id `workspace`) and this strip's empty end both land a kept tab here.
+    const dropTargetIds = React.useMemo(() => [splitCanvasEntityTargetId('workspace', group.id, 'center'), `workspace-strip:${group.id}`], [group.id]);
+    const dropCue = usePaneDropStripCue(scope ? runtime : null, { targetIds: dropTargetIds, tabIds: group.tabIds });
 
     const touchFloor = resolveTouchTargetFloorPx(Platform.OS);
     const actionSize = Math.max(props.placement === 'bar' ? 28 : M.actionSizePx, touchFloor ?? 0);
@@ -247,12 +273,9 @@ export function WorkspaceGroupTabs(props: Readonly<{
             onUnpin={(tabId) => workspace.dispatch({ type: 'setPinned', tabId, pinned: false })}
             onClose={(tabId) => workspace.closeTab(group.id, tabId)}
             onTabMenu={(tabId, event) => setMenu({ tabId, anchor: resolvePointerMenuAnchor(event) })}
-            tabDragPayload={(tabId) => {
-                setWorkspaceTabDragActive(true);
-                return encodeWorkspaceDragData({ kind: 'tab', tabId });
-            }}
-            onTabDragEnd={() => setWorkspaceTabDragActive(false)}
-            onTabDrop={(beforeTabId, payload) => drop(payload, beforeTabId)}
+            entityDragDrop={entityDragDrop}
+            dropSlot={dropCue.slot}
+            dropRingTabKey={dropCue.pulseTabKey}
             renderLeadingIcon={(tab, emphasized) => <Icon name={tab.icon} size={M.tabGlyphPx}
                 color={emphasized ? theme.colors.text.primary : theme.colors.text.secondary} />}
             tabNativeId={(key) => `workspace-${safeGroup}-tab-${toTestIdSafeValue(key)}`}
@@ -262,7 +285,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
     );
 
     return (
-        <WebDropTargetView testID={`workspace-tabs-${safeGroup}`} style={styles.row} onLayout={onLayout} {...stripDropProps}>
+        <View ref={attachStrip} testID={`workspace-tabs-${safeGroup}`} style={styles.row} onLayout={onLayout}>
             <View style={styles.tabs}>
                 {renderStrip([...pinnedTabs, ...visibleTabs])}
             </View>
@@ -327,7 +350,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
                     allowEmptySelection
                 />
             ) : null}
-        </WebDropTargetView>
+        </View>
     );
 }
 

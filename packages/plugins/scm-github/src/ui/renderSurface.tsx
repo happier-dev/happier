@@ -87,7 +87,11 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import {
   completeTriagePostMutationIfNeeded,
+  TriageDetailInstance,
   TriageDetailPanel,
+  TriageDetailStory,
+  TriageDetailChanges,
+  TriageDetailActivity,
   useTriagePostMutationCompletion,
 } from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
@@ -3588,9 +3592,7 @@ function GithubChangeStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV
     { additions: String(summary.additions), deletions: String(summary.deletions), files: String(summary.fileCount) },
   );
   return (
-    <Step
-      marker={{ kind: 'number', value: 2 }}
-      title="What changed"
+    <TriageDetailChanges
       titleKey="plugins.github.ui.story.changed"
       trailing={files.state.rows.length === 0 ? undefined : <Text variant="caption" tone="secondary" value={totals} />}
     >
@@ -3620,7 +3622,7 @@ function GithubChangeStep({ input }: Readonly<{ input: TriageDetailSurfaceInputV
           value={text('plugins.github.ui.story.smallerFiles', '{count} smaller files', { count: String(summary.smallerCount) })}
         />
       )}
-    </Step>
+    </TriageDetailChanges>
   );
 }
 
@@ -3673,11 +3675,9 @@ function GithubStoryOverview({
   // current description; neither is invented when both are absent.
   const ask = exact?.body ?? input.observation.snapshot.summary;
   return (
-    <Stack gap="large">
-      <Step
-        marker={{ kind: 'number', value: 1 }}
-        title={kindId === 'issue' ? 'The report' : 'The ask'}
-        titleKey={kindId === 'issue' ? 'plugins.github.ui.story.report' : 'plugins.github.ui.story.ask'}
+    <TriageDetailStory kind={kindId === 'issue' ? 'report' : 'ask'}
+        changes={kindId === 'pull-request' ? <GithubChangeStep input={input} /> : null}
+        checks={kindId === 'pull-request' ? <GithubChecksStep input={input} /> : null}
         trailing={(
           <RefreshRow
             onRefresh={overview.refresh}
@@ -3691,10 +3691,7 @@ function GithubStoryOverview({
           ? <Text variant="caption" tone="secondary" valueKey="plugins.github.ui.story.noDescription" fallback="No description." />
           : <GithubOverviewMarkdown body={ask} />}
         {currentEntries.length === 0 ? null : <Metadata entries={currentEntries} />}
-      </Step>
-      {kindId === 'pull-request' ? <GithubChangeStep input={input} /> : null}
-      {kindId === 'pull-request' ? <GithubChecksStep input={input} /> : null}
-    </Stack>
+    </TriageDetailStory>
   );
 }
 
@@ -3711,12 +3708,12 @@ function GithubActivityPanel(props: Readonly<{
   conversation: React.ReactNode;
 }>): React.ReactElement {
   return (
-    <Stack gap="large" style={{ flex: 1, minHeight: 0 }}>
+    <TriageDetailActivity>
       <Stack style={{ flex: 1, minHeight: 0 }}>{props.conversation}</Stack>
       <Stack style={{ flex: 1, minHeight: 0 }}>
         <TimelinePanel input={props.input} locale={props.locale} nowMs={props.nowMs} />
       </Stack>
-    </Stack>
+    </TriageDetailActivity>
   );
 }
 
@@ -3838,6 +3835,9 @@ function GithubDetailBody({
         <TriageDetailPanel
           panel={input.panel}
           ariaLabel={text('plugins.github.ui.detailTabs', 'GitHub entry detail')}
+          retention={Object.fromEntries(visible
+            .filter((declaration) => ['overview', 'timeline', 'files', 'checks'].includes(declaration.id))
+            .map((declaration) => [declaration.id === 'timeline' ? 'activity' : declaration.id, declaration.retention]))}
           panels={{
             overview: <GithubStoryOverview input={input} kindId={kindId} locale={locale} nowMs={nowMs} />,
             activity: (
@@ -3925,7 +3925,7 @@ function GithubDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <GithubDetailBody input={admitted.input} kindId={admitted.kindId} />;
+  return <TriageDetailInstance><GithubDetailBody input={admitted.input} kindId={admitted.kindId} /></TriageDetailInstance>;
 }
 
 /**

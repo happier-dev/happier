@@ -63,6 +63,25 @@ describe('native Agent CLI/auth metadata', () => {
     expect(parsed.cli).toEqual(validCliMetadata());
   });
 
+  it('admits declared environment-relative install directories through the strict executable metadata', () => {
+    const cli = validCliMetadata();
+    const configured = {
+      ...cli,
+      executable: {
+        ...cli.executable,
+        knownEnvironmentBinDirs: [{ envVar: 'PI_CODING_AGENT_DIR', relativeDir: 'bin' }],
+      },
+    };
+    expect(PluginAgentContributionV2Schema.parse(nativeAgent(configured)).cli).toEqual(configured);
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({
+      ...configured,
+      executable: {
+        ...configured.executable,
+        knownEnvironmentBinDirs: [{ envVar: '', relativeDir: 'bin' }],
+      },
+    })).success).toBe(false);
+  });
+
   it('accepts a host-owned ACP login target without accepting arbitrary commands', () => {
     const cli = validCliMetadata();
     const parsed = PluginAgentContributionV2Schema.parse(nativeAgent({

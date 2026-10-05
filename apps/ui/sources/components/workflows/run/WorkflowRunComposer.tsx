@@ -1,19 +1,23 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierSelect } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField } from '@happier-dev/plugin-ui/presentation';
 import type { JsonValue, RoleOverrideV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
-import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
-import { actionInputOptionValueKey, isSameActionInputOptionValue, readActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { workflowInputToFieldHint, type WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
+import type { InputOptionsConsumerV1 } from '@happier-dev/protocol/inputs';
+import { actionInputOptionValueKey, isSameActionInputOptionValue, readActionInputOptionValue, type ActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
-import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
+import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
+import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
+import { SurfaceStateCard } from '@/components/ui/surfaces';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -30,6 +34,9 @@ const styles = StyleSheet.create((theme) => ({
     fields: { gap: theme.margins.md, padding: theme.margins.md },
     secondary: { color: theme.colors.text.secondary },
     required: { color: theme.colors.text.destructive },
+    /** Readiness, not an error: quiet warning tone, aligned with the composer card's content edge. */
+    readiness: { flexDirection: 'row', alignItems: 'center', gap: theme.margins.xs, paddingHorizontal: theme.margins.md },
+    readinessText: { color: theme.colors.state.warning.foreground, flexShrink: 1 },
 }));
 
 const EMPTY_AUTOCOMPLETE_KINDS: React.ComponentProps<typeof AgentInput>['autocompleteKinds'] = [];
@@ -37,6 +44,8 @@ const EMPTY_AUTOCOMPLETE_SUGGESTIONS: React.ComponentProps<typeof AgentInput>['a
 
 export type WorkflowRunComposerProps = Readonly<{
     inputs: readonly WorkflowInputDefinition[];
+    /** Discovery reopens this admitted descriptor; local field bags cannot grant a source read. */
+    optionsConsumer?: Extract<InputOptionsConsumerV1, { kind: 'workflow' }>;
     values: Readonly<Record<string, JsonValue | undefined>>;
     onChangeValues: (next: Readonly<Record<string, JsonValue | undefined>>) => void;
     rawTextValues?: Readonly<Record<string, string>>;
@@ -57,6 +66,8 @@ export type WorkflowRunComposerProps = Readonly<{
     notice?: string;
     machineId?: string | null;
     serverId?: string | null;
+    /** Placement comes from the host, including New's phone floating composer. */
+    surfaceGroup?: React.ComponentProps<typeof AgentInput>['surfaceGroup'];
     /** Where and Roles come from their incumbent composer control owners. */
     extraActionChips?: readonly AgentInputExtraActionChip[];
     workflowChip?: AgentInputExtraActionChip;
@@ -64,10 +75,20 @@ export type WorkflowRunComposerProps = Readonly<{
     retainedText?: string;
     authoringControls?: Pick<React.ComponentProps<typeof AgentInput>,
         'machineName' | 'machinePopover' | 'currentPath' | 'folderChipState' | 'onRemoveFolder' | 'pathPopover'>;
+    /** Catalog-facing input copy (built-ins); authored workflows name their inputs themselves. */
+    inputPresentation?: WorkflowRunInputPresentation;
 }>;
+
+export type WorkflowRunInputPresentation = Readonly<Record<string, Readonly<{
+    title: string;
+    /** The composer's empty-field prompt when the input has no authored description. */
+    placeholder?: string;
+    optionLabels?: Readonly<Record<string, string>>;
+}>>>;
 
 /** One start presentation; FIN owns defaults, validation and the admitted input map. */
 export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const prefix = props.testIDPrefix ?? 'workflow-run-inputs';
     const roleIds = React.useMemo(() => props.definition ? workflowUsedRoleIds(props.definition) : [], [props.definition]);
     const acceptedRepeat = props.materializedLeaves !== undefined;
@@ -79,18 +100,19 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
     const fields = React.useMemo(() => projectWorkflowRunInputFields({
         inputs: props.inputs, values: props.values, rawTextValues,
     }), [props.inputs, props.values, rawTextValues]);
-    const main = fields.find((field) => field.definition.valueType === 'string') ?? null;
+    const main = fields.find((field) => field.definition.valueType === 'string' && !isWorkflowChoiceInput(field.definition)) ?? null;
     const remaining = fields.filter((field) => field !== main);
-    const missing = fields.filter((field) => field.errorCode === 'missing_required_input').length;
+    const missingFields = fields.filter((field) => field.errorCode === 'missing_required_input');
+    const missing = missingFields.length;
+    const inputTitle = (definition: WorkflowInputDefinition) => props.inputPresentation?.[definition.name]?.title ?? definition.name;
     const blocked = fields.find((field) => field.blocking) ?? null;
-    // Mitigation until FIN admission carries frozen role/child context: flattened
-    // definitions cannot replay role authority, and child refs read today's graph.
-    const frozenRepeatUnavailable = props.materializedLeaves?.some((leaf) => leaf.sourceKey !== '$root' || leaf.role !== undefined) === true;
     const disabled = props.pending === true || props.startDisabled === true || blocked !== null
-        || frozenRepeatUnavailable || (!acceptedRepeat && roleDraft.status !== 'ready');
-    const reason = blocked === null ? (frozenRepeatUnavailable ? t('workflows.start.frozenRepeatUnavailable') : !acceptedRepeat && roleDraft.status !== 'ready'
+        || (!acceptedRepeat && roleDraft.status !== 'ready');
+    const reason = blocked === null ? (!acceptedRepeat && roleDraft.status !== 'ready'
         ? roleDraft.status === 'failed' ? t('workflows.start.rolesPrefillFailed') : t('common.loading') : null) : blocked.errorCode === 'missing_required_input'
-        ? t('workflows.start.required') : t('workflows.issue.invalid_input');
+        ? t('workflows.start.addToStart', { name: inputTitle(blocked.definition) }) : t('workflows.issue.invalid_input');
+    // 07 §3: an untouched missing value is readiness, not an error. It never interrupts as an alert.
+    const readinessOnly = blocked?.errorCode === 'missing_required_input' || (roleDraft.status === 'loading' && blocked === null);
     const changeText = React.useCallback((name: string, text: string) => {
         // Raw buffers survive intermediate numbers and malformed JSON. Only FIN parses them.
         setRawTextValues({ ...rawTextValues, [name]: text });
@@ -115,16 +137,19 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
         })]),
         ...(remaining.length === 0 && missing === 0 ? [] : [createExecutionRunStartContentChip({
             key: 'workflow-start-inputs', icon: 'sliders-horizontal',
-            label: missing > 0 ? t('workflows.start.needed', { count: missing }) : t('workflows.start.inputs'),
+            label: missing === 1 ? t('workflows.start.neededNamed', { name: inputTitle(missingFields[0]!.definition) })
+                : missing > 1 ? t('workflows.start.needed', { count: missing }) : t('workflows.start.inputs'),
             title: t('workflows.start.inputs'), testID: `${prefix}-inputs-chip`,
             revision: JSON.stringify([props.values, rawTextValues]),
             renderContent: <View>
                 {main?.errorCode === 'missing_required_input' ? <View style={styles.fields}>
-                    <Text>{main.definition.name}</Text><Text style={styles.required}>{t('workflows.start.required')}</Text>
+                    <Text>{inputTitle(main.definition)}</Text><Text style={styles.readinessText}>{t('workflows.start.required')}</Text>
                 </View> : null}
                 <WorkflowRunInputs fields={remaining} values={props.values} rawTextValues={rawTextValues}
                 onChangeText={changeText} onChangeValue={changeValue} pending={props.pending === true}
-                machineId={props.machineId ?? null} serverId={props.serverId ?? null} prefix={prefix} />
+                machineId={props.machineId ?? null} serverId={props.serverId ?? null} prefix={prefix}
+                optionsConsumer={props.optionsConsumer}
+                {...(props.inputPresentation === undefined ? {} : { presentation: props.inputPresentation })} />
             </View>,
         })]),
         ...(props.extraActionChips ?? []),
@@ -144,7 +169,7 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
                     overrides={roleOverrides} onChange={roleDraft.onChange} pending={props.pending === true} prefix={prefix} />}</View>,
         })]),
         ...(props.materializedLeaves === undefined ? [] : [createExecutionRunStartContentChip({
-            key: 'workflow-start-targets', icon: 'layers', label: t('workflows.start.targetsTitle'), title: t('workflows.start.targetsTitle'),
+            key: 'workflow-start-targets', icon: 'stack', label: t('workflows.start.targetsTitle'), title: t('workflows.start.targetsTitle'),
             testID: `${prefix}-targets-chip`, renderContent: <View style={styles.fields}>{props.materializedLeaves.map((leaf) => {
                 const block = leaf.sourceKey === '$root' && props.definition
                     ? walkWorkflowBlocks(props.definition.blocks).find((candidate) => candidate.id === leaf.blockId) : null;
@@ -160,8 +185,8 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
             : chip.key === 'workflow-start-inputs' ? { controlId: 'workflowInputs' as const }
                 : chip.key === 'workflow-start-roles' ? { controlId: 'workflowRoles' as const }
                     : chip.key === 'workflow-start-targets' ? { controlId: 'workflowTargets' as const } : {}),
-    })), [changeText, changeValue, main, missing, prefix, props.extraActionChips, props.machineId, props.pending,
-        props.preview, props.serverId, props.values, props.workflowChip, props.workflowName, rawTextValues, remaining,
+    })), [changeText, changeValue, main, missing, missingFields, props.inputPresentation, prefix, props.extraActionChips, props.machineId, props.pending,
+        props.preview, props.serverId, props.optionsConsumer, props.values, props.workflowChip, props.workflowName, rawTextValues, remaining,
         acceptedRepeat, props.definition, props.materializedLeaves, roleDraft.onChange, roleDraft.retry, roleDraft.status, roleIds, roleOverrides]);
     return (
         <View testID={prefix} style={styles.root}>
@@ -170,12 +195,13 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
             <View testID={`${prefix}-${main === null ? 'preview' : 'main'}`}>
                 <PluginContextualResourceStoreProvider>
                     <AgentInput
+                        surfaceGroup={props.surfaceGroup}
                         {...props.authoringControls}
                         value={main === null ? props.preview ?? props.workflowName ?? t('workflows.start.preview')
                             : rawTextValues[main.definition.name] ?? formatWorkflowInputValue(main.value)}
                         onChangeText={(text) => { if (main !== null) changeText(main.definition.name, text); }}
-                        placeholder={main?.definition.description ?? main?.definition.name ?? t('workflows.start.preview')}
-                        inputAccessibilityLabel={main?.definition.name ?? t('workflows.start.preview')}
+                        placeholder={main === null ? t('workflows.start.preview') : main.definition.description ?? props.inputPresentation?.[main.definition.name]?.placeholder ?? inputTitle(main.definition)}
+                        inputAccessibilityLabel={main === null ? t('workflows.start.preview') : inputTitle(main.definition)}
                         inputAccessibilityHint={main?.blocking ? reason ?? undefined : undefined}
                         disabled={props.pending === true || main === null}
                         voiceAffordance="none"
@@ -196,15 +222,31 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
                 </PluginContextualResourceStoreProvider>
             </View>
             {main === null && props.retainedText ? <Text testID={`${prefix}-retained-text`} style={styles.secondary}>{props.retainedText}</Text> : null}
-            {reason === null ? null : <Text testID={`${prefix}-reason`} accessibilityRole={roleDraft.status === 'loading' && blocked === null ? undefined : 'alert'}
-                style={roleDraft.status === 'loading' && blocked === null && !frozenRepeatUnavailable ? styles.secondary : styles.required}>{reason}</Text>}
-            <RoundButton testID={`${prefix}-cancel`} size="small" display="inverted" title={t('common.cancel')} onPress={props.onCancel} />
+            {reason === null ? null : <View testID={`${prefix}-reason`} style={styles.readiness}
+                {...(readinessOnly ? {} : { accessibilityRole: 'alert' as const })}>
+                {blocked?.errorCode === 'missing_required_input' ? <Icon name="warning" size={ICON_SIZE.xs} color={theme.colors.state.warning.foreground} /> : null}
+                <Text testID={`${prefix}-reason-text`} style={readinessOnly ? blocked === null ? styles.secondary : styles.readinessText : styles.required}>{reason}</Text>
+            </View>}
         </View>
     );
 }
 
+/** A declared source, enum or input type is chosen, never typed into the main composer. */
+function isWorkflowChoiceInput(definition: WorkflowInputDefinition): boolean {
+    return definition.optionsSourceId !== undefined || definition.enum !== undefined || definition.inputType !== undefined;
+}
+
+/** A choice, several choices, or a value a custom picker returned (already validated by its host). */
+function readWorkflowSelection(value: unknown): JsonValue | undefined {
+    if (!Array.isArray(value)) return readActionInputOptionValue(value);
+    return value.flatMap((item) => {
+        const option = readActionInputOptionValue(item);
+        return option === undefined ? [] : [option];
+    });
+}
+
 /** Only mounted while Inputs is open; option reads stay local to this leaf. */
-function WorkflowRunInputs(props: Readonly<{
+export function WorkflowRunInputs(props: Readonly<{
     fields: readonly WorkflowRunInputFieldState[];
     values: WorkflowRunComposerProps['values'];
     rawTextValues: Readonly<Record<string, string>>;
@@ -214,58 +256,78 @@ function WorkflowRunInputs(props: Readonly<{
     machineId: string | null;
     serverId: string | null;
     prefix: string;
+    optionsConsumer?: WorkflowRunComposerProps['optionsConsumer'];
+    /** Catalog-facing copy; input names and option values remain the authored contract. */
+    presentation?: WorkflowRunInputPresentation;
 }>) {
     const { theme } = useUnistyles();
     const selectTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
-    const resolveOptions = useActionFieldOptionsForMachine({
+    const requests = props.fields.map(({ definition }) => ({
+        field: workflowInputToFieldHint(definition, props.presentation?.[definition.name]),
+        draftInput: props.values,
+        ...(props.optionsConsumer ? { consumer: props.optionsConsumer } : {}),
+    }));
+    const { resolveOptions, state: optionsState, retry, snapshot } = useInputFieldOptions({
+        requests,
         machineId: props.machineId, serverId: props.serverId,
-        enabled: props.fields.some((field) => field.definition.optionsSourceId !== undefined),
+        enabled: props.fields.some((field) => field.definition.optionsSourceId !== undefined || field.definition.inputType !== undefined),
     });
-    return <View style={styles.fields}>{props.fields.map((field) => {
+    return <InputTypePickerHostProvider enabled={props.fields.some((field) => field.definition.inputType !== undefined)}
+        {...resolveOptions.pickerContext}
+        contextKey={JSON.stringify([props.optionsConsumer, props.values, snapshot])}>
+        <View style={styles.fields}>{props.fields.map((field) => {
         const definition = field.definition;
+        const presentation = props.presentation?.[definition.name];
+        const title = presentation?.title ?? definition.name;
         const id = `${props.prefix}-${definition.name}`;
         const repair = field.errorCode === 'missing_required_input' ? t('workflows.start.required')
             : describeWorkflowInputRepair({ valueType: definition.valueType, errorCode: field.errorCode });
         const state = props.values[definition.name] === undefined && props.rawTextValues[definition.name] === undefined
             ? definition.default === undefined ? t('workflows.start.optional')
-                : t('workflows.start.defaultValue', { value: formatWorkflowInputValue(definition.default) })
+                : t('workflows.start.defaultValue', { value: typeof definition.default === 'string'
+                    ? presentation?.optionLabels?.[definition.default] ?? formatWorkflowInputValue(definition.default)
+                    : formatWorkflowInputValue(definition.default) })
             : definition.description;
-        if (definition.optionsSourceId !== undefined || definition.enum !== undefined) {
-            const options = resolveOptions({
-                optionsSourceId: definition.optionsSourceId,
-                options: definition.enum?.map((value) => ({ value, label: value })),
-            });
+        if (isWorkflowChoiceInput(definition)) {
+            const hint = workflowInputToFieldHint(definition, presentation);
+            const options = resolveOptions(hint);
+            const optionState = optionsState(hint);
             const selected = Array.isArray(field.value)
                 ? field.value.flatMap((value) => {
                     const option = readActionInputOptionValue(value);
                     return option === undefined ? [] : [option];
                 })
                 : readActionInputOptionValue(field.value);
-            return <FieldItem key={definition.name} label={definition.name} supportingText={repair ?? state}>
-                <HappierSelect label={definition.name} options={options}
-                    value={selected} multiple={Array.isArray(field.value) || (field.value === undefined && definition.valueType === 'json')}
+            return <FieldItem key={definition.name} label={title} supportingText={repair ?? state}>
+                <HappierInputField<ActionInputOptionValue> frame="none" field={hint} value={field.value}
+                    selection={selected} options={options} optionsStatus={optionState.status}
+                    optionsNotice={<SurfaceStateCard kind="error" size="line" title={t('common.error')}
+                        diagnosticCode={optionState.errorCode} action={{ label: t('common.retry'), onPress: retry }} />}
                     isEqual={isSameActionInputOptionValue} keyForOption={(option) => actionInputOptionValueKey(option.value)}
-                    theme={selectTheme} disabled={props.pending}
-                    onChange={(value) => props.onChangeValue(definition.name, Array.isArray(value) ? [...value] : readActionInputOptionValue(value))} />
+                    theme={selectTheme} disabled={props.pending} testID={id}
+                    onChange={(value) => props.onChangeValue(definition.name, readWorkflowSelection(value))} />
             </FieldItem>;
         }
         if (definition.valueType === 'boolean') return <SegmentedChoiceItem
-            key={definition.name} title={definition.name} subtitle={repair ?? state}
+            key={definition.name} title={title} subtitle={repair ?? state}
             value={field.value === true ? 'yes' : field.value === false ? 'no' : 'unset'}
             options={[
-                ...(!definition.required ? [{ id: 'unset', label: t('common.notSet') }] : []),
+                ...(!definition.required ? [{ id: 'unset', label: t('workflows.page.blocks.notSet') }] : []),
                 { id: 'yes', label: t('common.yes') }, { id: 'no', label: t('common.no') },
             ]}
             onChange={(value) => props.onChangeValue(definition.name, value === 'unset' ? undefined : value === 'yes')}
             disabled={props.pending} testIDPrefix={id} />;
         const value = props.rawTextValues[definition.name] ?? (definition.valueType === 'json' && field.value !== undefined
             ? JSON.stringify(field.value) : formatWorkflowInputValue(field.value));
-        return <FieldItem key={definition.name} label={definition.name} supportingText={state}>
+        // A missing required value is readiness, said as supporting text; only a value the person
+        // typed that cannot be used is an error on the field (07 §3: untouched fields never show errors).
+        const missingRequired = field.errorCode === 'missing_required_input';
+        return <FieldItem key={definition.name} label={title} supportingText={missingRequired ? repair ?? state : state}>
             <FieldTextInput testID={id} value={value}
-                accessibilityLabel={definition.name} error={repair}
+                accessibilityLabel={title} error={missingRequired ? null : repair}
                 multiline={definition.valueType !== 'number'} monospace={definition.valueType === 'json'}
                 inputMode={definition.valueType === 'number' ? 'decimal' : undefined}
                 editable={!props.pending} onChangeText={(text) => props.onChangeText(definition.name, text)} />
         </FieldItem>;
-    })}</View>;
+    })}</View></InputTypePickerHostProvider>;
 }

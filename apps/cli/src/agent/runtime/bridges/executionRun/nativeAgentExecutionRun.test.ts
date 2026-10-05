@@ -15,6 +15,9 @@ import {
     AgentSessionProviderBindingV1Schema,
     PortableRuntimeDescriptorV1Schema,
     ProviderBoundModelRefSchema,
+    buildReviewCommentsOutboundMessage,
+    buildMentionRefForKindV1,
+    MENTION_KIND_V1,
     createProviderErrorV1,
     type ExecutionRunResumeHandle,
 } from '@happier-dev/protocol';
@@ -545,8 +548,19 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
                 terminalPromise: Promise.resolve(), resolveTerminal() {},
             };
             let authorized = false;
+            let publicationReady = false;
+            const preparedInputs: string[] = [];
+            let preparationGate = Promise.resolve();
+            let onPreparationStarted: (() => void) | undefined;
             const options = {
                 runId: 'run-context', controller, authorizeProviderEffect: async () => ({ ok: authorized }),
+                beforeProviderInput: async (localId: string) => {
+                    if (!publicationReady) throw new Error('Result revision is unavailable');
+                    preparedInputs.push(localId);
+                    onPreparationStarted?.();
+                    await preparationGate;
+                },
+                readInitialProfileContext: () => 'Saved captured explanation: the retained change is blue.',
                 sessionRunContext: {
                     kind: 'happier_session_run' as const, sessionId: 'session-parent',
                     origin: { kind: 'session_discussion' as const, discussionId: 'discussion-1', messageIds: ['message-1'] },
@@ -559,14 +573,32 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             const delivery = createRetainedExecutionRunInputDelivery(options);
             const outcomes: unknown[] = [];
             const unsubscribe = delivery.delivery.subscribeProviderInputOutcomes?.((outcome) => outcomes.push(outcome));
+            const reviewInput = buildReviewCommentsOutboundMessage({ sessionId: 'session-parent',
+                drafts: [{ id: 'saved-change', filePath: 'src/value.ts', source: 'diff',
+                    anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: 1, newLine: 1 },
+                    snapshot: { selectedLines: ['+const value = "blue";'], beforeContext: [], afterContext: [] },
+                    body: 'Explain the saved blue value.', createdAt: 1 }],
+                additionalMessage: '@session:source First input',
+            });
+            const token = '@session:source';
+            const mentionStart = reviewInput.text.indexOf(token);
             const firstInput = {
-                role: 'user' as const, content: { type: 'text' as const, text: 'First input' },
+                role: 'user' as const, content: { type: 'text' as const, text: reviewInput.text },
                 localId: `${occurrence}-first`, authorAccountId: 'alice', inputAdmissionReceipt: null,
                 pendingProviderAction: 'send' as const,
+                meta: { ...reviewInput.metaOverrides, happierStructuredInputV1: { v: 1,
+                    mentions: [{ kind: MENTION_KIND_V1.session,
+                        ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'source-session'),
+                        token, start: mentionStart, end: mentionStart + token.length }] } },
             };
             try {
                 expect((await delivery.delivery.deliver(firstInput)).status).toBe('rejected_before_effect');
+                expect(preparedInputs).toEqual([]);
                 authorized = true;
+                const requestCountBeforePreparation = requests.length;
+                expect((await delivery.delivery.deliver(firstInput)).status).toBe('rejected_before_effect');
+                expect(requests).toHaveLength(requestCountBeforePreparation);
+                publicationReady = true;
                 if (occurrence === 'create') {
                     const rejectedInput = { ...firstInput, localId: 'create-rejected' };
                     await delivery.delivery.deliver(rejectedInput);
@@ -577,14 +609,37 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
                 expect(await delivery.delivery.deliver(firstInput)).toEqual({ status: 'admitted' });
                 expect(requests.at(-1)?.input.text).toContain('<happier_session_run>');
                 expect(requests.at(-1)?.input.text).toContain('session-parent');
+                expect(requests.at(-1)?.input.text).toContain('Saved captured explanation');
+                expect(requests.at(-1)?.input.text).toContain('Explain the saved blue value.');
+                expect(requests.at(-1)?.input.text).toContain('const value');
+                expect(requests.at(-1)?.input.text).toContain('<happier_session_reference>');
+                expect(requests.at(-1)?.input.text).toContain('source-session');
                 expect(requests.at(-1)?.input.text).toContain('discussion-1');
                 expect(requests.at(-1)?.input.text).toContain('session.transcript.get');
                 expect(requests.at(-1)?.input.text).toContain('session.discussion.read');
                 expect(requests.at(-1)?.input.text).not.toContain('session.discussion.post');
                 expect((await delivery.delivery.deliver({ ...firstInput, localId: `${occurrence}-second`,
-                    content: { type: 'text', text: 'Second input' } })).status).toBe('admitted');
+                    content: { type: 'text', text: 'Second input' }, meta: undefined })).status).toBe('admitted');
                 expect(requests.at(-1)?.input.text).toContain('Second input');
                 expect(requests.at(-1)?.input.text).not.toContain('<happier_session_run>');
+                expect(requests.at(-1)?.input.text).not.toContain('Saved captured explanation');
+                for (const invalidation of ['cancelled', 'replaced', 'revoked'] as const) {
+                    let finishPreparation = () => {};
+                    preparationGate = new Promise<void>((resolve) => { finishPreparation = resolve; });
+                    const preparationStarted = new Promise<void>((resolve) => { onPreparationStarted = resolve; });
+                    const requestsBeforePreparation = requests.length;
+                    const preparing = delivery.delivery.deliver({ ...firstInput, localId: `${occurrence}-${invalidation}` });
+                    await preparationStarted;
+                    if (invalidation === 'cancelled') controller.cancelled = true;
+                    if (invalidation === 'replaced') controller.runtimeId = 'replacement-runtime';
+                    if (invalidation === 'revoked') authorized = false;
+                    finishPreparation();
+                    expect((await preparing).status).toBe('rejected_before_effect');
+                    expect(requests).toHaveLength(requestsBeforePreparation);
+                    controller.cancelled = false;
+                    controller.runtimeId = runtimeId;
+                    authorized = true;
+                }
             } finally {
                 unsubscribe?.();
                 await host.dispose();

@@ -8,7 +8,7 @@ import {
   processGenerationMatches,
   readProcessInstanceFingerprintSync,
 } from '@happier-dev/cli-common/processInstance';
-import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
+import { getActionSpec, type ActionExecuteResult, type ActionExecutorContext } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import {
   clearReplaceableDaemonLock,
@@ -577,6 +577,7 @@ export async function controlDaemonPluginDevelopment(
 export async function requestDaemonPluginActionExecution(request: Readonly<{
   actionId: string;
   input: unknown;
+  requiredDangerLevel?: 'safe';
   surface: 'cli' | 'mcp' | 'agent';
   defaultSessionId?: string;
   /** Host-stamped descriptive starter, not an authorization principal. */
@@ -605,13 +606,16 @@ export async function requestDaemonSignedRootActionExecution(
   request: SignedRootActionExecuteRequest,
   options: DaemonControlRequestOptions = {},
 ): Promise<ActionExecuteResult> {
+  if (options.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+  const { sideEffectClass, executionPlacement } = getActionSpec(request.actionId);
   const result = await daemonPost(SIGNED_ROOT_ACTION_EXECUTE_PATH, request, {
     ...options,
-    timeoutMs: options.timeoutMs ?? 300_000,
+    // Idle observation owns its deadline; client Actions may wait for approval
+    // and completion under the caller lifetime. Neither gets a shorter ACK cutoff.
+    timeoutMs: options.timeoutMs !== undefined ? options.timeoutMs
+      : request.actionId === 'session.wait.idle' || executionPlacement === 'client' ? null : 300_000,
+    mutation: sideEffectClass !== 'none' && sideEffectClass !== 'read',
   });
-  if (options.signal?.aborted) {
-    return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-  }
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return {
       ok: false,

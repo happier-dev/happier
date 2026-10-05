@@ -93,7 +93,7 @@ export type SessionTerminalTabMenuInput = Readonly<{
     tab: SessionTerminalTabDescriptor;
     /** The terminal the verbs act on: the tab's focused member. */
     terminalId: string;
-    mounted: Readonly<{ copySelection: boolean; paste: boolean; clear: boolean; restart: boolean }>;
+    mounted: Readonly<{ copySelection: boolean; paste: boolean; clear: boolean; restart: boolean; find?: boolean }>;
     canSplit: boolean;
     canOpenInDetails: boolean;
     splitShortcut?: string;
@@ -107,6 +107,9 @@ export function buildSessionTerminalTabMenuItems(input: SessionTerminalTabMenuIn
         { id: 'rename', testID: 'terminal-tab-menu-rename', title: t('terminalWorkspace.tabMenu.rename'), icon: glyph('pencil-simple') },
         { id: 'splitRight', testID: 'terminal-tab-menu-split', title: t('terminalWorkspace.tabMenu.splitRight'), icon: glyph('square-split-horizontal'), disabled: !input.canSplit, ...(input.splitShortcut ? { shortcut: input.splitShortcut } : {}) },
     ];
+    if (input.mounted.find) {
+        items.push({ id: 'find', testID: 'terminal-tab-menu-find', title: t('find.open'), icon: glyph('magnifying-glass') });
+    }
     if (input.tab.members.length > 1) {
         items.push({ id: 'moveToOwnTab', testID: 'terminal-tab-menu-detach', title: t('terminalWorkspace.tabMenu.moveToOwnTab'), icon: glyph('arrow-square-out') });
     }

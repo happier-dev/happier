@@ -10,7 +10,9 @@ import {
 } from '@happier-dev/protocol';
 
 import { readLatestSystemTaskPrompt } from './prompts/readLatestSystemTaskPrompt';
+import { matchesThisComputerSetupScope, readThisComputerSetupScope } from './thisComputerSetup/thisComputerSetupScope';
 import type {
+    ActiveSetupTask,
     SystemTaskPromptContinuation,
     SystemTaskPromptContinuationRegistration,
     SystemTaskRunState,
@@ -108,6 +110,16 @@ export function createSystemTaskRunner(options: Readonly<{
     mode?: SystemTaskRunner['mode'];
 }>): SystemTaskRunner {
     const tasks = new Map<string, TaskRecord>();
+    let activeSetupTask: ActiveSetupTask | null = null;
+    let setupStart: Promise<string> | null = null;
+    const setupListeners = new Set<() => void>();
+    const notifySetup = () => { for (const listener of setupListeners) listener(); };
+    const retireSetup = (taskId: string) => {
+        if (activeSetupTask?.taskId !== taskId) return;
+        activeSetupTask = null;
+        setupStart = null;
+        notifySetup();
+    };
 
     const notifyTask = (taskId: string) => {
         const record = tasks.get(taskId);
@@ -139,6 +151,7 @@ export function createSystemTaskRunner(options: Readonly<{
             },
         };
         record.promptContinuation = null;
+        retireSetup(taskId);
         notifyTask(taskId);
         record.unlistenBridge?.();
         record.unlistenBridge = null;
@@ -248,31 +261,32 @@ export function createSystemTaskRunner(options: Readonly<{
             status: resolveResultStatus(result),
         };
         record.promptContinuation = null;
+        retireSetup(taskId);
         notifyTask(taskId);
         record.unlistenBridge?.();
         record.unlistenBridge = null;
     };
 
-    return {
-        mode: options.mode ?? 'tauri',
-        capabilities: options.bridge.capabilities,
-        async start(spec: SystemTaskSpec): Promise<string> {
-            const parsedSpec = SystemTaskSpecSchema.parse(spec);
-            const taskId = await options.bridge.start(parsedSpec);
-            if (tasks.has(taskId)) {
-                return taskId;
-            }
-            const record: TaskRecord = {
-                spec: parsedSpec,
-                state: createInitialTaskState(taskId),
-                listeners: new Set(),
-                unlistenBridge: null,
-                promptContinuation: null,
-                answeredPromptSignatures: new Set(),
-                inFlightPromptSignatures: new Set(),
-            };
-            tasks.set(taskId, record);
-            const unlistenBridge = await options.bridge.subscribe(taskId, {
+    const startTask = async (parsedSpec: SystemTaskSpec, continuation?: SystemTaskPromptContinuation): Promise<string> => {
+        const taskId = await options.bridge.start(parsedSpec);
+        if (tasks.has(taskId)) return taskId;
+        const record: TaskRecord = {
+            spec: parsedSpec,
+            state: createInitialTaskState(taskId),
+            listeners: new Set(),
+            unlistenBridge: null,
+            promptContinuation: continuation ?? null,
+            answeredPromptSignatures: new Set(),
+            inFlightPromptSignatures: new Set(),
+        };
+        tasks.set(taskId, record);
+        if (activeSetupTask?.spec === parsedSpec) {
+            activeSetupTask = { taskId, spec: parsedSpec };
+            notifySetup();
+        }
+        let unlistenBridge: () => void;
+        try {
+            unlistenBridge = await options.bridge.subscribe(taskId, {
                 onEvent: (payload) => {
                     applyEvent(taskId, payload);
                 },
@@ -280,10 +294,46 @@ export function createSystemTaskRunner(options: Readonly<{
                     applyResult(taskId, payload);
                 },
             } satisfies SystemTaskBridgeListenerSet);
-            if (record.state.result) unlistenBridge();
-            else record.unlistenBridge = unlistenBridge;
-            notifyTask(taskId);
-            return taskId;
+        } catch (error) {
+            failTask(taskId, 'system_task_start_failed', error instanceof Error ? error.message : 'system_task_start_failed');
+            throw error;
+        }
+        if (record.state.result) unlistenBridge();
+        else record.unlistenBridge = unlistenBridge;
+        notifyTask(taskId);
+        return taskId;
+    };
+
+    return {
+        mode: options.mode ?? 'tauri',
+        capabilities: options.bridge.capabilities,
+        async start(spec: SystemTaskSpec, continuation?: SystemTaskPromptContinuation,
+            startOptions?: Readonly<{ adoptExisting?: boolean }>): Promise<string> {
+            const parsedSpec = SystemTaskSpecSchema.parse(spec);
+            const scope = readThisComputerSetupScope(parsedSpec);
+            if (!scope) return startTask(parsedSpec, continuation);
+            if (activeSetupTask && setupStart) {
+                if (startOptions?.adoptExisting !== false && matchesThisComputerSetupScope(activeSetupTask.spec, scope)) return setupStart;
+                throw Object.assign(new Error('system_task_setup_in_progress'), {
+                    code: 'system_task_setup_in_progress',
+                });
+            }
+            activeSetupTask = { taskId: null, spec: parsedSpec };
+            setupStart = startTask(parsedSpec, continuation).catch((error: unknown) => {
+                if (activeSetupTask?.spec === parsedSpec) {
+                    activeSetupTask = null;
+                    setupStart = null;
+                    notifySetup();
+                }
+                throw error;
+            });
+            notifySetup();
+            return setupStart;
+        },
+        getActiveSetupTask() { return activeSetupTask; },
+        subscribeActiveSetupTask(listener: () => void) {
+            setupListeners.add(listener);
+            return () => { setupListeners.delete(listener); };
         },
         async cancel(taskId: string): Promise<void> {
             const record = tasks.get(taskId);

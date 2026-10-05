@@ -14,6 +14,7 @@ import {
   readActionInputOptionValue,
   readActionInputPath,
 } from '@happier-dev/protocol';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';
 import {
@@ -346,8 +347,8 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
     // The canonical Action input schema has already admitted this object. An
     // omitted optional dynamic field has no Account capability to revalidate.
     if (rawValue === undefined) continue;
-    const selected = readActionInputOptionValue(rawValue);
-    if (!selected || typeof selected === 'string') return actionFormUnavailable();
+    const selected = QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawValue));
+    if (!selected.success) return actionFormUnavailable();
     const authorization = resolveRegistryConnectedAccountActionFormPurposeAuthorization({
       registry: input.registry,
       qualifiedActionId: input.qualifiedActionId,
@@ -362,7 +363,7 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
         purpose: authorization.purpose,
         target: Object.freeze({
           kind: 'account' as const,
-          account: selected,
+          account: selected.data,
         }),
         serviceRefs: authorization.serviceRefs,
         signal: input.signal,
@@ -443,14 +444,14 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
 
     const rawValue = readActionInputPath(input.value, mapping.path);
     if (rawValue === undefined || rawValue === null) continue;
-    const selected = readActionInputOptionValue(rawValue);
-    if (!selected || typeof selected === 'string') return actionFormUnavailable();
+    const selected = QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawValue));
+    if (!selected.success) return actionFormUnavailable();
     try {
       bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
         purpose: authorization.purpose,
         target: Object.freeze({
           kind: 'account' as const,
-          account: selected,
+          account: selected.data,
         }),
         serviceRefs: authorization.serviceRefs,
         signal: input.signal,
@@ -510,14 +511,14 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
 
       const rawValue = readActionInputPath(currentSource.sourceConfig, mapping.path);
       if (rawValue === undefined || rawValue === null) continue;
-      const selected = readActionInputOptionValue(rawValue);
-      if (!selected || typeof selected === 'string') return historyGapSourceUnavailable();
+      const selected = QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawValue));
+      if (!selected.success) return historyGapSourceUnavailable();
       try {
         bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
           purpose: authorization.purpose,
           target: Object.freeze({
             kind: 'account' as const,
-            account: selected,
+            account: selected.data,
           }),
           serviceRefs: authorization.serviceRefs,
           signal: input.signal,
@@ -675,7 +676,7 @@ export function deriveRegistryConnectedAccountPurposeAuthorizations(
 
   for (const target of registry.activationTargets) {
     const addReferencedRequests = (
-      family: 'actions' | 'hooks' | 'backgroundServices',
+      family: 'actions' | 'hooks' | 'backgroundServices' | 'resources',
       localId: string,
       requestIds: readonly string[] | undefined,
     ): void => {
@@ -710,6 +711,9 @@ export function deriveRegistryConnectedAccountPurposeAuthorizations(
     }
     for (const hook of target.manifest.contributes.hooks) {
       addReferencedRequests('hooks', hook.id, hook.hostAccess);
+    }
+    for (const resource of target.manifest.contributes.resources) {
+      addReferencedRequests('resources', resource.id, 'hostAccess' in resource ? resource.hostAccess : undefined);
     }
     for (const backgroundService of target.manifest.contributes.backgroundServices) {
       addReferencedRequests('backgroundServices', backgroundService.id, undefined);

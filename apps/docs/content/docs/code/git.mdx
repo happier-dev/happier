@@ -101,6 +101,76 @@ refresh.
 Choose **Retry refresh** to reload repository status and history. This retries
 the read operation; it does not create another commit.
 
+### Hook, staging and uncertain outcomes
+
+In the unreleased 0.3 development writer, scoped commits preserve staging intent
+through a private candidate and a protected live-index reconciliation. A moved
+branch/HEAD or incompatible staged content stops publication; refresh and review
+the current state before accepting a new commit. Normal hooks and configured
+signing still run. A hook that changes selected content requires explicit
+inclusion rather than silently expanding your commit. A rewritten message is
+reported as the actual committed message.
+
+A failure after publication can still mean the commit exists. Happier retains
+its known SHA when a post-commit hook, index reconciliation or later refresh
+fails. An unresolved outcome stays unconfirmed. Refresh or reconcile before
+creating another commit; a failed response is not permission to retry it.
+
+Older POSIX Git can still run executable hooks. Git below 2.40 refuses the cases
+that need a staged-content merge to preserve your staging, with a conflict rather
+than a reset. Pre-2.36 Git for Windows cannot use this hook path. These branches
+do not establish support certification for every old Git/platform combination.
+
+## Propose a sequence of commits
+
+<Callout type="info">
+  Commit proposals and sequential application are **unreleased 0.3 development
+  behavior**. The source and UI owners are implemented; the composed live journey
+  is still awaiting verification. Git writes retain the existing experimental
+  Source control operations setting and approval policy, and the machine backend
+  must support safe proposal application.
+</Callout>
+
+Open a **Pending changes** comparison and choose **Propose commits** or **Commits**.
+If no proposal exists, choose an offered model and **Propose commits** inside
+Commits. Opening the destination does not generate. If a saved walkthrough of
+the same pending comparison exists, this adds the proposal to that saved result
+instead of creating a separate explanation. Generating or selecting a proposal
+makes no Git commit. Session, turn, branch, commit and PR comparisons cannot
+authorize commits in your current checkout.
+
+Review the ordered groups, edit a message, reorder or merge groups, and use a
+change's move menu to put it in another group, a new group or **Leave out of these
+commits**. Left-out work stays pending. An empty group blocks creation until you
+move work into it or merge it away. In Git's list or tree view, selecting a proposal
+highlights its changes; selecting it again or choosing Open opens that group in
+Commits. Ordinary staging retains its meaning.
+
+**Discard proposal** removes a proposal-only saved result after confirmation,
+without changing pending files. When the result also holds a summary or walkthrough,
+Discard removes only the proposal as a revisioned edit, with Undo available, and
+preserves the other output. Discard is unavailable while application is active or
+after a commit has landed.
+**Regenerate** captures current pending changes and requests a fresh proposal;
+it does not apply the old one.
+
+Choose **Create N commits** to accept the current revision, messages, exact
+selections and repository base. Editing pauses during application. The machine
+creates one commit at a time through the ordinary writer, with hooks and signing.
+Each successful commit builds on the preceding verified tree. This operation
+does not push or rewrite earlier commits.
+
+If a hook adds or changes content, inspect the displayed changes and choose
+**Include the hook’s changes** (**Include and commit** on phone) or cancel that
+commit. Another hook expansion needs another explicit decision.
+**Stop after this commit** allows the active commit to settle and
+starts no next group. A later failure leaves earlier commits in place and shows
+their SHAs, the stopped step and remaining work. Signing failure before the first
+publication creates none. HEAD/source movement requires refreshed evidence and
+fresh acceptance of the remaining work. An unknown outcome must be resolved
+before continuing; recovery does not automatically replay a commit or resume
+the remaining sequence.
+
 ## Remote operations
 
 The remote-actions area covers routine network operations without leaving the session.

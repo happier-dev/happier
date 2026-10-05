@@ -2323,7 +2323,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         notifications.push(event);
         await dispatchConnectedServiceAutomaticQuotaResetNotificationAsync({
           settings: accountSettingsParse({ attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: true } } } }), event, dedupeWindowMs: 0,
-          expoPushSender: { sendToAllDevicesAsync: async (_title, _body, data) => { pushDeliveries.push(data); } },
+          expoPushSender: { sendToAllDevicesAsync: async (_title, _body, data) => { if (data) pushDeliveries.push(data); return true; } },
         });
         // A pending delivery boundary must not hold quota refresh or the result.
         if (recoveryMode === 'enumerated') await new Promise<void>(() => {});

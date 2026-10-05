@@ -9,6 +9,7 @@ import type {
     PluginUiTargetedContributionContributorV1,
     PluginUiTargetedContributionOperationV1,
     RenderSurface,
+    SessionStateV1,
 } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -21,7 +22,7 @@ import {
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     listTriageEntries,
@@ -51,6 +52,7 @@ import {
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
+import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
@@ -169,6 +171,9 @@ function createHarness(options: Readonly<{
     repositories?: Readonly<Record<string, TriageEntryRepositoryRefV1>>;
     /** Holds the project registry at its boundary until the mounted request is cancelled. */
     deferProjectsRead?: boolean;
+    sessionStates?: Record<string, SessionStateV1 | null>;
+    /** A Collection transport outage after an earlier successful mounted read. */
+    sessionLinkReadFails?: () => boolean;
 }> = {}) {
     const kindId = options.kindId ?? 'pull-request';
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
@@ -190,7 +195,13 @@ function createHarness(options: Readonly<{
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     const collectionsById = new Map<string, unknown>([
         ['source-instances', collections.sourceInstances],
-        ['session-links', collections.sessionLinks],
+        ['session-links', {
+            ...collections.sessionLinks,
+            query: async (...args: Parameters<typeof collections.sessionLinks.query>) => {
+                if (options.sessionLinkReadFails?.()) throw new Error('Session links unavailable');
+                return await collections.sessionLinks.query(...args);
+            },
+        }],
         ['user-marks', collections.userMarks],
     ]);
     const dataClient = {
@@ -416,6 +427,7 @@ function createHarness(options: Readonly<{
 
     return {
         collections,
+        sessionStates: options.sessionStates ?? {},
         dataClient,
         executeAction,
         newSessionSeeds,
@@ -455,7 +467,9 @@ async function mountShell(
     const locations: string[] = [];
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     const surfaceWithDataClient: RenderSurface = (context) => cloneElement(
-        renderShellSurface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>,
+        // This visible semantic mount supplies the same host activity fact as
+        // the real surface; the generic testkit RenderContext omits it.
+        renderShellSurface({ ...context, activity: { active: true } }) as ReactElement<{ dataClient?: PluginUiDataClient }>,
         { dataClient: harness.dataClient },
     );
     let fixture!: PluginUiTestkit;
@@ -472,6 +486,8 @@ async function mountShell(
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
+                readSession: ({ sessionId }) => harness.sessionStates[sessionId] ?? null,
+                watchSession: () => undefined,
                 executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
                 openNewSession: async ({ request, preparedReviewWorkspace }) => {
                     harness.newSessionSeeds.push(request);
@@ -634,6 +650,78 @@ async function chooseBulkAction(shell: PluginUiTestkit, label: string): Promise<
 }
 
 describe('selecting several PRs & Issues rows', () => {
+    it('groups linked working Sessions live without opening a detail', async () => {
+        const working: SessionStateV1 = {
+            sessionId: 'working-session', lifecycle: 'active', runtime: 'working',
+            operational: 'working', pendingPermissions: [],
+            workStatus: { bucket: 'working', tone: 'neutral', word: 'Working' },
+        };
+        const harness = createHarness({ sessionStates: { 'working-session': working } });
+        await linkEntryToSession({
+            collections: harness.collections,
+            entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+            sessionId: 'working-session',
+            display: { locator: testkitLocator(), scopeLabel: 'example/repository' },
+            nowMs: 1,
+        });
+        const { shell, locations } = await mountShell(harness);
+        await vi.waitFor(async () => {
+            await act(async () => { await Promise.resolve(); });
+            expect(document.body.textContent).toContain('With an agent');
+        });
+        expect(rowNamed('Replace the duplicated normalizer')).toBeDefined();
+        expect(locations).toEqual([]);
+
+        harness.sessionStates['working-session'] = {
+            ...working, runtime: 'idle', operational: 'ready',
+            workStatus: { bucket: 'idle', tone: 'neutral', word: 'Ready' },
+        };
+        await act(async () => { shell.invalidateSession('working-session', `sha256:${'2'.repeat(64)}`); });
+        await vi.waitFor(async () => {
+            await act(async () => { await Promise.resolve(); });
+            expect(document.body.textContent).not.toContain('With an agent');
+        });
+        expect(rowNamed('Replace the duplicated normalizer')).toBeDefined();
+    });
+
+    it('retains known working groups during a link read failure and recovers through explicit retry', async () => {
+        let unreachable = false;
+        const harness = createHarness({
+            sessionLinkReadFails: () => unreachable,
+            sessionStates: { 'working-session': {
+                sessionId: 'working-session', lifecycle: 'active', runtime: 'working',
+                operational: 'working', pendingPermissions: [],
+                workStatus: { bucket: 'working', tone: 'neutral', word: 'Working' },
+            } },
+        });
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' };
+        await linkEntryToSession({
+            collections: harness.collections, entryRef, sessionId: 'working-session',
+            display: { locator: testkitLocator(), scopeLabel: 'example/repository' }, nowMs: 1,
+        });
+        const { shell } = await mountShell(harness);
+        await vi.waitFor(async () => {
+            await act(async () => { await Promise.resolve(); });
+            expect(document.body.textContent).toContain('With an agent');
+        });
+
+        unreachable = true;
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Refresh' })); });
+        await vi.waitFor(async () => {
+            await act(async () => { await Promise.resolve(); });
+            expect(document.body.textContent).toContain('Some linked Session activity could not be read.');
+        });
+        expect(document.body.textContent).toContain('With an agent');
+
+        unreachable = false;
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
+        await vi.waitFor(async () => {
+            await act(async () => { await Promise.resolve(); });
+            expect(document.body.textContent).not.toContain('Some linked Session activity could not be read.');
+        });
+        expect(document.body.textContent).toContain('With an agent');
+    });
+
     it('enters the same selection mode from touch without opening a detail', async () => {
         const { locations } = await mountShell(createHarness());
         const before = locations.length;

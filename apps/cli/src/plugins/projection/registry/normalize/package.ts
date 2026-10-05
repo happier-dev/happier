@@ -9,6 +9,9 @@ import type {
   PluginExecutionRunProfileContributionV2,
   PluginRoleDeclarationV1,
   PluginWorkflowContributionV1,
+  PluginInputTypeContributionV1,
+  PluginDragSourceContributionV1,
+  PluginDropTargetContributionV1,
   PluginEventContributionV1,
   PluginHookContributionV2,
   PluginMcpDiscoverySourceContributionV1,
@@ -108,6 +111,10 @@ export type PluginOwnedUiRendererContribution = PluginOwnedContribution<PluginUi
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
 }>;
 
+export type PluginOwnedClientExecutableContribution<T> = PluginOwnedContribution<T> & Readonly<{
+  generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
+}>;
+
 export type PluginOwnedVoiceProviderContribution = PluginOwnedContribution<VoiceProviderContribution> & Readonly<{
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
 }>;
@@ -164,6 +171,9 @@ export type PluginContributionRegistry = Readonly<{
   executionRunProfiles: readonly PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[];
   roles: readonly PluginOwnedContribution<PluginRoleDeclarationV1>[];
   workflows: readonly PluginOwnedContribution<PluginWorkflowContributionV1>[];
+  inputTypes: readonly PluginOwnedContribution<PluginInputTypeContributionV1>[];
+  dragSources: readonly PluginOwnedClientExecutableContribution<PluginDragSourceContributionV1>[];
+  dropTargets: readonly PluginOwnedClientExecutableContribution<PluginDropTargetContributionV1>[];
   mcpServers: readonly PluginOwnedContribution<PluginMcpServerContributionV1>[];
   mcpDiscoverySources: readonly PluginOwnedContribution<PluginMcpDiscoverySourceContributionV1>[];
   scmHostingProviders: readonly PluginOwnedContribution<ScmHostingProviderContribution>[];
@@ -406,6 +416,9 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const executionRunProfiles: PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[] = [];
   const roles: PluginOwnedContribution<PluginRoleDeclarationV1>[] = [];
   const workflows: PluginOwnedContribution<PluginWorkflowContributionV1>[] = [];
+  const inputTypes: PluginOwnedContribution<PluginInputTypeContributionV1>[] = [];
+  const dragSources: PluginOwnedClientExecutableContribution<PluginDragSourceContributionV1>[] = [];
+  const dropTargets: PluginOwnedClientExecutableContribution<PluginDropTargetContributionV1>[] = [];
   const mcpServers: PluginOwnedContribution<PluginMcpServerContributionV1>[] = [];
   const mcpDiscoverySources: PluginOwnedContribution<PluginMcpDiscoverySourceContributionV1>[] = [];
   const scmHostingProviders: PluginOwnedContribution<ScmHostingProviderContribution>[] = [];
@@ -428,7 +441,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
     const semanticContributionsForPlugin = new Map<string, PluginOwnedSemanticContribution[]>();
     for (const catalogEntry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
       for (const rawDefinition of catalogEntry.readEntries(plugin.manifest.contributes)) {
-        const definition = catalogEntry.canonicalize(rawDefinition);
+        const definition = catalogEntry.canonicalize(rawDefinition, { pluginId: plugin.pluginId });
         if (!isRecord(definition)) continue;
         const introspection = catalogEntry.projectIntrospection(definition);
         const familyContributions = semanticContributionsByFamily.get(catalogEntry.manifestKey) ?? [];
@@ -1047,6 +1060,37 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
+    for (const definition of readSemanticDefinitions<PluginInputTypeContributionV1>('inputTypes')) {
+      inputTypes.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginDragSourceContributionV1>('dragSources')) {
+      dragSources.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+        ...(plugin.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: plugin.generatedUiArtifactsManifest } : {}),
+      });
+    }
+    for (const definition of readSemanticDefinitions<PluginDropTargetContributionV1>('dropTargets')) {
+      dropTargets.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+        ...(plugin.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: plugin.generatedUiArtifactsManifest } : {}),
+      });
+    }
+
     for (const definition of readSemanticDefinitions<VoiceModelPackContributionV1>('voiceModelPacks')) {
       voiceModelPacks.push({
         pluginId: plugin.pluginId,
@@ -1114,6 +1158,9 @@ export function buildPluginContributionRegistry(params: Readonly<{
     executionRunProfiles: Object.freeze(executionRunProfiles),
     roles: Object.freeze(roles),
     workflows: Object.freeze(workflows),
+    inputTypes: Object.freeze(inputTypes),
+    dragSources: Object.freeze(dragSources),
+    dropTargets: Object.freeze(dropTargets),
     mcpServers: Object.freeze(mcpServers),
     mcpDiscoverySources: Object.freeze(mcpDiscoverySources),
     scmHostingProviders: Object.freeze(scmHostingProviders),

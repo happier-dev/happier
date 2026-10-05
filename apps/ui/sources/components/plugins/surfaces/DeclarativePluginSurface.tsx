@@ -16,6 +16,7 @@ import {
     type HappierSelectOption,
 } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
+import { DragSource, DropTarget } from '@happier-dev/plugin-ui/components';
 import {
     HappierUiEnvironmentProvider,
     HappierUiPaletteProvider,
@@ -628,6 +629,11 @@ export function DeclarativePluginSurface(props: Readonly<{
      * can preserve it when an exact B mount later becomes unavailable.
      */
     renderTargetedSurface?: (node: RecordValue, fallback: React.ReactNode) => React.ReactNode;
+    /**
+     * The mounted page's declared widget areas (`widgetArea` nodes), drawn by the host's one area owner
+     * through this mount's area facade. Absent where the mount has none: the node renders nothing.
+     */
+    renderWidgetArea?: (input: Readonly<{ area: string; context: Readonly<Record<string, unknown>>; testID: string }>) => React.ReactNode;
     /** B's deliberately unsupported nested target reports through B's mount. */
     reportUnsupportedNestedTargetedSurface?: () => void;
     /** `content` stays inside its parent's existing document scroll owner. */
@@ -1383,6 +1389,29 @@ export function DeclarativePluginSurface(props: Readonly<{
         renderField,
         renderCollectionList,
         renderTargetedSurface,
+        renderWidgetArea(node) {
+            const area = typeof node.area === 'string' ? node.area : null;
+            const context = record(node.context) ?? {};
+            if (!area || !props.renderWidgetArea) return null;
+            return <React.Fragment key={String(node.path)}>{props.renderWidgetArea({ area, context, testID: `plugin-declarative-widget-area:${String(node.path)}` })}</React.Fragment>;
+        },
+        renderDragNode(node, children) {
+            const reference = record(node.kind === 'dragSource' ? node.source : node.target);
+            const identity = PluginContributionIdentityV1Schema.safeParse(reference?.identity);
+            if (!identity.success || reference?.occurrenceId !== occurrenceId || identity.data.pluginId !== props.pluginId
+                || reference?.qualifiedId !== buildQualifiedPluginContributionKey(identity.data)) return children;
+            const key = buildQualifiedPluginContributionKey(identity.data);
+            if (node.kind === 'dragSource') {
+                const value = PluginJsonValueV2Schema.safeParse(node.reference);
+                return value.success && admittedModel?.dragSources.has(key)
+                    ? <DragSource key={String(node.path)} sourceId={identity.data.localId} reference={value.data} organizing={node.organizing === true} testID={`plugin-declarative-drag-source:${String(node.path)}`}>{children}</DragSource>
+                    : children;
+            }
+            const value = node.input === undefined ? undefined : PluginJsonValueV2Schema.safeParse(node.input);
+            return admittedModel?.dropTargets.has(key) && (value === undefined || value.success)
+                ? <DropTarget key={String(node.path)} targetId={identity.data.localId} input={value?.success ? value.data : undefined} testID={`plugin-declarative-drop-target:${String(node.path)}`}>{children}</DropTarget>
+                : children;
+        },
     };
     const renderNode = (nodeValue: unknown) => renderDeclarativeNode(nodeValue, renderContext);
 

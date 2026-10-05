@@ -17,6 +17,7 @@ import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settin
 import { clearSessionListViewFilterRetentionForTests } from './search/useSessionListViewFilters';
 import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,6 +42,7 @@ const layoutMaxWidthStyle = vi.hoisted(() => ({ maxWidth: 1280 } as const));
 let mockPathname = '';
 let platformOs: 'ios' | 'android' = 'ios';
 let filteredListingEnabled = false;
+let previousRealStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState> | undefined;
 
 vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', () => ({
     useUniversalSearchRuntime: () => ({
@@ -385,22 +387,6 @@ installSessionShellCommonModuleMocks({
             }
             return next;
         };
-        const buildReachabilityRenderableMapForItems = (items: readonly any[] | null | undefined) => {
-            const next = new Map<string, any>();
-            for (const item of items ?? []) {
-                if (!item || item.type !== 'session') continue;
-                const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
-                const sessionId = typeof item.sessionId === 'string' ? item.sessionId.trim() : '';
-                if (!serverId || !sessionId) continue;
-                const row = resolveRowRenderableForTest(serverId, sessionId);
-                const key = buildSessionListServerScopedRowKey(serverId, sessionId);
-                if (row && key) next.set(key, {
-                    id: row.id,
-                    metadata: row.metadata,
-                });
-            }
-            return next;
-        };
         return createStorageModuleMock({
             importOriginal,
             overrides: {
@@ -459,7 +445,6 @@ installSessionShellCommonModuleMocks({
                     if (sessionId === 'sess_b') return sessionB as any;
                     return null;
                 },
-                useSessionListReachabilityRenderablesForItems: buildReachabilityRenderableMapForItems,
                 useSessionListRowRenderablesForItems: buildRowRenderableMapForItems,
                 useSessionListRowsByServerId: () => ({
                     server_a: {
@@ -626,17 +611,24 @@ let mockVisibleSessionListViewData: any[] = [
     },
 ];
 
-vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
-    useVisibleSessionListPaneState: () => ({
-        summary: {
-            sessionsReady: true,
-            sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
+vi.mock('@/hooks/session/useVisibleSessionListPaneState', async () => {
+    const { useSessionListFeatureHomeSupportByServerId } = await import('@/sync/domains/session/listing/useSessionListQuerySourceState');
+    return {
+        useVisibleSessionListPaneState: () => {
+            const folderSupport = useSessionListFeatureHomeSupportByServerId('sessions.folders', mockAllowedServerIds, true);
+            return {
+                summary: {
+                    sessionsReady: true,
+                    sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
+                },
+                visibleSessionListIndex: buildSessionListIndexFromViewData(mockVisibleSessionListViewData),
+                folderFeatureEnabledServerIds: mockAllowedServerIds.filter((serverId) => folderSupport[serverId] === true),
+                showLoading: false,
+                showEmptyState: false,
+            };
         },
-        visibleSessionListIndex: buildSessionListIndexFromViewData(mockVisibleSessionListViewData),
-        showLoading: false,
-        showEmptyState: false,
-    }),
-}));
+    };
+});
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),
@@ -679,7 +671,6 @@ function resetVisibleSessionListViewData(): void {
 }
 
 async function renderSessionsList(props: React.ComponentProps<typeof import('./SessionsList').SessionsList> = {}) {
-    await vi.resetModules();
     const { SessionsList } = await import('./SessionsList');
     return renderScreen(<SessionsList {...props} />);
 }
@@ -689,7 +680,6 @@ async function renderSessionsListWithSurfaceOwnership(surfaceOwnership: Readonly
     dataActive?: boolean;
     visible?: boolean;
 }>) {
-    await vi.resetModules();
     const { SessionsList } = await import('./SessionsList');
     return renderScreen(<SessionsList surfaceOwnership={surfaceOwnership} />);
 }
@@ -783,10 +773,25 @@ describe('SessionsList (native virtualization)', () => {
                 sess_b: sessionB,
             },
         };
+        const { storage: realStorage } = await import('@/sync/domains/state/storageStore');
+        previousRealStorageState = realStorage.getState();
+        realStorage.setState({ sessionListRowsByServerId: storageState.sessionListRowsByServerId });
+        const { resetServerFeaturesClientForTests, primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        primeServerFeaturesSnapshot({
+            serverId: 'server_a',
+            snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+                features: { sessions: { folders: { enabled: false } } },
+            }) },
+        });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         standardCleanup();
+        const { storage: realStorage } = await import('@/sync/domains/state/storageStore');
+        if (previousRealStorageState) realStorage.setState(previousRealStorageState, true);
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
     });
 
     it('preloads the transcript markdown runtime before a session is opened from the list', async () => {
@@ -1365,26 +1370,14 @@ describe('SessionsList (native virtualization)', () => {
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(0);
     });
 
-    it('wraps iOS rows in a full-row drag gesture without exposing a hidden reorder handle', async () => {
+    it('keeps iOS rows free of any drag gesture outside Organize mode, so scroll, swipe and long-press keep their meaning (K1)', async () => {
         const screen = await renderSessionsList();
 
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
-        expect(first.props.reorderHandleGesture).toBeUndefined();
-        expect(first.props.nativeInlineDragEnabled).toBe(true);
-
-        const nativeRowGestureDetectors = findRecordedGestureDetectors(screen);
-        expect(nativeRowGestureDetectors).toHaveLength(2);
-        expect(findGestureByKind(nativeRowGestureDetectors[0]?.props.gesture, 'pan')).toBeTruthy();
-        const nativeRowWrapper = expectPresent(
-            nativeRowGestureDetectors[0]?.children[0],
-            'expected native row gesture wrapper',
-        );
-        expect(typeof nativeRowWrapper).not.toBe('string');
-        if (typeof nativeRowWrapper === 'string') {
-            throw new Error('expected native row gesture wrapper element');
-        }
-        expect(String(nativeRowWrapper.type)).toContain('Animated.View');
-        expect(nativeRowWrapper.props.collapsable).toBe(false);
+        expect(first.props.dragEnabled).toBe(true);
+        expect(first.props.organizeMode).toBe(false);
+        expect(first.props.dragGripGesture).toBeUndefined();
+        expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
     });
 
     it('uses a plain row bounds wrapper on Android where full-row inline drag is disabled', async () => {
@@ -1398,29 +1391,22 @@ describe('SessionsList (native virtualization)', () => {
         }
         rowWrapper = expectPresent(rowWrapper, 'expected session row bounds wrapper');
 
-        expect(first.props.reorderHandleGesture).toBeUndefined();
-        expect(first.props.nativeInlineDragEnabled).toBeUndefined();
+        expect(first.props.dragGripGesture).toBeUndefined();
         expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
         expect(String(rowWrapper.type)).toBe('View');
         expect(rowWrapper.props.collapsable).toBe(false);
     });
 
-    it('opens the iOS native context menu immediately when the row long-press gesture activates', async () => {
+    it('opens the iOS native context menu when the row reports its long press (K1: the long press is the menu)', async () => {
         const screen = await renderSessionsList();
         const initialListProps = virtualizedListState.current?.props;
         expect(initialListProps).toBeTruthy();
         const initialRenderItem = initialListProps?.renderItem;
         const initialExtraData = initialListProps?.extraData;
-        const firstGesture = expectPresent(
-            findRecordedGestureDetectors(screen)[0]?.props.gesture,
-            'expected recorded native row gesture',
-        );
-        const longPress = findGestureByKind(firstGesture, 'longPress');
-
-        expect(longPress?.__handlers.onStart).toBeTruthy();
+        const row = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
 
         await act(async () => {
-            longPress?.__handlers.onStart?.({});
+            row.props.onNativeContextMenuOpenChange(true);
         });
 
         const open = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
@@ -1440,19 +1426,14 @@ describe('SessionsList (native virtualization)', () => {
     it('suppresses iOS native context menu activation while the native list is being scrolled', async () => {
         const screen = await renderSessionsList();
         const listProps = virtualizedListState.current?.props;
-        const firstGesture = expectPresent(
-            findRecordedGestureDetectors(screen)[0]?.props.gesture,
-            'expected recorded native row gesture',
-        );
-        const longPress = findGestureByKind(firstGesture, 'longPress');
+        const row = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
 
         expect(typeof listProps?.onScrollBeginDrag).toBe('function');
         expect(typeof listProps?.onScrollEndDrag).toBe('function');
 
         await act(async () => {
             listProps?.onScrollBeginDrag?.();
-            longPress?.__handlers.onBegin?.({});
-            longPress?.__handlers.onStart?.({});
+            row.props.onNativeContextMenuOpenChange(true);
         });
 
         const suppressed = expectPresent(
@@ -1463,8 +1444,7 @@ describe('SessionsList (native virtualization)', () => {
 
         await act(async () => {
             listProps?.onScrollEndDrag?.();
-            longPress?.__handlers.onBegin?.({});
-            longPress?.__handlers.onStart?.({});
+            row.props.onNativeContextMenuOpenChange(true);
         });
 
         const opened = expectPresent(
@@ -1514,25 +1494,24 @@ describe('SessionsList (native virtualization)', () => {
         expect(stillOpen.props.nativeContextMenuOpen).toBe(true);
     });
 
-    it('disables native inline drag affordances when ordering mode is not custom', async () => {
+    it('keeps the native date-ordered carry source free of gestures outside Organize mode', async () => {
         sessionListOrderingModeV1 = 'updated';
 
         const screen = await renderSessionsList();
 
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
-        expect(first.props.reorderHandleGesture).toBeUndefined();
-        expect(first.props.nativeInlineDragEnabled).toBe(false);
+        expect(first.props.dragEnabled).toBe(true);
+        expect(first.props.dragGripGesture).toBeUndefined();
         expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
     });
 
-    it('keeps Android session rows on the shared drag handle without native inline context menus', async () => {
+    it('keeps Android session rows free of drag gestures and native inline context menus outside Organize mode', async () => {
         platformOs = 'android';
 
         const screen = await renderSessionsList();
 
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
-        expect(first.props.reorderHandleGesture).toBeUndefined();
-        expect(first.props.nativeInlineDragEnabled).toBeUndefined();
+        expect(first.props.dragGripGesture).toBeUndefined();
         expect(first.props.nativeContextMenuOpen).toBeUndefined();
         expect(first.props.onNativeContextMenuOpenChange).toBeUndefined();
         expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
@@ -1629,7 +1608,10 @@ describe('SessionsList (native virtualization)', () => {
         ));
         await screen.update(<SessionsList />);
 
-        expect(virtualizedListState.current?.props?.extraData).toBe(initialExtraData);
+        const nextExtraData = virtualizedListState.current?.props?.extraData;
+        const changedKeys = Object.keys(initialExtraData ?? {}).filter((key) =>
+            !Object.is(initialExtraData[key], nextExtraData?.[key]));
+        expect(nextExtraData, `Changed row inputs: ${changedKeys.join(', ')}`).toBe(initialExtraData);
     });
 
     it('invalidates mounted native rows when a row presentation setting changes', async () => {
@@ -1688,11 +1670,11 @@ describe('SessionsList (native virtualization)', () => {
             server_a: serverRows,
         };
 
-        await vi.resetModules();
         const {
             registerExternalSessionStatusDemandTransport,
             resetExternalSessionStatusDemandCoordinatorForTests,
         } = await import('@/sync/runtime/orchestration/externalSessions/externalSessionStatusDemandCoordinator');
+        resetExternalSessionStatusDemandCoordinatorForTests();
         const emitStatusDemand = vi.fn();
         const statusDemandTransport = registerExternalSessionStatusDemandTransport(
             'server_a',
@@ -1810,6 +1792,10 @@ describe('SessionsList (native virtualization)', () => {
                 },
             },
         };
+        const { storage: realStorage } = await import('@/sync/domains/state/storageStore');
+        await act(async () => {
+            realStorage.setState({ sessionListRowsByServerId: storageState.sessionListRowsByServerId });
+        });
         await screen.update(<SessionsList />);
 
         expect(virtualizedListState.current?.props?.data).toBe(initialData);
@@ -1818,6 +1804,14 @@ describe('SessionsList (native virtualization)', () => {
 
     it('keeps row move action props stable when an equivalent session-list refresh only replaces data objects', async () => {
         platformOs = 'android';
+        exactHomeCredentialAccounts.set('server_a', 'account-a');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({
+            serverId: 'server_a',
+            snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+                features: { sessions: { enabled: true, folders: { enabled: true } } },
+            }) },
+        });
         mockVisibleSessionListViewData = mockVisibleSessionListViewData.map((item) => (
             item.type === 'session'
                 ? {

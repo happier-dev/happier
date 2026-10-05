@@ -60,11 +60,40 @@ JavaScript runtime requirement. Legacy Windows consoles retain readable text.
 The animated step spinner uses Braille in capable terminals; redirected,
 no-animation and dumb-terminal output stays linear.
 
-Voice and onboarding tokens, and the website hero scrim, consume that same
-owner's existing-artwork projections. Their current orb gradients and raster
-artwork remain unchanged; moving to a dot-rendered app or website is separate
-design work. The terminal breath and the existing artwork breath are distinct
-projection recipes, not competing model owners.
+Voice's dot microphone/planet projection consumes this same Brand owner through
+the UI's native Skia and web canvas adapters. Its atmosphere follows actual microphone/output levels;
+production silence does not synthesize a breathing level. Terminal choreography
+keeps its existing recipe. Onboarding artwork and the website hero scrim remain
+consumers of the Brand artwork tokens.
+
+### Voice conversations and speech (0.3 development)
+
+The UI's admitted Voice attempt owns its Account, Home, exact conversation/session
+binding and microphone lifecycle. Top bar, Island, Orb, composer and Companion
+consume the same attempt-control projection. Changing a container or navigating
+does not change the authority for End, Retry or a submitted input. Dictation is a
+separate input purpose: it returns editable draft text without sending a turn.
+
+Local conversation Agent work uses the daemon-backed Agent/session owner on the
+canonical execution machine. `voice/settings/executionMachine.ts` owns initial
+Automatic selection, the Account's sticky machine and explicit fixed selection;
+an unreachable selected machine produces recovery rather than silent failover.
+Model Provider configuration remains in the ordinary Agent/Provider selection
+seam, including migrated predecessor direct-chat settings. There is no second
+Voice-owned HTTP chat runtime.
+
+Speech capture and inference retain their existing application/attempt authority.
+Binary speech grants authorize the speech application, not a TCP destination port;
+see [peer mediation](peer-mediation.md).
+Semantic output segmentation and character/UTF-8 budgets are owned by the shared
+Protocol speech policy and the selected provider's declaration, described in
+[plugin platform](plugin-platform.md#batch-speech-output-03-development).
+
+Voice may describe a pending permission under the current sharing policy. Spoken
+approval cannot decide it: the canonical permission UI owns the tap, and End leaves
+pending requests reachable. Android's ongoing microphone notification opens the
+app; it does not own conversation state. The existing iOS Focus activity is
+session-attention delivery. A dedicated Voice Live Activity remains deferred.
 
 ### Local-service Machine summary (0.3 development)
 
@@ -124,6 +153,17 @@ Agent reads and verdict writes may target their own Session or a currently reada
 This is the current development contract, not a released availability claim. Automatic E2EE materialization is not verified: the current mutation transport seals the event but does not seal raw finding body/snapshot request fields, which the server rejects only after receipt. The canonical encrypted create/read transport must be completed before this path is usable for E2EE Accounts. Package and loaded-runtime validation of the integrated review path is still pending.
 
 ### Execution result ownership (0.3 development)
+
+SCM explanations have one saved machine result, separate from the disposable
+analysis cache and personal Account-KV reviewed marks. Capture/generate Actions
+resolve authenticated source evidence before admitting a retained analysis Run;
+read/edit/refine/Undo and accepted commit progress use that result's revision
+owner. Review narration publishes through the same store after findings, without
+replacing ReviewComment's disposition authority. The Git plugin owns ordinary,
+stacked and accepted-plan publication; CLI checkpoints share only temporary-index
+mechanics. [SCM comparisons and walkthroughs](scm-diff-summary.md) owns the detailed
+source, coverage, persistence, Git-version and truthful recovery contracts and
+names the unfinished UI/live integration.
 
 `workflow.run.wait` parks in the shared Account Run Action owner. The CLI uses
 the existing user-scoped Account socket; the UI uses its captured Home Account
@@ -192,8 +232,14 @@ declares Execution Run completion additionally retains its immediate output and
 every launched Run id before native observation. Live completion and recovery
 consume Protocol's Action completion owner, not get/wait Actions. Lost invoke
 responses remain uncertain and replay never invokes the Action again. Typed
-terminal output is checked against the frozen schema. The current adapter accepts
-host catalog Actions; qualified contributed Action preparation remains unbound.
+terminal output is checked against the frozen schema. The exact-machine
+materialization host reads host catalog contracts through its host adapter and
+qualified contributed Action schemas through `daemon.plugins.actions.schemas.read`,
+bound to the merged catalog's current `occurrenceId`. Missing, unavailable, stale
+or output-schema-less contributions fail preparation. This schema path is
+implemented; it is not proof that every qualified Action is executable as a
+Workflow leaf or has an Execution Run completion declaration. The one-shot
+executor and completion owner still decide invocation and terminal settlement.
 Proven pre-invoke validation failures, prepared refusals and finished typed Action
 failures are ordinary failed leaves that `collect_outcomes` can collect. For a
 declaring Action, a typed terminal failure is collectable only after native
@@ -352,6 +398,14 @@ Native SCM credential selection, connection creation/reuse and principal resolut
 stay with that owner. The binding is also the Session↔PR link: the Protocol
 trigger read receives the Channels projection of distinct selections in binding
 creation order through `session.trigger.list`, including retained disabled links.
+That read lists ordinary scoped trigger sets even when the PR-link reader is
+unavailable or rejects the request. Its `pullRequestLinks` result is either the
+successful link array (which may be empty) or
+`{ status: 'unavailable', code: 'target_unavailable' }`; failures never become an
+empty link array. Both CLI and UI consume this result from the Protocol executor,
+while caller cancellation and ordinary Session authorization failures still
+reject the overall read. The Session UI keeps ordinary rows usable and offers
+a separate retry for the unavailable links.
 A successful `scm.pullRequest.openOrReuse` with an origin Session writes through the
 same binding owner; an originless call writes no link. Replay rejoins the existing
 binding. Removing a trigger disables its ingress binding while retaining the link.
@@ -471,6 +525,16 @@ The Agent/MCP catalog derives the direct `workflow_run_start`,
 `workflow_run_get`, `workflow_run_wait`, and `workflow_run_cancel` tools from
 those same Action bindings. All other Workflow operations remain discoverable
 through generic Action discovery/execution, with the same policy and errors.
+
+Development Plan review recovery compares the child Run's authenticated
+`authoredDefinition` from `workflow.run.get` with the held proposal through
+`matchesWorkflowAcceptedDefinitionV1`, the same normalized source comparison
+used by start rejoin. A different earlier proposal is disclosed instead of
+attached to Use; running the new proposal uses its own derived admission id
+through the existing seeded editor. The Account review owner also refuses a
+`run_started` follow-up whose child's authored definition differs from the
+accepted review value. The materialized execution definition remains a separate
+read projection, and no second proposal store or admission transaction is added.
 
 In development, Session MCP Account Actions use the existing authenticated
 `/agent-runtime/session/services/v1` channel to their own daemon. Account
@@ -715,10 +779,22 @@ an installed preference, or uses the existing at-login default for a new termina
 `--keep-disabled` still preserves a disabled service during repair rather than activating it.
 `daemon status --json` reports `service.autostart` from platform enablement and triggers, or `null`
 when the service is absent or the manager cannot be queried.
+Windows user tasks use the invoking user's SID in both the principal and the logon trigger, with
+`InteractiveToken` and `LeastPrivilege`; registration needs no password or all-users logon trigger.
+On-demand tasks register no trigger and omit missed-start catch-up. The existing task namespace,
+hidden PowerShell wrapper, service policy, and explicit Run lifecycle remain the same.
 
 The desktop status task publishes `serviceAutostart` from one common-mode fact:
 every desktop-managed service in this Happier home and ring, independent of the requested Home.
 An unreadable inventory fails with `service_inventory_unavailable`, and an unknown/mixed mode yields `null`.
+The shared `discoverHappierServices` owner supplies both the CLI's installed-service projection and
+Home lifecycle discovery. It reports named Happier definition read failures, and on Windows it
+enumerates Scheduler tasks even without a wrapper directory. A registered task with a missing
+wrapper remains an installed candidate; failed task inspection requires a successful fresh listing
+before disappearance can be inferred. A readable definition remains an installed repair target when
+its Scheduler registration is absent.
+Home disconnect refuses an unverified matching pin before uninstall; an installed candidate found
+after uninstall also prevents the Home from being forgotten.
 The requested Home does not redefine the global preference. Individual service modes remain in
 the existing inventory entries. Successful service controls refresh the same row/status projection.
 The status owner calls the shared `readDaemonServiceInventory`; there is no separate
@@ -786,6 +862,20 @@ note by the item's machine identity, including this computer, on both the full U
 the grouped popover. A grouped note describes only the CLI included in that row's action, not
 unrelated updates on the machine.
 
+In the current development UI, an explicit Update all or group press gives the already-discovered
+plan to the shared in-memory update-action owner (`machineUpdateRuns`), scoped to its initiating
+server and account. The Updates page and popover adopt its progress and Stop intent after navigation;
+detail discovery remains lazy. Disjoint machine groups may run concurrently, but overlapping plans
+cannot start a second batch. Stop prevents subsequent items without cancelling work already started.
+The existing helper → agent → CLI order remains per machine, and all started branches settle before
+the batch is released, including failures. This state is not persisted across app restarts.
+
+Queued "this computer" CLI actions retain their planned task spec, server/account scope and machine
+identity. Switching Home or account does not redirect the update, its original-Home status reread or
+its completion attribution; the reread replaces shared status only while that initiating scope is
+still active. Newly planned actions rebuild their context when the canonical Home snapshot changes,
+including an endpoint refresh, while callbacks already queued retain their original context.
+
 **Remote.** The daemon's `tool.systemTasks` capability lists `cli.update.v1` only when
 `canUpdateRemotely` (presence = capability; older daemons never list it). The kind starts
 `self update` detached from the daemon's own binary (output to `logs/cli-update-<ms>.log`) and answers
@@ -824,11 +914,24 @@ in that relay's lifecycle directory (`--server` alone replaces the URL/profile s
 lifecycle scope). The SSH enrollment approval (`auth approve --home-target-from-request-json`) already
 binds its credentials to the Home target the request names.
 
+In current 0.3 development, `home pair-device` also accepts an authenticated
+URL-only profile retained from 0.2 or created by Stack auth seeding. The shared
+terminal enrollment carrier verifies its selected HTTPS or loopback origin;
+the authenticated features projection supplies the complete Home descriptor.
+`serverProfiles.adoptServerProfileHomeConnectionDescriptor` persists it on that
+same immutable profile before pairing starts. Public fallback observations,
+inconsistent Home identities and existing advisory profiles cannot authorize
+pairing. Stack seeding does not manufacture a descriptor or copy routing trust
+from another Home.
+
 In the current 0.3 development UI, the system-task runner retains setup prompt answering after
 navigation. Reopening adopts that run only for its initiating Home and account; an initially
 identity-free Home uses the canonical saved-profile URL resolution, with ambiguous matches refused.
-Settings shares launch, task, error and post-success inspection state through the local daemon
-owner. Its status readback keeps the setup spec's original URL and backend identity (including an
+The same runner admits pending and running setup across Home, checklist and Settings, so a second
+same-scope start adopts rather than launches another task. Enrollment owns cancellation on leave
+and requests a non-adopting start; an existing setup is refused, never borrowed and cancelled.
+Settings adopts the runner's activity; the local daemon owner retains only outcomes and post-success
+inspection. Its status readback keeps the setup spec's original URL and backend identity (including an
 originally absent identity), while publication checks the current Home's canonical profile
 equivalence and account. Before pairing is sealed or posted, the explicit Home credential's token
 subject must match the initiating account. A failed retained prompt continuation emits a default-on
@@ -901,6 +1004,24 @@ user `Path`; desktop setup never rewrites the terminal's own default-following s
 **Manage** a user service installed by the old CLI keeps its launcher until it is reinstalled.
 
 ### Default-following and pinned services on one server
+
+For a terminal install of a pinned service, use
+`happier --server <profile-id> service install --instance <service-id> --autostart on-demand --json`.
+`--server` is a root prefix flag and selects the saved Home profile; `--instance` names the service
+and does not select a profile. The service id may differ from the profile id. Address later service
+status/start/stop/restart commands with the same prefix and instance. If the caller inherits a
+`HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID` for another Home, clear it before invoking this command: the
+root profile selector updates endpoint/profile selectors, but not the inherited lifecycle scope.
+
+In current development source, status attributes an installed service to this Happier home only
+when its definition declares the same home. A default label, systemd unit or scheduled-task name
+is global to the OS user and ring; finding that name alone does not establish ownership. On Windows,
+the registered task's wrapper decides before a candidate wrapper in the invoking home. Foreign or
+unknown homes report no installed service or autostart mode here. Targeted start, stop, restart and
+uninstall fail with `foreign_home_service` before changing definitions or OS jobs. Raw inventory
+retains foreign services for diagnostics and install-conflict reporting. The desktop's aggregate
+controls consume only this home's installed managed identities, so a running manual daemon cannot
+authorize stopping a foreign default service.
 
 A daemon's lock is per Happier home and server, so one server has one owner. When the server the
 default-following service follows has this home's pinned service (for example after a terminal
@@ -1074,6 +1195,14 @@ package scripts. Terminal URL discovery reuses the existing output detector and
 `terminal_url` inventory. These are development-source contracts; the redesigned
 strip, list, Jump and phone controls require the terminal UI integration.
 
+The development permission-mode controller verifies the current composer footer
+before cycling modes. A clipped footer is unknown, rather than evidence of default
+mode; historical mode text above the composer is not authoritative. Legacy mode
+labels and compact HUD labels share that parser. If the footer is hidden by a short
+terminal, control waits without cycling blindly; enlarging the terminal restores
+verification through the existing retry path. Pending prompts still wait for their
+required runtime configuration to be verified.
+
 The development parser distinguishes Claude's automatic usage-limit wait footer
 from the interactive usage-limit chooser. An empty composer still accepts a new
 prompt, as Claude permits during the wait. Clearing an owned leftover draft with
@@ -1113,7 +1242,16 @@ attachments without ending their live controller or automatically reopening a cl
 Controller recovery distinguishes these optional clients from session-bearing hosts:
 the former can be disposed before continuation, while the latter retain their existing
 control and recovery fences. Borrowed shells are never destroyed by this owned-host
-supervision.
+supervision. Existing-session continuation leaves the optional client remote until an
+explicit Attach request. After that client has retired, Stop still requires positive
+daemon ownership and current OS process-identity proof before terminating its headless
+runner; a missing session-bearing host remains fenced.
+
+For an optional presenter, normal runner exit retains marker evidence only while an
+owned or legacy terminal descriptor is current, or custody cannot be read reliably.
+Verified absence and borrowed-shell custody release the marker after terminal-finality
+and exit staging complete. The initial attachment's historical publication is not
+current custody; unexpected daemon recovery retains its separate existing policy.
 
 The daemon's `spawn/routeSpawnModeAndWaitForWebhook.ts` keeps headless ACP runtimes
 headless and routes supported interactive runners into the selected host.
@@ -1125,6 +1263,11 @@ Initial native configuration options combine persisted metadata and launch prefe
 through the canonical configuration-intent writer and snapshot reader, preserving
 per-option timestamp precedence. Initial model selection already uses the canonical
 public model-selection resolver; it is not a separate terminal-host selector.
+Permission startup uses one shared seed-admission owner for the prompt loop and
+runtime override synchronization. A saved mode is applied before eager native
+startup even when its timestamp was already captured while building the queue.
+Subsequent metadata changes still require a strictly newer timestamp; explicit
+launch permission intent keeps its existing precedence.
 Codex App Server and OpenCode server prepare their native TUI attachment against
 the existing Agent session, rather than starting another conversation.
 
@@ -1192,6 +1335,22 @@ endpoint and artifacts. The host receipt alone does not establish native identit
 an authenticated primary hook or statusline observation must match the requested
 native session, followed by the existing transcript admission. This is distinct
 from a fresh resume launch and does not synthesize a SessionStart hook.
+The selected runtime's existing presentation result also declares whether it can
+adopt a retained terminal. The daemon delegates an absent controller to that
+recovery path only with its attachment-bound control descriptor and an affirmative
+runtime declaration. Claude unified declares adoption; SDK and optional native
+clients do not. Missing descriptors, uncertain liveness and changed attachments
+remain fenced. This declaration permits endpoint admission, not a fresh provider
+launch or a claim that authenticated recovery has already completed.
+For this admitted headless continuation, startup preserves the exact active owned
+association instead of publishing the controller's plain placement over it. It
+leaves both current and supported predecessor attachment records untouched and
+does not bind or report the old host as live before final adoption. Missing,
+unreadable or mismatched active custody fails before the startup metadata update.
+An owned attachment without a matching Session terminal association is likewise
+refused rather than overwritten by the controller's plain placement.
+Fresh placement, borrowed hosts and canonically retired associations retain their
+ordinary startup behavior.
 
 Cold Herdr attachment verifies the recorded standard saved namespace through the
 native session inventory before starting that same server. It uses the existing
@@ -1281,8 +1440,19 @@ controller is positively absent. A restored command already inside that exact
 pane, socket and namespace continues through ordinary same-Session resume even
 when relay activity is stale; a present or unreadable controller retains normal
 attachment admission. The pane record is placement intent, not Session identity
-or owned-host custody. This does not transfer managed custody from a surviving
-headless controller to an independent foreground client. When a
+or owned-host custody. A surviving shared headless controller can admit a native
+client in that recorded restored pane through the existing strict Session attach
+operation. The selected-session owner checks the current native identity, exact
+socket/pane, prepared native invocation and launcher fingerprint/foreground
+ancestry before binding the actual borrowed v3 record through the existing
+terminal publisher. An absent descriptor requires the authenticated retired
+placement's exact attachment ID; absence alone is not admission. Local Switch
+and Detach join that same custody proof. Managed Detach retires only the exact
+native launcher tree, preserving the borrowed shell, and a subsequent explicit
+Attach can reuse the same pane. Ordinary independent clients without this
+admitted association still do not claim managed status or Detach. These source
+contracts do not establish automatic installed-channel replay or the composed
+0.3 authenticated cold-restart live result. When a
 preserved host cannot be verified, Resume remains fenced. Reconnect to
 the original terminal host and retry Resume, or Stop the session if that action
 is available before resuming on a fresh host. There is no parallel Herdr session
@@ -1399,7 +1569,8 @@ timeouts, connection failures and 5xx responses remain pending and retry under i
 shared backoff policy; identity mismatch and rejected authentication fail closed.
 TLS verification remains enabled, and a failed TLS identity request cannot admit
 credentials or an origin. Identity requests inherit the fresh feature-request
-owner's attempt deadline. Shutdown cancels startup readiness; transport release
+owner's attempt deadline; authenticated readiness uses that same attempt budget
+rather than a shorter phase cutoff. Shutdown cancels startup readiness; transport release
 also cancels pending authenticated verification. Live reconnect consumes single
 attempts under its existing connection supervisor.
 
@@ -1475,6 +1646,14 @@ sequenceDiagram
 - `/session-started` (session self-report)
 
 The CLI talks to this server via `controlClient.ts`, using a port stored in `daemon.state.json`.
+
+CLI Stop delegates acknowledgement expiry to the relay's existing finite
+forwarding deadline rather than imposing the generic machine-RPC timer. Fork
+cleanup uses the same Stop contract. Local `/stop-session` requests follow the
+daemon operation by default; explicit caller deadlines and cancellation remain
+available. A guarded refusal to signal does not authorize an unsafe kill: Stop
+rechecks positive runner exit before reporting incomplete termination. Transport
+timeout or disconnect never proves physical termination.
 
 ### Session spawning
 
@@ -1780,9 +1959,37 @@ RPC is used to send commands over the Socket.IO connection:
 
 This mechanism allows the server and mobile clients to drive local actions without exposing a broad REST surface.
 
+### Session-log RPC scopes (0.3 development)
+
+Protocol's `rpc/methods.ts` declares method names and `rpc/index.ts` owns Session
+authorization and routing. The server consumes that classification for registration
+and dispatch; Machine diagnostics do not register Session-only methods.
+The canonical peer-route policy keeps `daemon.session.log.tail` server-required
+with Account and Machine scope, like the existing ambiguous diagnostic reads.
+
+| Method | Scope | Owner and input |
+| --- | --- | --- |
+| `session.log.tail` | Session | The bound Session's transcript Action handler; retains its Action input and `readTranscript` authority. |
+| `daemon.session.log.tail` | Machine | Daemon diagnostics; `{ path, maxBytes? }` selects an explicit Session log file on that Machine. |
+
+The Machine method retains the existing `.log` requirement and canonical-path
+validation under the Happier home's `logs` or `stacks` directory. It returns
+`{ success: true, path, tail, truncated }` or `{ success: false, error }`.
+`bugreport.getLogTail` remains a separate bug-report operation: it only reads paths
+selected by the diagnostics snapshot and uses its existing `{ ok }` response.
+The [one-way upgrade basis](compatibility.md#machine-session-log-diagnostics-v03-development)
+requires UI, daemon and server to move together; no Machine alias for
+`session.log.tail` is registered or routed.
+
 ## Runtime-backed Stack and daemon artifacts
 
 The CLI daemon is one component of the named-stack runtime format; it is not a second runtime owner. Source validation and source development use the checkout's workspace outputs; those workspace package outputs are distinct from managed runtime artifacts. A managed runtime build publishes daemon code and, when its inputs require it, an immutable daemon-support artifact for the CLI runtime dependencies, tools, and sidecars. The daemon manifest owns that optional support reference.
+
+In current development source, explicit artifact builds record requested components' preparation and terminal
+outcomes through the producer's existing `runtimePublication` state writer. The launcher delegates artifact
+admission to that build owner instead of publishing its own workspace closure first. A preparation failure
+therefore appears in producer `stack info --json` even before daemon staging. Queued and lock-wait progress
+goes to stderr; building an artifact alone does not certify a new selected or loaded runtime snapshot.
 
 Managed server code follows the same boundary. Its generated Prisma/native runtime support is owned by the server component-artifact builder, while static web UI remains a separate selected runtime component. Stack launch supplies the selected UI path through `HAPPIER_SERVER_UI_DIR`; the server artifact does not decide which UI provider to use. Managed support references and snapshots are development/QA inputs only. Release/self-host packaging remains the existing per-target direct boundary that discovers and embeds each target's complete self-contained code/web/support payload; it does not consume or flatten a host-target managed snapshot.
 
@@ -1794,7 +2001,9 @@ The finite-task graph uses Turbo only as the outer dependency scheduler and read
 
 Canonical build tasks do not pass through or restore from Turbo's cache. The root package-build command delegates its complete package set once to the existing workspace build owner, which already performs dependency-DAG scheduling, bounded concurrency, incremental/currentness checks, per-package locking, and atomic artifact publication. Package scripts remain directly runnable for focused diagnosis. Turbo is reserved for read-only source typechecks, API checks, tests, and projection checks whose exact-input results can be reused safely; CI restores job-scoped Turbo caches and Turbo revalidates the task hash before accepting them.
 
-The repository typecheck reuses those canonical builds as the source-compilation evidence for buildable workspace packages. It then runs only the six remaining source-only graphs (Terminal Native, Plugin UI, App, CLI, Server, and the cross-package Tests workspace) with `--noEmit`. Their Turbo hashes include the exact emitted declaration roots they consume, rather than every workspace source tree. This avoids immediately compiling the same package a second time, avoids pulling all first-party Plugin builds into a typecheck, and still invalidates a cached source check when a consumed declaration changes. Plugin SDK and the external SDK retain separate test-project typechecks after their public declaration checks.
+The repository typecheck reuses those canonical builds as the source-compilation evidence for buildable workspace packages. It then runs the six remaining source-only graphs (Terminal Native, Plugin UI, App, CLI, Server, and the cross-package Tests workspace) with `--noEmit`. Their Turbo hashes include the exact emitted declaration roots they consume, rather than every workspace source tree. This avoids immediately compiling the same package a second time, avoids pulling all first-party Plugin builds into a typecheck, and still invalidates a cached source check when a consumed declaration changes. Plugin SDK and the external SDK retain separate test-project typechecks after their public declaration checks.
+
+The shared TypeScript dist builder excludes test-only roots, including `.test-d.ts` and `.test-d.tsx`, through a build-only configuration extending the package project. It preserves package exclusions and leaves no-emit project selection unchanged. Root typecheck also runs the Protocol and Triage projects with `--noEmit`, in both ordinary and compiler-only modes, because their type tests previously relied on production compilation. Plugin UI's source check and Plugin SDK's test-project check continue to enforce their type tests.
 
 Generated-contract validation and mutable compiler-input preparation are separate finite facts. For example, the Plugin SDK Action-map and external SDK Action-wrapper checks are cacheable exact-input tasks, while synchronizing the physical declaration graph consumed by the Plugin SDK remains non-cacheable. This prevents an expensive semantic generator check from being repeated merely because declaration bytes must be refreshed through their canonical owner.
 

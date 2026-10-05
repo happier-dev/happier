@@ -52,6 +52,11 @@ describe('Session-control RPC write classification', () => {
       routeToSessionOwnerDaemon: true,
     });
   });
+  it('keeps restored native client custody under Session-owner control authority', () => {
+    expect(resolveSocketRpcSessionAuthorization('session-1:session.providerCliAttach.prepare.v1')).toEqual({
+      method: 'session.providerCliAttach.prepare.v1', authority: 'sessionOwner', routeToSessionOwnerDaemon: true,
+    });
+  });
   it('classifies every declared Session RPC through the one closed map', () => {
     for (const method of Object.values(SESSION_RPC_METHODS)) {
       expect(resolveSocketRpcSessionAuthorization(`session-1:${method}`)).toMatchObject({

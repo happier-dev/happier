@@ -20,7 +20,7 @@ import {
     moveGitPullRequestForm,
     resolveGitPullRequestFormPlacement,
     useGitPullRequestFormState,
-} from './gitPullRequestForm';
+} from './gitPullRequestFormState';
 
 /**
  * The Git sidebar's pull request slot (Git lab PR): the new pull request form when it was asked for and lives in

@@ -2,6 +2,7 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
   PluginSourceCustodyV1Schema,
   StoredJsonContentEnvelopeSchema,
   isStoredJsonContentEnvelopeModeCompatible,
@@ -66,6 +67,7 @@ const PreparedSettlementShape = {
   service: ServiceSchema,
   accountId: BoundedIdSchema,
   authenticationModeId: BoundedIdSchema,
+  directExportContract: z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1).nullable().optional(),
   expectedCredentialRevision: z.string().max(4_096).nullable(),
   expectedCredentialConfigurationRevision:
     z.string().min(1).max(4_096).nullable(),

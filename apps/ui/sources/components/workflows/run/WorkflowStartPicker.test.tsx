@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol';
+import { BUILTIN_WORKFLOW_CATALOG_V1, WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
+import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { t } from '@/text';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -16,13 +18,16 @@ import { useSessionBuiltinWorkflowStart } from '@/components/sessions/agents/lau
 import { SessionAgentsLaunchMenu } from '@/components/sessions/agents/launch/SessionAgentsLaunchMenu';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WorkflowStartPicker } from './WorkflowStartPicker';
+import { WorkflowRunComposer } from './WorkflowRunComposer';
 import { resetWorkflowLibraryReadsForTests } from '../library/workflowLibraryReads';
+import { WorkflowsColumnActions } from '../column/WorkflowsColumnActions';
 
 const execute = vi.hoisted(() => vi.fn());
 const routing = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const routeParams = vi.hoisted(() => ({ id: 'plugin:example.recipe/check', intent: undefined as string | undefined }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ params: { id: 'plugin:example.recipe/check' }, router: routing }).module;
+    return createExpoRouterMock({ params: routeParams, router: routing }).module;
 });
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -51,6 +56,8 @@ vi.mock('@/text', async () => {
 let snapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 let previousState = storage.getState();
 beforeEach(async () => {
+    routeParams.id = 'plugin:example.recipe/check';
+    routeParams.intent = undefined;
     previousState = storage.getState();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     snapshot = runtime.getActiveServerSnapshot;
@@ -73,6 +80,69 @@ afterEach(async () => {
 });
 
 describe('WorkflowStartPicker plugin workflows', () => {
+    it.each(['builtin:keep-going', 'builtin:review-and-converge'])('offers Choose a session, never Run now, for %s', async (id) => {
+        routeParams.id = id;
+        routeParams.intent = 'run';
+        const screen = await renderScreen(<SavedWorkflowRoute />);
+        expect(screen.findByTestId('workflow-builtin:session')).not.toBeNull();
+        expect(screen.findByTestId('workflow-builtin:run')).toBeNull();
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(execute.mock.calls.some(([action]) => action === 'workflow.run.start')).toBe(false);
+        await screen.pressByTestIdAsync('workflow-builtin:duplicate');
+        const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
+        expect(route.pathname).toBe('/workflows/new');
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
+            definition: BUILTIN_WORKFLOW_CATALOG_V1.find((entry) => entry.id === id)!.definition,
+        });
+        expect(execute.mock.calls.some(([action]) => action === 'workflow.definition.create')).toBe(false);
+    });
+    it('opens the shared example picker from the column + menu without saving', async () => {
+        const screen = await renderScreen(<WorkflowsColumnActions canCreate />);
+        const addMenu = screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'workflows-column:add:menu')!;
+        await act(async () => { addMenu.props.onSelect('example'); });
+        for (const example of WORKFLOW_STARTER_EXAMPLES_V1) expect(screen.findByTestId(`workflow-examples:${example.key}:use`)).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-examples:review-pull-request:use');
+        expect(routing.push).toHaveBeenCalledWith({ pathname: '/workflows/new', params: { example: 'review-pull-request' } });
+        expect(execute.mock.calls.some(([action]) => action === 'workflow.definition.create' || action === 'workflow.run.start')).toBe(false);
+    });
+    it('reviews a built-in in the canonical composer before admitting its catalog source', async () => {
+        routeParams.id = 'builtin:open-a-pull-request';
+        storage.setState({ machines: { 'machine-1': createMachineFixture({ id: 'machine-1' }) },
+            authoringMemory: { ...storage.getState().authoringMemory, recentMachinePaths: [{ machineId: 'machine-1', path: '/project' }] } });
+        execute.mockImplementation(async (id: string, input: { runId: string }) => ({ ok: true, result: id === 'workflow.run.start'
+            ? { admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId }) }
+            : { definitions: [] } }));
+        const screen = await renderScreen(<SavedWorkflowRoute />);
+        await screen.pressByTestIdAsync('workflow-builtin:run');
+        expect(execute.mock.calls.some(([id]) => id === 'workflow.run.start')).toBe(false);
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
+        await act(async () => { screen.findByType(WorkflowRunComposer).props.onRun(undefined); });
+        expect(execute.mock.calls.find(([id]) => id === 'workflow.run.start')?.[1]).toMatchObject({
+            source: { kind: 'catalog', workflow: 'builtin:open-a-pull-request' },
+        });
+        expect(execute.mock.calls.find(([id]) => id === 'workflow.run.start')?.[2]).toMatchObject({
+            externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { directory: '/project' } },
+        });
+    });
+    it.each([false, true])('renders the canonical examples and built-ins on the home (saved=%s) without seeding persistence', async (saved) => {
+        execute.mockImplementation(async (actionId: string) => ({ ok: true, result: actionId === 'workflow.definition.list'
+            ? { definitions: saved ? [{ kind: 'workflow-definition.v1', definitionId: 'saved-workflow',
+                metadata: { title: 'Saved' }, revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null }] : [] }
+            : actionId === 'workflow.run.summaries' ? { summaries: [] } : { runs: [] } }));
+        const screen = await renderScreen(<WorkflowsLibraryHome />);
+        await act(async () => { await Promise.resolve(); });
+        for (const example of WORKFLOW_STARTER_EXAMPLES_V1) {
+            expect(screen.findHostByTestId(`workflow-examples:${example.key}`)).not.toBeNull();
+            expect(screen.findByTestId(`workflow-examples:${example.key}:use`)).not.toBeNull();
+        }
+        for (const builtin of BUILTIN_WORKFLOW_CATALOG_V1) {
+            expect(screen.findByTestId(`workflow-builtins:${builtin.id}:${builtin.requiresOriginSession ? 'session' : 'run'}`)).not.toBeNull();
+        }
+        await screen.pressByTestIdAsync('workflow-examples:morning-digest:use');
+        expect(routing.push).toHaveBeenCalledWith({ pathname: '/workflows/new', params: { example: 'morning-digest' } });
+        expect(execute.mock.calls.some(([id]) => id === 'workflow.definition.create' || id === 'workflow.run.start')).toBe(false);
+    });
     const plugin = {
         workflow: 'plugin:example.recipe/check', pluginId: 'example.recipe', version: '1.2.3',
         title: 'Check changes', definition: BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition,
@@ -87,21 +157,19 @@ describe('WorkflowStartPicker plugin workflows', () => {
         expect(execute.mock.calls.filter(([id]) => id === 'workflow.run.summaries')).toHaveLength(0);
     });
 
-    it('opens the contribution read-only and duplicates through saved workflow creation', async () => {
-        const copyId = '00000000-0000-4000-8000-000000000002';
-        execute.mockImplementation(async (actionId: string) => ({ ok: true, result: actionId === 'workflow.definition.create'
-            ? { definitionId: copyId, revision: { headerVersion: 1, bodyVersion: 1 }, definition: plugin.definition, metadata: { title: plugin.title } }
-            : { definitions: [], pluginWorkflows: [plugin] } }));
+    it('opens the contribution read-only and duplicates as an unsaved portable draft without a write', async () => {
+        execute.mockResolvedValue({ ok: true, result: { definitions: [], pluginWorkflows: [plugin] } });
         const screen = await renderScreen(<SavedWorkflowRoute />);
         await act(async () => { await Promise.resolve(); });
         expect(screen.findAllByTestId('workflow-plugin:read-only').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('workflow-editor-name').length).toBe(0);
         await screen.pressByTestIdAsync('workflow-plugin:duplicate');
-        expect(execute.mock.calls.find(([id]) => id === 'workflow.definition.create')?.[1]).toMatchObject({
-            definition: plugin.definition, metadata: { title: plugin.title },
+        expect(execute.mock.calls.some(([id]) => id === 'workflow.definition.create' || id === 'workflow.definition.update')).toBe(false);
+        const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
+        expect(route.pathname).toBe('/workflows/new');
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toEqual({
+            definition: plugin.definition, name: t('workflows.copyName', { name: plugin.title }),
         });
-        expect(execute.mock.calls.some(([id]) => id === 'workflow.definition.get' || id === 'workflow.definition.update')).toBe(false);
-        expect(routing.push).toHaveBeenCalledWith(`/workflows/${copyId}`);
     });
 
     it('starts plugin workflows through the session composer with origin and observed version', async () => {

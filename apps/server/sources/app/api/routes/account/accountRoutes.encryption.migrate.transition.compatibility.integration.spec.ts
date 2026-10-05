@@ -69,6 +69,7 @@ const V5_OPERATION_REQUESTS = [
         payload: {
             transitionId: TRANSITION_ID,
             collections: { action: "staged", transitionId: TRANSITION_ID },
+            automations: { action: "staged", transitionId: TRANSITION_ID },
         },
     },
 ] as const;

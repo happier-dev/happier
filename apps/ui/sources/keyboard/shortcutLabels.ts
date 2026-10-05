@@ -17,3 +17,18 @@ export function useKeyboardShortcutLabel(commandId: KeyboardCommandId | undefine
     const labels = React.useContext(KeyboardShortcutLabelsContext);
     return commandId === undefined ? undefined : labels[commandId];
 }
+
+/** "Cmd+Shift+Enter" → ["Cmd", "Shift", "Enter"]; a literal "+" key stays one keycap. */
+export function splitKeybindingLabel(label: string): readonly string[] {
+    const parts = label.split('+');
+    const keys: string[] = [];
+    for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        if (part === '' && index === parts.length - 1 && keys.length > 0) {
+            keys[keys.length - 1] = '+';
+            continue;
+        }
+        if (part !== '') keys.push(part);
+    }
+    return keys.length > 0 ? keys : [label];
+}

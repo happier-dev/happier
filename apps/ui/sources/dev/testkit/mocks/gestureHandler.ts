@@ -9,6 +9,7 @@ export type TestGestureChain = {
     readonly __handlers: Record<string, TestGestureCallback>;
     readonly __gestures?: TestGestureChain[];
     minDistance(value: number): TestGestureChain;
+    hitSlop(value: Readonly<Record<string, number>>): TestGestureChain;
     enabled(value: boolean): TestGestureChain;
     activateAfterLongPress(value: number): TestGestureChain;
     minDuration(value: number): TestGestureChain;
@@ -51,6 +52,7 @@ function createGestureChain(kind: TestGestureKind, gestures?: TestGestureChain[]
 
     Object.assign(gesture, {
         minDistance: (value: number) => configure('minDistance', value),
+        hitSlop: (value: Readonly<Record<string, number>>) => configure('hitSlop', value),
         enabled: (value: boolean) => configure('enabled', value),
         activateAfterLongPress: (value: number) => configure('activateAfterLongPress', value),
         minDuration: (value: number) => configure('minDuration', value),

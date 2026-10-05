@@ -15,9 +15,11 @@ import { getExpoStatePaths, writePidState } from './utils/expo/expo.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import {
   assertExpoWebappBundlesOrThrow,
+  resolveBestExpoWebappUrlForAuth,
   resolveStackWebappTargetForAuth,
 } from './utils/auth/stack_guided_login.mjs';
 import { prepareGuidedLoginWebapp } from './utils/auth/orchestrated_stack_auth_flow.mjs';
+import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 
 async function createHealthyServer({
   rootBody = 'ok',
@@ -654,6 +656,59 @@ test('resolveStackWebappTargetForAuth skips Expo probing when a runtime snapshot
   }
 });
 
+for (const runtimeSnapshot of [false, true]) {
+  test(`guided auth uses the borrowed Expo consumer origin (${runtimeSnapshot ? 'runtime snapshot' : 'source'})`, async (t) => {
+    const fixture = await buildGuidedNoExpoFixture({
+      stackName: 'guided-borrowed-expo',
+      runtimeSnapshot,
+    });
+    t.after(() => fixture.cleanup());
+    const metro = await createHealthyServer({ rootBody: 'packager-status:running' });
+    t.after(() => new Promise((resolvePromise) => metro.server.close(resolvePromise)));
+    const producerStackName = 'repo-guided-expo-producer';
+    const producerDir = join(fixture.storageDir, producerStackName);
+    await mkdir(producerDir, { recursive: true });
+    await writeFile(join(producerDir, 'stack.runtime.json'), JSON.stringify({
+      expo: { webPort: metro.port, mobilePort: metro.port },
+      placement: { expo: 'mac-host' },
+      remoteTargets: { 'mac-host': { status: 'running', services: { expo: true } } },
+      processes: { expoPid: null },
+    }) + '\n');
+    const consumerDir = join(fixture.storageDir, fixture.stackName);
+    const envPath = join(consumerDir, 'env');
+    await writeFile(envPath, (await readFile(envPath, 'utf8')) +
+      `HAPPIER_STACK_EXPO_SOURCE_STACK=${producerStackName}\n`);
+    await writeFile(join(consumerDir, 'stack.runtime.json'), JSON.stringify({
+      stackName: fixture.stackName,
+      ports: { server: fixture.port },
+      expo: null,
+    }) + '\n');
+    withPatchedProcessEnv(t, {
+      ...fixture.env,
+      HAPPIER_STACK_BIND_MODE: 'loopback',
+      HAPPIER_STACK_LOCALHOST_SUBDOMAIN_PREFIX: 'happier',
+      HAPPIER_STACK_LOCALHOST_SUBDOMAINS: '1',
+      HAPPIER_STACK_EXPO_SOURCE_STACK: undefined,
+    });
+    const rootDir = join(fixture.tmp, 'happier');
+    const serverUrl = `http://happier-${fixture.stackName}.localhost:${fixture.port}`;
+    // Match auth.mjs auto selection: an empty Expo result falls back to the server origin.
+    const expoUrl = await resolveBestExpoWebappUrlForAuth({
+      rootDir, stackName: fixture.stackName, env: fixture.env, timeoutMs: 1,
+    });
+    const selectedUrl = new URL(expoUrl || serverUrl);
+    assert.equal(selectedUrl.origin, `http://happier-${fixture.stackName}.localhost:${metro.port}`);
+    assert.equal(selectedUrl.searchParams.get('server'), serverUrl);
+    assert.equal(selectedUrl.searchParams.get('happier_hmr'), '0');
+
+    const target = await resolveStackWebappTargetForAuth({
+      rootDir, stackName: fixture.stackName, env: { ...fixture.env, HAPPIER_STACK_AUTH_FLOW: '1' },
+    });
+    assert.equal(target.kind, 'expo');
+    assert.equal(target.webappUrl, expoUrl);
+  });
+}
+
 test('resolveStackWebappTargetForAuth prefers Expo declared by the active runtime snapshot', async (t) => {
   let fixture;
   let runtimeExpo;
@@ -717,6 +772,13 @@ test('resolveStackWebappTargetForAuth prefers Expo declared by the active runtim
     assert.equal(resolved.kind, 'expo');
     assert.match(resolved.webappUrl, new RegExp(`:${runtimeExpo.port}$`));
     assert.doesNotMatch(resolved.webappUrl, new RegExp(`:${fixture.port}$`));
+    assert.equal(new URL(resolved.webappUrl).search, '');
+    assert.equal(await resolveBestExpoWebappUrlForAuth({
+      rootDir: join(fixture.tmp, 'happier'),
+      stackName: fixture.stackName,
+      env: fixture.env,
+      timeoutMs: 1,
+    }), resolved.webappUrl);
   } finally {
     if (runtimeOwner) runtimeOwner.kill('SIGKILL');
     if (runtimeExpo) await runtimeExpo.kill();
@@ -872,6 +934,7 @@ test('hstack auth login uses the active runtime snapshot cli for the actual logi
           '#!/bin/sh\n' +
           'if [ -n "$RUNTIME_AUTH_MARKER" ]; then\n' +
           '  printf "%s\\n" "$@" >> "$RUNTIME_AUTH_MARKER"\n' +
+          '  printf "runtime=%s\\nentrypoint=%s\\nfingerprint=%s\\n" "$HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED" "$HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT" "$HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT" >> "$RUNTIME_AUTH_MARKER"\n' +
           'fi\n' +
           'exit 0\n',
       });
@@ -899,12 +962,30 @@ test('hstack auth login uses the active runtime snapshot cli for the actual logi
     assert.match(markerRaw, /^--no-open$/m, `expected runtime cli to receive --no-open\n${markerRaw}`);
     assert.match(markerRaw, /^--method$/m, `expected runtime cli to receive --method flag\n${markerRaw}`);
     assert.match(markerRaw, /^web$/m, `expected runtime cli to receive web method\n${markerRaw}`);
+    assert.match(markerRaw, /^runtime=1$/m, `expected runtime login to retain admitted provenance\n${markerRaw}`);
+    assert.match(markerRaw, /entrypoint=.*\/runtime\/builds\/snap-auth\/cli\/package-dist\/index\.mjs$/m);
+    assert.match(markerRaw, /^fingerprint=0123456789abcdef$/m);
   } finally {
     if (fixture?.markerPath) {
       await rm(dirname(fixture.markerPath), { recursive: true, force: true }).catch(() => {});
     }
     if (fixture) await fixture.cleanup();
   }
+});
+
+test('printed runtime stack login preserves admitted subprocess identity', async (t) => {
+  const fixture = await buildGuidedNoExpoFixture({ runtimeSnapshot: true, includeSourceCli: false });
+  t.after(() => fixture.cleanup());
+  const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const result = await runNodeCapture([authScriptPath(rootDir), 'login', '--no-open', '--print', '--json'], {
+    cwd: rootDir,
+    env: { ...fixture.env, HAPPIER_STACK_RUNTIME_MODE: 'require' },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const { cmd } = JSON.parse(result.stdout);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED="1"/);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT="[^"\n]+\/cli\/package-dist\/index\.mjs"/);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT="0123456789abcdef"/);
 });
 
 test('hstack auth login --force fails closed when guided login exits without usable credentials and skips post-auth daemon start', async (t) => {

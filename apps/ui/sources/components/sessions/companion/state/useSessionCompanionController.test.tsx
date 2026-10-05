@@ -52,6 +52,20 @@ async function mountController(serverId: string | null = 'home-a') {
 }
 
 describe('useSessionCompanionController', () => {
+    it('checks transfer removal against latest storage even before its mounted preference rerenders', async () => {
+        const hook = await mountController();
+        const controller = hook.getCurrent();
+        const instance = { v: 1 as const, id: 'copy-a', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const item = { kind: 'instance' as const, instance };
+        controller.show();
+        controller.addItem(item);
+        const guard = { expectedInstance: instance, expectedPresentation: { frameStyle: null, nativeIndex: 1 } };
+        controller.renameInstance(instance.id, 'New title');
+        expect(controller.removeItem(item, guard)).toBeNull();
+        expect(storedNow()).toMatchObject({ items: [SUMMARY, { instance: { displayName: 'New title' } }] });
+        expect(controller.removeItem(item)).not.toBeNull();
+        expect(storedNow()).toMatchObject({ items: [SUMMARY] });
+    });
     it('persists and reverses an item frame override while retaining later changes to other items', async () => {
         const hook = await mountController();
         const controller = hook.getCurrent();

@@ -111,6 +111,7 @@ export function ensureOverrideStyleElement(document: Document): HTMLStyleElement
     const style = document.createElement('style');
     style.id = HAPPIER_UI_FONT_OVERRIDE_STYLE_ELEMENT_ID;
     style.setAttribute?.('data-happier', 'ui-font-scale-overrides');
+    style.textContent = `[data-happier-ui-font-scaling="disabled"] { ${HAPPIER_UI_FONT_SCALE_CSS_VAR}: 1; }\n`;
     document.head.appendChild(style);
     return style;
 }

@@ -126,6 +126,8 @@ function createLayoutAnimationBuilderMock(presetName: string) {
 }
 
 export type ReanimatedModuleMockOptions = Readonly<{
+    /** Re-evaluate derived values on read to model live SharedValue changes without a native UI thread. */
+    reactiveDerivedValues?: boolean;
     /**
      * Invoke a `withTiming` completion callback synchronously with `finished: true`.
      *
@@ -164,11 +166,19 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
         return ref.current;
     };
     const useDerivedValue = <T,>(factory: () => T): ReanimatedSharedValue<T> => {
+        const latest = React.useRef(factory);
+        latest.current = factory;
         const ref = React.useRef<ReanimatedSharedValue<T> | null>(null);
         const value = factory();
         if (!ref.current) {
             ref.current = createSharedValue(value);
-        } else {
+            if (options.reactiveDerivedValues) {
+                Object.defineProperty(ref.current, 'value', {
+                    get: () => latest.current(),
+                    set: () => { throw new Error('Derived values are readonly'); },
+                });
+            }
+        } else if (!options.reactiveDerivedValues) {
             ref.current.value = value;
         }
         return ref.current;
@@ -228,6 +238,8 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
         // render scope by production code, so a mock without them is not a missing
         // assertion but an import-time crash.
         FadeIn: createLayoutAnimationBuilderMock('FadeIn'),
+        ZoomIn: createLayoutAnimationBuilderMock('ZoomIn'),
+        FadeOut: createLayoutAnimationBuilderMock('FadeOut'),
         LinearTransition: createLayoutAnimationBuilderMock('LinearTransition'),
         ReduceMotion,
         // Reanimated's real `Extrapolation` is a plain enum of string constants; production code
@@ -240,6 +252,8 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
         interpolate,
         interpolateColor,
         cancelAnimation: () => {},
+        // Host tests have no attached native view; suites needing measurements override the OS boundary.
+        measure: () => null,
         makeMutable,
         runOnJS,
         runOnUI,

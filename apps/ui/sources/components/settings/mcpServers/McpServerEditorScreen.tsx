@@ -16,7 +16,8 @@ import { McpServerQuickInstallTab } from '@/components/settings/mcpServers/McpSe
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -486,9 +487,9 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                 description={t('mcpSettings.serverPurpose')}
                 meta={meta}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <Icon name={resolveTransportIconName(draftServer.transport)} size={22} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
                 actions={(
                     <View style={styles.headerActions}>

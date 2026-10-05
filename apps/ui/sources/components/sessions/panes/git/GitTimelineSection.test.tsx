@@ -11,6 +11,8 @@ vi.mock('react-native', async () => {
 });
 const textMock = createTextModuleMock({ translate: (key: string) => key });
 vi.mock('@/text', () => textMock);
+// Cold module transformation is collection, not the first rendered timeline interaction.
+const { GitTimelineSection, resolveTimelineFillDelays } = await import('./GitTimelineSection');
 
 function commit(shortSha: string, minutesAgo: number): ScmLogEntry {
     return {
@@ -31,7 +33,6 @@ const INCOMING = commit('ddddddd', 0);
 
 /** The ids of the timeline's rows, in reading order: commits by short SHA, origin as `origin`. */
 async function readOrder(props: Partial<React.ComponentProps<typeof import('./GitTimelineSection').GitTimelineSection>>) {
-    const { GitTimelineSection } = await import('./GitTimelineSection');
     const screen = await renderScreen(
         <GitTimelineSection
             changedCount={2}
@@ -78,7 +79,6 @@ describe('GitTimelineSection (Git lab A/HI/S)', () => {
     });
 
     it('fills pushed nodes bottom-up and solidifies pulled ones top-down, and nothing on first sight', async () => {
-        const { resolveTimelineFillDelays } = await import('./GitTimelineSection');
         const newestFirst = [
             { sha: 'n3', relation: 'shared' as const },
             { sha: 'n2', relation: 'shared' as const },

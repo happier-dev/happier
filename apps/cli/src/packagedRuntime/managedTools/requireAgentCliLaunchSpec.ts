@@ -1,3 +1,4 @@
+import { AgentCliNotFoundError } from './agentCliNotFoundError';
 import {
   buildMissingAgentCliCommandErrorMessage,
   resolveAgentCliRuntimeSpecForLookupId,
@@ -25,5 +26,5 @@ export function requireAgentCliLaunchSpec(
 ): AgentCliLaunchSpec {
   const resolved = resolveAgentCliLaunchSpec(agentId, opts);
   if (resolved) return resolved;
-  throw new ReferenceError(buildMissingAgentCliCommandErrorMessage(agentId, opts));
+  throw new AgentCliNotFoundError(agentId, buildMissingAgentCliCommandErrorMessage(agentId, opts));
 }

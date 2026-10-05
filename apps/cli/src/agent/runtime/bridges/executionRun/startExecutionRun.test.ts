@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tmpdir } from 'node:os';
+import { getAgentStaticModels } from '@happier-dev/agents';
 
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
@@ -52,15 +53,17 @@ const SELECTED_PULL_REQUEST_REVIEW_SCOPE = {
 } as const;
 type StartExecutionRunArgs = Parameters<typeof startExecutionRun>[0];
 
-const contributionRegistryMock = vi.hoisted(() => ({
-  getResolvedContributionRegistry: vi.fn(() => ({
-    agentDefinitionsById: new Map(),
-      })),
-}));
+function readOfferedSummaryModelId(): string {
+  const model = getAgentStaticModels('claude', { catalogOnly: true })[0];
+  if (!model) throw new Error('The native Claude offered-model catalog is unavailable');
+  return model.id;
+}
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
-  getResolvedContributionRegistry: contributionRegistryMock.getResolvedContributionRegistry,
-}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
+  return createBundledPluginPublicationFsFixture(actual);
+});
 
 type AcpCommittedMessage = {
   body: Extract<ACPMessageData, { type: 'message' }>;
@@ -103,11 +106,10 @@ function createProvisioningRuntime(): TestExecutionRunHostRuntime {
 
 describe('startExecutionRun', () => {
   beforeEach(() => {
-    contributionRegistryMock.getResolvedContributionRegistry.mockReturnValue({
-      agentDefinitionsById: new Map(),
-          });
+    vi.stubEnv('HAPPIER_CLAUDE_PATH', process.execPath);
+    vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');
   });
-
+  afterEach(() => vi.unstubAllEnvs());
   it('refuses a role start without a target-host admission snapshot before creating a run', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });
@@ -637,12 +639,12 @@ describe('startExecutionRun', () => {
       await expect(startExecutionRun({
         params: {
           sessionId: null,
-          intent: 'review',
+          intent: 'scm_diff_summary',
           backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-          instructions: 'Review this change.',
+          instructions: 'Explain this captured change.',
           permissionMode: 'read_only',
-          retentionPolicy: 'ephemeral',
-          runClass: 'bounded',
+          retentionPolicy: 'resumable',
+          runClass: 'long_lived',
           ioMode: 'request_response',
         },
         parentProvider: TEST_BACKEND_ID,
@@ -706,6 +708,7 @@ describe('startExecutionRun', () => {
           intent: 'scm_diff_summary',
           backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           instructions: 'SCM diff summary cache hit; no generation required.',
+          modelId: readOfferedSummaryModelId(),
           intentInput: {
             cachedOutput: {
               success: true,
@@ -793,6 +796,7 @@ describe('startExecutionRun', () => {
           intent: 'scm_diff_summary',
           backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           instructions: 'Regenerate the checkpoint summary.',
+          modelId: readOfferedSummaryModelId(),
           intentInput: {
             cachePolicy: { mode: 'bypass' },
             cachedOutput: {
@@ -846,10 +850,6 @@ describe('startExecutionRun', () => {
       },
     });
 
-    contributionRegistryMock.getResolvedContributionRegistry.mockReturnValue({
-      agentDefinitionsById: new Map(),
-    });
-
     try {
       const executeBoundedRun = vi.fn<StartExecutionRunArgs['executeBoundedRun']>(async () => {});
       await startExecutionRun({
@@ -898,10 +898,6 @@ describe('startExecutionRun', () => {
       createRuntime: () => {
         throw new Error('voice runtime should not be used by plan runs');
       },
-    });
-
-    contributionRegistryMock.getResolvedContributionRegistry.mockReturnValue({
-      agentDefinitionsById: new Map(),
     });
 
     try {
@@ -1147,7 +1143,8 @@ describe('startExecutionRun', () => {
         params: {
           sessionId: 'parent_session_1',
           intent: 'scm_diff_summary',
-          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          modelId: readOfferedSummaryModelId(),
           instructions: 'Summarize the checkpoint.',
           intentInput: {
             cwd: '/repo',

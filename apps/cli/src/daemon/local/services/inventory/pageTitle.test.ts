@@ -19,6 +19,18 @@ function streamBody(html: string): ReadableStream<Uint8Array> {
 }
 
 describe('extractLocalPageTitle', () => {
+    it('does not turn a known internal control endpoint into a page-title URL', () => {
+        const internal: NormalizedLocalServiceInventoryEntry = {
+            id: 'control', machineId: 'machine-a', address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' },
+            port: 44473, protocol: 'tcp', detectedAt: 1, lastSeenAt: 1, state: 'listening', source: 'detected',
+            labels: [], confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'low', diagnostics: [],
+            classification: { kind: 'happier', confidence: 'high', signals: ['owner:happier'] },
+            endpoint: { scheme: 'http', host: '127.0.0.1', port: 44473, probeState: 'ready', probedAt: 1 },
+        };
+        expect(buildLocalPageTitleUrl(internal)).toBeNull();
+        expect(buildLocalPageTitleUrl({ ...internal, classification: undefined })).toBe('http://127.0.0.1:44473/');
+    });
+
     it('prefers application metadata before html title', () => {
         expect(extractLocalPageTitle(`
             <html>

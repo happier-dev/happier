@@ -7,6 +7,15 @@ import {
 } from './index.js';
 
 describe('PluginTranscriptPresentationNodeV1', () => {
+  it('refuses live drag declarations in immutable transcript snapshots', () => {
+    for (const node of [
+      { kind: 'dragSource', sourceId: 'card', reference: '42', children: [{ kind: 'text', text: 'Card' }] },
+      { kind: 'dropTarget', targetId: 'tray', children: [] },
+      { kind: 'widgetArea', area: 'pinned' },
+    ]) {
+      expect(PluginTranscriptPresentationNodeV1Schema.safeParse({ kind: 'stack', children: [node] }).success).toBe(false);
+    }
+  });
   it('keeps mounted host Action requests out of contributed transcript snapshots', () => {
     const node = { kind: 'action', hostAction: 'session.message.send', label: 'Send' };
     expect(PluginDeclarativeNodeV2Schema.safeParse(node).success).toBe(true);
@@ -48,6 +57,10 @@ describe('PluginTranscriptPresentationNodeV1', () => {
 
     expect(PluginTranscriptPresentationNodeV1Schema.safeParse(snapshot).success).toBe(true);
     expect(PLUGIN_TRANSCRIPT_PRESENTATION_NODE_V1_KINDS).toEqual([
+      'metric',
+      'table',
+      'rows',
+      'chart',
       'text',
       'markdown',
       'stack',

@@ -12,7 +12,7 @@
  */
 
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -58,6 +58,11 @@ function defaultProps(overrides: Partial<SelectionListProps> = {}): SelectionLis
 }
 
 describe('SelectionList — Shift+Tab back hint (RUX-13)', () => {
+    beforeEach(() => {
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 0 });
+    });
+    afterEach(() => vi.unstubAllGlobals());
     it('does NOT render the back hint at the root step when no path-mode is active', async () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps()} />);

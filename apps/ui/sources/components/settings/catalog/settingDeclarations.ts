@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import type { AccountSettingKey, FeatureId } from '@happier-dev/protocol';
+import type { AccountSettingKey, AutomationV3Settings, FeatureId, PluginContributionIdentityV1, SettingsDeclarationOperationInputV1, StrictJsonValueSchema } from '@happier-dev/protocol';
 
 import type { TranslationKeyNoParams } from '@/text';
 import { desktopHostKind, isDesktopHost } from '@/utils/platform/desktopHost';
@@ -7,6 +7,36 @@ import { desktopHostKind, isDesktopHost } from '@/utils/platform/desktopHost';
 import type { SettingsPageId } from './types';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings, WritableSettingsKey } from '@/sync/domains/settings/settings';
+import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
+import type { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol';
+import type { z } from 'zod';
+
+export type SettingScalarValue = z.infer<typeof SettingsDeclarationValueV1Schema>;
+/** An unavailable owner value is not an unset preference; never serialize this sentinel. */
+export const SETTING_VALUE_UNAVAILABLE = Symbol('setting_value_unavailable');
+export type SettingOwnerMutation = (settings: Settings) => SettingsWriteDelta | null;
+export type SettingOperationContext = Readonly<{
+    signal?: AbortSignal;
+    input?: SettingsDeclarationOperationInputV1;
+    isCurrent(): boolean;
+    readSettings(): Promise<Settings>;
+    mutateSettings(mutate: SettingOwnerMutation): Promise<void>;
+}>;
+export type SettingOperationResult = Readonly<{
+    status: 'completed' | 'cancelled' | 'unavailable';
+    reason?: string;
+    value?: z.infer<typeof StrictJsonValueSchema>;
+}>;
+export type SettingsMutationServices = Readonly<{
+    readScmDiffSummaryCatalog?: (settings: Settings, storedValue: string) => Promise<Readonly<{
+        profiles: readonly import('@/settings/scmDiffSummary/settings').ScmDiffSummaryCatalogProfile[];
+        isCurrent: (settings: Settings) => boolean;
+    }> | null>;
+    readAgentCatalog?: (settings: Settings) => Promise<Readonly<{
+        entries: readonly import('@/agents/backendCatalog/agentCatalogProjection').ResolvedAgentCatalogEntry[];
+        isCurrent: (settings: Settings) => boolean;
+    }> | null>;
+}>;
 
 type ScalarSettingKeys<T> = { [K in keyof T]: T[K] extends string | number | boolean | null | undefined ? K : never }[keyof T] & string;
 
@@ -20,6 +50,33 @@ export type SettingStorageBinding = Readonly<{
 }> & (
     | Readonly<{ scope: 'account'; key: ScalarSettingKeys<Pick<Settings, AccountSettingKey & WritableSettingsKey>> }>
     | Readonly<{ scope: 'local'; key: ScalarSettingKeys<LocalSettings> }>
+    | Readonly<{
+        scope: 'account';
+        kind: 'automationSettings';
+        /** These fields belong to the server Automation record, not synced Account preferences. */
+        field: keyof AutomationV3Settings;
+    }>
+    | Readonly<{
+        scope: 'account';
+        kind: 'owner';
+        read: (settings: Settings) => unknown;
+        parse: (value: unknown) => Readonly<{ success: true; value: SettingScalarValue }> | Readonly<{ success: false }>;
+        /** Applied inside the Account CAS owner, including every conflict rebase. */
+        mutate: (settings: Settings, value: SettingScalarValue) => SettingsWriteDelta | null;
+        /** Resolve a catalog choice before CAS; the returned intent rechecks its captured authority. */
+        prepare?: (settings: Settings, value: SettingScalarValue, services: SettingsMutationServices, context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean }>) => Promise<SettingOwnerMutation | null>;
+    }>
+    | Readonly<{
+        scope: 'local';
+        kind: 'localOwner';
+        read: (local: LocalSettings) => unknown;
+        parse: (value: unknown) => Readonly<{ success: true; value: SettingScalarValue }> | Readonly<{ success: false }>;
+        /**
+         * Writes through the device setting's owner, which may apply more than storage (the running
+         * theme and status bar) or keep sibling fields of a nested record.
+         */
+        commit: (local: LocalSettings, value: SettingScalarValue, writeLocal: (delta: Partial<LocalSettings>) => void) => void | Promise<void>;
+    }>
 );
 
 /**
@@ -71,6 +128,11 @@ export function resolveSettingsHost(): SettingsHost {
 export type SettingDeclaration = Readonly<{
     titleKey: TranslationKeyNoParams;
     descriptionKey?: TranslationKeyNoParams;
+    /** Resolved author-owned label for contribution fields; never a host translation-key cast. */
+    title?: string;
+    description?: string;
+    /** Activation-owned contribution fields may only use their admitted Account's projection. */
+    contribution?: PluginContributionIdentityV1;
     /** Extra searchable words, as translation keys so they are found in every language. */
     keywordKeys?: readonly TranslationKeyNoParams[];
     /** The row exists only on these hosts. */
@@ -79,6 +141,14 @@ export type SettingDeclaration = Readonly<{
     storage?: SettingStorageBinding;
     /** Secret-bearing rows remain discoverable without exposing or changing their value. */
     sensitive?: boolean;
+    /** Operations have no scalar value; human controls keep their incumbent selection/trust owner. */
+    operation?: Readonly<{ requiresHumanInteraction: true; kind: 'interaction' }> | Readonly<{
+        requiresHumanInteraction: boolean;
+        /** Consumed by the incumbent Actions approval policy, never by an operation-local gate. */
+        requiresApproval?: boolean;
+        kind: 'invoke';
+        invoke(input: SettingOperationContext): Promise<SettingOperationResult>;
+    }>;
 }>;
 
 export type SettingsSectionDeclaration = Readonly<{

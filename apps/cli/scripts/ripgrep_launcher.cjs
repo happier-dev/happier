@@ -7,7 +7,7 @@
  * Fallback chain:
  * - Use the packaged target-specific rg executable
  * - Fall back to system ripgrep when the packaged executable is unavailable
- * - Fallback: Mock implementation with helpful guidance
+ * - Report unavailable when neither executable exists
  */
 
 const path = require('path');
@@ -84,17 +84,12 @@ function createRipgrepWrapper(binaryPath) {
     };
 }
 
-function createMockRipgrep() {
+function createUnavailableRipgrep() {
     return {
-        ripgrepMain: (args) => {
-            if (args.includes('--version')) {
-                console.log('ripgrep 0.0.0 (mock)');
-                return 0;
-            }
-
+        ripgrepMain: () => {
             console.error('Search functionality unavailable without ripgrep');
             console.error('See installation instructions above');
-            return 1;
+            return 127;
         }
     };
 }
@@ -130,7 +125,7 @@ function loadRipgrep() {
     }
     console.warn('');
 
-    return createMockRipgrep();
+    return createUnavailableRipgrep();
 }
 
 function main(argv = process.argv.slice(2)) {

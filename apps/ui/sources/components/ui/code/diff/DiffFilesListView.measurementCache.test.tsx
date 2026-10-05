@@ -83,7 +83,7 @@ describe('DiffFilesListView measurement-cache contract', () => {
                     virtualizeFileList
                 />)).tree;
 
-        const pressable = findTestInstanceByTypeContainingText(tree, 'Pressable', 'src/a.ts');
+        const pressable = findTestInstanceByTypeContainingText(tree, 'Pressable', 'a.ts');
         expect(pressable).toBeTruthy();
 
         pressTestInstance(pressable, 'DiffFilesListView file row');

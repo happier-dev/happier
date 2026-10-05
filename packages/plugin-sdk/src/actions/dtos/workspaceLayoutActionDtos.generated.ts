@@ -9,7 +9,9 @@ export type WorkspaceLayoutActionInputById = {
         href?: string | undefined;
         tabId?: string | undefined;
         groupId?: string | undefined;
-        mode?: 'preview' | 'newTab' | undefined;
+        beforeTabId?: string | null | undefined;
+        reuseExisting?: boolean | undefined;
+        mode?: 'preview' | 'newTab' | 'splitLeft' | 'splitRight' | 'splitUp' | 'splitDown' | undefined;
     };
     readonly "workspace.tabs.activate": {
         tabId: string;
@@ -28,10 +30,14 @@ export type WorkspaceLayoutActionInputById = {
     readonly "workspace.tabs.move": {
         tabId: string;
         targetGroupId: string;
+        beforeTabId?: string | null | undefined;
     };
     readonly "workspace.tabs.reorder": {
         tabId: string;
         index: number;
+    } | {
+        tabId: string;
+        beforeTabId: string | null;
     };
     readonly "workspace.groups.focus": {
         groupId: string;
@@ -48,6 +54,69 @@ export type WorkspaceLayoutActionInputById = {
     readonly "workspace.resize": {
         splitId: string;
         ratio: number;
+    };
+    readonly "session.canvas.tabs.list": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+    };
+    readonly "session.canvas.tabs.open": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+        sessionId: string;
+        leafId: string;
+        placement?: 'left' | 'right' | 'up' | 'down' | 'center' | undefined;
+        beforeTabId?: string | null | undefined;
+    };
+    readonly "session.canvas.tabs.activate": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+        tabId: string;
+    };
+    readonly "session.canvas.tabs.close": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+        tabId: string;
+    };
+    readonly "session.canvas.tabs.move": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+        tabId: string;
+        targetLeafId: string;
+        placement?: 'left' | 'right' | 'up' | 'down' | 'center' | undefined;
+        beforeTabId?: string | null | undefined;
+    };
+    readonly "session.canvas.tabs.reorder": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+        tabId: string;
+        beforeTabId: string | null;
+    };
+    readonly "session.canvas.tabs.pin": {
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        canvasKey: string;
+        tabId: string;
+        pinned: boolean;
     };
 };
 export type WorkspaceLayoutActionResultById = {
@@ -126,5 +195,90 @@ export type WorkspaceLayoutActionResultById = {
     };
     readonly "workspace.resize": {
         ok: true;
+    };
+    readonly "session.canvas.tabs.list": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'listed';
+        focusedLeafId: string | null;
+        maximizedLeafId: string | null;
+        leaves: {
+            id: string;
+            tabIds: string[];
+            activeTabId: string | null;
+        }[];
+        tabs: {
+            id: string;
+            leafId: string;
+            address: {
+                serverId: string;
+                sessionId: string;
+            };
+            pinned: boolean;
+            preview: boolean;
+        }[];
+    };
+    readonly "session.canvas.tabs.open": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'applied';
+    } | {
+        status: 'unchanged';
+    };
+    readonly "session.canvas.tabs.activate": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'applied';
+    } | {
+        status: 'unchanged';
+    };
+    readonly "session.canvas.tabs.close": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'applied';
+    } | {
+        status: 'unchanged';
+    };
+    readonly "session.canvas.tabs.move": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'applied';
+    } | {
+        status: 'unchanged';
+    };
+    readonly "session.canvas.tabs.reorder": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'applied';
+    } | {
+        status: 'unchanged';
+    };
+    readonly "session.canvas.tabs.pin": {
+        status: 'unavailable';
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'applied';
+    } | {
+        status: 'unchanged';
     };
 };

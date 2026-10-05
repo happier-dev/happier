@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import type { WorkflowConversationSelection, WorkflowReferenceScope } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
@@ -157,6 +158,7 @@ export function WorkflowContinuityControls(props: Readonly<{
     /** Existing Sessions the host offers for continuation; absent means none can be offered here. */
     existingSessions?: readonly WorkflowExistingSessionOption[];
     onChangeConversation: (value: WorkflowConversationSelection | undefined) => void;
+    onBindExistingSession?: (sessionId: string) => Promise<EntityDropOutcomeV1>;
     onChangeWorkspace: (value: WorkflowWorkspaceSelection | undefined) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
@@ -165,7 +167,7 @@ export function WorkflowContinuityControls(props: Readonly<{
         ? []
         : listWorkflowProducerOptions(draft, props.consumerBlockId);
     const existingSessions = props.existingSessions ?? NO_EXISTING_SESSIONS;
-    const existingSessionOffered = existingSessions.length > 0;
+    const existingSessionOffered = existingSessions.length > 0 && props.onBindExistingSession !== undefined;
     const inherits = props.inherited !== undefined;
 
     // What actually runs: the step's own choice, else the default it inherits.
@@ -199,6 +201,7 @@ export function WorkflowContinuityControls(props: Readonly<{
     // option opens the picker; the selection is authored when a row is chosen
     // and the picker closes.
     const [choosingSession, setChoosingSession] = React.useState(false);
+    const [bindingRefusal, setBindingRefusal] = React.useState<string | null>(null);
     const recordedSession = props.conversation?.kind === 'existing_session' ? props.conversation : null;
     const existingSessionStep = React.useMemo<SelectionListStep>(() => ({
         id: `${testIDPrefix}-conversation-existing-session`,
@@ -213,12 +216,15 @@ export function WorkflowContinuityControls(props: Readonly<{
             })),
         }],
     }), [existingSessions, testIDPrefix]);
-    const selectExistingSession = React.useCallback((sessionId: string) => {
+    const selectExistingSession = React.useCallback(async (sessionId: string) => {
         const option = existingSessions.find((candidate) => candidate.sessionId === sessionId);
-        if (option === undefined) return;
-        onChangeConversation({ kind: 'existing_session', sessionId: option.sessionId, machineId: option.machineId });
-        setChoosingSession(false);
-    }, [existingSessions, onChangeConversation]);
+        if (option === undefined || !props.onBindExistingSession) return;
+        const outcome = await props.onBindExistingSession(sessionId);
+        if (outcome.status === 'applied') {
+            setBindingRefusal(null);
+            setChoosingSession(false);
+        } else if ('reason' in outcome) setBindingRefusal(outcome.reason.message);
+    }, [existingSessions, props.onBindExistingSession]);
 
     const conversationChoices = new Map<string, WorkflowConversationSelection>();
     const conversationItems: DropdownMenuItem[] = [];
@@ -257,7 +263,8 @@ export function WorkflowContinuityControls(props: Readonly<{
         testID: `${testIDPrefix}-conversation-option-existing`,
         disabled: !existingSessionOffered,
         // The reason reaches the option itself, not only nearby text.
-        ...(existingSessionOffered ? {} : { subtitle: t('workflows.conversation.noExistingSessions') }),
+        ...(existingSessionOffered ? {} : { subtitle: existingSessions.length === 0
+            ? t('workflows.conversation.noExistingSessions') : t('entityDragDrop.reasons.generic') }),
     });
     const conversationSelectedId = props.conversation === undefined
         ? (inherits ? DEFAULT_OPTION_ID : 'shared_run')
@@ -313,7 +320,7 @@ export function WorkflowContinuityControls(props: Readonly<{
                         return;
                     }
                     if (id === EXISTING_SESSION_OPTION_ID) {
-                        if (existingSessionOffered) setChoosingSession(true);
+                        if (existingSessionOffered) { setBindingRefusal(null); setChoosingSession(true); }
                         return;
                     }
                     const choice = conversationChoices.get(id);
@@ -343,7 +350,7 @@ export function WorkflowContinuityControls(props: Readonly<{
             )}
             {existingSessionOffered ? null : (
                 <Text testID={`${testIDPrefix}-conversation-existing-unavailable`} style={workflowEditorStyles.groupSummary}>
-                    {t('workflows.conversation.noExistingSessions')}
+                    {existingSessions.length === 0 ? t('workflows.conversation.noExistingSessions') : t('entityDragDrop.reasons.generic')}
                 </Text>
             )}
             {choosingSession && existingSessionOffered ? (
@@ -358,6 +365,9 @@ export function WorkflowContinuityControls(props: Readonly<{
                     maxHeight={360}
                     heightBehavior="stabilizedContentHeight"
                 />
+            ) : null}
+            {choosingSession && bindingRefusal !== null ? (
+                <Text accessibilityRole="alert" style={workflowEditorStyles.groupSummary}>{bindingRefusal}</Text>
             ) : null}
 
             <ContinuityField

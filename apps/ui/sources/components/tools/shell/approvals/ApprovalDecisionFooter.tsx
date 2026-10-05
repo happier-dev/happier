@@ -8,6 +8,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
+import { usePendingPromptPrimaryFocus } from '@/components/tools/shell/permissions/usePendingPromptPrimaryFocus';
 
 export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter(props: Readonly<{
     disabled?: boolean;
@@ -19,11 +20,13 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     onApprove: () => void;
     onReject: () => void;
     testIDPrefix?: string;
+    requestId?: string;
 }>) {
     const { theme } = useUnistyles();
     const disabled = props.disabled === true || props.decisionDisabled === true || props.isDeciding;
     const approveDisabled = disabled || props.approveDisabled === true;
     const testIDPrefix = props.testIDPrefix ?? 'approval-prompt';
+    const primaryAnswerRef = usePendingPromptPrimaryFocus(props.requestId ?? null, !approveDisabled && !props.disabledReason);
 
     if (props.disabledReason === 'inactive') return null;
 
@@ -42,6 +45,7 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
         <View style={styles.container}>
             <Pressable
                 testID={`${testIDPrefix}-approve`}
+                ref={primaryAnswerRef}
                 accessibilityRole="button"
                 accessibilityLabel={t('approvals.approve')}
                 accessibilityHint={props.approveAccessibilityHint}

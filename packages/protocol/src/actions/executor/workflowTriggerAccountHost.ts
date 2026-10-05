@@ -9,7 +9,8 @@ import {
   projectLegacyAutomationTemplateToWorkflowDefinitionV1,
   convertLegacyAutomationRecipeToInlineWorkflowV1,
 } from '../../automations/automationLegacyWorkflowV1.js';
-import { openAutomationTemplateStoredV1 } from '../../automations/automationTemplateStoredV1.js';
+import { openAutomationTemplateStoredV1, readAutomationTemplateStoredEnvelopeV1,
+  type AutomationTemplateRetainedSessionV1 } from '../../automations/automationTemplateStoredV1.js';
 import { AutomationStoredContentEnvelopeV1Schema } from '../../automations/automationStoredContentEnvelopeV1.js';
 import {
   AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
@@ -44,10 +45,12 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   automations: WorkflowTriggerAutomationOperations;
   /** Current validated Account encryption; throws typed when unavailable or stale. */
   resolveEncryption: () => Promise<AvailableAutomationAccountEncryptionV1>;
+  /** Authenticated Session-mode/key custody, separate from ordinary plain Account material. */
+  resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
   newId: () => string;
   /** Channels-owned Account-scoped observation; eligibility/listing is not association evidence. */
-  observeLegacyChannelAssociation?: (input: Readonly<{ automationId: string; expectedTemplateVersion: number }>) => Promise<
+  observeLegacyChannelAssociation?: (input: Readonly<{ automationId: string; expectedTemplateVersion: number }>, caller?: Parameters<NonNullable<WorkflowTriggerActionsDependencies['resolveSession']>>[1]) => Promise<
     Readonly<{ kind: 'absent' | 'bound' | 'unknown' }>>;
 }> & Pick<WorkflowTriggerActionsDependencies, 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveMaterializer' | 'pullRequests'>;
 
@@ -61,7 +64,11 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     if (row.templateCiphertext === undefined
       || (row.targetType !== 'newSession' && row.targetType !== 'existingSession')) unavailable('source_unavailable');
     const current = await params.resolveEncryption();
+    const stored = readAutomationTemplateStoredEnvelopeV1(row.templateCiphertext);
+    const retainedSession = current.witness.mode === 'plain' && row.targetType === 'existingSession' && stored?.legacyExistingSessionId
+      ? await params.resolveRetainedSession?.(stored.legacyExistingSessionId) : undefined;
     const opened = openAutomationTemplateStoredV1({ templateCiphertext: row.templateCiphertext,
+      ...(retainedSession ? { retainedSession } : {}),
       accountMode: current.witness.mode, ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
         ? { material: current.material.material } : {}) });
     if (!opened.ok) unavailable(opened.code);
@@ -241,13 +248,19 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
       }
       unavailable('source_unavailable');
     },
-    convertLegacy: async (row) => {
-      const association = await params.observeLegacyChannelAssociation?.({ automationId: row.id, expectedTemplateVersion: row.templateVersion });
+    convertLegacy: async (row, caller) => {
+      const current = await params.resolveEncryption();
+      const stored = row.templateCiphertext ? readAutomationTemplateStoredEnvelopeV1(row.templateCiphertext) : null;
+      if (current.witness.mode === 'plain' && stored?.legacyExistingSessionId
+        && stored.envelope.kind !== 'happier_automation_template_plain_v1') {
+        unavailable('legacy_conversion_unsupported', { reason: 'spawn_unrepresentable' });
+      }
+      const association = await params.observeLegacyChannelAssociation?.({ automationId: row.id, expectedTemplateVersion: row.templateVersion }, caller);
       if (!association || association.kind === 'unknown') unavailable('legacy_conversion_unsupported', { reason: 'channel_association_unknown' });
       const legacy = await readStoredLegacy(row);
       if (association.kind === 'bound') unavailable('legacy_conversion_unsupported', { reason: 'channel_reply_handoff' });
       const session = legacy.targetType === 'existing_session'
-        ? await params.resolveSession?.(legacy.template.existingSessionId!) : undefined;
+        ? await params.resolveSession?.(legacy.template.existingSessionId!, caller) : undefined;
       const converted = convertLegacyAutomationRecipeToInlineWorkflowV1({ legacyTemplate: legacy,
         machineId: legacy.machineId, ...(session ? { session } : {}) });
       if (converted.kind !== 'available') unavailable(converted.code, { reason: converted.reason });

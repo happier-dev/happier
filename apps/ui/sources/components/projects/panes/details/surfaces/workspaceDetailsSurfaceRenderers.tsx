@@ -15,7 +15,9 @@ import {
     type BrowserDetailsSurfaceRendererOptions,
 } from '@/components/browser/surfaces';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
-import { WorkspaceFileDetailsView, type WorkspaceFileDeepLinkAnchor } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
+import { WorkspaceFileDetailsView } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
+import { readFileTargetAnchorResource } from '@/utils/url/sessionFileDeepLink';
+import { FileFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
 import { WorkspaceCommitDetailsView } from '@/components/projects/panes/details/views/WorkspaceCommitDetailsView';
 import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmReviewDetailsView';
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
@@ -79,15 +81,6 @@ function readOptionalString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
-}
-
-function readDeepLinkAnchor(resource: unknown): WorkspaceFileDeepLinkAnchor | null {
-    if (resource == null || typeof resource !== 'object') return null;
-    if (!('deepLinkAnchor' in resource)) return null;
-    const value = (resource as { deepLinkAnchor?: unknown }).deepLinkAnchor;
-    if (value == null || typeof value !== 'object') return null;
-    if (!('source' in value) || !('anchor' in value)) return null;
-    return value as WorkspaceFileDeepLinkAnchor;
 }
 
 function readCommitSha(resource: unknown): string {
@@ -175,14 +168,19 @@ export function createWorkspaceDetailsSurfaceRenderers(
             canRender: (input) => readResourceKind(input) === 'file' && isFileResource(input.tab.resource),
             render: (input) => {
                 if (!isFileResource(input.tab.resource)) return null;
+                const filePath = input.tab.resource.path;
                 return (
+                    <FileFindSeedHost destination={{ host: 'project', id: options.workspaceRefId, scope: options.workspaceScope, path: filePath }} active={input.active}>
+                    {({ findSeed, consumeFindSeed }) => (
                     <WorkspaceFileDetailsView
+                        findSeed={findSeed}
+                        onFindSeedConsumed={consumeFindSeed}
                         onRevealInFilesTree={options.onRevealInFilesTree}
                         onOpenChanges={options.onOpenChanges}
                         scopeId={options.scopeId}
                         scope={options.workspaceScope}
-                        filePath={input.tab.resource.path}
-                        deepLinkAnchor={readDeepLinkAnchor(input.tab.resource)}
+                        filePath={filePath}
+                        deepLinkAnchor={readFileTargetAnchorResource(input.tab.resource)}
                         presentation={options.presentation}
                         sessionIdForAugmentation={options.sessionIdForAugmentation ?? null}
                         openableContentViewer={{
@@ -198,6 +196,8 @@ export function createWorkspaceDetailsSurfaceRenderers(
                             }
                         }}
                     />
+                    )}
+                    </FileFindSeedHost>
                 );
             },
         },

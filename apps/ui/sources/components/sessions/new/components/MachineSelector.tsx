@@ -1,17 +1,18 @@
 import React from 'react';
 import { Pressable, type View as RNView } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { SearchableListSelector } from '@/components/ui/forms/SearchableListSelector';
+import { SelectionList } from '@/components/ui/selectionList';
+import { useMachineSelectionListModel } from './machineSelection/useMachineSelectionListModel';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
-import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { buildMachineSelectionBuckets } from './machineSelection/buildMachineSelectionBuckets';
+
+const EMPTY_MACHINES: readonly Machine[] = [];
 
 export interface MachineSelectorProps {
     machines: ReadonlyArray<Machine>;
@@ -75,7 +76,6 @@ export function MachineSelector({
     showCliGlyphs = true,
     autoDetectCliGlyphs = true,
     serverId,
-    searchPlacement = 'header',
     favoriteGroupPlacement = 'afterRecent',
     searchPlaceholder: searchPlaceholderProp,
     recentSectionTitle: recentSectionTitleProp,
@@ -101,15 +101,9 @@ export function MachineSelector({
     const machineOptionTestIdPrefix = typeof testIdPrefix === 'string' && testIdPrefix.trim()
         ? `${testIdPrefix.trim()}-option`
         : undefined;
-    const machineReadinessTestIdPrefix = typeof testIdPrefix === 'string' && testIdPrefix.trim()
-        ? `${testIdPrefix.trim()}-readiness`
-        : undefined;
     const getMachineOptionTestID = React.useCallback((machine: Machine) => {
         return machineOptionTestIdPrefix ? `${machineOptionTestIdPrefix}:${machine.id}` : undefined;
     }, [machineOptionTestIdPrefix]);
-    const getMachineReadinessTestID = React.useCallback((machine: Machine) => {
-        return machineReadinessTestIdPrefix ? `${machineReadinessTestIdPrefix}:${machine.id}` : undefined;
-    }, [machineReadinessTestIdPrefix]);
     const selectedMachineId = selectedMachine?.id ?? null;
     const bucketModel = React.useMemo(() => buildMachineSelectionBuckets({
         machines,
@@ -277,85 +271,50 @@ export function MachineSelector({
         );
     }
 
-    return (
-        <SearchableListSelector<Machine>
-            config={{
-                getItemId: (machine) => machine.id,
-                getItemTitle: (machine) => machineName(machine),
-                getItemSubtitle: undefined,
-                getItemIcon: () => (
-                    <Icon
-                        name="desktop"
-                        size={24}
-                        color={theme.colors.text.secondary}
-                    />
-                ),
-                getRecentItemIcon: () => (
-                    <Icon
-                        name="clock"
-                        size={24}
-                        color={theme.colors.text.secondary}
-                    />
-                ),
-                getItemStatus: (machine) => {
-                    const presence = resolveMachinePickerPresence(machine);
-                    const offline = !presence.selectable;
-                    const testID = getMachineReadinessTestID(machine);
-                    return {
-                        text: offline ? t('status.offline') : t('status.online'),
-                        color: offline ? theme.colors.status.disconnected : theme.colors.status.connected,
-                        dotColor: offline ? theme.colors.status.disconnected : theme.colors.status.connected,
-                        isPulsing: !offline,
-                        state: presence.selectable ? 'ready' : presence.status,
-                        testID,
-                    };
-                },
-                getItemStatusTestID: getMachineReadinessTestID,
-                isItemDisabled: disableOfflineMachines
-                    ? (machine) => !resolveMachinePickerPresence(machine).selectable
-                    : undefined,
-                ...(showCliGlyphs ? {
-                    getItemStatusExtra: (machine: Machine) => (
-                        <MachineCliGlyphs
-                            machineId={machine.id}
-                            serverId={serverId}
-                            isOnline={isMachineOnline(machine)}
-                            autoDetect={autoDetectCliGlyphs}
-                        />
-                    ),
-                } : {}),
-                formatForDisplay: (machine) => machineName(machine),
-                parseFromDisplay: (text) => {
-                    return visibleMachines.find(m =>
-                        machineName(m) === text || m.metadata?.displayName === text || m.metadata?.host === text || m.id === text
-                    ) || null;
-                },
-                filterItem: (machine, searchText) => {
-                    const displayName = (machine.metadata?.displayName || '').toLowerCase();
-                    const host = (machine.metadata?.host || '').toLowerCase();
-                    const id = machine.id.toLowerCase();
-                    const search = searchText.toLowerCase();
-                    return displayName.includes(search) || host.includes(search) || id.includes(search);
-                },
-                searchPlaceholder,
-                recentSectionTitle,
-                favoritesSectionTitle,
-                allSectionTitle,
-                noItemsMessage,
-                showFavorites,
-                showRecent,
-                showSearch,
-                allowCustomInput: false,
-            }}
-            items={visibleAllMachines}
-            recentItems={visibleRecentMachinesWithoutFavorites}
-            favoriteItems={launchPinnedFavoriteMachines}
-            selectedItem={selectedMachine}
-            onSelect={onSelect}
-            onToggleFavorite={onToggleFavorite}
-            searchPlacement={searchPlacement}
-            groupOrder={favoriteGroupPlacement === 'beforeRecent' ? 'favoritesFirst' : 'recentFirst'}
-            testIdPrefix={machineOptionTestIdPrefix}
-        />
-    );
+    return <MachineSelectorList
+        machines={machines} selectedMachine={selectedMachine} recentMachines={recentMachines} favoriteMachines={favoriteMachines}
+        onSelect={onSelect} onToggleFavorite={onToggleFavorite} showFavorites={showFavorites} showRecent={showRecent}
+        showSearch={showSearch} showCliGlyphs={showCliGlyphs} autoDetectCliGlyphs={autoDetectCliGlyphs} serverId={serverId}
+        favoriteGroupPlacement={favoriteGroupPlacement} testIdPrefix={testIdPrefix} disableOfflineMachines={disableOfflineMachines}
+        includeSelectedUnavailableMachine={includeSelectedUnavailableMachine} searchPlaceholder={searchPlaceholder}
+        recentSectionTitle={recentSectionTitle} favoritesSectionTitle={favoritesSectionTitle} allSectionTitle={allSectionTitle}
+        noItemsMessage={noItemsMessage}
+    />;
+}
+
+function MachineSelectorList(props: MachineSelectorProps) {
+    const groupServerId = props.serverId ?? '';
+    const groups = React.useMemo(() => [{
+        serverId: groupServerId, serverName: '', loading: false, signedOut: false,
+        machines: props.machines.map((machine) => ({ ...machine, serverId: groupServerId, serverName: '' })),
+    }], [groupServerId, props.machines]);
+    const sectionTitles = React.useMemo(() => ({
+        recent: props.recentSectionTitle, favorites: props.favoritesSectionTitle, all: props.allSectionTitle,
+    }), [props.recentSectionTitle, props.favoritesSectionTitle, props.allSectionTitle]);
+    const resolveAvailability = React.useCallback((machine: Machine) => {
+        const presence = resolveMachinePickerPresence(machine);
+        return { selectable: presence.selectable || (props.disableOfflineMachines === false && presence.status === 'offline') };
+    }, [props.disableOfflineMachines]);
+    const selectMachine = React.useCallback((machine: Machine) => {
+        const original = props.machines.find((candidate) => candidate.id === machine.id);
+        if (original) props.onSelect(original);
+    }, [props.machines, props.onSelect]);
+    const toggleFavorite = React.useCallback((machine: Machine) => {
+        const original = props.machines.find((candidate) => candidate.id === machine.id);
+        if (original) props.onToggleFavorite?.(original);
+    }, [props.machines, props.onToggleFavorite]);
+    const model = useMachineSelectionListModel({
+        groups, selectedMachine: props.selectedMachine, selectedServerId: groupServerId,
+        recentMachines: props.recentMachines ?? EMPTY_MACHINES, favoriteMachines: props.favoriteMachines ?? EMPTY_MACHINES,
+        onSelectMachine: selectMachine, onSelectScopedMachine: selectMachine,
+        onToggleFavorite: props.onToggleFavorite ? toggleFavorite : undefined,
+        showFavorites: props.showFavorites ?? true, showRecent: props.showRecent ?? true, showSearch: props.showSearch ?? true,
+        showCliGlyphs: props.showCliGlyphs ?? true, autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
+        serverId: props.serverId, favoriteGroupPlacement: props.favoriteGroupPlacement, testIdPrefix: props.testIdPrefix,
+        disableOfflineMachines: props.disableOfflineMachines, resolveMachineAvailability: resolveAvailability,
+        includeSelectedUnavailableMachineId: props.includeSelectedUnavailableMachine ? props.selectedMachine?.id : null,
+        searchPlaceholder: props.searchPlaceholder, emptyStateLabel: props.noItemsMessage, sectionTitles,
+    });
+    return <SelectionList testID={props.testIdPrefix ? `${props.testIdPrefix}-list` : 'machine-selector-list'}
+        rootStep={model.rootStep} selectedOptionId={model.selectedOptionId} onSelect={() => {}} onRequestClose={() => {}} />;
 }

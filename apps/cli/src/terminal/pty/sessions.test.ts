@@ -1458,14 +1458,15 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
 
     const first = manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
     if (!first.ok) throw new Error('expected ok');
-    const restarted = manager.restart({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
+    const restarted = manager.restart({ terminalKey: 'k1', cwd: '/repo/web' });
     if (!restarted.ok) throw new Error('expected ok');
 
     expect(restarted.terminalId).not.toBe(first.terminalId);
     // old run unregistered (identity-checked) then new run registered (replace-by-key)
     expect(unregisters).toEqual([{ terminalKey: 'k1', terminalId: first.terminalId }]);
     expect(registers).toHaveLength(2);
-    expect(registers[1]).toMatchObject({ terminalKey: 'k1', terminalId: restarted.terminalId });
+    expect(registers[1]).toMatchObject({ terminalKey: 'k1', terminalId: restarted.terminalId, sessionId: 'session-a' });
+    expect(manager.list()).toMatchObject([{ terminalId: restarted.terminalId, sessionId: 'session-a' }]);
   });
 
   it('skips registration when the backend cannot supply a pid', () => {

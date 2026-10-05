@@ -5,7 +5,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -46,9 +47,9 @@ export const PromptEditorHeader = React.memo(function PromptEditorHeader(props: 
                 </Text>
             ) : undefined}
             leading={(
-                <PageHeaderMarkTile appearance="glyph">
+                <PageHeaderMarkSlot>
                     <Icon name={props.mark} size={20} color={theme.colors.text.secondary} />
-                </PageHeaderMarkTile>
+                </PageHeaderMarkSlot>
             )}
             actions={(
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

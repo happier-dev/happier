@@ -17,11 +17,13 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   removeWorkflowTriggers?: (definitionId: string) => Promise<void>;
   resolveMaterializer?: ReturnType<typeof createWorkflowMaterializationHostV1>;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
+  readWorkflowTriggerSummaries?: Parameters<typeof createSharedWorkflowDefinitionActions>[0]['readWorkflowTriggerSummaries'];
 }>) {
   return createSharedWorkflowDefinitionActions({
     artifactStore: params.artifactStore,
     encodeListCursor: encodeAccountArtifactListCursor,
     readPluginWorkflows: params.readPluginWorkflows ?? (() => readPluginWorkflowSources(readCurrentContributionRegistry())),
+    ...(params.readWorkflowTriggerSummaries ? { readWorkflowTriggerSummaries: params.readWorkflowTriggerSummaries } : {}),
     ...(params.removeWorkflowTriggers ? { removeWorkflowTriggers: params.removeWorkflowTriggers } : {}),
     assertDefinitionWriteAllowed: async (definition, context, caller) => {
       if (caller?.surface !== 'agent') return;

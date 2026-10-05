@@ -363,7 +363,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Read the Azure DevOps iterations of a pull request',
       description: 'Reads the pull request\u2019s iteration list once, and names the real'
         + ' current iteration the Files and Activity tabs both compare against.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: AzureIterationsInputV1Schema.jsonSchema,
       resultSchema: AzureIterationsResultV1Schema.jsonSchema,
@@ -375,7 +375,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Read an Azure DevOps commit page',
       description: 'Reads one bounded page of the commits of one pull request, positioned only'
         + ' by the continuation token Azure DevOps issued.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: AzureCommitsInputV1Schema.jsonSchema,
       resultSchema: AzureCommitsResultV1Schema.jsonSchema,
@@ -387,7 +387,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Read an Azure DevOps iteration change page',
       description: 'Reads one bounded page of the files one pull-request iteration changes,'
         + ' advancing only through the skip and top Azure DevOps issued.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: AzureIterationChangesInputV1Schema.jsonSchema,
       resultSchema: AzureIterationChangesResultV1Schema.jsonSchema,
@@ -399,7 +399,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Read the Azure DevOps policies of a pull request',
       description: 'Reads the statuses and policy evaluations of one pull request, with'
         + ' enforcement taken only from a returned evaluation.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: AzurePoliciesInputV1Schema.jsonSchema,
       resultSchema: AzurePoliciesResultV1Schema.jsonSchema,
@@ -411,7 +411,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Read the Azure DevOps threads of a pull request',
       description: 'Reads every review thread of one pull request in the one response the'
         + ' documented endpoint returns.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: AzureThreadsInputV1Schema.jsonSchema,
       resultSchema: AzureThreadsResultV1Schema.jsonSchema,
@@ -421,20 +421,16 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
     },
     // The five enabled Azure DevOps pull-request writes.
     //
-    // `surfaces: ['ui']` is the human gate, and the gate is reachability rather than a
-    // prompt: with no `agent` and no `mcp` surface not one of them is agent-reachable at all. A
-    // `danger` level plus `agent: true` would only floor an agent invocation to an approval
-    // prompt, which is a weaker guarantee — so there is no list of exempt callers here, and none
-    // may be added. `ui` is the write's whole product reach: the daemon derives the invoking
-    // surface from the authenticated mounted-UI provenance, so this plugin's own mounted detail
-    // artifact reaches the write as present-user authority while direct plugin code —
-    // ActionsService — checks only the `plugin` surface and is refused here.
+    // UI, agent, MCP and CLI share these native handlers and the host approval
+    // policy. Non-safe danger levels and confirmations require approval by
+    // default; exact configured-account admission and provider preconditions
+    // remain with the source.
     [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.complete]: {
       title: 'Complete an Azure DevOps pull request',
       description: 'Completes one active pull request with the branch decision the user chose,'
         + ' only while its merge source is still the commit they saw, and reports the polled'
         + ' terminal state rather than the accepted request.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       // Irreversible on the forge, and it may delete the source branch.
       dangerLevel: 'destructive',
@@ -462,7 +458,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Abandon an Azure DevOps pull request',
       description: 'Abandons one active pull request. Azure can reactivate an abandoned pull'
         + ' request later.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -484,7 +480,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Reactivate an Azure DevOps pull request',
       description: 'Reactivates one abandoned pull request, which is Azure’s reopen. A'
         + ' completed pull request is refused rather than reactivated.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       // The body says what comes back with it, because reactivating is not a private bookkeeping
@@ -508,7 +504,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Request review on an Azure DevOps pull request',
       description: 'Adds the selected identities as reviewers of one active pull request through'
         + ' one additive request, leaving every existing reviewer and vote untouched.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       // The body states the one thing this write does NOT do, because the reviewer routes Azure
@@ -532,7 +528,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Set the status of an Azure DevOps review thread',
       description: 'Sets one review thread’s status and confirms it from the thread itself.'
         + ' The conversation in the thread is never rewritten.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -557,7 +553,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Submit an Azure DevOps pull request review',
       description: 'Publishes the selected canonical review comments in order and submits the'
         + ' viewer verdict last, only while the exact base and head remain current.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -575,7 +571,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Publish an Azure DevOps pull request review comment',
       description: 'Publishes one canonical Happier proposal as a new review thread at its exact'
         + ' preflighted Azure DevOps anchor.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -593,7 +589,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       title: 'Reply to an Azure DevOps pull request review thread',
       description: 'Publishes one canonical Happier proposal as a reply to the exact Azure DevOps'
         + ' thread and parent comment selected by the reader.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {

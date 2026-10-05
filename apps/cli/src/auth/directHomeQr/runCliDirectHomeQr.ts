@@ -18,7 +18,7 @@ import qrcode from 'qrcode-terminal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { buildTerminalAuthorityCeilingHttpHeaders } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
-import { resolveAuthenticatedExactHomeConnectionDescriptorObservation } from '@/auth/terminalAuthEnrollmentClient';
+import { resolveAuthenticatedExactHomeConnectionDescriptorObservation, verifyTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentClient';
 import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentialsForServerId } from '@/persistence';
 import {
@@ -28,6 +28,7 @@ import {
   type ServerProfile,
 } from '@/server/serverProfiles';
 import { resolveTerminalProvisioningMaterial, type TerminalProvisioningMaterial } from '@/auth/terminalProvisioningMaterial';
+import { resolveCliHomeTarget } from '@/server/homeTarget';
 
 export type CliDirectHomeQrResult =
   | Readonly<{ kind: 'completed'; requestedDeviceLabel: string | null }>
@@ -154,11 +155,17 @@ export async function runCliDirectHomeQr(input: Readonly<{
     return { kind: 'failed', status: 404 };
   }
   const storedDescriptor = profile.homeConnectionDescriptor;
-  if (!storedDescriptor || profile.homeConnectionDescriptorAuthority !== 'exact') return { kind: 'failed', status: 412 };
+  if (storedDescriptor && profile.homeConnectionDescriptorAuthority !== 'exact') return { kind: 'failed', status: 412 };
   const credentials = await readStoredCredentialsForServerId(profile.id);
   if (!credentials?.token) return { kind: 'failed', status: 401 };
 
-  const acquired = await acquireTerminalAuthEnrollmentRuntime(storedDescriptor, undefined, input.signal);
+  let target: Awaited<ReturnType<typeof resolveCliHomeTarget>>;
+  try {
+    target = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: profile.id });
+  } catch {
+    return { kind: 'failed', status: 412 };
+  }
+  const acquired = await acquireTerminalAuthEnrollmentRuntime(storedDescriptor ?? target, undefined, input.signal);
   if (!acquired.ok) return input.signal?.aborted
     ? { kind: 'cancelled' }
     : { kind: 'failed', status: 503 };
@@ -181,9 +188,14 @@ export async function runCliDirectHomeQr(input: Readonly<{
   }
   let exactObservation;
   try {
+    // URL-only profiles use the same exact-origin verification as terminal
+    // login. Only the authenticated Home projection can establish the descriptor;
+    // the public predecessor fallback remains advisory and cannot start pairing.
+    const expectedHomeServerIdentityId = storedDescriptor?.homeServerIdentityId
+      ?? verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: observed }).homeServerIdentityId;
     exactObservation = resolveAuthenticatedExactHomeConnectionDescriptorObservation({
       snapshot: observed,
-      expectedHomeServerIdentityId: storedDescriptor.homeServerIdentityId,
+      expectedHomeServerIdentityId,
     });
   } catch {
     await acquired.close().catch(() => undefined);
@@ -200,7 +212,7 @@ export async function runCliDirectHomeQr(input: Readonly<{
     await acquired.close().catch(() => undefined);
     return { kind: 'update_required' };
   }
-  let descriptor: typeof storedDescriptor;
+  let descriptor: NonNullable<typeof storedDescriptor>;
   try {
     const reconciled = await adoptServerProfileHomeConnectionDescriptor({
       descriptor: observedDescriptor,

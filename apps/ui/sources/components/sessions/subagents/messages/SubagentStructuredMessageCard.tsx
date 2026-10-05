@@ -2,20 +2,30 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
+import { StructuredFindText, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
 
-export function SubagentStructuredMessageCard(props: Readonly<{
+type SubagentCardProps = Readonly<{
     title: string;
     targetLabel: string;
     messageText: string;
     detailText?: string | null;
-}>) {
+}>;
+
+export function projectSubagentStructuredFindText(props: SubagentCardProps): readonly StructuredFindTextBlock[] {
+    return [
+        { id: 'structured-subagent-title', text: props.title },
+        { id: 'structured-subagent-target', text: props.targetLabel },
+        ...(props.detailText ? [{ id: 'structured-subagent-detail', text: props.detailText }] : []),
+        { id: 'structured-subagent-body', text: props.messageText },
+    ];
+}
+
+export function SubagentStructuredMessageCard(props: SubagentCardProps) {
+    const blocks = projectSubagentStructuredFindText(props);
     return (
         <View style={styles.container}>
-            <Text selectable style={styles.headerText}>{props.title}</Text>
-            <Text selectable style={styles.targetText}>{props.targetLabel}</Text>
-            {props.detailText ? <Text selectable style={styles.detailText}>{props.detailText}</Text> : null}
-            <Text selectable style={styles.bodyText}>{props.messageText}</Text>
+            {blocks.map((block) => <StructuredFindText key={block.id} selectable blockId={block.id} text={block.text}
+                style={block.id === 'structured-subagent-title' ? styles.headerText : block.id === 'structured-subagent-target' ? styles.targetText : block.id === 'structured-subagent-detail' ? styles.detailText : styles.bodyText} />)}
         </View>
     );
 }

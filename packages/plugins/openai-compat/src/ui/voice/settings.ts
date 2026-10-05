@@ -53,6 +53,11 @@ const OPENAI_COMPAT_TTS_SETTINGS = Object.freeze({
       promptBodyKey: 'settingsVoice.local.ttsBaseUrlDescription',
     }),
     Object.freeze({
+      fieldId: 'maxInputCharacters',
+      titleKey: 'Endpoint input limit (characters)',
+      subtitleKey: 'OpenAI accepts 4,096 characters. For a custom endpoint, use its documented input limit.',
+    }),
+    Object.freeze({
       fieldId: 'model',
       titleKey: 'settingsVoice.local.ttsModel',
       subtitleKey: 'settingsVoice.local.ttsModelSubtitle',

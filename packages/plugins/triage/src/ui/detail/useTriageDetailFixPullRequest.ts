@@ -32,8 +32,8 @@ import {
  * and this hook only consumes its `primary` answer: it finds that PR in the
  * device projection, reads its strict detail input through the one entry-detail
  * owner, and resolves the PR's admitted detail surface and declared tabs. A PR
- * the projection does not hold, or whose source declares no panels, yields no
- * mount — the issue then shows only the tabs it has.
+ * the projection does not hold yields no mount, but its admitted kind's declared
+ * tabs remain available with the detail frame's canonical unavailable state.
  */
 export type TriageDetailFixPullRequestV1 = Readonly<{
   state: TriageFixPullRequestsStateV1 | null;

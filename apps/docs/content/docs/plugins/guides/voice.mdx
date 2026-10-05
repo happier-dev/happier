@@ -5,6 +5,10 @@ description: Choose a conversation runtime or independent STT and TTS speech con
 
 Voice is one discriminated contribution family with three common tasks.
 
+This guide describes the 0.3 development Plugin SDK. Declaring a capability is not
+a claim that an installed release supports it; runtime and platform admission still
+apply.
+
 | Task | Declaration and realm | Runtime import |
 | --- | --- | --- |
 | Realtime conversation | `kind: 'conversation'`; client leaf | `@happier-dev/plugin-sdk/voice/client` |
@@ -19,12 +23,55 @@ their own contribution ids when they can be selected independently; do not
 recreate the retired `registerSpeech` path or a Voice-local credential/settings
 owner.
 
+The host's conversation attempt owns its target, controls and presentation. Top bar,
+Island, Orb and Companion consume that same attempt; plugins do not choose placement
+or reinterpret Mute, End or Retry. Dictation remains a separate input purpose that
+returns editable composer text rather than admitting a conversation turn.
+
 Credentials declare one slot, effective source, exact host-mediated operation
 or raw grant. The host retains source selection, current binding/grant checks,
 disclosure approval, cancellation, and materialization. Conversation code must
 not use the hosted-web `ui/client` path as a Voice runtime import.
 
+## Privacy facts and numeric controls
+
+In the 0.3 development contract, declare `settings.privacyFacts` alongside the
+full `settings.privacyDisclosure`. The facts contain localized
+`audioDestination`, `processor`, and `retention`, plus optional `details`.
+Use literal service names or `{ key, fallback }` text with a readable fallback.
+Describe where microphone audio goes, who processes it, and the actual retention
+policy; do not imply a no-training or no-retention guarantee without evidence.
+TTS-only services should say that they receive reply text, not microphone audio.
+
+The host renders these facts with its settings rows only on **Settings → Voice →
+Privacy & data**. The full disclosure and optional details sit behind **Details**;
+plugins do not add privacy banners to the composer or conversation surfaces.
+
+For a contributed numeric settings field, use `kind: 'number'`,
+`numericControl: 'stepper'`, a positive `step`, the setting's existing `min`/`max`,
+and optional localized `unitKey`. This uses the same numeric draft and stepper as
+host settings. Units are presentation only and never become part of saved values.
+
 ## Roles decide where a provider is offered
+
+Give your service a recognizable identity with the optional `mark` on its Voice
+declaration. For example, ElevenLabs uses the public icon vocabulary:
+
+```ts
+import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
+
+const mark = { kind: 'icon', name: 'waveform' } satisfies VoiceServiceMark;
+```
+
+Set `declaration.mark` to that value alongside your contribution's existing
+kind, roles and execution declaration. Bundled OpenAI, xAI, ElevenLabs and Codex
+use this same public contract.
+
+`VoiceServiceMark` also accepts `{ kind: 'connected_service', serviceId: 'openai' }`
+or `{ kind: 'agent', agentId: 'codex' }`. The public
+`VoiceServiceMarkSchema` validates the same shapes for installed and bundled
+plugins. These marks only identify the service visually; they grant no access to
+an Agent, Connected Account or its credentials.
 
 `roles` is not documentation — it is what puts your contribution in a picker.
 A speech contribution declaring `dictation_stt` appears in the composer
@@ -32,6 +79,103 @@ Dictation provider list; `conversation_stt` and `conversation_tts` appear in
 Local voice's speech pipeline. Declare both STT roles only when the same engine
 genuinely serves both, and give independently selectable STT and TTS their own
 contribution ids.
+
+## Build a voice-enabled interface
+
+Same-realm Plugin UI surfaces can use `VoiceMarkArt`, `StatusCell`,
+`SetupBlockTile`, `SetupBlockGrid` and `SetupSteps` from
+`@happier-dev/plugin-ui`. The mark accepts an explicit pose, size, light vector
+and light/dark theme. It is still by default; `still={false}` permits pose/light
+event transitions, never live microphone energy. `StatusCell` accepts
+`working`, `thinking` or `needs_you` and a required accessible label. Both use the
+host's existing Brand renderer; they neither subscribe to a Voice attempt nor
+decide its state. Reduced-motion and hidden-presentation rules remain host-owned.
+
+Setup tiles use the existing host paper and action controls. The grid owns
+in-place opening/closing and mounts its panel only for that lifecycle.
+`SetupSteps` is the ordered composition of the shared `HappierStep` marker;
+authors supply each step's title, detail, body and current/done/upcoming state.
+Hosts without these presentation bindings use your explicit `fallback`.
+The ordinary `SelectionTiles` wrapper also forwards bare `mark`, translated
+`badge`, per-option `testID`, option footers, density, tile sizing, column bounds,
+minimum tile width and subtitle lines to the same shared tile owner.
+
+### Dictate into your own input
+
+`DictationButton` returns editable text through `onTranscription`. Put it beside
+your controlled input; decide how to insert those words, and keep submission as
+a separate user action:
+
+```tsx
+import { useState } from 'react';
+import { DictationButton, Text, TextField } from '@happier-dev/plugin-ui';
+
+export function DraftInput() {
+  const [draft, setDraft] = useState('');
+  return <>
+    <TextField label="Draft" value={draft} onChange={setDraft} multiline />
+    <DictationButton
+      onTranscription={(words) => setDraft((current) => current ? `${current}\n${words}` : words)}
+      fallback={<Text>Dictation is unavailable in this host.</Text>}
+    />
+  </>;
+}
+```
+
+This uses the composer's Dictation engine, recognition language, microphone
+permission, capture admission and error handling. It is independent of the
+selected conversation service, and does not create a Session target. The host
+cancels capture and rejects late delivery when the field's control is hidden,
+disabled or unmounted. `presented={false}` and `disabled` may narrow admission;
+they cannot override hidden host presentation. Remount the control with a new
+React key when replacing the logical draft it edits. Do not send audio to a
+second STT implementation from your UI. Hosted-web frames without the same-realm
+presentation binding retain their normal text input and use the fallback.
+
+## Commands a voice agent can call
+
+Declare an ordinary plugin Action through `definePlugin({ actions: ... })` and
+include `voice` in its invocation surfaces. Give it a typed input/output schema,
+accurate effect/safety metadata and, when useful, `definition.examples.voice`.
+The host's `action.spec.search`, `action.spec.get` and `action.invoke` tools
+discover and dispatch it through the same Action policy, approvals and target
+ownership as other invocation surfaces. A Tool declaration's separate
+`cli`/`mcp`/`agent` surface grammar does not create a Voice tool.
+
+A mounted UI may publish contextual commands with
+`hostApi.publishCurrentUiContext({ commands: [...] })`: a command describes an
+admitted `executeAction` or `openSurface` operation. Host-generated command
+handles, privacy filtering and synchronous retirement stay with the mounting
+client. These commands describe that foreground interface, not another client
+on the Account.
+
+For a conversation provider, `VoiceClientToolDefinition` at
+`@happier-dev/plugin-sdk/voice/client` describes the host-delivered tools in
+realtime preparation. Adapt their names, descriptions and parameter schemas to
+your native provider. Its `execute` callback is an attempt-bound read boundary,
+not a new plugin registration API: effects must emit canonical `tool_calls` with
+the declared correlation capability so the host Action barrier can authorize,
+cancel and settle them. Never bypass that barrier or turn spoken approval into
+an approval token.
+
+### Start a conversation or Brief
+
+Use `usePluginHostApi().executeAction` rather than an app-internal Voice controller:
+
+```ts
+await hostApi.executeAction('ui.voice_global.start', {
+  target: { kind: 'global' }, expectedAttempt: null,
+});
+await hostApi.executeAction('ui.voice_global.brief.request', {});
+```
+
+These development Actions are contributed by the Voice Actions owner. Starting
+or recovering microphone input and requesting/retrying a Brief require ordinary
+host approval by default. Inspect the typed result instead of assuming speech
+started: unsupported microphone hosts or an unmounted/unready Home/Inbox Brief
+owner can return unavailability or refusal. `ui.voice_global.get` supplies the
+captured attempt identity for subsequent end/mute/hold operations; navigation
+must not retarget them. Dictation does not start one of these conversations.
 
 ## The host owns the transcript, not your runtime
 
@@ -49,6 +193,34 @@ tool, cancellation and retirement behaviour to a bundled one.
 The [contribution reference](/plugins/manifest/contributions#voice-providers)
 and the public-authoring example contain full conversation, STT, and TTS
 shapes.
+
+## Attempt policy and human approval
+
+Standalone realtime preparation can consume the host's optional `attemptPolicy`.
+It contains the admitted reply-language, greeting and client-tool guidance, and the
+host retains it through reconnect. Translate supported policy into your provider's
+native configuration; do not advertise an independent language or greeting control
+unless the runtime applies it. Attached Agent sessions retain their session-owned
+prompt authority.
+
+For an immediate greeting, the policy may include `welcome.text`, translated in
+the admitted reply language. Use that value for a provider's literal first-message
+override; Off and After I speak carry no immediate text. If no literal is available,
+retain the policy's model-generated greeting instructions. A provider that can
+only start with a literal should wait for the user and declare
+`immediateRequiresLiteral: true` on its curated `welcome` field so the host
+explains that limitation.
+
+Speech can describe a permission request only within the person's context-sharing
+policy. Spoken “yes” or “allow” cannot approve it, create a confirmation token or
+advance approval custody. The existing permission UI owns the tap decision. End
+retirements do not settle pending permissions. Tool effects still enter the host's
+canonical Action barrier with captured attempt identity and currentness.
+
+For speech output, declare provider input budgets through the public speech
+declaration. Character and UTF-8 byte limits are distinct. The host uses those facts
+to batch whole and streaming replies in order; runtime leaves must not invent a
+second playback or segmentation policy.
 
 ## Current UI context
 

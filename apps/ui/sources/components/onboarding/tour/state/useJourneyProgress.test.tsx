@@ -34,25 +34,20 @@ describe('useJourneyProgress', () => {
         await hook.unmount();
     });
 
-    it('carries the A7 attention choice to completion without applying settings in the hook', async () => {
+    it('reports the final beat for the settled Personalize handoff', async () => {
         const onComplete = vi.fn();
         const hook = await renderHook(() => useJourneyProgress({
             surface: 'desktop',
             initialBeatId: 'S5',
-            initialAttentionChoice: 'keep_current',
             onComplete,
         }));
 
-        await act(async () => {
-            hook.getCurrent().setAttentionChoice('promote_attention_and_working');
-        });
         await act(async () => {
             hook.getCurrent().advance();
         });
 
         expect(onComplete).toHaveBeenCalledTimes(1);
         expect(onComplete).toHaveBeenCalledWith({
-            attentionChoice: 'promote_attention_and_working',
             completedBeatId: 'S5',
         });
 

@@ -1,14 +1,8 @@
 import * as React from 'react';
 
 import { LocalNeuralTtsSettings } from '@/voice/settings/panels/localTts/LocalNeuralTtsSettings';
-import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
-import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
-import { DaemonTtsController } from '@/voice/runtime/daemonInference/DaemonTtsController';
-import {
-  resolveDaemonVoiceInferenceExecution,
-  resolveLocalNeuralExecutionPolicy,
-} from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
+import { previewLocalNeuralTts } from './previewLocalNeuralTts';
 import { t } from '@/text';
 
 import type { LocalTtsProviderSpec } from '../_types';
@@ -37,38 +31,8 @@ export const localNeuralTtsProviderSpec: LocalTtsProviderSpec = {
   iconName: 'sparkle',
   detail: t('settingsVoice.local.localNeuralTts.provider.detail'),
   Settings: LocalNeuralProviderSettings,
-  test: async ({ cfgTts, networkTimeoutMs, sample }) => {
-    const executionPolicy = resolveLocalNeuralExecutionPolicy({
-      requestedExecution: cfgTts.localNeural.execution,
-    });
-    const resolvedExecution = await resolveDaemonVoiceInferenceExecution({
-      requestedExecution: cfgTts.localNeural.execution ?? 'auto',
-      surface: 'tts',
-    });
-
-    if (resolvedExecution === 'daemon') {
-      await new DaemonTtsController().speak({
-        text: sample,
-        packId: resolveKokoroDaemonTtsPackId(cfgTts.localNeural.assetId),
-        voiceId: cfgTts.localNeural.voiceId,
-        speed: cfgTts.localNeural.speed ?? 1,
-        registerPlaybackStopper: (_stopper) => () => {},
-        onSpeaking: () => {},
-      });
-      return;
-    }
-
-    if (executionPolicy.preferredExecution !== 'device') {
-      return;
-    }
-
-    await speakKokoroText({
-      text: sample,
-      assetSetId: cfgTts.localNeural.assetId,
-      voiceId: cfgTts.localNeural.voiceId,
-      speed: cfgTts.localNeural.speed ?? 1,
-      timeoutMs: resolveKokoroOperationTimeoutMs(networkTimeoutMs),
-      registerPlaybackStopper: (_stopper) => () => {},
-    });
-  },
+  test: async ({ cfgTts, networkTimeoutMs, sample, signal, isCurrent, registerPlaybackStopper }) => previewLocalNeuralTts({
+    config: cfgTts.localNeural, sample, timeoutMs: resolveKokoroOperationTimeoutMs(networkTimeoutMs),
+    signal, isCurrent, registerPlaybackStopper: registerPlaybackStopper ?? ((_stopper) => () => {}),
+  }),
 };

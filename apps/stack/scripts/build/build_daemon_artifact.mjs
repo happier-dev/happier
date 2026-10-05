@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { access, mkdir, rm, symlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, rm, symlink } from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
 
 import {
   buildCliBinaryArtifactCodePayload,
@@ -14,19 +14,22 @@ import {
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 import { resolveWorkspaceBundlesFromPackageJson } from '@happier-dev/cli-common/workspaces';
 
-import { readWorkspaceBuildInputs, readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { resolveBundledPluginGeneratorInputPaths } from '../../../cli/scripts/build-owned/bundledPlugins/authoringInputs.mjs';
+import { createWorkspaceBuildWaitNotifier } from '../utils/proc/workspaceBuildWaitNotifier.mjs';
 
 import {
   artifactPayloadDir,
   readArtifactManifest,
   readReusableArtifactManifest,
+  validateArtifactManifest,
   writeArtifactManifest,
 } from '../runtime/shared/artifact_manifest.mjs';
 import { resolveStackComponentArtifactDir } from '../runtime/shared/runtime_paths.mjs';
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
 
-const DAEMON_SUPPORT_DIRECTORIES = Object.freeze(['node_modules', 'tools', 'scripts', '.project']);
+import { assertDaemonSupportPayload, DAEMON_SUPPORT_DIRECTORIES } from '../runtime/shared/daemon_support_payload.mjs';
 
 function readDaemonSupportWorkspaceRuntimeIdentity(manifest) {
   const workspaceRuntimeIdentity = String(manifest?.daemonWorkspaceRuntimeIdentity ?? '').trim().toLowerCase();
@@ -40,7 +43,7 @@ function resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata }) {
   return String(sourceMetadata?.repoDir ?? rootDir ?? '').trim();
 }
 
-export function readDaemonWorkspaceSourceFingerprint({ repoDir }) {
+export function readDaemonWorkspaceSourceFingerprint({ repoDir, stalePackages = [] }) {
   const hash = createHash('sha256');
   hash.update('happier:daemon-workspace-source:v1\0');
   const bundles = resolveWorkspaceBundlesFromPackageJson({
@@ -57,14 +60,14 @@ export function readDaemonWorkspaceSourceFingerprint({ repoDir }) {
   // Packaged plugin resources are derived from the single publisher and its
   // build-owned helpers. Reuse the source input owner so renderer-only edits
   // invalidate support too, while tests and generated outputs stay excluded.
-  const cliDir = join(repoDir, 'apps', 'cli');
-  const generatorInput = 'scripts/build-owned/generateBundledPluginEntries.ts';
-  hash.update(readFileSync(join(cliDir, generatorInput)));
-  for (const input of readWorkspaceBuildInputs(cliDir)) {
-    if (input === generatorInput || !input.startsWith('scripts/build-owned/')) continue;
-    hash.update(`${input}\0`);
-    hash.update(readFileSync(join(cliDir, input)));
+  for (const input of resolveBundledPluginGeneratorInputPaths({ repoDir })) {
+    const relativeInput = relative(join(repoDir, 'apps', 'cli'), input).replaceAll('\\', '/');
+    if (relativeInput !== 'scripts/build-owned/generateBundledPluginEntries.ts') hash.update(`${relativeInput}\0`);
+    hash.update(readFileSync(input));
   }
+  if (stalePackages.length) hash.update(`qa-last-green\0${JSON.stringify(stalePackages
+    .map(({ packageName, outputIdentity }) => ({ packageName, outputIdentity }))
+    .sort((a, b) => a.packageName.localeCompare(b.packageName)))}`);
   return hash.digest('hex');
 }
 
@@ -118,16 +121,6 @@ export async function resolveDaemonSupportArtifactFingerprint({
   return fingerprint;
 }
 
-async function assertDaemonSupportPayload({ supportPayloadDir }) {
-  await Promise.all(DAEMON_SUPPORT_DIRECTORIES.map(async (name) => {
-    try {
-      await access(join(supportPayloadDir, name));
-    } catch {
-      throw new Error(`[build] daemon support artifact is incomplete: missing ${name}.`);
-    }
-  }));
-}
-
 /**
  * Code artifacts intentionally contain only daemon code. These links are
  * created in an unpublished temporary artifact directory, so replacing them
@@ -147,7 +140,7 @@ export async function linkDaemonSupportPayload({
     const linkPath = join(codePayloadDir, name);
     await rmImpl(linkPath, { recursive: true, force: true });
     await symlinkImpl(
-      join(supportPayloadDir, name),
+      platform === 'win32' ? join(supportPayloadDir, name) : relative(dirname(linkPath), join(supportPayloadDir, name)),
       linkPath,
       platform === 'win32' ? 'junction' : 'dir',
     );
@@ -159,6 +152,7 @@ async function buildDaemonSupportArtifact({
   supportArtifactFingerprint,
   sourceMetadata,
   workspaceSourceFingerprint,
+  expectedWorkspaceRuntimeIdentity,
   target,
   env,
   runCaptureImpl,
@@ -208,12 +202,14 @@ async function buildDaemonSupportArtifact({
         supportArtifactFingerprint,
         goVersion,
         workspaceSourceFingerprint,
+        expectedWorkspaceRuntimeIdentity,
       });
       await writeArtifactManifest({
         artifactDir: tmpArtifactDir,
         manifest: {
           version: 1,
           component: 'daemon-support',
+          target: { platform: process.platform, arch: process.arch },
           artifactFingerprint: supportArtifactFingerprint,
           sourceFingerprint: sourceMetadata.sourceFingerprint,
           createdAt: sourceMetadata.builtAt,
@@ -237,6 +233,7 @@ async function buildDaemonSupportArtifact({
   }, {
     lockPath: supportLockPath,
     errorLabel: 'daemon support artifact build lock',
+    onWait: createWorkspaceBuildWaitNotifier({ env, label: 'daemon support artifact build', kind: 'lock' }),
   });
 }
 
@@ -247,6 +244,7 @@ export async function buildDaemonArtifact({
   artifactFingerprint,
   supportArtifactFingerprint,
   sourceMetadata,
+  stalePackages = [],
   preparedWorkspacePublication,
   requiredCliDistInputFingerprint,
   workspaceSourceFingerprint,
@@ -275,7 +273,7 @@ export async function buildDaemonArtifact({
   const repoDir = resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata });
   const resolvedSupportArtifactFingerprint = String(
     supportArtifactFingerprint
-      ?? await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, env }),
+      ?? await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, workspaceSourceFingerprint, env }),
   ).trim();
   if (!resolvedSupportArtifactFingerprint) {
     throw new Error('[build] daemon runtime artifact requires a daemon support identity.');
@@ -290,6 +288,14 @@ export async function buildDaemonArtifact({
     );
   }
 
+  // Payload damage does not release an immutable artifact's recorded binding.
+  const recorded = validateArtifactManifest(await readArtifactManifest({ artifactDir })).manifest;
+  if (recorded?.artifactFingerprint === artifactFingerprint
+    && recorded.daemonSupportArtifactFingerprint != null
+    && recorded.daemonSupportArtifactFingerprint !== resolvedSupportArtifactFingerprint) {
+    throw new Error('[build] immutable daemon artifact fingerprint is already bound to a different support artifact.');
+  }
+
   const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
   const externals = String(env.HAPPIER_CLI_BUN_EXTERNALS ?? '')
     .split(',')
@@ -297,6 +303,19 @@ export async function buildDaemonArtifact({
     .filter(Boolean);
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
+    // Publish or repair support through its existing owner before compiling
+    // code; both must consume the same prepared workspace frame.
+    const supportArtifact = await buildDaemonSupportArtifact({
+      stackBaseDir: resolvedStackBaseDir,
+      supportArtifactFingerprint: resolvedSupportArtifactFingerprint,
+      sourceMetadata,
+      workspaceSourceFingerprint,
+      expectedWorkspaceRuntimeIdentity: preparedWorkspacePublication?.workspaceRuntimeIdentity,
+      target,
+      env,
+      runCaptureImpl,
+      buildDaemonSupportArtifactPayloadImpl,
+    });
     const built = await buildCliBinaryArtifactPayloadImpl({
       repoRoot: repoDir,
       payloadDir,
@@ -306,25 +325,13 @@ export async function buildDaemonArtifact({
       preparedWorkspacePublication,
       requiredCliDistInputFingerprint,
     });
-    const currentSupportArtifactFingerprint = String(
-      await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, env }),
-    ).trim();
-    if (currentSupportArtifactFingerprint !== resolvedSupportArtifactFingerprint) {
+    if (preparedWorkspacePublication
+      && built.workspaceRuntimeIdentity !== preparedWorkspacePublication.workspaceRuntimeIdentity) {
       throw new Error(
-        '[component-artifacts] daemon support publication changed before staging '
-        + `(expected ${resolvedSupportArtifactFingerprint}, found ${currentSupportArtifactFingerprint})`,
+        '[component-artifacts] daemon code does not match its prepared workspace runtime frame; restart the phase '
+        + `(expected ${preparedWorkspacePublication.workspaceRuntimeIdentity}, found ${built.workspaceRuntimeIdentity})`,
       );
     }
-    const supportArtifact = await buildDaemonSupportArtifact({
-      stackBaseDir: resolvedStackBaseDir,
-      supportArtifactFingerprint: resolvedSupportArtifactFingerprint,
-      sourceMetadata,
-      workspaceSourceFingerprint,
-      target,
-      env,
-      runCaptureImpl,
-      buildDaemonSupportArtifactPayloadImpl,
-    });
     await linkDaemonSupportPayload({
       codePayloadDir: payloadDir,
       supportPayloadDir: supportArtifact.payloadDir,
@@ -339,11 +346,13 @@ export async function buildDaemonArtifact({
       manifest: {
         version: 1,
         component: 'daemon',
+        target: { platform: process.platform, arch: process.arch },
         artifactFingerprint,
         daemonSupportArtifactFingerprint: resolvedSupportArtifactFingerprint,
         sourceFingerprint: sourceMetadata.sourceFingerprint,
         createdAt: sourceMetadata.builtAt,
         source: sourceMetadata,
+        ...(stalePackages.length ? { stalePackages } : {}),
         payloadDir: 'payload',
         entrypoint: built.entrypoint,
       },

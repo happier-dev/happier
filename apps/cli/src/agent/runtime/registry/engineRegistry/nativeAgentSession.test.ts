@@ -1,12 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ChildProcess, spawn } from 'node:child_process';
 import { createTerminalLauncherFixture } from '@/testkit/process/terminalLauncher';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
+import * as processIdentity from '@/daemon/processIdentity';
+import { hashProcessCommand } from '@/daemon/sessionRegistry';
+import { createRunnerAgentSessionBootstrapAuthorization, publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { createRunnerAgentSessionRuntimeBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
+import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { projectEngineRuntimeContributionFromAgent } from './contributions';
 
 import type {
     AgentRuntime,
@@ -27,11 +35,13 @@ import {
     buildBackendTargetKeyV2,
     accountSettingsParse,
     redactBugReportSensitiveText,
+    SessionTerminalMetadataSchema,
     type AgentProviderRequirementsV1,
     type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
 import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY,
     CurrentSessionPresentationStateV1Schema,
@@ -60,6 +70,10 @@ import {
     type BackendExecutionSurfaces,
 } from '@/agent/runtime/registry/engineRegistryTypes';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
+import { resolveDisconnectedTerminalHostResumeGate, superviseDisconnectedTerminalHostCandidate } from '@/daemon/sessions/disconnectedTerminalHostSupervision';
+import { clearTerminalControlServiceabilityProjection } from '@/daemon/startup/terminalControlServiceabilityProjection';
+import { createHerdrTerminalHostAdapter } from '@/integrations/herdr/adapter';
+import { HERDR_ACTION_TIMEOUT_MS, HERDR_STARTUP_TIMEOUT_MS } from '@/integrations/herdr/runtimeBinary';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
@@ -127,6 +141,10 @@ import type { PermissionModeQueuedPrompt, PermissionModeQueuedPromptMode } from 
 import { createStablePluginStorageService } from '@/plugins/runtime/context/storage';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createPluginInvocationLogger } from '@/plugins/runtime/invocation/services/logger';
+import { withCodexNativeAttachFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
+import { managedServiceHandle } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/assembly.managedServices.testkit';
+import { resolveCodexAttachTarget, createCodexAttachArgs, resolveCodexAttachReachability } from '../../../../../../../packages/plugins/codex/src/agent/surfaces/sessions/attachDescriptor';
+import { resolveOpenCodeAttachTarget, createOpenCodeAttachArgs, resolveOpenCodeAttachReachability } from '../../../../../../../packages/plugins/opencode/src/agent/surfaces/sessions/attach/descriptor';
 
 vi.mock('node:fs', async (importOriginal) => {
     const fs = await importOriginal<typeof import('node:fs')>();
@@ -701,6 +719,331 @@ function createAgentActivityHeadline() {
 }
 
 describe('native Agent session host adapter', () => {
+    it.each(['fresh', 'resume', 'respawn', 'prompt-failure', 'claim-rejected'] as const)(
+        'claims the real runner bootstrap before startup contributions (%s)', async (scenario) => {
+        await withTempDir('native-runner-startup-authority-', async (temporaryDirectory) => {
+            const directory = await realpath(temporaryDirectory);
+            const pluginId = 'acme.startup-authority';
+            const localAgentId = 'fixture';
+            const agentId = `${pluginId}/${localAgentId}`;
+            const sessionId = 'session-startup-authority';
+            const definition = PluginAgentContributionV2Schema.parse({
+                id: localAgentId, title: 'Startup authority fixture', runtime: { kind: 'custom' }, primary: 'sessions',
+                capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false,
+                    startupInstructions: { versions: [1], revisionChanges: 'resume' } } },
+            });
+            await mkdir(join(directory, '.happier-plugin'));
+            await writeFile(join(directory, '.happier-plugin', 'plugin.json'), JSON.stringify(createPluginManifestV2Fixture({
+                id: pluginId, contributes: { agents: [definition] },
+            })));
+            // A real retained plugin leaf: construction and open use the production loader.
+            await writeFile(join(directory, 'runtime.mjs'), `export async function createRuntime() {
+                return { sessions: { async open(request) { return {
+                    getSessionId() { return request.providerSessionId ?? 'native-created'; },
+                    async send() { return { status: 'admitted' }; },
+                    watch() { return { dispose() {} }; }, async dispose() {}
+                }; } } };
+            }`);
+            const sourceCustody = { kind: 'development' as const, registeredRootId: directory };
+            const issued = await createRunnerAgentSessionBootstrapAuthorization({
+                happyHomeDir: directory, publicReleaseRing: 'stable', descriptor: {
+                    v: 1, pluginId, pluginVersion: '1.0.0', agentId, backendId: agentId,
+                    occurrenceId: 'startup-authority-occurrence', sourceCustody,
+                    agentDeclaration: { provenance: 'external', source: { kind: 'path' }, definition },
+                },
+            });
+            const command = '/runtime/node /runtime/.runner-snapshots/startup-authority/package-dist/index.mjs';
+            // OS process inventory and daemon HTTP are the only substituted system boundaries.
+            const identitySpy = vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({
+                pid: process.pid, processStartTimeMs: 1, command,
+            });
+            const originalFetch = globalThis.fetch;
+            const events: string[] = [];
+            const fetchSpy = vi.fn<typeof fetch>(async (_url, init) => {
+                const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                expect(request.context.sessionId).toBe(sessionId);
+                expect(request.operation.kind).toBe('turn_contributions.resolve');
+                events.push('daemon-prompt');
+                return new Response(JSON.stringify({ ok: true, result: {
+                    kind: 'turn_contributions', status: 'resolved',
+                    contributions: { kind: 'prompt', promptAssetBlocks: [], toolPromptContributions: [] },
+                } }), { status: 200 });
+            });
+            globalThis.fetch = fetchSpy;
+            const generation = new AbortController();
+            let source: Awaited<ReturnType<typeof createRunnerAgentSessionRuntimeBootstrap>> = null;
+            try {
+                await publishAgentRuntimeDaemonServiceAuthority({
+                    happyHomeDir: directory, publicReleaseRing: 'stable', path: issued.authorization.authorityFilePath,
+                    sessionId: scenario === 'claim-rejected' ? 'another-session' : sessionId,
+                    runner: { pid: process.pid, processStartTimeMs: 1, processCommandHash: hashProcessCommand(command),
+                        snapshotIdentity: 'snapshot:startup-authority' },
+                    retainedAgent: { v: 1, pluginId, pluginVersion: '1.0.0', agentId, localAgentId, sourceCustody,
+                        locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
+                        normalizedModulePath: 'runtime.mjs', loadMode: 'immutable-js' },
+                    httpPort: 43123,
+                });
+                source = await createRunnerAgentSessionRuntimeBootstrap({
+                    happyHomeDir: directory, publicReleaseRing: 'stable', ...issued.authorization,
+                });
+                if (!source?.daemonTurnContributionsBridge) throw new Error('Expected a real runner bootstrap');
+                const bootstrap = source;
+                await expect(bootstrap.daemonTurnContributionsBridge!.resolvePrompt({ sessionId }))
+                    .rejects.toThrow('Runner Agent session runtime authority has not been claimed');
+                const plan = await createNativeAgentRuntimeSessionPlan({
+                    identity: bootstrap.identity, createRuntime: bootstrap.createRuntime,
+                    authorizeNewTurn: bootstrap.authorizeNewTurn,
+                    prepareRuntimeSource: async (input) => {
+                        await bootstrap.prepareForSession!(input);
+                        events.push('claim');
+                    },
+                    retireRuntimeSource: bootstrap.retire,
+                    generationSignal: generation.signal,
+                    agent: bootstrap.agentContribution,
+                    backend: projectEngineRuntimeContributionFromAgent(bootstrap.agentContribution, agentId),
+                    createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+                    sessionInput: buildPluginSessionBindingInput({ credentials, directory,
+                        ...(scenario === 'resume' || scenario === 'respawn' ? { resume: 'native-resume' } : {}),
+                        ...(scenario === 'respawn' ? { existingSessionId: sessionId, startedBy: 'daemon' as const } : {}),
+                    }),
+                });
+                if (!plan.config.createSessionRuntime) throw new Error('Expected native Session construction');
+                const promptFailure = new Error('startup contribution failed');
+                const create = plan.config.createSessionRuntime({
+                    directory, metadata: {}, machineId: 'machine-1', session: createNativeSessionClientTestPort(sessionId),
+                    transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
+                    getPermissionMode: () => 'default', setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
+                    resolveFreshSessionSystemPrompt: async ({ signal }: { signal: AbortSignal }) => {
+                        await bootstrap.daemonTurnContributionsBridge!.resolvePrompt({ sessionId, signal });
+                        if (scenario === 'prompt-failure') throw promptFailure;
+                        return 'Use the claimed startup instructions.';
+                    },
+                } as never);
+                if (scenario === 'claim-rejected') {
+                    await expect(create).rejects.toThrow('Runner Agent canonical session authority is unavailable');
+                    expect(events).toEqual([]);
+                } else if (scenario === 'prompt-failure') {
+                    await expect(create).rejects.toBe(promptFailure);
+                    expect(bootstrap.identity.isCurrent()).toBe(false);
+                    expect(events).toEqual(['claim', 'daemon-prompt']);
+                } else {
+                    const created = await create;
+                    expect(created.operations.readSessionStartupInstructions?.()?.instructions).toBe('Use the claimed startup instructions.');
+                    expect(events).toEqual(['claim', 'daemon-prompt']);
+                    await created.operations.resetOrDisposeRuntime();
+                }
+            } finally {
+                generation.abort();
+                await source?.retire?.();
+                await issued.cleanupBootstrapFile();
+                globalThis.fetch = originalFetch;
+                identitySpy.mockRestore();
+            }
+        });
+    });
+
+    it.skipIf(process.platform === 'win32').each(['codex', 'opencode'] as const)(
+        'presents the real selected optional provider Session and retains its exact remote identity after client close (%s)', async agentId => {
+        await withTempDir('native-selected-optional-provider-', async directory => await withHerdrApi(async api => {
+            api.setServerVersion('0.9.3');
+            const previousHome = happierConfiguration.happyHomeDir;
+            const previousBinary = process.env.HERDR_BIN_PATH;
+            const generation = new AbortController();
+            const nativeRecord = join(directory, 'native.jsonl');
+            const nativePath = join(directory, 'native-client');
+            const herdrPath = join(directory, 'herdr');
+            const providerSessionId = agentId === 'codex' ? 'fresh-thread' : 'oc-session-zero-turn';
+            const baseUrl = 'http://127.0.0.1:49211';
+            const requests: Array<{ path: string; method: string }> = [];
+            const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+            const stopRuntimeSubscriptions: Array<() => void> = [];
+            let managedServerDisposed = false;
+            const native: { child: ChildProcess | null } = { child: null };
+            let nativePid: number | null = null;
+            let loop: Promise<void> | null = null;
+            let loopFailure: unknown;
+            const opened: { runtime: Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof createNativeAgentRuntimeSessionPlan>>['config']['createSessionRuntime']>>> | null } = { runtime: null };
+            const session = createMutableApiSessionClientFixture({ sessionId: 'selected-optional-happier', metadata: createTestMetadata({ flavor: agentId, path: directory }) });
+            const managed = managedServiceHandle({ baseUrl, onDispose() { managedServerDisposed = true; }, async request(input) {
+                const path = input.pathAndQuery.split('?')[0]!;
+                requests.push({ path, method: input.method ?? 'GET' });
+                if (path === '/api/event') return { ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'text/event-stream' },
+                    body: new ReadableStream<Uint8Array>({ start(controller) { streams.push(controller); } }) };
+                const legacyHealth = path === '/global/health';
+                const value = path === '/api/health' ? { healthy: true }
+                    : path === '/api/session' ? { data: { id: providerSessionId } }
+                    : path === `/api/session/${providerSessionId}` ? { data: { id: providerSessionId, model: null, agent: 'build' } }
+                    : path === `/api/session/${providerSessionId}/message` ? { data: [], hasMore: false }
+                    : path === '/api/model' || path === '/api/provider' || path === '/api/agent' ? { data: [] } : {};
+                return { ok: !legacyHealth, status: legacyHealth ? 404 : 200, statusText: legacyHealth ? 'Not Found' : 'OK',
+                    headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(value)).body };
+            } });
+            try {
+                Object.assign(happierConfiguration, { happyHomeDir: directory });
+                process.env.HERDR_BIN_PATH = herdrPath;
+                // The actual native executable/Herdr socket are external process boundaries. No vendor turn is submitted.
+                await writeFile(nativePath, `#!${process.execPath}\nconst fs=require('node:fs');\nif(process.argv.includes('--version')){console.log(${JSON.stringify(agentId === 'codex' ? 'codex-cli 0.159.2' : '2.0.15')});process.exit(0)}\nfs.appendFileSync(${JSON.stringify(nativeRecord)},JSON.stringify({pid:process.pid,argv:process.argv.slice(2)})+'\\n');\nprocess.on('SIGINT',()=>process.exit(0));process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n`, { mode: 0o755 });
+                await writeFile(herdrPath, `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('herdr 0.9.3');else console.log(${JSON.stringify(JSON.stringify({ sessions: [{ name: 'selected-optional', socket_path: api.socketPath, running: true }] }))});\n`, { mode: 0o755 });
+                api.beforeResponse.set('layout.apply', () => {
+                    const command = api.requests.at(-1)?.params.root as { command: string[] };
+                    native.child = spawn(command.command[0]!, command.command.slice(1), { stdio: 'ignore', detached: true });
+                });
+                api.beforeResponse.set('pane.close', async () => {
+                    if (native.child) await killProcessTree(native.child, { ownedProcessGroup: true });
+                });
+                const baseServices = createUnavailablePluginServices();
+                const runProvider = async (exec: HostPluginServices['exec'], endpoints: readonly string[] = []) => {
+                    const manifest = agentId === 'codex'
+                        ? (await import('../../../../../../../packages/plugins/codex/src/manifest')).PLUGIN_MANIFEST
+                        : (await import('../../../../../../../packages/plugins/opencode/src/manifest')).PLUGIN_MANIFEST;
+                    const definition = PluginAgentContributionV2Schema.parse(manifest.contributes.agents?.[0]);
+                    const pluginId = `happier.agent.${agentId}`;
+                    const external = createExternalContributionFixtures(agentId);
+                    const backend = { ...external.backend, pluginId, provenance: 'first_party' as const, source: { kind: 'bundled' as const } };
+                    const agent = { ...external.agent, pluginId, provenance: 'first_party' as const, source: { kind: 'bundled' as const }, richDefinition: { provenance: 'first_party' as const, definition } };
+                    const owners = createRealNativeHostOwners({ runtimeRegistry: null, runtimeAuthority: { runtimeCapabilities: [] }, identity: { pluginId, agentId, occurrenceId: 'selected-optional', isCurrent: () => !generation.signal.aborted },
+                        backend, agent, hostSession: { session, machineId: 'selected-machine', permissionHandler: new ProviderEnforcedPermissionHandler(session, { logPrefix: '[selected-optional]' }) },
+                        sessionId: session.sessionId, directory, happyHomeDir: directory, signal: generation.signal });
+                    const factory = await loadRealAgentRuntimeFactory(agentId === 'codex'
+                        ? 'packages/plugins/codex/src/agent/runtime/engine.ts' : 'packages/plugins/opencode/src/agent/runtime/nativeRuntime.ts',
+                    agentId === 'codex' ? 'createCodexAgentRuntime' : 'createOpenCodeAgentRuntime');
+                    const runtime = await factory({ plugin: { id: pluginId, version: '0.0.0' }, agent: { id: agentId }, signal: generation.signal });
+                    if (!runtime.sessions?.resolveTerminalPresentation) throw new Error('The actual optional provider omitted its selected presentation');
+                    const selected = await runtime.sessions.resolveTerminalPresentation({ cwd: directory, requestedHost: 'herdr', runtimeDescriptorV1: {
+                        v: 1, agentId, agent: { backendMode: agentId === 'codex' ? 'appServer' : 'server' },
+                    } }, { settings: baseServices.settings, features: owners.features });
+                    expect(selected).toMatchObject({ kind: 'provider_attach', startingMode: 'terminal' });
+                    const attach = agentId === 'codex' ? createProviderCliAttachSurface({ agentId,
+                        resolveTarget: resolveCodexAttachTarget, createArgs: createCodexAttachArgs, resolveReachability: resolveCodexAttachReachability,
+                        resolveLaunchSpec: () => ({ source: 'managed', resolvedPath: nativePath, command: nativePath, args: [] }),
+                    }) : createProviderCliAttachSurface({ agentId,
+                        resolveTarget: resolveOpenCodeAttachTarget, createArgs: createOpenCodeAttachArgs, resolveReachability: resolveOpenCodeAttachReachability,
+                        cliVersionArgs: ['--version'], readFallbackServerBaseUrl: async ({ sessionId }) => {
+                            expect(sessionId).toBe(session.sessionId);
+                            return managed.snapshot().baseUrl ?? null;
+                        }, managedServiceTargetBaseUrl: target => target.baseUrl,
+                        managedServiceCredentialEnvironmentKey: 'OPENCODE_SERVER_PASSWORD',
+                        resolveLaunchSpec: () => ({ source: 'managed', resolvedPath: nativePath, command: nativePath, args: [] }),
+                    });
+                    const binding = buildPluginSessionBindingInput({ credentials, directory, startedBy: 'daemon', startingMode: selected.startingMode,
+                        terminalRuntime: { mode: 'plain', requested: 'herdr', herdrSessionName: 'selected-optional', herdrSocketPath: api.socketPath },
+                        ...(agentId === 'opencode' ? { sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1,
+                            overrides: { opencodeCliGeneration: { value: 'v2', updatedAt: 1 } } } } : {}),
+                        backendTarget: { kind: 'backend', backendId: agentId }, environmentVariables: { CODEX_HOME: join(directory, 'codex-home') } });
+                    const plan = await createNativeAgentRuntimeSessionPlan({ runtime, lease: { ...createLease(agentId), pluginId }, backend, agent,
+                        sessionInput: { ...binding, bootstrap: { ...binding.bootstrap, runtimeDescriptorV1: selected.runtimeDescriptorV1 } },
+                        executionSurfaces: { ...createEmptyBackendExecutionSurfaces(), attach }, generationSignal: generation.signal,
+                        createSessionHostServiceOwners: () => owners,
+                        reportSessionMetadataToDaemon: async () => {},
+                        resolveProviderCliAttachManagedServiceAccess: async input => {
+                            expect(input.sessionId).toBe(session.sessionId);
+                            expect(input.targetBaseUrl).toBe(baseUrl);
+                            return { baseUrl, childEnvironment: { OPENCODE_SERVER_PASSWORD: 'fixture-owned-password' }, async request(request) {
+                                const response = await managed.request({ method: 'GET', pathAndQuery: request.pathAndQuery });
+                                return { ok: response.ok };
+                            } };
+                        },
+                        createInvocationServices: async () => ({ ...baseServices, exec,
+                            logger: createPluginInvocationLogger({ seed: { plugin: { id: pluginId, version: '0.0.0' }, contribution: { id: agentId, qualifiedId: `${pluginId}/agents/${agentId}` }, occurrenceId: 'selected-optional', correlationId: session.sessionId, surface: 'agent', signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted }, sink: { write(record) { logger.infoFile('Selected optional provider fixture', record); } } }),
+                            managedServices: { ...baseServices.managedServices, supervise: async () => managed },
+                            connectedAccounts: { ...baseServices.connectedAccounts, getBinding: async () => null, watch: (_purpose, listener) => { queueMicrotask(() => { void listener({ kind: 'resync' }); }); return { dispose() {} }; } },
+                        }),
+                    });
+                    const params: HostSessionRuntimeFactoryParams = { directory, metadata: session.getMetadataSnapshot()!, machineId: 'selected-machine', agentTargetKey: `backend:${agentId}`, session, transcriptSession: session,
+                        messageQueue: new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(mode => mode.permissionMode), messageBuffer: new MessageBuffer(), mcpServers: {}, permissionHandler: new ProviderEnforcedPermissionHandler(session, { logPrefix: '[selected-optional]' }),
+                        getPermissionMode: () => 'default', memoryRecallGuidanceEnabled: false, runnerProcessIdentity: null, startupModelSelection: null,
+                        async runWithTerminalModelSelection() {
+                            throw new Error('Optional provider preparation must not enter exclusive terminal model selection');
+                        } };
+                    const created = await plan.config.createSessionRuntime!(params);
+                    opened.runtime = created;
+                    const runtimeEvents: AgentSessionRuntimeEvent[] = [];
+                    // The normal host subscribes before running the mode loop; this real public
+                    // subscription also supplies canonical native identity to the control owner.
+                    stopRuntimeSubscriptions.push(created.operations.subscribeRuntimeEvents(event => { runtimeEvents.push(event); }));
+                    if (!created.terminalRemoteModeLoop) throw new Error('Actual optional provider omitted its shared mode owner');
+                    loop = runTerminalRemoteSessionModeLoop(created.terminalRemoteModeLoop).then(() => undefined).catch(error => { loopFailure = error; });
+                    await vi.waitFor(() => expect(session.__getAgentState().localControl).toMatchObject({ attached: true, canDetach: true, remoteWritable: true, topology: 'shared' }));
+                    await vi.waitFor(async () => expect((await readFile(nativeRecord, 'utf8')).trim()).not.toBe(''));
+                    const records: unknown[] = (await readFile(nativeRecord, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+                    expect(records).toHaveLength(1);
+                    expect(created.operations.readSessionIdentity()).toEqual({ sessionId: providerSessionId });
+                    expect(runtimeEvents).toContainEqual(expect.objectContaining({ kind: 'provider-session-id', providerSessionId }));
+                    const record = records[0];
+                    if (!record || typeof record !== 'object' || !('pid' in record) || typeof record.pid !== 'number') throw new Error('The optional native executable did not report its actual process');
+                    nativePid = record.pid;
+                    expect(record).toMatchObject({ argv: agentId === 'codex'
+                        ? ['--remote', endpoints[0], '--cd', directory, 'resume', providerSessionId]
+                        : ['--server', baseUrl, '--session', providerSessionId, directory] });
+                    expect(api.requests.filter(request => request.method === 'layout.apply')).toHaveLength(1);
+                    const attachment = await readTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId: session.sessionId });
+                    if (!attachment || attachment.version !== 2) throw new Error('The optional client did not publish owned host custody');
+                    // A native pane closing is an external process/socket event. The daemon's actual
+                    // exact-host supervisor produces the metadata notification consumed by the mode owner.
+                    // Herdr owns the pane's entire process group, not just the launcher root PID.
+                    if (!native.child) throw new Error('Herdr did not launch the optional client');
+                    await killProcessTree(native.child, { ownedProcessGroup: true });
+                    api.panes.clear();
+                    await expect(superviseDisconnectedTerminalHostCandidate({
+                        candidate: { sessionId: session.sessionId, pid: process.pid, happyHomeDir: directory,
+                            attachmentId: attachment.attachmentId, handle: attachment.handle, terminalMode: 'herdr' },
+                        terminalHostAdapters: { herdr: createHerdrTerminalHostAdapter({ binary: herdrPath,
+                            sessionName: 'selected-optional', socketPath: api.socketPath,
+                            actionTimeoutMs: HERDR_ACTION_TIMEOUT_MS, startupTimeoutMs: HERDR_STARTUP_TIMEOUT_MS }) },
+                        // No daemon actor or accepted spawn marker is created by this process fixture.
+                        removeSessionMarker: async () => {},
+                        retireExactTerminalControlServiceability: async fact => {
+                            await session.updateMetadata(metadata => {
+                                if (!metadata) throw new Error('The admitted Session metadata disappeared');
+                                const retired = clearTerminalControlServiceabilityProjection({ metadata,
+                                    retiredAttachmentId: fact.attachmentInfo.attachmentId,
+                                    retiredAt: Date.now(), terminalMode: fact.terminalMode });
+                                return { ...metadata, terminal: SessionTerminalMetadataSchema.parse(retired.terminal) };
+                            });
+                        },
+                    })).resolves.toEqual({ state: 'stopped' });
+                    await vi.waitFor(() => expect(session.__getAgentState().localControl).toMatchObject({ attached: false, canDetach: false, remoteWritable: true }));
+                    expect(await readTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId: session.sessionId })).toBeNull();
+                    const capturedPid = nativePid;
+                    await vi.waitFor(() => expect(() => process.kill(capturedPid!, 0)).toThrow());
+                    expect(managedServerDisposed).toBe(false);
+                    await expect(session.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_PROVIDER_CLI_ATTACH_PREPARE,
+                        { providerSessionId })).resolves.toEqual({ ok: true, providerSessionId });
+                    expect(api.requests.filter(request => request.method === 'layout.apply')).toHaveLength(1);
+                    expect(requests.some(request => request.path.endsWith('/prompt'))).toBe(false);
+                    if (agentId === 'opencode') expect(requests.filter(request => request.path === '/api/session' && request.method === 'POST')).toHaveLength(1);
+                    expect(loopFailure).toBeUndefined();
+                };
+                if (agentId === 'codex') await withCodexNativeAttachFixture(async fixture => {
+                    await runProvider({ ...baseServices.exec, ...fixture.exec }, fixture.endpoints);
+                    expect(fixture.requests.filter(request => request.method === 'thread/start')).toHaveLength(1);
+                    expect(fixture.requests.some(request => request.method === 'turn/start')).toBe(false);
+                });
+                else await runProvider({ ...baseServices.exec, systemTools: { ...baseServices.exec.systemTools, resolve: async () => ({ executable: { kind: 'systemTool', id: 'opencode-cli' }, executablePath: nativePath }) } });
+            } finally {
+                for (const stop of stopRuntimeSubscriptions) stop();
+                generation.abort();
+                try {
+                    await opened.runtime?.operations.resetOrDisposeRuntime();
+                    await loop;
+                } finally {
+                    try {
+                        for (const controller of streams) { try { controller.close(); } catch { /* The real consumer already cancelled the stream. */ } }
+                        if (native.child) await killProcessTree(native.child, { ownedProcessGroup: true });
+                        if (nativePid) { try { process.kill(nativePid, 'SIGKILL'); } catch { /* The exact owned child already exited. */ } }
+                    }
+                    finally {
+                        try { await session.close(); }
+                        finally {
+                            Object.assign(happierConfiguration, { happyHomeDir: previousHome });
+                            if (previousBinary === undefined) delete process.env.HERDR_BIN_PATH;
+                            else process.env.HERDR_BIN_PATH = previousBinary;
+                        }
+                    }
+                }
+            }
+        }));
+    });
     it.skipIf(process.platform === 'win32').each(['unified', 'sdk'] as const)('prepares the captured Claude Session through its real host owner (%s)', async selectedMode => {
         await withTempDir('native-selected-claude-host-', async directory => await withHerdrApi(async api => {
             api.setServerVersion('0.9.3');
@@ -757,10 +1100,36 @@ describe('native Agent session host adapter', () => {
                 if (!runtime.sessions?.resolveTerminalPresentation) throw new Error('The actual Claude factory has no selected presentation');
                 const selected = await runtime.sessions.resolveTerminalPresentation({ cwd: directory, requestedHost: 'herdr' }, { settings, features: owners.features });
                 expect(selected).toMatchObject({ kind: 'runner', startingMode: selectedMode === 'unified' ? 'terminal' : 'remote', runtimeDescriptorV1: { agent: { backendMode: selectedMode === 'unified' ? 'unifiedTerminal' : 'agentSdk' } } });
+                // Only the selected recoverable runtime may delegate a retained
+                // provider to its existing endpoint/host admission owner.
+                expect(resolveDisconnectedTerminalHostResumeGate(
+                    { state: 'recoverable_unservable', reason: 'runner_absent' },
+                    { ...selected, controlDescriptorAvailable: true },
+                )).toEqual(selectedMode === 'unified'
+                    ? { action: 'resume', retainedTerminalRecovery: 'adopt' }
+                    : { action: 'fence', reason: 'runner_absent' });
+                expect(resolveDisconnectedTerminalHostResumeGate(
+                    { state: 'recoverable_unservable', reason: 'runner_absent' },
+                    { ...selected, controlDescriptorAvailable: false },
+                )).toEqual({ action: 'fence', reason: 'runner_absent' });
+                expect(resolveDisconnectedTerminalHostResumeGate(
+                    { state: 'unknown', reason: 'attachment_changed' },
+                    { ...selected, controlDescriptorAvailable: true },
+                )).toEqual({ action: 'fence', reason: 'attachment_changed' });
                 const captured = createSessionMetadata({ flavor: 'claude', machineId: 'selected-machine', directory, runtimeDescriptorV1: selected.runtimeDescriptorV1, launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }) });
                 const startupMetadata = { ...metadata, runtimeDescriptorV1: captured.metadata.runtimeDescriptorV1 };
                 session.__setMetadata(startupMetadata);
                 selectedSetting = !selectedSetting;
+                const retainedSelection = await runtime.sessions.resolveTerminalPresentation({
+                    cwd: directory,
+                    runtimeDescriptorV1: selected.runtimeDescriptorV1,
+                }, { settings, features: owners.features });
+                expect(retainedSelection).toMatchObject({
+                    kind: selected.kind,
+                    startingMode: selected.startingMode,
+                    runtimeDescriptorV1: selected.runtimeDescriptorV1,
+                    ...(selectedMode === 'unified' ? { retainedTerminalRecovery: 'adopt' } : {}),
+                });
                 const executionSurfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({ backend, runtime, agentId: 'claude', isCurrent: () => !generation.signal.aborted, declaredAgentSurfaceFamilies: new Set(['terminalRuntime']), diagnostics: [] });
                 const binding = buildPluginSessionBindingInput({ credentials, directory, startedBy: 'terminal', startingMode: selectedMode === 'unified' ? 'terminal' : 'remote', ...(selectedMode === 'sdk' ? { resume: 'exact-sdk-native-conversation' } : {}), environmentVariables: { HAPPIER_CLAUDE_PATH: nativePath, HERDR_BIN_PATH: herdrPath, CLAUDE_CONFIG_DIR: join(directory, 'claude-home') }, backendTarget: { kind: 'backend', backendId: 'claude' } });
                 const plan = await createNativeAgentRuntimeSessionPlan({ runtime, lease: { ...createLease('claude'), pluginId }, backend, agent, sessionInput: { ...binding, bootstrap: { ...binding.bootstrap, runtimeDescriptorV1: selected.runtimeDescriptorV1 } }, executionSurfaces, generationSignal: generation.signal, createInvocationServices: async () => ({ ...createUnavailablePluginServices(), settings, storage, logger: invocationLogger }), createSessionHostServiceOwners: () => owners });
@@ -2015,6 +2384,47 @@ describe('native Agent session host adapter', () => {
         expect(redactBugReportSensitiveText(
             'value=profile-plaintext',
         )).toBe('value=profile-plaintext');
+    });
+
+    it('preserves missing Agent CLI diagnosis across native Session startup failure cleanup', async () => {
+        const agentId = 'acme-native-missing-cli';
+        const contributions = createExternalContributionFixtures(agentId);
+        const secret = 'private-startup-environment';
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { async open() {
+                throw new PluginError({
+                    code: 'agent_cli_missing', retryable: false,
+                    message: `Agent CLI unavailable: ${secret}`,
+                });
+            } } },
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent: contributions.agent,
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-native-missing-cli',
+                resolveLateEnvironment: async () => ({
+                    environmentVariables: { PROFILE_SECRET: secret },
+                    unsetEnvironmentVariables: [],
+                    sensitiveEnvironmentVariableNames: ['PROFILE_SECRET'],
+                }),
+            }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('Expected a native Session factory');
+        const failure = await Promise.resolve(plan.config.createSessionRuntime({
+            directory: '/tmp/acme-native-missing-cli', metadata: {}, machineId: 'machine-1',
+            session: createNativeSessionClientTestPort('session-native-missing-cli'),
+            transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
+            getPermissionMode: () => 'default', setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never)).then(() => undefined, (error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'agent_cli_missing', retryable: false });
+        const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure });
+        expect(issue).toMatchObject({ code: 'agent_cli_missing', source: 'dependency_failure' });
+        expect(issue.sanitizedPreview).toMatch(/install.*CLI|CLI.*install/iu);
+        expect(JSON.stringify(issue)).not.toContain(secret);
+        expect(JSON.stringify(issue)).not.toContain('after acceptance');
     });
 
     it.each([

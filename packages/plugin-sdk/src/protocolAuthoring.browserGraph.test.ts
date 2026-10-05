@@ -44,6 +44,7 @@ const protocolDataCollectionOpaqueCursor = resolve(
     import.meta.dirname,
     '../../protocol/src/plugins/data/collectionOpaqueCursorV1.ts',
 );
+const protocolLaunchProfileId = resolve(import.meta.dirname, '../../protocol/src/profiles/v2/profileId.ts');
 const protocolComposerReferenceProviders = resolve(
     import.meta.dirname,
     '../../protocol/src/plugins/contributions/composerReferenceProviders.ts',
@@ -59,6 +60,7 @@ const expectedProtocolExports = [
     'ProtocolComposerReferenceResolutionV1Schema',
     'ProtocolJsonValue',
     'ProtocolJsonValueOptions',
+    'ProtocolLaunchProfileIdV2Schema',
     'ProtocolNumberOptions',
     'ProtocolObjectEvolutionPolicy',
     'ProtocolObjectOptions',
@@ -167,6 +169,10 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
                     replacement: protocolDataCollectionOpaqueCursor,
                 },
                 {
+                    find: '@happier-dev/protocol/profiles/v2/profileId',
+                    replacement: protocolLaunchProfileId,
+                },
+                {
                     // The graph is a source-level browser check; never let a stale
                     // workspace dist decide which Protocol exports it sees.
                     find: /^@happier-dev\/protocol$/u,
@@ -182,7 +188,7 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
             load(id) {
                 if (id !== '\0virtual:protocol-authoring-browser-realm-entry') return null;
                 return [
-                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema, ProtocolComposerReferenceResolutionV1Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
+                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema, ProtocolComposerReferenceResolutionV1Schema, ProtocolLaunchProfileIdV2Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
                     `export { defineContributionPoint, defineContributionProtocol, PluginTargetedContributionSelectionV1Schema } from ${JSON.stringify(contributionsBrowserEntry)};`,
                 ].join('\n');
             },
@@ -294,6 +300,7 @@ describe('protocol-authoring public browser entrypoint', () => {
         // the contribution graph into every feature-protocol bundle, which the
         // pinned filters below are what catches.
         expect(moduleIds).toContain(protocolDataCollectionOpaqueCursor);
+        expect(moduleIds).toContain(protocolLaunchProfileId);
         const manifestOrContributionsModules = moduleIds
             .filter((id) => id.includes('/protocol/src/plugins/manifest/')
                 || id.includes('/protocol/src/plugins/contributions/'))

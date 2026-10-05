@@ -31,8 +31,8 @@ export async function executeScmCommit(input: {
 }): Promise<{ ok: boolean }> {
     let didSucceed = false;
     let createdCommitSha: string | undefined;
-    const showRefreshFailure = (error: unknown) => {
-        const refreshMessage = t('files.commitRefreshFailed', { sha: createdCommitSha ?? '' });
+    const showRefreshFailure = (error: unknown, preservedOutcome?: ScmOperationOutcome) => {
+        const refreshMessage = createdCommitSha ? t('files.commitRefreshFailed', { sha: createdCommitSha }) : preservedOutcome?.message;
         reportSessionScmOperation({
             state: storage.getState(),
             sessionId: input.sessionId, serverId: input.serverId,
@@ -44,13 +44,13 @@ export async function executeScmCommit(input: {
             ...(createdCommitSha ? { outcome: {
                 v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED,
                 effect: { kind: 'commit', commitSha: createdCommitSha }, nextActions: [{ kind: 'refresh' }], message: refreshMessage,
-            } satisfies ScmOperationOutcome } : {}),
+            } satisfies ScmOperationOutcome } : preservedOutcome ? { outcome: preservedOutcome } : {}),
             surface: 'files',
             tracking: input.tracking,
         });
         // The Git pane's outcome line shows this failed refresh with Try again; the commit itself stands.
     };
-    const refreshRepository = async (): Promise<void> => {
+    const refreshRepository = async (preservedOutcome?: ScmOperationOutcome): Promise<void> => {
         try {
             input.setScmOperationStatus(t('files.refreshingRepository'));
             await input.refreshScmData();
@@ -64,7 +64,7 @@ export async function executeScmCommit(input: {
                 tracking: input.tracking,
             });
         } catch (error) {
-            showRefreshFailure(error);
+            showRefreshFailure(error, preservedOutcome);
         }
     };
     const lockResult = await withSessionProjectScmOperationLock({
@@ -96,11 +96,17 @@ export async function executeScmCommit(input: {
                 }
 
                 const outcome = normalizeScmOperationOutcome(response);
+                const effect = 'effect' in outcome ? outcome.effect : undefined;
+                createdCommitSha = effect?.kind === 'commit' ? effect.commitSha : undefined;
+                if (createdCommitSha) {
+                    storage.getState().clearSessionProjectScmCommitSelectionPaths(input.sessionId, input.serverId);
+                    storage.getState().clearSessionProjectScmCommitSelectionPatches(input.sessionId, input.serverId);
+                }
                 if (outcome.kind !== 'succeeded') {
                     const errorMessage = buildScmCommitFailureMessage({
                         errorCode: response.errorCode,
                         error: response.error,
-                        commitSha: response.commitSha,
+                        commitSha: createdCommitSha,
                     });
                     reportSessionScmOperation({
                         state: storage.getState(),
@@ -114,31 +120,25 @@ export async function executeScmCommit(input: {
                         surface: 'files',
                         tracking: input.tracking,
                     });
-                    // Inline in the Git pane's outcome line (cause + one recovery); the message and selection stay.
+                    if (createdCommitSha || outcome.kind === 'outcome_unknown') await refreshRepository(outcome);
                     return;
                 }
 
                 didSucceed = true;
-                createdCommitSha = response.commitSha;
-                try {
-                    storage.getState().clearSessionProjectScmCommitSelectionPaths(input.sessionId, input.serverId);
-                    storage.getState().clearSessionProjectScmCommitSelectionPatches(input.sessionId, input.serverId);
-                } finally {
-                    reportSessionScmOperation({
-                        state: storage.getState(),
-                        sessionId: input.sessionId, serverId: input.serverId,
-                        operation: 'commit',
-                        status: 'success',
-                        outcome,
-                        detail: response.commitSha || undefined,
-                        surface: 'files',
-                        tracking: input.tracking,
-                    });
-                }
+                reportSessionScmOperation({
+                    state: storage.getState(),
+                    sessionId: input.sessionId, serverId: input.serverId,
+                    operation: 'commit',
+                    status: 'success',
+                    outcome,
+                    detail: createdCommitSha || undefined,
+                    surface: 'files',
+                    tracking: input.tracking,
+                });
 
                 await refreshRepository();
             } catch (error) {
-                if (didSucceed) {
+                if (didSucceed || createdCommitSha) {
                     showRefreshFailure(error);
                     return;
                 }

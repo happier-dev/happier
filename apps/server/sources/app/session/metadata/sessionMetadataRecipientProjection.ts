@@ -13,6 +13,8 @@ import {
     deriveAccountEncryptionCurrentnessFromRow,
 } from "@/app/encryption/accountContentKeyAdmission";
 import type { Tx } from "@/storage/inTx";
+import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from "@/app/session/access/sessionRecipients";
+import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublication";
 import {
     parsePersistedSessionOwnerMetadataEnvelopeV1,
     type SessionOwnerMetadataAccountMode,
@@ -57,6 +59,21 @@ export type SessionMetadataRecipientProjection =
 
 export type SessionMetadataOwnerAccountMode =
     SessionOwnerMetadataAccountMode;
+
+/** Pending owner upgrades include archived/offscreen Sessions, but never private-only rows. */
+export async function listSessionMetadataPrivacyUpgradeIdsInTx(tx: Tx, accountId: string): Promise<string[]> {
+    const rows = await tx.session.findMany({
+        where: { accountId, metadataLayoutVersion: 0, ownerMetadata: null },
+        select: { id: true, publicShare: { select: { expiresAt: true } } },
+        orderBy: { id: "asc" },
+    });
+    const recipients = await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, {
+        sessionIds: rows.map(row => row.id),
+    });
+    return rows.filter(row => (row.publicShare !== null && isPublicSessionShareActive(row.publicShare))
+        || (recipients.get(row.id) ?? []).some(recipientId => recipientId !== accountId))
+        .map(row => row.id);
+}
 
 export type SessionMetadataRecipientAuthority =
     | Readonly<{

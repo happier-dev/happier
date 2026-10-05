@@ -22,6 +22,23 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('plugin manifest v2 root contract', () => {
+  it('admits Widget refresh dependencies only for its own declared Resources', () => {
+    const resources = [{ id: 'live-status', source: 'dynamic', kind: 'config', contentType: 'text/plain' }];
+    const renderer = { id: 'native', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Status</p>' } };
+    const ingest = (resource: unknown) => ingestPluginManifestV2(manifest({ contributes: {
+      resources, ui: { renderers: [renderer], views: [{ id: 'status', container: 'widget', renderer: 'native',
+        target: { kind: 'app' }, resources: [resource] }] },
+    } }));
+    const admitted = ingest({ pluginId: 'com.acme.fixture', localId: 'live-status' });
+    expect(admitted.ok ? admitted.ok : admitted.diagnostics).toEqual(true);
+    for (const resource of [
+      { pluginId: 'com.acme.fixture', localId: 'missing' },
+      { pluginId: 'com.acme.other', localId: 'live-status' },
+    ]) expect(ingest(resource)).toMatchObject({ ok: false, diagnostics: expect.arrayContaining([
+      expect.objectContaining({ code: 'plugin_manifest_dangling_reference' }),
+    ]) });
+  });
+
   it('admits declarative roles with closed role fields and local contribution identities', () => {
     const role = {
       id: 'security-reviewer', name: 'Security reviewer', instructions: 'Review security boundaries.',

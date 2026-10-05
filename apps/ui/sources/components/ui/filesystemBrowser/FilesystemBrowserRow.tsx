@@ -12,6 +12,8 @@ import { TREE_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SelectionCheckGlyph, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
+import { Typography } from '@/constants/Typography';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 /** How a row hands its actions menu the reveal: open it (a long press) and whether its … is drawn. */
 export type FilesystemBrowserRowActionsControl = Readonly<{
@@ -36,6 +38,8 @@ export type FilesystemBrowserRowProps = Readonly<{
     node: FilesystemBrowserNode;
     treeItemProps?: Pick<ItemProps, 'webRole' | 'webTabIndex' | 'accessibilityLevel' | 'webKeyShortcuts' | 'accessibilityExpanded' | 'pressableRef' | 'onFocus' | 'onKeyDown'>;
     title: string;
+    /** Drawn right after the title on its line (a folder's changed-file count). */
+    titleAccessory?: React.ReactNode;
     subtitle?: React.ReactNode;
     icon: React.ReactNode;
     /** Tree rows: a disclosure chevron before the leading control (a spacer on files, so names align). */
@@ -73,10 +77,11 @@ const ROW_ACTIONS_HIDDEN_ANCHOR_STYLE = { position: 'absolute', right: 0, width:
 
 export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const phone = useDeviceType() === 'phone';
     const paddingLeft = (props.basePaddingLeft ?? TREE_ROW_METRICS.basePaddingPx)
         + Math.min(TREE_ROW_METRICS.maxIndentDepth, Math.max(0, props.node.depth)) * (props.depthIndent ?? TREE_ROW_METRICS.indentStepPx);
     const treeRowMinHeight = props.disclosure
-        ? (isTouchPrimaryPointer() ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise)
+        ? (isTouchPrimaryPointer() || phone ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise)
         : undefined;
     const showDivider = props.showDivider === true;
 
@@ -177,8 +182,13 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                 testID={props.testID}
                 {...props.treeItemProps}
                 title={props.title}
+                titleAccessory={props.titleAccessory}
                 subtitle={props.subtitle}
-                icon={leading}
+                // A compound tree control grows horizontally through Item's natural leading slot.
+                // The fixed icon box fits one glyph, not disclosure + checkbox + status.
+                leftElement={props.disclosure || props.selection ? leading : undefined}
+                icon={props.disclosure || props.selection ? undefined : props.icon}
+                titleStyle={props.disclosure ? { ...(props.node.type === 'directory' ? Typography.default('semiBold') : null), ...(phone ? { fontSize: 14, lineHeight: 20 } : null) } : undefined}
                 // A tree row is one line. A folder (or a merged chain) ellipsizes in the middle so its last
                 // folder stays whole; a file keeps its name's start and truncates its end.
                 titleLines={props.disclosure ? 1 : undefined}

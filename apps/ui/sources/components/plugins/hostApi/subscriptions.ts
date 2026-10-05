@@ -25,7 +25,7 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         value: unknown;
     }>) => void;
 }> = {}) {
-    const activeSubscriptionKeys = new Map<string, PluginUiSurfaceContextV1>();
+    const activeSubscriptionKeys = new Map<string, Readonly<{ surface: PluginUiSurfaceContextV1; release?: () => void; deliverValue?: (value: unknown) => void }>>();
 
     function createSubscriptionKey(
         surface: PluginUiSurfaceContextV1,
@@ -37,9 +37,11 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
     function register(input: Readonly<{
         surface: PluginUiSurfaceContextV1;
         subscriptionId: string;
+        release?: () => void;
+        deliverValue?: (value: unknown) => void;
     }>): void {
         const key = createSubscriptionKey(input.surface, input.subscriptionId);
-        activeSubscriptionKeys.set(key, input.surface);
+        activeSubscriptionKeys.set(key, input);
     }
 
     function dispose(input: Readonly<{
@@ -47,7 +49,9 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         subscriptionId: string;
     }>): boolean {
         const key = createSubscriptionKey(input.surface, input.subscriptionId);
+        const previous = activeSubscriptionKeys.get(key);
         const hadActiveSubscription = activeSubscriptionKeys.delete(key);
+        previous?.release?.();
         return hadActiveSubscription;
     }
 
@@ -61,6 +65,7 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
             return false;
         }
 
+        activeSubscriptionKeys.get(key)?.deliverValue?.(value);
         options.deliverSubscriptionValue?.({ subscriptionId, value });
         return true;
     }
@@ -101,7 +106,9 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         const surfaceKey = createSurfaceKey(surface);
         for (const key of [...activeSubscriptionKeys.keys()]) {
             if (key.startsWith(`${surfaceKey}\u001f`)) {
+                const previous = activeSubscriptionKeys.get(key);
                 activeSubscriptionKeys.delete(key);
+                previous?.release?.();
             }
         }
     }

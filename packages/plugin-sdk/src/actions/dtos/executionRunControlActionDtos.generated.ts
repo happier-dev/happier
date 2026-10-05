@@ -405,7 +405,7 @@ export type ExecutionRunControlActionInputById = {
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | undefined;
                     tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
                 };
                 content?: {
@@ -559,6 +559,12 @@ export type ExecutionRunControlActionInputById = {
         sessionId?: string | null | undefined;
         includeStructured?: boolean | undefined;
         waitForInputId?: string | undefined;
+        waitForOutput?: {
+            kind: 'review_walkthrough';
+            comparisonId: string;
+            resultId?: string | undefined;
+            afterRevision?: number | undefined;
+        } | undefined;
     };
     readonly "execution.run.send": {
         sessionId: null;
@@ -988,7 +994,7 @@ export type ExecutionRunControlActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | undefined;
                         tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
                     };
                     content?: {
@@ -1167,6 +1173,15 @@ export type ExecutionRunControlActionInputById = {
         sessionId?: string | null | undefined;
         input?: unknown;
     };
+    readonly "execution.run.permission.respond": {
+        runId: string;
+        requestId: string;
+        approved: boolean;
+    } | {
+        runId: string;
+        requestId: string;
+        answers: unknown;
+    };
     readonly "execution.run.wait": {
         [x: string]: unknown;
         runId: string;
@@ -1329,6 +1344,13 @@ export type ExecutionRunControlActionInputById = {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
+                } | undefined;
+                voicePolicy?: {
+                    assistantLanguage: string | null;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                    };
                 } | undefined;
                 finishedAtMs?: number | undefined;
                 error?: {
@@ -1542,6 +1564,13 @@ export type ExecutionRunControlActionResultById = {
                         persistenceMode: 'ephemeral' | 'persistent';
                         epoch: number;
                     } | undefined;
+                    voicePolicy?: {
+                        assistantLanguage: string | null;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                        };
+                    } | undefined;
                     finishedAtMs?: number | undefined;
                     error?: {
                         [x: string]: unknown;
@@ -1741,6 +1770,13 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         persistenceMode: 'ephemeral' | 'persistent';
                         epoch: number;
+                    } | undefined;
+                    voicePolicy?: {
+                        assistantLanguage: string | null;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                        };
                     } | undefined;
                     finishedAtMs?: number | undefined;
                     error?: {
@@ -1946,6 +1982,13 @@ export type ExecutionRunControlActionResultById = {
                         persistenceMode: 'ephemeral' | 'persistent';
                         epoch: number;
                     } | undefined;
+                    voicePolicy?: {
+                        assistantLanguage: string | null;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                        };
+                    } | undefined;
                     finishedAtMs?: number | undefined;
                     error?: {
                         [x: string]: unknown;
@@ -2144,6 +2187,13 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         persistenceMode: 'ephemeral' | 'persistent';
                         epoch: number;
+                    } | undefined;
+                    voicePolicy?: {
+                        assistantLanguage: string | null;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                        };
                     } | undefined;
                     finishedAtMs?: number | undefined;
                     error?: {
@@ -2357,6 +2407,13 @@ export type ExecutionRunControlActionResultById = {
                 persistenceMode: 'ephemeral' | 'persistent';
                 epoch: number;
             } | undefined;
+            voicePolicy?: {
+                assistantLanguage: string | null;
+                welcome: {
+                    enabled: boolean;
+                    mode: 'immediate' | 'on_first_turn';
+                };
+            } | undefined;
             finishedAtMs?: number | undefined;
             error?: {
                 [x: string]: unknown;
@@ -2547,6 +2604,13 @@ export type ExecutionRunControlActionResultById = {
                 persistenceMode: 'ephemeral' | 'persistent';
                 epoch: number;
             } | undefined;
+            voicePolicy?: {
+                assistantLanguage: string | null;
+                welcome: {
+                    enabled: boolean;
+                    mode: 'immediate' | 'on_first_turn';
+                };
+            } | undefined;
             finishedAtMs?: number | undefined;
             error?: {
                 [x: string]: unknown;
@@ -2662,6 +2726,9 @@ export type ExecutionRunControlActionResultById = {
     readonly "execution.run.action": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
+    readonly "execution.run.permission.respond": {
+        ok: true;
+    };
     readonly "execution.run.wait": {
         ok: true;
         status: 'running';
@@ -2847,6 +2914,13 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
+                } | undefined;
+                voicePolicy?: {
+                    assistantLanguage: string | null;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                    };
                 } | undefined;
                 finishedAtMs?: number | undefined;
                 error?: {
@@ -3047,6 +3121,13 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
+                } | undefined;
+                voicePolicy?: {
+                    assistantLanguage: string | null;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                    };
                 } | undefined;
                 finishedAtMs?: number | undefined;
                 error?: {
@@ -3252,6 +3333,13 @@ export type ExecutionRunControlActionResultById = {
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
                 } | undefined;
+                voicePolicy?: {
+                    assistantLanguage: string | null;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                    };
+                } | undefined;
                 finishedAtMs?: number | undefined;
                 error?: {
                     [x: string]: unknown;
@@ -3450,6 +3538,13 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
+                } | undefined;
+                voicePolicy?: {
+                    assistantLanguage: string | null;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                    };
                 } | undefined;
                 finishedAtMs?: number | undefined;
                 error?: {

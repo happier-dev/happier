@@ -11,8 +11,9 @@ import {
     SetSessionAccessContextResponseV1Schema,
     SessionPublicLinkGetActionResultV1Schema,
     SessionPublicLinkRemoveActionResultV1Schema,
-    SessionPublicLinkSettingsV1Schema,
+    SessionPublicLinkCreateActionResultV1Schema,
     projectSessionPublicLinkActionResultV1,
+    projectSessionPublicLinkCreateActionResultV1,
     type ActionId,
     type PrincipalRefV1,
     type SessionGrantIntentV1,
@@ -81,7 +82,7 @@ export type SessionAccessRequestOptions = Readonly<{
     availability: SessionCollaborationAvailability;
     isCurrent?: () => boolean;
     signal?: AbortSignal;
-    /** Device-local custody only; this material never enters the public Action or HTTP body. */
+    /** Optional mounted-sheet notification; the approved result also carries the full URL. */
     onPublicLinkIssued?: (material: Readonly<{ lookupId: string; secret: string }>) => void;
 }>;
 
@@ -264,9 +265,6 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
     // An already-aborted request proves this host never handed bytes to the
     // transport. After dispatch, cancellation can no longer prove that.
     if (params.signal?.aborted) throw new SessionAccessApiError('cancelled');
-    if (actionId === 'session.public_link.create' && !params.onPublicLinkIssued) {
-        throw new SessionAccessApiError('public_link_custody_unavailable');
-    }
     // The typed family binder is the one place an Action input becomes a
     // request, so this leaf keeps no route table of its own.
     return await runWithServerAccountScopeRequestGuard({
@@ -284,6 +282,7 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
             const publicBound = bindSessionAccessActionHttpRequestV1(actionId, publicInput);
             let physicalMutation: SessionGrantMutationV1 | null = null;
             let publicLinkMaterial: Readonly<{ lookupId: string; keyDerivation: 'fragment_v1'; encryptedDataKey?: string }> | null = null;
+            let issuedPublicLink: Readonly<{ lookupId: string; secret: string }> | null = null;
             let retainedEnvelopeFallback = false;
             let checkMaterializationCurrentness = check;
             if (actionId === 'session.public_link.create') {
@@ -293,13 +292,7 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                     ? { lookupId: materialized.lookupId, keyDerivation: 'fragment_v1' }
                     : { lookupId: materialized.lookupId, keyDerivation: 'fragment_v1', encryptedDataKey: materialized.encryptedDataKey };
                 checkMaterializationCurrentness = materialized.checkCurrentness;
-                try {
-                    params.onPublicLinkIssued?.({ lookupId: materialized.lookupId, secret: materialized.secret });
-                } catch {
-                    // This callback has seen a fragment secret; never propagate
-                    // its arbitrary exception to an Action result or logger.
-                    throw new SessionAccessApiError('public_link_custody_unavailable');
-                }
+                issuedPublicLink = { lookupId: materialized.lookupId, secret: materialized.secret };
             }
             if (actionId === 'session.access.grant.set') {
                 const { sessionId, ...grant } = publicInput as Record<string, unknown> & { sessionId: string };
@@ -313,7 +306,7 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                 retainedEnvelopeFallback = materialized.retainedEnvelopeFallback;
                 checkMaterializationCurrentness = materialized.checkCurrentness;
             }
-            // The public Action remains key-free and bearer-free. Only this
+            // The public Action input remains key-free and bearer-free. Only this
             // trusted execution host extends the already-bound physical request
             // with recipient ciphertext or publication material.
             // Only the Account arm of the physical mutation carries recipient
@@ -392,8 +385,10 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                     }
                     return spec.outputSchema!.parse({ changed: true });
                 }
-                const value = actionId === 'session.public_link.get' || actionId === 'session.public_link.create'
-                    ? projectSessionPublicLinkActionResultV1(payload) : payload;
+                const value = actionId === 'session.public_link.create' && issuedPublicLink
+                    ? projectSessionPublicLinkCreateActionResultV1(payload, issuedPublicLink)
+                    : actionId === 'session.public_link.get' ? projectSessionPublicLinkActionResultV1(payload) : payload;
+                if (issuedPublicLink) params.onPublicLinkIssued?.(issuedPublicLink);
                 return spec.outputSchema!.parse(value);
             } catch (error) {
                 if (!mutation) throw error;
@@ -465,7 +460,7 @@ export function createSessionAccessClient(options: SessionAccessRequestOptions &
             await execute('session.public_link.get', { sessionId: options.sessionId }),
         ),
         createPublicLink: async (input: Readonly<{ expiresAt?: number; maxUses?: number; isConsentRequired: boolean }>) =>
-            SessionPublicLinkSettingsV1Schema.parse(await execute('session.public_link.create', {
+            SessionPublicLinkCreateActionResultV1Schema.parse(await execute('session.public_link.create', {
                 sessionId: options.sessionId,
                 ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
                 ...(input.maxUses !== undefined ? { maxUses: input.maxUses } : {}),

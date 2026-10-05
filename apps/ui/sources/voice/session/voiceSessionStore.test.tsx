@@ -12,6 +12,81 @@ afterEach(async () => {
 });
 
 describe('voiceSessionStore', () => {
+  it('retains the last ended exact conversation independently of later binding removal or route changes', async () => {
+    const store = await import('./voiceSessionStore');
+    const conversationSessionAddress = { serverId: 'home-a', sessionId: 'conversation' };
+    const targetSessionAddress = { serverId: 'home-a', sessionId: 'coding-session' };
+    const accountScope = { serverId: 'home-a', accountId: 'account-a' };
+    const conversationScope = { kind: 'session_root' as const, sessionRootId: 'coding-session' };
+    store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 'control', status: 'connected', mode: 'listening', canStop: true }, {
+      adapterId: 'local_direct', controlSessionId: 'control', conversationSessionId: 'conversation',
+      conversationSessionAddress, targetSessionAddress, transcriptMode: 'native_session', updatedAt: 1,
+    }, { accountScope, conversationScope });
+    store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+    expect(store.getVoiceSessionEndedAttempt()).toMatchObject({
+      conversationSessionAddress, targetSessionAddress, accountScope, conversationScope,
+      transcriptMode: 'native_session', reason: { kind: 'disconnected' },
+    });
+    store.setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+    expect(store.getVoiceSessionEndedAttempt()?.conversationSessionAddress).toEqual(conversationSessionAddress);
+  });
+  it('records an attempt that ended cleanly, never a failure, and forgets it at the next start or on dismiss', async () => {
+    const store = await import('./voiceSessionStore');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      const seen: unknown[] = [];
+      const unsubscribe = store.subscribeToVoiceSessionEndedAttempt(() => seen.push(store.getVoiceSessionEndedAttempt()));
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', mode: 'idle', canStop: true });
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connected', mode: 'listening', canStop: true });
+      expect(store.getVoiceSessionEndedAttempt()).toBeNull();
+      const attemptId = store.getVoiceSessionAttemptId();
+      now.mockReturnValue(253_000);
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+      expect(store.getVoiceSessionEndedAttempt()).toEqual({ attemptId, sessionId: 's1', adapterId: 'local_direct', startedAt: 1_000, endedAt: 253_000,
+        reason: { kind: 'disconnected' }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null,
+        accountScope: null, conversationScope: null });
+      expect(seen).toHaveLength(1);
+
+      // A new start replaces the ended fact; a failure is its own state, not "ended".
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's2', status: 'connecting', mode: 'idle', canStop: true });
+      expect(store.getVoiceSessionEndedAttempt()).toBeNull();
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's2', status: 'error', mode: 'idle', canStop: false });
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+      expect(store.getVoiceSessionEndedAttempt()).toBeNull();
+
+      // Provider recovery may carry its failure on a disconnected snapshot.
+      // That is still a failure, never a clean End/approval-after-End moment.
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 'failed-disconnect', status: 'connected', mode: 'listening', canStop: true });
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false,
+        errorCode: 'microphone_permission_denied', errorPresentation: 'permission_required' });
+      expect(store.getVoiceSessionEndedAttempt()).toBeNull();
+
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's3', status: 'connected', mode: 'listening', canStop: true });
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+      expect(store.getVoiceSessionEndedAttempt()).not.toBeNull();
+      store.dismissVoiceSessionEndedAttempt();
+      expect(store.getVoiceSessionEndedAttempt()).toBeNull();
+      unsubscribe();
+    } finally { now.mockRestore(); }
+  });
+
+  it('keeps one observed attempt start time through reconnect and resets it only for a new attempt', async () => {
+    const store = await import('./voiceSessionStore');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    try {
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', mode: 'idle', canStop: true });
+      expect(store.getVoiceSessionAttemptStartedAt?.()).toBe(1000);
+      now.mockReturnValue(5000);
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connected', mode: 'listening', canStop: true });
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', presentationState: 'reconnecting', mode: 'idle', canStop: true });
+      expect(store.getVoiceSessionAttemptStartedAt?.()).toBe(1000);
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+      expect(store.getVoiceSessionAttemptStartedAt?.()).toBeNull();
+      store.setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connecting', mode: 'idle', canStop: true });
+      expect(store.getVoiceSessionAttemptStartedAt?.()).toBe(5000);
+    } finally { now.mockRestore(); }
+  });
+
   it('mints one canonical attempt id per inactive-to-active start and keeps it through reconnect churn', async () => {
     vi.resetModules();
     const {
@@ -186,6 +261,11 @@ describe('voiceSessionStore', () => {
         canStop: false,
       });
       setVoiceSessionLifecycleController({
+        observeSyncedConversationMessages: () => {},
+        commitInput: async () => {},
+        beginHoldToTalk: (await import('./voiceSessionManager')).createVoiceSessionManager({}).beginHoldToTalk,
+        finishHoldToTalk: async () => false,
+        getAttemptTargetSessionAddress: () => null,
         dispose: async () => {},
         getConfiguredProviderId: () => 'local_conversation',
         rearmAfterCredentialAuthorityChange: vi.fn(() => {}),
@@ -198,6 +278,7 @@ describe('voiceSessionStore', () => {
         setMuted: vi.fn(async () => {}),
         suspendInput: vi.fn(async () => null),
         retry: vi.fn(async () => {}),
+        dismissFailedAttempt: vi.fn(async () => {}),
         stop: vi.fn(async () => {}),
         subscribe: () => () => {},
         toggle: vi.fn(async () => {}),
@@ -234,6 +315,11 @@ describe('voiceSessionStore', () => {
       canStop: false,
     });
     setVoiceSessionLifecycleController({
+      observeSyncedConversationMessages: () => {},
+      commitInput: async () => {},
+      beginHoldToTalk: (await import('./voiceSessionManager')).createVoiceSessionManager({}).beginHoldToTalk,
+      finishHoldToTalk: async () => false,
+      getAttemptTargetSessionAddress: () => null,
       dispose: async () => {},
       getConfiguredProviderId: () => 'local_direct',
       rearmAfterCredentialAuthorityChange: vi.fn(() => {}),
@@ -246,6 +332,7 @@ describe('voiceSessionStore', () => {
       setMuted: vi.fn(async () => {}),
       suspendInput: vi.fn(async () => null),
       retry: vi.fn(async () => {}),
+      dismissFailedAttempt: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       subscribe: () => () => {},
       toggle: vi.fn(async () => {}),

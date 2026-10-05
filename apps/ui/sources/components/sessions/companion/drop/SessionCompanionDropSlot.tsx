@@ -7,7 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { useSessionCompanionDropView } from './sessionCompanionDropStore';
+import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useEntityDragDropSnapshot } from '@/components/ui/treeDragDrop';
 
 const stylesheet = StyleSheet.create((theme) => ({
     slot: {
@@ -33,25 +35,31 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 /**
  * The "Keep beside your chat" slot that appears in the Companion rail only while a
- * Board card is being dragged (lab CM). It subscribes to two booleans; pointer
- * movement never re-renders the column.
+ * Board card is being dragged (lab CM). This qualified feedback leaf subscribes
+ * to semantic selection; pointer frames never re-render the column.
  */
 export const SessionCompanionDropSlot = React.memo(function SessionCompanionDropSlot(props: Readonly<{
-    sessionId: string;
+    scope: EntityDragScopeV1 | null;
+    address: SessionAddress | null;
+    targetId: string;
     testID: string;
 }>) {
     const { theme } = useUnistyles();
-    const view = useSessionCompanionDropView(props.sessionId);
-    if (!view.dragging) return null;
+    const snapshot = useEntityDragDropSnapshot();
+    const item = snapshot.item;
+    if (snapshot.phase !== 'carrying' || item?.kind !== 'session-board-item' || !props.scope || !props.address
+        || item.scope.serverId !== props.scope.serverId || item.scope.accountId !== props.scope.accountId
+        || item.address.serverId !== props.address.serverId || item.address.sessionId !== props.address.sessionId) return null;
+    const hovering = snapshot.targetId === props.targetId && snapshot.admission?.status === 'allowed';
     return (
         <View
             testID={props.testID}
-            style={[stylesheet.slot, view.hovering ? stylesheet.slotHovering : null]}
+            style={[stylesheet.slot, hovering ? stylesheet.slotHovering : null]}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
         >
-            <Icon name="stack-simple" size={15} color={view.hovering ? theme.colors.text.link : theme.colors.text.secondary} />
-            <Text style={[stylesheet.label, view.hovering ? stylesheet.labelHovering : null]}>
+            <Icon name="stack-simple" size={15} color={hovering ? theme.colors.text.link : theme.colors.text.secondary} />
+            <Text style={[stylesheet.label, hovering ? stylesheet.labelHovering : null]}>
                 {t('sessionCompanion.drop.keepBesideChat')}
             </Text>
         </View>

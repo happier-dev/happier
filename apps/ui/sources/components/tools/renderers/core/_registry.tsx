@@ -1,41 +1,42 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import * as React from 'react';
-import { EditView } from '../fileOps/EditView';
-import { BashView } from '../system/BashView';
+import { EditView, projectEditDisplayText } from '../fileOps/EditView';
+import { BashView, projectBashDisplayText } from '../system/BashView';
 import { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { Metadata } from '@happier-dev/session-core/state';
-import { WriteView } from '../fileOps/WriteView';
-import { TodoView } from '../workflow/TodoView';
-import { ExitPlanToolView } from '../workflow/ExitPlanToolView';
-import { MultiEditView } from '../fileOps/MultiEditView';
-import { EnterPlanModeView } from '../workflow/EnterPlanModeView';
-import { SubAgentView } from '../workflow/SubAgentView';
-import { PatchView } from '../fileOps/PatchView';
-import { DiffView } from '../fileOps/DiffView';
-import { AskUserQuestionView } from '../workflow/AskUserQuestionView';
-import { AcpHistoryImportView } from '../system/AcpHistoryImportView';
-import { GlobView } from '../fileOps/GlobView';
-import { GrepView } from '../fileOps/GrepView';
-import { ReadView } from '../fileOps/ReadView';
-import { WebFetchView } from '../web/WebFetchView';
-import { WebSearchView } from '../web/WebSearchView';
-import { CodeSearchView } from '../fileOps/CodeSearchView';
-import { ReasoningView } from '../workflow/ReasoningView';
-import { WorkspaceIndexingPermissionView } from '../system/WorkspaceIndexingPermissionView';
-import { LSView } from '../fileOps/LSView';
-import { ChangeTitleView } from '../workflow/ChangeTitleView';
-import { DeleteView } from '../fileOps/DeleteView';
-import { MCPToolView } from '../system/MCPToolView';
-import { UnknownToolView } from '../system/UnknownToolView';
-import { SubAgentRunView } from '../workflow/SubAgentRunView';
-import { AgentTeamView } from '../workflow/AgentTeamView';
-import { WorkflowActivityView } from '../workflow/WorkflowActivityView';
-import { TaskOutputView } from '../system/TaskOutputView';
-import { TaskStopView } from '../system/TaskStopView';
+import { WriteView, projectWriteDisplayText } from '../fileOps/WriteView';
+import { TodoView, projectTodoDisplayText } from '../workflow/TodoView';
+import { ExitPlanToolView, projectExitPlanDisplayText } from '../workflow/ExitPlanToolView';
+import { MultiEditView, projectMultiEditDisplayText } from '../fileOps/MultiEditView';
+import { EnterPlanModeView, projectEnterPlanModeDisplayText } from '../workflow/EnterPlanModeView';
+import { SubAgentView, projectSubAgentDisplayText } from '../workflow/SubAgentView';
+import { PatchView, projectPatchDisplayText } from '../fileOps/PatchView';
+import { DiffView, projectDiffDisplayText } from '../fileOps/DiffView';
+import { AskUserQuestionView, projectAskUserQuestionDisplayText } from '../workflow/AskUserQuestionView';
+import { AcpHistoryImportView, projectAcpHistoryImportDisplayText } from '../system/AcpHistoryImportView';
+import { GlobView, projectGlobDisplayText } from '../fileOps/GlobView';
+import { GrepView, projectGrepDisplayText } from '../fileOps/GrepView';
+import { ReadView, projectReadDisplayText } from '../fileOps/ReadView';
+import { WebFetchView, projectWebFetchDisplayText } from '../web/WebFetchView';
+import { WebSearchView, projectWebSearchDisplayText } from '../web/WebSearchView';
+import { CodeSearchView, projectCodeSearchDisplayText } from '../fileOps/CodeSearchView';
+import { ReasoningView, projectReasoningDisplayText } from '../workflow/ReasoningView';
+import { WorkspaceIndexingPermissionView, projectWorkspaceIndexingPermissionDisplayText } from '../system/WorkspaceIndexingPermissionView';
+import { LSView, projectLSDisplayText } from '../fileOps/LSView';
+import { ChangeTitleView, projectChangeTitleDisplayText } from '../workflow/ChangeTitleView';
+import { DeleteView, projectDeleteDisplayText } from '../fileOps/DeleteView';
+import { MCPToolView, projectMCPDisplayText } from '../system/MCPToolView';
+import { UnknownToolView, projectUnknownDisplayText } from '../system/UnknownToolView';
+import { SubAgentRunView, projectSubAgentRunDisplayText } from '../workflow/SubAgentRunView';
+import { AgentTeamView, projectAgentTeamDisplayText } from '../workflow/AgentTeamView';
+import { WorkflowActivityView, projectWorkflowActivityDisplayText } from '../workflow/WorkflowActivityView';
+import { TaskOutputView, projectTaskOutputDisplayText } from '../system/TaskOutputView';
+import { TaskStopView, projectTaskStopDisplayText } from '../system/TaskStopView';
 import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
 import { normalizeToolNameForView } from '@/components/tools/normalization/policy/normalizeToolNameForView';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { ExecutionRunPromptResponseTarget } from '@/components/tools/shell/permissions/executionRunPromptResponseTarget';
+import type { ToolDisplayTextProjector } from './toolDisplayTextTypes';
 
 export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 
@@ -47,6 +48,8 @@ export type ToolViewProps = {
     serverId?: string;
     session?: Session;
     messageId?: string;
+    /** Original body block when a text message is presented as a synthetic tool. */
+    findBodyBlockId?: string;
     detailLevel?: ToolViewDetailLevel;
     interaction?: TranscriptInteraction;
     /**
@@ -60,50 +63,61 @@ export type ToolViewProps = {
 export type ToolViewComponent = React.ComponentType<ToolViewProps>;
 
 // Registry of tool-specific view components
-export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponent> = {
-    Edit: EditView,
-    Bash: BashView,
-    Delete: DeleteView,
-    Patch: PatchView,
-    Diff: DiffView,
-    Reasoning: ReasoningView,
-    Write: WriteView,
-    Read: ReadView,
-    Glob: GlobView,
-    Grep: GrepView,
-    LS: LSView,
-    WebFetch: WebFetchView,
-    WebSearch: WebSearchView,
-    CodeSearch: CodeSearchView,
-    TodoWrite: TodoView,
-    TodoRead: TodoView,
-    SubAgent: SubAgentView,
-    EnterPlanMode: EnterPlanModeView,
-    ExitPlanMode: ExitPlanToolView,
-    MultiEdit: MultiEditView,
-    Workflow: WorkflowActivityView,
-    Task: SubAgentView,
+type ToolViewDescriptor = Readonly<{ component: ToolViewComponent; projectDisplayText: ToolDisplayTextProjector }>;
+const toolViewDescriptors: Record<KnownCanonicalToolNameV2, ToolViewDescriptor> = {
+    Edit: { component: EditView, projectDisplayText: projectEditDisplayText },
+    Bash: { component: BashView, projectDisplayText: projectBashDisplayText },
+    Delete: { component: DeleteView, projectDisplayText: projectDeleteDisplayText },
+    Patch: { component: PatchView, projectDisplayText: projectPatchDisplayText },
+    Diff: { component: DiffView, projectDisplayText: projectDiffDisplayText },
+    Reasoning: { component: ReasoningView, projectDisplayText: projectReasoningDisplayText },
+    Write: { component: WriteView, projectDisplayText: projectWriteDisplayText },
+    Read: { component: ReadView, projectDisplayText: projectReadDisplayText },
+    Glob: { component: GlobView, projectDisplayText: projectGlobDisplayText },
+    Grep: { component: GrepView, projectDisplayText: projectGrepDisplayText },
+    LS: { component: LSView, projectDisplayText: projectLSDisplayText },
+    WebFetch: { component: WebFetchView, projectDisplayText: projectWebFetchDisplayText },
+    WebSearch: { component: WebSearchView, projectDisplayText: projectWebSearchDisplayText },
+    CodeSearch: { component: CodeSearchView, projectDisplayText: projectCodeSearchDisplayText },
+    TodoWrite: { component: TodoView, projectDisplayText: projectTodoDisplayText },
+    TodoRead: { component: TodoView, projectDisplayText: projectTodoDisplayText },
+    SubAgent: { component: SubAgentView, projectDisplayText: projectSubAgentDisplayText },
+    EnterPlanMode: { component: EnterPlanModeView, projectDisplayText: projectEnterPlanModeDisplayText },
+    ExitPlanMode: { component: ExitPlanToolView, projectDisplayText: projectExitPlanDisplayText },
+    MultiEdit: { component: MultiEditView, projectDisplayText: projectMultiEditDisplayText },
+    Workflow: { component: WorkflowActivityView, projectDisplayText: projectWorkflowActivityDisplayText },
+    Task: { component: SubAgentView, projectDisplayText: projectSubAgentDisplayText },
     // Background-task control tools. Deliberately NOT the subagent card: they act on a detached
     // process, not on a roster entry.
-    TaskOutput: TaskOutputView,
-    TaskStop: TaskStopView,
-    AskUserQuestion: AskUserQuestionView,
-    AcpHistoryImport: AcpHistoryImportView,
-    WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
-    change_title: ChangeTitleView,
-    SubAgentRun: SubAgentRunView,
-    AgentTeamCreate: AgentTeamView,
-    AgentTeamDelete: AgentTeamView,
-    AgentTeamSendMessage: AgentTeamView,
+    TaskOutput: { component: TaskOutputView, projectDisplayText: projectTaskOutputDisplayText },
+    TaskStop: { component: TaskStopView, projectDisplayText: projectTaskStopDisplayText },
+    AskUserQuestion: { component: AskUserQuestionView, projectDisplayText: projectAskUserQuestionDisplayText },
+    AcpHistoryImport: { component: AcpHistoryImportView, projectDisplayText: projectAcpHistoryImportDisplayText },
+    WorkspaceIndexingPermission: { component: WorkspaceIndexingPermissionView, projectDisplayText: projectWorkspaceIndexingPermissionDisplayText },
+    change_title: { component: ChangeTitleView, projectDisplayText: projectChangeTitleDisplayText },
+    SubAgentRun: { component: SubAgentRunView, projectDisplayText: projectSubAgentRunDisplayText },
+    AgentTeamCreate: { component: AgentTeamView, projectDisplayText: projectAgentTeamDisplayText },
+    AgentTeamDelete: { component: AgentTeamView, projectDisplayText: projectAgentTeamDisplayText },
+    AgentTeamSendMessage: { component: AgentTeamView, projectDisplayText: projectAgentTeamDisplayText },
 };
+
+// Compatibility projection for existing component consumers; descriptors own both paths.
+export const toolViewRegistry = Object.fromEntries(Object.entries(toolViewDescriptors)
+    .map(([name, descriptor]) => [name, descriptor.component])) as Record<KnownCanonicalToolNameV2, ToolViewComponent>;
+
+function getToolViewDescriptor(toolName: string): ToolViewDescriptor {
+    if (toolName.startsWith('mcp__')) return { component: MCPToolView, projectDisplayText: projectMCPDisplayText };
+    const parsed = KnownCanonicalToolNameV2Schema.safeParse(normalizeToolNameForView(toolName));
+    return parsed.success ? toolViewDescriptors[parsed.data] : { component: UnknownToolView, projectDisplayText: projectUnknownDisplayText };
+}
+
+export function getToolDisplayTextProjector(toolName: string): ToolDisplayTextProjector {
+    return getToolViewDescriptor(toolName).projectDisplayText;
+}
 
 // Helper function to get the appropriate view component for a tool
 export function getToolViewComponent(toolName: string): ToolViewComponent | null {
-    if (toolName.startsWith('mcp__')) return MCPToolView;
-    const normalizedName = normalizeToolNameForView(toolName);
-    const parsed = KnownCanonicalToolNameV2Schema.safeParse(normalizedName);
-    if (!parsed.success) return UnknownToolView;
-    return toolViewRegistry[parsed.data] ?? UnknownToolView;
+    return getToolViewDescriptor(toolName).component;
 }
 
 // Export individual components

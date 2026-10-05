@@ -36,6 +36,7 @@ import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { triageListRowTestId } from './list/rows.js';
+import { pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
 
 /**
  * Opening a row, driven through the real mounted vertical.
@@ -85,7 +86,8 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
         contributor: {
             pluginId: SOURCE.pluginId,
             contributionId: SOURCE.localId,
-            immutableGenerationId: 'generation-1',
+            occurrenceId: 'generation-1',
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' },
         },
         protocol: {
             id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -163,7 +165,7 @@ async function mountShell(harness: Harness): Promise<Readonly<{
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
@@ -188,6 +190,20 @@ afterEach(async () => {
 });
 
 describe('opening a PRs & Issues row', () => {
+    it('enters and exits transient Organize list mode without changing the lens or normal row activation', async () => {
+        const { shell, locations } = await mountShell(createHarness());
+        const before = locations.length;
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Organize list');
+        expect(locations).toHaveLength(before);
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Done' })); });
+        expect((await shell.getAllByRole('button')).some((button) => button.name === 'Done')).toBe(false);
+        expect(locations).toHaveLength(before);
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Replace the duplicated normalizer' }));
+        });
+        expect(locations.length).toBeGreaterThan(before);
+    });
+
     it('makes each row an activatable option rather than inert text', async () => {
         const { shell } = await mountShell(createHarness());
 

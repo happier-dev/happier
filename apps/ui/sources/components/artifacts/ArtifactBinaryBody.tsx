@@ -116,7 +116,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             : previewable && preview.key === key && preview.phase === 'failed' ? <SurfaceStateCard testID="artifact:previewFailed" kind="error"
                 title={t('artifacts.error')} reason={t('artifacts.browser.loadFailedBody')}
                 action={{ label: t('common.retry'), onPress: () => setAttempt(value => value + 1) }} /> : card}
-        <RoundButton testID="artifact:download" title={t('common.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />
+        <RoundButton testID="artifact:download" title={t('files.repositoryTree.actions.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />
         {downloadFailed ? <Text accessibilityRole="alert" testID="artifact:downloadFailed">{t('artifacts.browser.loadFailedBody')}</Text> : null}
     </View>;
 }

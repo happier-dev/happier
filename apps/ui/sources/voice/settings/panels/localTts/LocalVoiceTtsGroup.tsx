@@ -16,6 +16,8 @@ import { getLocalTtsProviderSpec, useLocalTtsProviderSpecs } from '@/voice/setti
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Icon } from '@/components/ui/icons/Icon';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 export function LocalVoiceTtsGroup(props: {
   cfgTts: VoiceLocalTtsSettings;
@@ -36,7 +38,11 @@ export function LocalVoiceTtsGroup(props: {
   const setCfg = (patch: Partial<VoiceLocalTtsSettings>) => props.setTts({ ...cfg, ...patch });
 
   return (
-    <ItemGroup title={t('settingsVoice.local.ttsBaseUrlTitle')}>
+    <ItemGroup
+      title={t('settingsVoice.pages.conversations.speakTitle')}
+      description={t('settingsVoice.pages.conversations.speakDescription')}
+    >
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsProvider}>
       <DropdownMenu
         open={openMenu === 'ttsProvider'}
         onOpenChange={(next) => setOpenMenu(next ? 'ttsProvider' : null)}
@@ -49,7 +55,7 @@ export function LocalVoiceTtsGroup(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: t('settingsVoice.local.ttsProvider'),
+          title: t('settingsVoice.pages.conversations.voiceEngineTitle'),
         }}
         items={providerSpecs.map((spec) => ({
           id: spec.id,
@@ -62,28 +68,7 @@ export function LocalVoiceTtsGroup(props: {
           setOpenMenu(null);
         }}
       />
-
-      <Item
-        title={t('settingsVoice.local.autoSpeak')}
-        subtitle={t('settingsVoice.local.autoSpeakSubtitle')}
-        rightElement={(
-          <Switch
-            accessibilityLabel={t('settingsVoice.local.autoSpeak')}
-            value={cfg.autoSpeakReplies}
-            onValueChange={(v) => setCfg({ autoSpeakReplies: v })}
-          />
-        )}
-      />
-      <Item
-        title={t('settingsVoice.local.bargeIn')}
-        rightElement={(
-          <Switch
-            accessibilityLabel={t('settingsVoice.local.bargeIn')}
-            value={cfg.bargeInEnabled}
-            onValueChange={(v) => setCfg({ bargeInEnabled: v })}
-          />
-        )}
-      />
+      </SettingAnchor>
 
       {providerSpec ? (
         <providerSpec.Settings
@@ -99,6 +84,21 @@ export function LocalVoiceTtsGroup(props: {
         <Item title={t('common.unavailable')} />
       )}
 
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.autoSpeakReplies}>
+      <Item
+        title={t('settingsVoice.local.autoSpeak')}
+        subtitle={t('settingsVoice.local.autoSpeakSubtitle')}
+        rightElement={(
+          <Switch
+            accessibilityLabel={t('settingsVoice.local.autoSpeak')}
+            value={cfg.autoSpeakReplies}
+            onValueChange={(v) => setCfg({ autoSpeakReplies: v })}
+          />
+        )}
+      />
+      </SettingAnchor>
+
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.testTts}>
       <Item
         title={t('settingsVoice.local.testTts')}
         subtitle={t('settingsVoice.local.testTtsSubtitle')}
@@ -128,6 +128,7 @@ export function LocalVoiceTtsGroup(props: {
           })(), { tag: 'LocalVoiceTtsGroup.testTts' });
         }}
       />
+      </SettingAnchor>
     </ItemGroup>
   );
 }

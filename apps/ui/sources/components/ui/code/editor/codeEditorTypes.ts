@@ -1,4 +1,23 @@
 import { normalizeCodeLanguageId } from '@/utils/code/normalizeCodeLanguageId';
+import type { FindOptions, FindStatus } from '@happier-dev/plugin-ui/presentation';
+
+export type CodeEditorFindTarget = Readonly<{ line: number; column?: number }>;
+export type CodeEditorFindSnapshot = Readonly<{ query: string; options: FindOptions; status: FindStatus }>;
+export type CodeEditorFindHandle = Readonly<{
+    /** Monaco owns its widget; CodeMirror uses the host's shared bar. */
+    presentation: 'native' | 'shared';
+    /** Reveal/focus Find without replacing query state owned by the engine. */
+    open: () => void;
+    seed: (query: string, options: FindOptions, target?: CodeEditorFindTarget) => void;
+    set: (query: string, options: FindOptions) => void;
+    step: (direction: 1 | -1) => void;
+    close: () => void;
+    getSnapshot: () => CodeEditorFindSnapshot;
+    subscribe: (listener: () => void) => () => void;
+    containsFocus: () => boolean;
+    isOpen: () => boolean;
+    isInputFocused: () => boolean;
+}>;
 
 export type CodeEditorProps = Readonly<{
     resetKey: string;
@@ -18,6 +37,7 @@ export type CodeEditorHandle = Readonly<{
     flushPendingChange: () => Promise<void>;
     /** Move editing focus into the incumbent platform surface. */
     focus?: () => void;
+    find?: CodeEditorFindHandle;
 }>;
 
 export function resolveMonacoLanguageId(language: string | null): string {

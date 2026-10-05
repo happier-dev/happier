@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   resolveStackArtifactsDir,
   resolveStackComponentArtifactDir,
-  resolveStackComponentArtifactLockPath,
   resolveStackRuntimePaths,
 } from './runtime_paths.mjs';
 
@@ -38,18 +37,6 @@ test('resolveStackComponentArtifactDir rejects fingerprints that are not one man
       /artifact fingerprint.*path segment/i,
     );
   }
-});
-
-test('resolveStackComponentArtifactLockPath scopes publication to one immutable artifact identity', () => {
-  const stackBaseDir = join('tmp', 'happier', 'stacks', 'prod-dev');
-  assert.equal(
-    resolveStackComponentArtifactLockPath({
-      stackBaseDir,
-      component: 'server',
-      fingerprint: 'abc123',
-    }),
-    `${join(stackBaseDir, 'artifacts', 'server', 'abc123')}.lock`,
-  );
 });
 
 test('resolveStackRuntimePaths exposes build and activation locations', () => {

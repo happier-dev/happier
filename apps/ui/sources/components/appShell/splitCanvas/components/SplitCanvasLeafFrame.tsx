@@ -43,6 +43,7 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
 
     const setHostRef = React.useCallback((node: unknown) => {
         if (Platform.OS !== 'web') {
+            props.onHostRefChange?.(node as SplitCanvasLeafHostRef | null);
             return;
         }
 

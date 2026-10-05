@@ -83,6 +83,8 @@ export class RpcHandlerManager {
         RpcHandlerConfig['onRegistrationAcknowledged'];
     private readonly nowMs: () => number;
     private socket: Socket | null = null;
+    private readonly observedSockets = new WeakSet<Socket>();
+    private readonly permanentlyRejectedRegistrationMethods = new Set<string>();
     private acknowledgedRegistrationMethods = new Set<string>();
     private registrationReadinessWaiters = new Set<RegistrationReadinessWaiter>();
     private inFlightRequestCount = 0;
@@ -150,6 +152,7 @@ export class RpcHandlerManager {
 
         // Store the handler
         this.handlers.set(prefixedMethod, handler);
+        this.permanentlyRejectedRegistrationMethods.delete(prefixedMethod);
 
         if (this.socket) {
             this.acknowledgedRegistrationMethods.delete(prefixedMethod);
@@ -430,46 +433,69 @@ export class RpcHandlerManager {
         }
         this.socket = socket;
         this.acknowledgedRegistrationMethods.clear();
-        socket.on(SOCKET_RPC_EVENTS.ERROR, (error: unknown) => {
-            if (this.socket !== socket) {
-                return;
-            }
-            const type = error && typeof error === 'object' && !Array.isArray(error)
-                ? (error as Record<string, unknown>).type
-                : null;
-            if (type !== 'register') {
-                return;
-            }
-            this.logger('[RPC] [ERROR] Handler registration rejected', { error });
-            this.onRegistrationError?.(error);
-        });
-        socket.on(SOCKET_RPC_EVENTS.REGISTERED, (data: unknown) => {
-            if (this.socket !== socket) {
-                return;
-            }
-            const method = data && typeof data === 'object' && !Array.isArray(data)
-                ? (data as Record<string, unknown>).method
-                : null;
-            if (typeof method !== 'string' || !this.handlers.has(method)) {
-                return;
-            }
-            this.acknowledgedRegistrationMethods.add(method);
-            this.settleReadyRegistrationWaiters();
-            this.onRegistrationAcknowledged?.(method);
-        });
-        socket.on(SOCKET_RPC_EVENTS.CANCEL, (payload: unknown) => {
-            if (this.socket !== socket) {
-                return;
-            }
-            const parsed = SocketRpcCancellationPayloadSchema.safeParse(payload);
-            if (!parsed.success) {
-                return;
-            }
-            this.activeTransportRequestControllersByRequestId
-                .get(parsed.data.requestId)
-                ?.abort(new Error('RPC request cancelled by caller'));
-        });
+        // Rejection policy belongs to the relay admission that produced it.
+        // Every connect starts fresh admission, including reuse of the same Socket.
+        this.permanentlyRejectedRegistrationMethods.clear();
+        if (!this.observedSockets.has(socket)) {
+            this.observedSockets.add(socket);
+            socket.on(SOCKET_RPC_EVENTS.ERROR, (error: unknown) => {
+                if (this.socket !== socket) {
+                    return;
+                }
+                const type = error && typeof error === 'object' && !Array.isArray(error)
+                    ? (error as Record<string, unknown>).type
+                    : null;
+                if (type !== 'register') {
+                    return;
+                }
+                const rejection = error as Record<string, unknown>;
+                const method = typeof rejection.method === 'string' && this.handlers.has(rejection.method)
+                    ? rejection.method : undefined;
+                if (method && rejection.retryable === false) {
+                    this.permanentlyRejectedRegistrationMethods.add(method);
+                }
+                // The relay owns rejection policy. Log only its bounded error code
+                // and a method we actually registered, never arbitrary response bags.
+                const safeErrors = ['Forbidden', 'Invalid method name', 'Machine replaced',
+                    'Machine unavailable', 'Internal error', 'client-upgrade-required', RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE];
+                this.logger('[RPC] [ERROR] Handler registration rejected', {
+                    ...(method ? { method } : {}),
+                    error: typeof rejection.error === 'string' && safeErrors.includes(rejection.error)
+                        ? rejection.error : 'Registration rejected',
+                    ...(typeof rejection.retryable === 'boolean' ? { retryable: rejection.retryable } : {}),
+                });
+                this.onRegistrationError?.(error);
+            });
+            socket.on(SOCKET_RPC_EVENTS.REGISTERED, (data: unknown) => {
+                if (this.socket !== socket) {
+                    return;
+                }
+                const method = data && typeof data === 'object' && !Array.isArray(data)
+                    ? (data as Record<string, unknown>).method
+                    : null;
+                if (typeof method !== 'string' || !this.handlers.has(method)) {
+                    return;
+                }
+                this.acknowledgedRegistrationMethods.add(method);
+                this.permanentlyRejectedRegistrationMethods.delete(method);
+                this.settleReadyRegistrationWaiters();
+                this.onRegistrationAcknowledged?.(method);
+            });
+            socket.on(SOCKET_RPC_EVENTS.CANCEL, (payload: unknown) => {
+                if (this.socket !== socket) {
+                    return;
+                }
+                const parsed = SocketRpcCancellationPayloadSchema.safeParse(payload);
+                if (!parsed.success) {
+                    return;
+                }
+                this.activeTransportRequestControllersByRequestId
+                    .get(parsed.data.requestId)
+                    ?.abort(new Error('RPC request cancelled by caller'));
+            });
+        }
         for (const [prefixedMethod] of this.handlers) {
+            if (this.permanentlyRejectedRegistrationMethods.has(prefixedMethod)) continue;
             socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
         }
     }
@@ -541,6 +567,7 @@ export class RpcHandlerManager {
             if (
                 !this.handlers.has(prefixedMethod)
                 || this.acknowledgedRegistrationMethods.has(prefixedMethod)
+                || this.permanentlyRejectedRegistrationMethods.has(prefixedMethod)
             ) {
                 continue;
             }
@@ -599,6 +626,7 @@ export class RpcHandlerManager {
     unregisterHandler(method: string): boolean {
         const prefixedMethod = this.getPrefixedMethod(method);
         const removed = this.handlers.delete(prefixedMethod);
+        this.permanentlyRejectedRegistrationMethods.delete(prefixedMethod);
         if (!removed) {
             return false;
         }
@@ -666,6 +694,7 @@ export class RpcHandlerManager {
      */
     clearHandlers(): void {
         this.handlers.clear();
+        this.permanentlyRejectedRegistrationMethods.clear();
         this.acknowledgedRegistrationMethods.clear();
         this.ownedHandlerMethodsByOwner.clear();
         this.logger('Cleared all RPC handlers');

@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { MessageActionReferenceV1 } from '@happier-dev/protocol';
+import { PluginProjectedActionV2Schema, type MessageActionReferenceV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type {
     PluginProjectionAction,
@@ -53,9 +54,18 @@ vi.mock('@/components/ui/text/Text', () => ({
         React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
-    machinePluginStructuredMessageActionExecute: machinePluginStructuredMessageActionExecuteMock,
+// Keep the projection/schema/dispatch owners real; only daemon RPC leaves the process.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: async (request: { machineId: string; serverId?: string | null; signal?: AbortSignal;
+        method: string; payload: Record<string, unknown> }) => {
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true, inputSchema: {} };
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+            const { machineId, ...payload } = request.payload;
+            return machinePluginStructuredMessageActionExecuteMock(request.machineId,
+                { ...payload, serverId: request.serverId, signal: request.signal });
+        }
+        throw new Error(`Unexpected daemon RPC: ${request.method}`);
+    },
 }));
 
 const messageReference: MessageActionReferenceV1 = {
@@ -68,7 +78,7 @@ const messageReference: MessageActionReferenceV1 = {
 function action(input: Partial<PluginProjectionAction> & Readonly<{ id: string }>): PluginProjectionAction {
     return {
         id: input.id,
-        occurrenceId: input.occurrenceId ?? null,
+        occurrenceId: input.occurrenceId ?? '7',
         title: input.title ?? input.id,
         description: input.description ?? null,
         icon: input.icon ?? null,
@@ -105,8 +115,7 @@ describe('PluginMessageActions', () => {
     beforeEach(() => {
         machinePluginStructuredMessageActionExecuteMock.mockReset();
         machinePluginStructuredMessageActionExecuteMock.mockResolvedValue({
-            supported: true,
-            result: { ok: true, result: null },
+            ok: true, result: null,
         });
     });
 
@@ -115,18 +124,26 @@ describe('PluginMessageActions', () => {
     });
 
     it('preserves legacy message Actions and presents semantic menu Actions with current Message intent', async () => {
+        const projection = entry([
+            action({ id: 'open-preview', title: 'Open preview' }),
+            action({ id: 'session-only', scopes: ['session'], placementBindings: ['contextMenu'] }),
+            action({ id: 'menu-only', placementBindings: ['contextMenu'] }),
+            action({ id: 'semantic-menu-only', placementBindings: ['message.menu'] }),
+            action({ id: 'mixed-menu', placementBindings: ['contextMenu', 'message.menu'] }),
+        ]);
         const resolveCurrent = vi.fn(() => ({
+            resolveContributedAction: (identity: { pluginId: string; localId: string }) => {
+                const contribution = projection.actions.find((candidate) => candidate.id === identity.localId);
+                if (identity.pluginId !== projection.pluginId || !contribution) return null;
+                return PluginProjectedActionV2Schema.parse({
+                    id: contribution.id, pluginId: projection.pluginId, occurrenceId: String(projection.generation),
+                    title: contribution.title, scopes: contribution.scopes, surfaces: contribution.surfaces,
+                    placementBindings: contribution.placementBindings, execution: { target: 'daemon' },
+                    dangerLevel: contribution.dangerLevel, available: true,
+                });
+            },
             pluginProjectionById: {
-                'acme.preview': entry([
-                    action({ id: 'open-preview', title: 'Open preview' }),
-                    action({ id: 'session-only', scopes: ['session'], placementBindings: ['contextMenu'] }),
-                    action({ id: 'menu-only', placementBindings: ['contextMenu'] }),
-                    action({ id: 'semantic-menu-only', placementBindings: ['message.menu'] }),
-                    action({
-                        id: 'mixed-menu',
-                        placementBindings: ['contextMenu', 'message.menu'],
-                    }),
-                ]),
+                'acme.preview': projection,
             },
             host: {
                 machineId: 'machine-1',
@@ -160,7 +177,7 @@ describe('PluginMessageActions', () => {
 
         await act(async () => {
             screen.pressByTestId('plugin-message-action:acme.preview/open-preview');
-            await Promise.resolve();
+            await vi.waitFor(() => expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalled());
         });
 
         expect(resolveCurrent.mock.calls.length).toBeGreaterThan(currentReadsBeforeRowPress);
@@ -189,7 +206,8 @@ describe('PluginMessageActions', () => {
 
         await act(async () => {
             screen.pressByTestId('plugin-message-action-menu:acme.preview/menu-only');
-            await Promise.resolve();
+            await vi.waitFor(() => expect(machinePluginStructuredMessageActionExecuteMock.mock.calls.at(-1)?.[1])
+                .toMatchObject({ qualifiedActionId: 'acme.preview/menu-only' }));
         });
 
         expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenLastCalledWith('machine-1', {
@@ -211,7 +229,8 @@ describe('PluginMessageActions', () => {
         });
         await act(async () => {
             screen.pressByTestId('plugin-message-action-menu:acme.preview/semantic-menu-only');
-            await Promise.resolve();
+            await vi.waitFor(() => expect(machinePluginStructuredMessageActionExecuteMock.mock.calls.at(-1)?.[1])
+                .toMatchObject({ qualifiedActionId: 'acme.preview/semantic-menu-only' }));
         });
 
         expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenLastCalledWith('machine-1', {

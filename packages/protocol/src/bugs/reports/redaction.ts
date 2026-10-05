@@ -1,4 +1,5 @@
 import { trimUtf8TextHeadToMaxBytes, trimUtf8TextToMaxBytes } from './utf8.js';
+import { redactPublicShareCapabilityUrl } from '../../crypto/publicShareCapabilityUrl.js';
 import {
   isBaseCredentialDiagnosticKey,
   splitSensitiveDiagnosticKeySegments,
@@ -46,8 +47,9 @@ function isSensitiveDiagnosticUrlQueryKey(key: string): boolean {
 function redactSensitiveDiagnosticUrls(input: string): string {
   return input.replace(DIAGNOSTIC_URL_PATTERN, (rawUrl) => {
     try {
-      const url = new URL(rawUrl);
-      let redacted = false;
+      const capabilitySafeUrl = redactPublicShareCapabilityUrl(rawUrl);
+      const url = new URL(capabilitySafeUrl);
+      let redacted = capabilitySafeUrl !== rawUrl;
       if (url.username || url.password) {
         url.username = '[REDACTED]';
         url.password = '';

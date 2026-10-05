@@ -61,7 +61,7 @@ test('native launcher hands Mac workspace execution to the configured execution-
   assert.equal(local.stdout, 'unexpected-local\n');
 });
 
-async function memoryRoutingFixture(t, { availableKiB = 5242880, roomyLoad = 4, roomyAvailableKiB = 25480397, fallback = 'error' } = {}) {
+async function memoryRoutingFixture(t, { availableKiB = 5242880, totalKiB = 28311552, roomyLoad = 4, roomyAvailableKiB = 25480397, roomyTotalKiB = 28311552, fallback = 'error' } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-memory-routing-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const binDir = join(root, 'bin');
@@ -84,7 +84,7 @@ async function memoryRoutingFixture(t, { availableKiB = 5242880, roomyLoad = 4, 
   await writeFile(configPath, JSON.stringify(config));
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot }));
   const samplePath = join(root, 'starved-sample');
-  await writeFile(samplePath, `8 0.1 ${availableKiB / 28311552} 22000000 20 0 ${availableKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
+  await writeFile(samplePath, `8 0.1 ${availableKiB / totalKiB} 22000000 20 0 ${availableKiB} ${totalKiB} 0 0 0 0 0 0 0 linux\n`);
   await executable(join(binDir, 'node'), '#!/bin/sh\nprintf "node:%s\\n" "$*" >> "$FIXTURE_TRACE"\nexit 0\n');
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
   await executable(join(binDir, 'systemctl'), '#!/bin/sh\nexit 1\n');
@@ -96,7 +96,7 @@ async function memoryRoutingFixture(t, { availableKiB = 5242880, roomyLoad = 4, 
     '  *getconf*)',
     '    case "$*" in',
     '      *starved-host*) cat "$STARVED_SAMPLE" ;;',
-    `      *) printf "8 ${roomyLoad} ${roomyAvailableKiB / 28311552} 22000000 20 0 ${roomyAvailableKiB} 28311552 0 0 0 0 0 0 0 linux\\n" ;;`,
+    `      *) printf "8 ${roomyLoad} ${roomyAvailableKiB / roomyTotalKiB} 22000000 20 0 ${roomyAvailableKiB} ${roomyTotalKiB} 0 0 0 0 0 0 0 linux\\n" ;;`,
     '    esac ;;',
     '  *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;',
     '  *)',
@@ -163,6 +163,43 @@ for (const dispatcher of ['native', 'javascript']) {
     assert.equal(result.stdout, 'remote:roomy\n');
     assert.match(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), /--heavyweight-admission/);
     assert.doesNotMatch(result.stderr, /running locally|insufficient validation memory/);
+  });
+
+  test(`compilation capacity ${dispatcher}: typechecks and builds exclude small workers but focused tests remain eligible`, async (t) => {
+    const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 15728640, roomyLoad: 80 });
+    const focused = dispatch(invocation, ['vitest', 'run', 'fixture.test.ts']);
+    assert.equal(focused.status, 0, focused.stderr);
+    assert.equal(focused.stdout, 'remote:starved\n');
+    for (const args of [
+      ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'],
+      ['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'build'],
+      ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/ui/tsconfig.source.json'],
+    ]) {
+      const result = dispatch(invocation, args);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, 'remote:roomy\n', args.join(' '));
+      assert.match(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), /--class=compilation/);
+    }
+    const focusedAgain = dispatch(invocation, ['vitest', 'run', 'fixture.test.ts']);
+    assert.equal(focusedAgain.status, 0, focusedAgain.stderr);
+    assert.equal(focusedAgain.stdout, 'remote:starved\n');
+  });
+
+  test(`compilation capacity ${dispatcher}: an undersized fleet fails visibly without local fallback`, async (t) => {
+    const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 15728640, roomyAvailableKiB: 14680064, roomyTotalKiB: 15728640, fallback: 'local' });
+    const result = dispatch(invocation, ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /memory capacity.*compilation.*22020096/);
+    assert.doesNotMatch(result.stderr, /running locally/);
+    await assert.rejects(readFile(invocation.env.DISPATCHES), { code: 'ENOENT' });
+  });
+
+  test(`compilation capacity ${dispatcher}: capable workers remain eligible while memory is busy`, async (t) => {
+    const { invocation } = await memoryRoutingFixture(t, { availableKiB: 0, roomyAvailableKiB: 5242880, fallback: 'local' });
+    const result = dispatch(invocation, ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'remote:roomy\n');
+    assert.doesNotMatch(result.stderr, /running locally/);
   });
 
   for (const allFail of [false, true]) {
@@ -312,8 +349,13 @@ test('memory-aware cache preserves optional fields in a short probe sample', asy
   }
 });
 
-test('memory-aware target admission waits below the absolute floor even above ten percent available', async (t) => {
-  const { invocation, samplePath } = await memoryRoutingFixture(t);
+for (const { admissionClass, belowFloorKiB, floorKiB, nested = false } of [
+  { admissionClass: 'validation', belowFloorKiB: 5242880, floorKiB: 6291456 },
+  { admissionClass: 'compilation', belowFloorKiB: 20971520, floorKiB: 22020096 },
+  { admissionClass: 'compilation', belowFloorKiB: 20971520, floorKiB: 22020096, nested: true },
+]) {
+test(`memory-aware ${admissionClass} target admission${nested ? ' beneath focused admission' : ''} waits below its measured floor`, { timeout: 30_000 }, async (t) => {
+  const { invocation, samplePath } = await memoryRoutingFixture(t, { availableKiB: belowFloorKiB });
   const binDir = invocation.env.PATH.split(':')[0];
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
@@ -325,23 +367,44 @@ test('memory-aware target admission waits below the absolute floor even above te
     '  *) exec /usr/bin/awk "$@" ;;',
     'esac', '',
   ].join('\n'));
-  await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "admitted\\n"\n');
-  const child = spawn('/bin/sh', [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', 'probe-command'], { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
+  await executable(join(binDir, 'probe-command'), '#!/bin/sh\ncount=0; for owner in "$HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT"/owners/*; do [ ! -d "$owner" ] || count=$((count + 1)); done\n[ "$count" = 1 ] || exit 99\nprintf "admitted\\n"\n');
+  const directArgs = [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, `--class=${admissionClass}`, '--machine=fixture', '--', 'probe-command'];
+  const args = nested ? [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs] : directArgs;
+  const child = spawn('/bin/sh', args, { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM'); });
   let stderr = '';
   let stdout = '';
   let recovery;
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => {
     stderr += chunk;
-    if (!recovery && stderr.includes('memory-available=5242880/28311552')) {
-      recovery = writeFile(samplePath, '8 0.1 0.5 22000000 20 0 6291456 28311552 0 0 0 0 0 0 0 linux\n');
+    if (!recovery && stderr.includes(`memory-available=${belowFloorKiB}/28311552`)) {
+      assert.equal(stdout, '');
+      recovery = writeFile(samplePath, `8 0.1 0.5 22000000 20 0 ${floorKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
     }
   });
   const code = await new Promise((resolveExit, reject) => { child.once('error', reject); child.once('exit', resolveExit); });
   await recovery;
   assert.equal(code, 0, stderr);
-  assert.match(stderr, /waiting.*memory-available=5242880\/28311552/);
+  assert.match(stderr, new RegExp(`waiting.*memory-available=${belowFloorKiB}/28311552`));
   assert.equal(stdout, 'admitted\n');
+});
+}
+
+test('compilation capacity target admission rejects a physically undersized machine directly and beneath focused admission', { timeout: 30_000 }, async (t) => {
+  const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 15728640 });
+  const binDir = invocation.env.PATH.split(':')[0];
+  await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
+  await executable(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7, $8}\' "$STARVED_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "unexpected-admission\\n"\n');
+  const directArgs = [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=compilation', '--machine=fixture', '--', 'probe-command'];
+  for (const args of [directArgs, [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs]]) {
+    const result = spawnSync('/bin/sh', args, { ...invocation, timeout: 10_000 });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /memory capacity.*compilation.*22020096/);
+  }
 });
 
 test('queue policy cwd: outside-repository routing refuses with paths and a recovery action', async (t) => {
@@ -3152,7 +3215,7 @@ test(`native launcher keeps ${platform} control commands preferred and adapts re
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) if [ "$GOVERNOR_PLATFORM" = darwin ]; then printf "14 1 0.8 22000000 20 0 0 0 0 0 0 0 0 0 0 darwin\\n"; else case "${GOVERNOR_PRESSURE-}" in quiet) printf "14 1 0.8 22000000 20 2 48000000 72000000 0 0 0 0 0 0 0 linux\\n" ;; *) printf "14 360 0.8 22000000 20 420 48000000 72000000 0 0 90 0 0 0 0 linux\\n" ;; esac; fi ;;',
+    '  *getconf*) if [ "$GOVERNOR_PLATFORM" = darwin ]; then printf "14 1 0.8 22000000 20 0 57600000 72000000 0 0 0 0 0 0 0 darwin\\n"; else case "${GOVERNOR_PRESSURE-}" in quiet) printf "14 1 0.8 22000000 20 2 48000000 72000000 0 0 0 0 0 0 0 linux\\n" ;; *) printf "14 360 0.8 22000000 20 420 48000000 72000000 0 0 90 0 0 0 0 linux\\n" ;; esac; fi ;;',
     '  *"&& command -v "*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *) remote_command=; for ssh_argument in "$@"; do remote_command=$ssh_argument; done; eval "set -- $remote_command"; /bin/bash -n -c "$3" || exit $?; printf "remote:%s\\n" "$*" ;;',
@@ -3778,7 +3841,7 @@ test('queue policy native launcher delegates dependency refresh waiting to the r
     'last_argument=; for argument in "$@"; do last_argument=$argument; done',
     '[ "$last_argument" = : ] && exit 0',
     'case "$*" in',
-    '  *getconf*) printf "8 1 0.5\\n" ;;',
+    '  *getconf*) printf "8 1 0.5 22000000 20 0 36000000 72000000 0 0 0 0 0 0 0 linux\\n" ;;',
     `  *dependency-install.lock*) [ -f "${dependencyStaleMarker}" ] && case "$*" in *kill\\ -0*) exit 0 ;; esac; [ -f "${dependencyBusyMarker}" ] && exit 75; exit 0 ;;`,
     '  *command\\ -v*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',

@@ -9,6 +9,11 @@ import { parseRealtimeSettingsDescriptor } from './descriptor';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const action = vi.hoisted(() => vi.fn(async () => ({ status: 'completed' as const })));
+const searchRoute = vi.hoisted(() => ({ params: {} as Record<string, string> }));
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  return createExpoRouterMock({ params: () => searchRoute.params }).module;
+});
 const audioPreview = vi.hoisted(() => ({
   create: vi.fn(),
   play: vi.fn(),
@@ -24,7 +29,7 @@ const playbackAudioMode = vi.hoisted(() => {
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props),
+  Item: (props: any) => React.createElement('Item', props, props.rightElement),
 }));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
   DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -41,19 +46,17 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
-vi.mock('@/text', () => ({
-  t: (key: string, params?: { voice?: string }) => params?.voice ? `${key}:${params.voice}` : key,
-  tLoose: (key: string) => key,
-  getPreferredLanguage: () => 'en',
-}));
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(async () => null),
-    confirm: vi.fn(async () => true),
-    alert: vi.fn(),
-    alertAsync: vi.fn(async () => undefined),
-  },
-}));
+vi.mock('@/text', async () => {
+  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  return createTextModuleMock({
+    translate: (key: string, params?: Record<string, unknown>) => params?.voice ? `${key}:${params.voice}` : key,
+    translateLoose: (key: string) => key,
+  });
+});
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock({ confirmResult: true }).module;
+});
 vi.mock('@/voice/session/voiceAdapterRegistry', () => ({
   performVoiceAdapterRuntimeAction: action,
 }));
@@ -63,6 +66,9 @@ vi.mock('expo-audio', () => ({
 vi.mock('@/voice/runtime/voiceAudioMode', () => ({
   acquireVoicePlaybackAudioMode: playbackAudioMode.acquire,
 }));
+
+// Keep cold owner-graph compilation outside each rendered interaction's timeout.
+const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
 
 const owner = Object.freeze({
   schemaVersion: 1,
@@ -91,7 +97,124 @@ async function typeIntoField(screen: Awaited<ReturnType<typeof renderScreen>>, r
   await act(async () => { fieldInput(screen, rowTestID).props.onBlur(); });
 }
 
+function isConfigRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 describe('RealtimeProviderFields', () => {
+  it('adjusts a nullable range and restores the service default without overwriting neighboring settings', async () => {
+    const { Slider } = await import('@/components/ui/forms/Slider');
+    const descriptor = parseRealtimeSettingsDescriptor('acme.range', {
+      kind: 'voice.provider-settings.v1', modes: ['byo'], credential: { kind: 'none', catalog: null }, links: {},
+      fields: [{ kind: 'range', path: 'speed', min: 0.7, max: 1.2, step: 0.1, nullable: true, defaultValue: 1, titleKey: 'Speed' }],
+    });
+    if (!descriptor) throw new Error('invalid range descriptor');
+    const onConfigChange = vi.fn();
+    const config: Record<string, unknown> = { ...owner.defaultConfig, speed: null };
+    const render = (next: typeof config) => <RealtimeProviderFields providerId="acme.range" descriptor={descriptor}
+      owner={owner} config={next} onConfigChange={onConfigChange} credentialStatus="ready"
+      catalog={{ phase: 'idle' }} onRequestCatalog={vi.fn()} />;
+    const screen = await renderScreen(render(config));
+    const slider = screen.findAllByType(Slider)[0]!;
+    expect(slider).toBeDefined();
+    expect(slider.props.value).toBe(1);
+    await act(async () => slider.props.onValueChange(1.1));
+    expect(onConfigChange).toHaveBeenLastCalledWith({ ...config, speed: 1.1 });
+    await screen.update(render({ ...config, speed: 1.1 }));
+    const reset = screen.tree.findAll((node) => node.props.testID === 'voice-realtime-field-speed.default' && typeof node.props.onPress === 'function')[0]!;
+    await act(async () => reset.props.onPress());
+    expect(onConfigChange).toHaveBeenLastCalledWith(config);
+  });
+  it('explains when an immediate native greeting has no Reply in literal without changing the choice', async () => {
+    const { ELEVENLABS_SETTINGS_SECTION } = await import('../../../../../../../packages/plugins/elevenlabs/src/voiceSettingsPresentation');
+    const descriptor = parseRealtimeSettingsDescriptor('acme.native-greeting', ELEVENLABS_SETTINGS_SECTION);
+    if (!descriptor) throw new Error('missing native greeting presentation');
+    const onWelcomeSelection = vi.fn();
+    const onConfigChange = vi.fn();
+    const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
+      providerId: 'acme.native-greeting', descriptor: { ...descriptor, fields: descriptor.fields.filter((field) => field.kind === 'welcome') },
+      owner, config: owner.defaultConfig, onConfigChange, credentialStatus: 'ready',
+      catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
+      welcomeSelection: 'immediate', assistantLanguage: 'ar-SA', onWelcomeSelection,
+    }));
+    // The service's Greeting is the same shared choice Local voice shows (one control, one owner).
+    const row = screen.tree.findAll((node) => node.props?.testIDPrefix === 'settings.voice.greeting' && Array.isArray(node.props?.options))[0]!;
+    expect(row.props.options.map((option: { id: string }) => option.id)).toEqual(['off', 'immediate', 'on_first_turn']);
+    expect(row.props.value).toBe('immediate');
+    expect(row.props.options.find((option: { id: string }) => option.id === 'immediate').description).toBe('voicePresence.greetingLiteralUnavailable');
+    expect(onWelcomeSelection).not.toHaveBeenCalled();
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+  it('reveals a contributed VAD subfield from search without changing its provider settings', async () => {
+    const { voiceSettingsDeclarationRegistry } = await import('@/voice/settings/voiceContributedSettingsDeclarations');
+    const providerId = 'happier.voice.xai/realtime-grok';
+    const entry = voiceSettingsDeclarationRegistry.get(providerId);
+    const settings = entry?.providerSettings;
+    const descriptor = parseRealtimeSettingsDescriptor(providerId, settings?.presentation);
+    if (!descriptor || !settings) throw new Error('Missing admitted xAI settings');
+    searchRoute.params = { setting: `voiceConversations.provider.${providerId}.turnDetection.threshold` };
+    const onConfigChange = vi.fn();
+    try {
+      const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
+        providerId, descriptor,
+        owner: {
+          schemaVersion: settings.schemaVersion, defaultConfig: settings.defaultConfig,
+          parseConfig(value: unknown) {
+            const parsed = settings.parseConfig(value);
+            return isConfigRecord(parsed) ? parsed : null;
+          },
+        },
+        config: settings.defaultConfig, onConfigChange, credentialStatus: 'ready',
+        catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
+      }));
+      expect(screen.tree.findAll((node) => node.props.testID === 'voice-realtime-field-turnDetection-threshold').length).toBeGreaterThan(0);
+      expect(onConfigChange).not.toHaveBeenCalled();
+    } finally { searchRoute.params = {}; }
+  });
+  it('saves a scalar catalog voice through the provider schema rather than a structured selection', async () => {
+    const { OpenAiRealtimeSettingsV1Schema } = await import('../../../../../../../packages/plugins/openai/src/protocol/voice/settings');
+    const config = OpenAiRealtimeSettingsV1Schema.parse({});
+    const scalarOwner = {
+      schemaVersion: 1, defaultConfig: config,
+      parseConfig(value: unknown) {
+        const result = OpenAiRealtimeSettingsV1Schema.safeParse(value);
+        return result.success ? result.data : null;
+      },
+    };
+    const descriptor = parseRealtimeSettingsDescriptor('acme.scalar', {
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
+      credential: { kind: 'api_key', catalog: 'voices' }, links: {},
+      fields: [{ kind: 'voice_catalog', path: 'voice', valueShape: 'string', customIdAllowed: true }],
+    });
+    expect(descriptor).not.toBeNull();
+    if (!descriptor) throw new Error('invalid scalar catalog descriptor');
+    const onConfigChange = vi.fn();
+    const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
+    const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
+      providerId: 'acme.scalar', descriptor, owner: scalarOwner, config, onConfigChange,
+      credentialStatus: 'ready', catalog: { phase: 'ready', rows: [{ id: 'cedar', name: 'Cedar' }] },
+      onRequestCatalog: vi.fn(),
+    }));
+    await act(async () => screen.tree.findByProps({ testID: 'voice-realtime-field-voice' }).props.onSelect('cedar'));
+    expect(onConfigChange).toHaveBeenCalledWith(expect.objectContaining({ voice: 'cedar' }));
+  });
+  it('keeps a custom pinned model editable through the curated model field', async () => {
+    const descriptor = parseRealtimeSettingsDescriptor('acme.model', {
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
+      credential: { kind: 'none', catalog: null }, links: {},
+      fields: [{ kind: 'model', path: 'model', customIdAllowed: true, options: [{ kind: 'pinned', id: 'stable' }] }],
+    });
+    if (!descriptor) throw new Error('invalid model descriptor');
+    const onConfigChange = vi.fn();
+    const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
+    const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
+      providerId: 'acme.model', descriptor, owner, config: owner.defaultConfig, onConfigChange,
+      credentialStatus: 'ready', catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
+    }));
+    await act(async () => screen.tree.findByProps({ testID: 'voice-realtime-field-model' }).props.onSelect('__custom__'));
+    await typeIntoField(screen, 'voice-realtime-field-model.custom', 'snapshot-specific');
+    expect(onConfigChange).toHaveBeenCalledWith(expect.objectContaining({ model: { kind: 'pinned', id: 'snapshot-specific' } }));
+  });
   it('holds the shared playback lease for a native catalog preview and releases it on completion', async () => {
     audioPreview.create.mockImplementation(() => audioPreview);
     audioPreview.create.mockClear();
@@ -150,7 +273,7 @@ describe('RealtimeProviderFields', () => {
         },
         {
           kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume',
-          subtitleKey: 'fixture.resume.help', retentionMinutes: 30,
+          subtitleKey: 'fixture.resume.help',
           forgetAction: 'forget_provider_conversation',
         },
       ],
@@ -193,7 +316,7 @@ describe('RealtimeProviderFields', () => {
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{
         kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume',
-        subtitleKey: 'fixture.resume.help', retentionMinutes: 30,
+        subtitleKey: 'fixture.resume.help',
         forgetAction: 'forget_provider_conversation',
       }],
     });
@@ -249,7 +372,7 @@ describe('RealtimeProviderFields', () => {
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
       kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
-      fields: [{ kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume', retentionMinutes: 30 }],
+      fields: [{ kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume' }],
     });
     if (!descriptor) throw new Error('invalid fixture descriptor');
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
@@ -322,6 +445,32 @@ describe('RealtimeProviderFields', () => {
     await screen.update(render('another_provider'));
     await act(async () => undefined);
     expect(audioPreview.play).not.toHaveBeenCalled();
+  });
+
+  it('lets the shared scoped Stop operation stop a sample started by the catalog picker', async () => {
+    audioPreview.play.mockClear();
+    audioPreview.remove.mockClear();
+    audioPreview.create.mockReturnValue({ play: audioPreview.play, remove: audioPreview.remove, addListener: audioPreview.addListener });
+    const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
+      kind: 'voice.provider-settings.v1', modes: ['byo'], credential: { kind: 'api_key', catalog: 'voices' }, links: {},
+      fields: [{ kind: 'voice_catalog', path: 'voice', titleKey: 'fixture.voice' }],
+    });
+    if (!descriptor) throw new Error('invalid fixture descriptor');
+    const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
+      providerId: 'fixture_realtime', descriptor,
+      owner: { schemaVersion: 1, defaultConfig: { voice: 'voice_a' }, parseConfig: value => value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null },
+      config: { voice: 'voice_a' }, onConfigChange: vi.fn(), credentialStatus: 'ready', onRequestCatalog: vi.fn(),
+      catalog: { phase: 'ready', rows: [{ id: 'voice_a', name: 'Voice A', previewUrl: 'https://example.test/a.mp3' }] },
+    }));
+    const preview = screen.tree.findByProps({ testID: 'voice-realtime-field-voice' }).props.items[0].rightElement;
+    await act(async () => { preview.props.onPress({ stopPropagation: vi.fn() }); });
+    await vi.waitFor(() => expect(audioPreview.play).toHaveBeenCalled());
+    const { stopRealtimeCatalogPreview } = await import('./catalogPreview');
+    expect(stopRealtimeCatalogPreview('another_provider')).toBe(false);
+    expect(audioPreview.remove).not.toHaveBeenCalled();
+    await act(async () => { expect(stopRealtimeCatalogPreview('fixture_realtime')).toBe(true); });
+    expect(audioPreview.remove).toHaveBeenCalled();
+    await screen.unmount();
   });
 
   it('merges an inline text value into the latest same-provider config instead of reviving a stale snapshot', async () => {
@@ -492,7 +641,7 @@ describe('RealtimeProviderFields', () => {
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
       kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
-      fields: [{ kind: 'range', path: 'speed', min: 0.7, max: 1.5, step: 0.05, titleKey: 'fixture.speed' }],
+      fields: [{ kind: 'number', path: 'speed', min: 0.7, max: 1.5, step: 0.05, titleKey: 'fixture.speed' }],
     });
     if (!descriptor) throw new Error('invalid fixture descriptor');
     const onConfigChange = vi.fn();

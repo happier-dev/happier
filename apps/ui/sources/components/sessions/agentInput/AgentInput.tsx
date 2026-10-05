@@ -1,7 +1,7 @@
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
-import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { reportSessionTypingEdit, stopSessionTyping } from '@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime';
 import * as React from 'react';
 import {
@@ -31,6 +31,7 @@ import {
     type MultiTextInputSubmitBehavior,
 } from '@/components/ui/forms/MultiTextInput';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
+import { composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
 import { Typography } from '@/constants/Typography';
 import type {
     PermissionMode,
@@ -77,8 +78,10 @@ import {
 } from 'react-native-unistyles';
 import {
     useSetting,
+    useActiveServerAccountScope,
 } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/connectionManager';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 import { Metadata } from '@happier-dev/session-core/state';
@@ -161,8 +164,12 @@ import type {
 } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { buildGlassCastShadowStyle } from '@/shadowElevation';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
+import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
+import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { isGlassComposerSurface } from './composerSurfaceStyle';
 import { resolveComposerSelectionRestore } from './composerSelectionRestore';
 import {
@@ -173,7 +180,7 @@ import {
     AGENT_INPUT_PANEL_PADDING_TOP,
     NATIVE_ACTION_CHIP_GAP_Y,
     resolveAgentInputActionChipTextStyle,
-    resolveAgentInputPanelStyle,
+    resolveAgentInputPanelLayoutStyle,
 } from './components/agentInputChromeStyles';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
@@ -186,8 +193,16 @@ import { buildSessionMessageRouteId } from "@happier-dev/session-core/messages";
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { useLocalSetting } from '@/sync/store/hooks';
 import type { AcpConfigOptionOverridesV1, ComposerRefV1 } from '@happier-dev/protocol';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
+import type { WebFileDragEvent } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
+import { useEntityDragDropRuntime, useEntityDropDomBinding, readWindowBounds, measureWindowBounds,
+    type TreeDropMeasurableRef, type WindowBounds } from '@/components/ui/treeDragDrop';
+import { EntityReleaseOutcomePill } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { ComposerEntityDropTarget } from '@/components/sessions/composer/ComposerEntityDropTarget';
+import type { ComposerReferenceSearchHost } from '@/components/autocomplete/composerSuggestionKinds';
+import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import type {
@@ -234,6 +249,9 @@ import {
     shouldReserveAgentInputExpansionToggleSpace,
 } from './inputExpansionToggleVisibility';
 import { AgentInputCommandMenu } from './commandMenu/AgentInputCommandMenu';
+import { AgentInputFieldAccessories, resolveAgentInputFieldAccessoryGeometry } from './components/AgentInputFieldAccessories';
+import { AgentInputPromptPicker } from './commandMenu/AgentInputPromptPicker';
+import { usePromptPickerController } from './commandMenu/usePromptPickerController';
 import { useAgentInputCommandMenu } from './commandMenu/useAgentInputCommandMenu';
 import { resolveAgentInputCommandMenuAnchor } from './commandMenu/resolveAgentInputCommandMenuAnchor';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -331,11 +349,13 @@ interface AgentInputProps {
     inputAccessibilityLabel?: string;
     /** A field-specific repair, supplied by the host's input validation owner. */
     inputAccessibilityHint?: string;
-    onChangeText: (text: string) => void;
+    /** Absent: full selectable document, with no editing, voice or submission. */
+    onChangeText?: (text: string) => void;
     /** Scope-local observer for the incumbent input's real focus transitions. */
     onComposerFocusChange?: (focused: boolean) => void;
     /** Scope-local access to this mounted input's existing imperative focus method. */
     onComposerFocusRequestChange?: (request: (() => void) | null) => void;
+    onPromptPickerOpenRequestChange?: (request: (() => boolean) | null) => void;
     onComposerInputFlushRequestChange?: (request: (() => void) | null) => void;
     /** Scope-local observer for this mounted input's resolved action-bar layout. */
     onComposerActionBarLayoutChange?: (layout: AgentInputActionBarLayout) => void;
@@ -344,6 +364,10 @@ interface AgentInputProps {
     sessionAddress?: SessionAddress | null;
     /** Exact Composer identity for origin-neutral authoring surfaces without a Session. */
     composerRef?: ComposerRefV1;
+    /** Borrows the current suggestion/provider owner; drops retain identity only. */
+    composerReferenceHost?: ComposerReferenceSearchHost | null;
+    /** Machine-addressed composers use their existing file-search scope. */
+    composerFileScope?: FileSuggestionScope | null;
     /** The Session host supplies its normalized access capability and exact Home. */
     sessionTypingPresence?: Readonly<{ serverId: string; canSubmitAgentInput: boolean }>;
     /** The retaining Session surface's existing presented fact; absent hosts are mounted/presented. */
@@ -584,6 +608,8 @@ interface AgentInputProps {
     envVarsPopover?: AgentInputContentPopoverConfig;
     contentPaddingHorizontal?: number;
     panelStyle?: ViewStyle;
+    /** Placement supplied by the host; the transcript remains on the content plane. */
+    surfaceGroup?: GlassSurfaceGroup;
     maxWidthCap?: number | null;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     /** UI-only Browser/Review presentation rendered before file/image attachments. */
@@ -703,10 +729,6 @@ const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputA
     );
 });
 
-const FIELD_ACCESSORY_VISUAL_SIZE = 24;
-const FIELD_ACCESSORY_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-const FIELD_ACCESSORY_HORIZONTAL_INSET = (FIELD_ACCESSORY_TARGET_SIZE - FIELD_ACCESSORY_VISUAL_SIZE) / 2;
-
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         alignItems: 'center',
@@ -718,32 +740,14 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: '100%',
         position: 'relative',
     },
-    // The visual remains in AgentInputExpansionToggle's 24pt slot. The parent
-    // instead bounds the full target so native hit testing does not clip the
-    // child's hitSlop; the two stacked targets meet at y=30 without overlap.
-    fieldAccessory: {
-        position: 'absolute',
-        top: 2,
-        right: 6 - FIELD_ACCESSORY_HORIZONTAL_INSET,
-        zIndex: 2,
-        width: FIELD_ACCESSORY_TARGET_SIZE,
-        height: FIELD_ACCESSORY_TARGET_SIZE,
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        paddingTop: 4,
-    },
-    fieldAccessoryBelowToggle: {
-        top: 30,
-    },
     // Default (non-glass) composer surface — the original styling: standard input
     // background + hairline surface border, no drop shadow.
-    unifiedPanel: resolveAgentInputPanelStyle(theme),
-    // Opt-in "glass" composer: the Liquid Glass tab bar's solid look — `surface.base`
-    // fill, the glass rim, and a top inset shadow. Fully redefines the border so the
+    unifiedPanel: resolveAgentInputPanelLayoutStyle(theme),
+    // The composer style changes its rim/shadow; the content material owns its fill.
+    // Fully redefines the border so the
     // standard hairline + highlight don't leak through. The cast shadow lives on the
     // `panelShadow` wrapper (glass mode only).
     unifiedPanelGlass: {
-        backgroundColor: theme.colors.glass.composerSurface,
         // Light: a touch thicker rim so the edge reads against the white surface.
         borderWidth: theme.dark ? 1.5 : 2,
         borderColor: theme.colors.glass.border,
@@ -771,6 +775,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingRight: 8,
         paddingVertical: AGENT_INPUT_CONTAINER_VERTICAL_PADDING,
         minHeight: 40,
+    },
+    readOnlyInputContent: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+    },
+    readOnlyText: {
+        color: theme.colors.text.primary,
     },
     nativeKeyboardPanelContent: {
         minHeight: 0,
@@ -820,8 +831,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         // An interactive decoration keeps the compact chip padding and reaches
         // the platform touch minimum through layout. A hit-slop floor would
         // expand each chip past the row gap and into its stacked neighbour.
-        minWidth: FIELD_ACCESSORY_TARGET_SIZE,
-        minHeight: FIELD_ACCESSORY_TARGET_SIZE,
+        minWidth: resolveMinimumInteractiveTargetSize(Platform.OS),
+        minHeight: resolveMinimumInteractiveTargetSize(Platform.OS),
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -959,16 +970,19 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsColumn: {
         flexDirection: 'column',
         flex: 1,
+        minWidth: 0,
         ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_Y } : {}),
     },
     actionButtonsColumnMobile: {
         flexDirection: 'column',
         flex: 1,
+        minWidth: 0,
         ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_MOBILE_Y } : {}),
     },
     actionButtonsColumnNarrow: {
         flexDirection: 'column',
         flex: 1,
+        minWidth: 0,
         ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_Y } : {}),
     },
     actionButtonsRow: {
@@ -1034,7 +1048,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsLeftScroll: {
         flex: 1,
-        overflow: 'visible',
+        minWidth: 0,
+        overflow: 'hidden',
     },
     actionButtonsScrollViewportContent: {
         paddingRight: ACTION_BAR_SCROLL_CONTENT_PADDING_RIGHT,
@@ -1165,22 +1180,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderColor: theme.colors.border.default,
         borderRadius: Platform.select({ default: 16, android: 20 }),
     },
-    fileDropOverlayContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface.base,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-    },
-    fileDropOverlayText: {
-        color: theme.colors.text.primary,
-        fontSize: 13,
-        ...Typography.default('semiBold'),
-    },
     sessionInputText: {
         fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
     },
@@ -1193,16 +1192,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+    const readOnly = props.onChangeText === undefined;
     const voiceFeatureEnabled = useFeatureEnabled('voice');
-    const voiceEnabled = voiceFeatureEnabled && props.voiceAffordance !== 'none';
-    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
+    const voiceEnabled = !readOnly && voiceFeatureEnabled && props.voiceAffordance !== 'none';
+    const { blurEnabled: floatingBlurEnabled } = useGlassBlurSetting('floating');
     const fileDropOverlayBackdropStyle = React.useMemo<ViewStyle>(() => {
         const backgroundColor = theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim;
         if (Platform.OS === 'web') {
             return createBackdropWebStyle({
                 backgroundColor,
                 blurPx: 2,
-                enableBlur: uiBackdropBlurEnabled,
+                enableBlur: floatingBlurEnabled,
                 fallbackBackgroundColorWhenBlurDisabled: theme.colors.overlay.scrimStrong ?? theme.colors.overlay.scrim,
             }) as unknown as ViewStyle;
         }
@@ -1211,9 +1211,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         theme.colors.overlay.scrim,
         theme.colors.overlay.scrimStrong,
         theme.colors.overlay.scrimWizard,
-        uiBackdropBlurEnabled,
+        floatingBlurEnabled,
     ]);
     const isGlassComposer = isGlassComposerSurface({ setting: useSetting('composerSurfaceStyle') });
+    const surfaceGroup = props.surfaceGroup ?? 'content';
+    const composerSurfaceColor = isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
+    const panelMaterialProps = { surfaceGroup, nested: surfaceGroup === 'content', solidColor: composerSurfaceColor };
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};
@@ -1354,7 +1357,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // capture, not draft state: feed the existing presentation fact into its one controller so
     // hiding this retained composer cancels and releases the canonical capture admission.
     const composerInputEditLocked = props.composerInputLock?.mode === 'editAndSubmit';
-    const dictationEditable = !props.disabled && !composerInputEditLocked;
+    const dictationEditable = !readOnly && !props.disabled && !composerInputEditLocked;
     const typingAddress = React.useMemo(
         () => normalizeSessionAddress(props.sessionTypingPresence?.serverId, props.sessionId),
         [props.sessionTypingPresence?.serverId, props.sessionId],
@@ -1375,7 +1378,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!typingEditable || !hasText) stopTyping();
     }, [typingEditable, hasText, stopTyping]);
     const [fileDragActive, setFileDragActive] = React.useState(false);
-    const handleFilesDroppedToComposer = React.useCallback((event: any) => {
+    const handleFilesDroppedToComposer = React.useCallback((event: WebFileDragEvent) => {
         const onAttachmentsAdded = props.onAttachmentsAdded;
         if (typeof onAttachmentsAdded !== 'function') return;
         const files = extractWebAttachmentFilesFromDataTransfer(event?.dataTransfer);
@@ -1383,7 +1386,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         onAttachmentsAdded(files);
     }, [props.onAttachmentsAdded]);
     const composerDropZoneHandlers = useWebFileDropZone({
-        enabled: Platform.OS === 'web' && typeof props.onAttachmentsAdded === 'function',
+        enabled: Platform.OS === 'web' && dictationEditable && props.surfacePresented !== false && typeof props.onAttachmentsAdded === 'function',
         onFilesDropped: handleFilesDroppedToComposer,
         onFileDragActiveChange: typeof props.onAttachmentsAdded === 'function' ? setFileDragActive : undefined,
     });
@@ -1498,6 +1501,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const agentInputHistoryScope = useSetting('agentInputHistoryScope');
     const agentInputActionBarLayout = useSetting('agentInputActionBarLayout');
     const agentInputChipDensity = useSetting('agentInputChipDensity');
+    const composerPromptLibraryButtonEnabled = useSetting('composerPromptLibraryButtonEnabled');
 
     const historyScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
     const messageHistory = useUserMessageHistory({
@@ -1516,11 +1520,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const lastControlledValueRef = React.useRef(props.value);
     const composerInputSubmitLocked = props.composerInputLock !== null && props.composerInputLock !== undefined;
     const sendActionDisabled = Boolean(
-        props.disabled || props.isSendDisabled || props.isSending || composerInputSubmitLocked,
+        readOnly || props.disabled || props.isSendDisabled || props.isSending || composerInputSubmitLocked,
     );
     const onSendProp = props.onSend;
     const controlsOnly = props.inputPresentation === 'controlsOnly';
-    const submitEnabled = onSendProp !== undefined && !controlsOnly;
+    const submitEnabled = !readOnly && onSendProp !== undefined && !controlsOnly;
     // An authoring-only composer never turns Enter into a send.
     const enterToSendEnabled = submitEnabled && (Platform.OS === 'web'
         ? agentInputEnterToSend === true
@@ -1747,6 +1751,58 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.composerRef
         ?? (props.sessionId ? { kind: 'session', sessionId: props.sessionId } : null)
     ), [props.composerRef, props.sessionId]);
+    const composerDropScope = useActiveServerAccountScope();
+    const composerDropTargetId = React.useId();
+    const composerDropRuntime = useEntityDragDropRuntime();
+    const entityDropDomRef = useEntityDropDomBinding(composerDropRuntime, { beforeRelease: flushComposerInput });
+    const composerDropHost = React.useRef<View | null>(null);
+    const composerDropNativeBounds = React.useRef<WindowBounds | null>(null);
+    const composerDropMeasurable = React.useCallback((): TreeDropMeasurableRef | null => {
+        const node = composerDropHost.current;
+        if (!node) return null;
+        const element = node as unknown as { getBoundingClientRect?: () => DOMRect };
+        return element.getBoundingClientRect ? { getBoundingClientRectFn: () => element.getBoundingClientRect!() } : node;
+    }, []);
+    const composerEntityDropRef = React.useCallback((node: View | null) => {
+        composerDropHost.current = node;
+        entityDropDomRef(node);
+    }, [entityDropDomRef]);
+    const composerDropBounds = React.useCallback(() => readWindowBounds(composerDropMeasurable()) ?? composerDropNativeBounds.current, [composerDropMeasurable]);
+    const measureComposerDrop = React.useCallback(() => {
+        const node = composerDropHost.current;
+        void measureWindowBounds(composerDropMeasurable()).then(bounds => {
+            if (composerDropHost.current !== node) return;
+            composerDropNativeBounds.current = bounds;
+            composerDropRuntime.refresh();
+        });
+    }, [composerDropMeasurable, composerDropRuntime]);
+    const mountedComposerId = React.useId();
+    const promptPickerSessionAddress = props.sessionAddress ?? typingAddress;
+    const promptPicker = usePromptPickerController({
+        composerKey: JSON.stringify([
+            promptPickerSessionAddress ? sessionAddressKey(promptPickerSessionAddress) : null,
+            composerRef ? composerRefV1Key(composerRef) : mountedComposerId,
+        ]),
+        editable: dictationEditable && !controlsOnly && props.surfacePresented !== false,
+        canSend: submitEnabled && !sendActionDisabled,
+        inputRef,
+        stateRef: inputStateRef,
+        send: handleSend,
+    });
+    const openPromptPicker = React.useCallback(() => {
+        flushComposerInput();
+        return promptPicker.open();
+    }, [flushComposerInput, promptPicker.open]);
+    React.useEffect(() => {
+        props.onPromptPickerOpenRequestChange?.(openPromptPicker);
+        return () => props.onPromptPickerOpenRequestChange?.(null);
+    }, [props.onPromptPickerOpenRequestChange, openPromptPicker]);
+    const openPromptPickerFromSlash = React.useCallback(() => {
+        flushComposerInput();
+        promptPicker.open(activeWordState
+            ? { start: activeWordState.offset, end: activeWordState.endOffset }
+            : undefined);
+    }, [activeWordState, flushComposerInput, promptPicker.open]);
     const dictation = useSessionAuthoringComposerDictation({
         composerRef,
         enabled: voiceEnabled && props.submitDictation !== false,
@@ -1813,6 +1869,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 onPress={handleDictationPress}
             />
             : null);
+    const showPromptLibraryButton = composerPromptLibraryButtonEnabled !== false
+        && dictationEditable && !controlsOnly;
+    const fieldAccessoryGeometry = resolveAgentInputFieldAccessoryGeometry({
+        library: showPromptLibraryButton,
+        accessory: fieldAccessory != null,
+        belowToggle: shouldShowInputExpansionToggle,
+    });
+    const fieldInputPaddingRight = Math.max(
+        fieldAccessoryGeometry.paddingRight ?? 0,
+        shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : 0,
+    ) || undefined;
 
     React.useEffect(() => {
         historyAppliedInputStateRef.current = null;
@@ -1899,7 +1966,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // replace it. Void the restore for this composer from here on.
         composerEditedSinceOpenRef.current = true;
         setHasAutocompleteTextInteraction(true);
-        props.onChangeText(text);
+        props.onChangeText?.(text);
     }, [props.onChangeText]);
 
     React.useEffect(() => {
@@ -1966,7 +2033,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             historyAppliedInputStateRef.current = pendingHistoryApply;
             setTextAndSelection(next, nextState.selection);
         } else {
-            props.onChangeText(next);
+            props.onChangeText?.(next);
         }
     }, [props.onChangeText]);
 
@@ -2099,6 +2166,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         selectedIndex: commandMenuSelectedIndex,
         query: commandMenuQuery,
         onSelectFromMenu: commandMenuOnSelect,
+        onSelectIndexFromMenu: commandMenuOnSelectIndex,
         onCloseMenu: commandMenuOnClose,
         moveUp: commandMenuMoveUp,
         moveDown: commandMenuMoveDown,
@@ -2114,6 +2182,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         moveUp,
         moveDown,
         handleSuggestionSelect,
+        onOpenPromptPicker: dictationEditable && !controlsOnly ? openPromptPickerFromSlash : undefined,
     });
     const commandMenuComboboxAccessibility = React.useMemo(
         () => resolveCommandMenuComboboxAccessibility({
@@ -2795,9 +2864,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         styles.actionChip,
     ]);
 
-    const actionBarFadeColor = React.useMemo(() => {
-        return isGlassComposer ? theme.colors.surface.base : theme.colors.input.background;
-    }, [isGlassComposer, theme.colors.surface.base, theme.colors.input.background]);
+    const actionBarFadeColor = useGlassSurfaceColor(panelMaterialProps.solidColor, panelMaterialProps.surfaceGroup, panelMaterialProps.nested);
 
     // Handle abort button press
     const handleAbortPress = React.useCallback(async () => {
@@ -2858,8 +2925,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (canStopFromComposer) {
             handlers['composer.abortConfirm'] = handleComposerAbortShortcut;
         }
+        if (isInputFocused && dictationEditable && !controlsOnly && props.surfacePresented !== false) {
+            handlers['composer.prompts.open'] = openPromptPicker;
+        }
         return handlers;
-    }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut]);
+    }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut, isInputFocused, dictationEditable, controlsOnly, props.surfacePresented, openPromptPicker]);
     useKeyboardShortcutHandlers(keyboardShortcutHandlers);
 
     const {
@@ -2926,6 +2996,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
     const {
         controlNodes: renderedActionControlNodes,
+        extraChipNodes: renderedExtraChipNodes,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
         extraChipAnchorRefsByKey,
     } = useRenderedAgentInputControlRows({
@@ -2937,8 +3008,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
         },
         themeTint: theme.colors.composer.chipTint,
-        showChipLabels,
-        showAutoHideChipLabels,
+        showChipLabels: readOnly || showChipLabels,
+        showAutoHideChipLabels: readOnly || showAutoHideChipLabels,
         chipStyle,
         chipStyleAutoHide,
         textStyle: styles.actionChipText,
@@ -3172,9 +3243,40 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         );
     };
 
+    if (readOnly) {
+        // The document owner has already placed and admitted these exact ranges.
+        // Reading never searches the live catalog or rebinds a frozen reference.
+        const references = composerReferencesFromStructuredMentions({
+            text: props.value,
+            mentions: structuredInputMentions,
+        });
+        return (
+            <TextSelectabilityScope selectable>
+                <View testID="agent-input-composer" style={[styles.container, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
+                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, props.panelStyle]}>
+                        {composerPresentationFeedback}
+                        <AgentInputAttachmentsRow items={attachmentRowItems} />
+                        <View style={[styles.inputContainer, styles.readOnlyInputContent]}>
+                            <Text selectable accessibilityLabel={props.inputAccessibilityLabel} style={[props.sessionId ? styles.sessionInputText : styles.newSessionInputText, styles.readOnlyText]}>{props.value}</Text>
+                            {references.map((reference) => (
+                                <Text key={`${reference.start}:${reference.ref}`} selectable style={styles.composerDecorationFeedbackText}>{reference.label ?? reference.token}</Text>
+                            ))}
+                        </View>
+                        {hasExtraActionChips ? (
+                            <View style={styles.actionButtonsLeft}>
+                                {renderedExtraChipNodes}
+                            </View>
+                        ) : null}
+                    </GlassSurface>
+                </View>
+            </TextSelectabilityScope>
+        );
+    }
+
     return (
         <SyncPerformanceReactProfiler id="sessions.agentInput">
             <View
+                testID="agent-input-composer"
                 ref={stageSpotlightRef}
                 collapsable={stageSpotlightProps.active ? false : undefined}
                 onLayout={stageSpotlightProps.onLayout}
@@ -3264,20 +3366,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     onEnvVarsPopoverRequestClose={closeEnvVarsPopover}
                 />
                 <AgentInputCommandMenu
-                    open={commandMenuOpen}
+                    open={commandMenuOpen && !promptPicker.isOpen}
                     anchor={commandMenuAnchor}
                     query={commandMenuQuery}
                     items={commandMenuItems}
                     selectedIndex={commandMenuSelectedIndex}
                     onMoveUp={commandMenuMoveUp}
                     onMoveDown={commandMenuMoveDown}
-                    onSelect={(_item, index) => {
-                        handleSuggestionSelect(index);
-                    }}
+                    onSelect={(_item, index) => commandMenuOnSelectIndex(index)}
                     onRequestClose={commandMenuOnClose}
                     maxHeight={240}
                     testID={AGENT_INPUT_COMMAND_MENU_TEST_ID}
                 />
+                {promptPicker.isOpen ? (
+                    <AgentInputPromptPicker
+                        anchor={{ kind: 'view', ref: composerAnchorRef }}
+                        serverId={props.sessionAddress?.serverId ?? props.sessionTypingPresence?.serverId ?? getAppliedActiveServerSnapshot().serverId}
+                        sessionId={props.sessionId ?? null}
+                        canSend={submitEnabled && !sendActionDisabled}
+                        onRequestClose={promptPicker.close}
+                        onApply={promptPicker.apply}
+                    />
+                ) : null}
 
                 {/* Session instrument strip: connection status + context gauge, quota ring,
                     git ±, extension badges, permission chip. Subscribes to the store itself
@@ -3302,21 +3412,33 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 />
 
                 {/* Box 2: Action Area (Input + Send) */}
-                <View style={[styles.panelShadow, isGlassComposer ? styles.panelShadowGlass : null]}>
                 <WebDropTargetView
+                    ref={composerEntityDropRef}
+                    style={[styles.panelShadow, isGlassComposer ? styles.panelShadowGlass : null]}
+                    onLayout={(event) => {
+                        updateNullableLayoutHeight(setPanelHeightPx, event.nativeEvent.layout.height);
+                        measureComposerDrop();
+                    }}
+                    onDragEnter={composerDropZoneHandlers.onDragEnter}
+                    onDragLeave={composerDropZoneHandlers.onDragLeave}
+                    onDragOver={composerDropZoneHandlers.onDragOver}
+                    onDrop={composerDropZoneHandlers.onDrop}
+                >
+                {composerRef && composerDropScope ? <ComposerEntityDropTarget
+                    id={composerDropTargetId} scope={composerDropScope} refValue={composerRef}
+                    bounds={composerDropBounds} presented={props.surfacePresented !== false}
+                    editable={dictationEditable && !controlsOnly} kinds={props.autocompleteKinds}
+                    referenceHost={props.composerReferenceHost} fileScope={props.composerFileScope}
+                    /> : null}
+                <GlassSurface
+                    testID="agent-input-material-surface"
+                    {...panelMaterialProps}
                     style={[
                         styles.unifiedPanel,
                         isGlassComposer ? styles.unifiedPanelGlass : null,
                         props.panelStyle,
                         typeof hostPanelMaxHeight === 'number' ? { maxHeight: hostPanelMaxHeight } : null,
                     ]}
-                    onLayout={(event) => {
-                        updateNullableLayoutHeight(setPanelHeightPx, event.nativeEvent.layout.height);
-                    }}
-                    onDragEnter={composerDropZoneHandlers.onDragEnter}
-                    onDragLeave={composerDropZoneHandlers.onDragLeave}
-                    onDragOver={composerDropZoneHandlers.onDragOver}
-                    onDrop={composerDropZoneHandlers.onDrop}
                 >
                     {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
                         <View
@@ -3327,10 +3449,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 fileDropOverlayBackdropStyle,
                             ]}
                         >
-                            <View style={styles.fileDropOverlayContent}>
-                                {renderIoniconNode('paperclip', 18, theme.colors.text.primary)}
-                                <Text style={styles.fileDropOverlayText}>{t('agentInput.dropToAttach')}</Text>
-                            </View>
+                            <EntityReleaseOutcomePill outcome={{ glyph: 'attach', tone: 'allowed', title: t('entityDragDrop.files.attach') }} />
                         </View>
                     ) : null}
                     {Platform.OS === 'web' ? (
@@ -3370,7 +3489,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         value={props.value}
                                         paddingTop={Platform.OS === 'web' ? 10 : 8}
                                         paddingBottom={Platform.OS === 'web' ? 10 : 8}
-                                        paddingRight={shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : undefined}
+                                        paddingRight={fieldInputPaddingRight}
                                         onChangeText={handleComposerTextChange}
                                         placeholder={props.placeholder}
                                         accessibilityLabel={props.inputAccessibilityLabel}
@@ -3395,18 +3514,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             onToggle={props.inputExpansion.onToggle}
                                         />
                                     ) : null}
-                                    {fieldAccessory ? (
-                                        <View
-                                            style={[
-                                                styles.fieldAccessory,
-                                                // Takes the toggle's slot while it is hidden; drops
-                                                // one row beneath it when the toggle appears.
-                                                shouldShowInputExpansionToggle ? styles.fieldAccessoryBelowToggle : null,
-                                            ]}
-                                        >
-                                            {fieldAccessory}
-                                        </View>
-                                    ) : null}
+                                    <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker}
+                                        accessory={fieldAccessory} belowToggle={shouldShowInputExpansionToggle} />
                                 </View>
                             </ScrollView>
                             )}
@@ -3582,7 +3691,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         value={props.value}
                                         paddingTop={8}
                                         paddingBottom={8}
-                                        paddingRight={shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : undefined}
+                                        paddingRight={fieldInputPaddingRight}
                                         onChangeText={handleComposerTextChange}
                                         placeholder={props.placeholder}
                                         accessibilityLabel={props.inputAccessibilityLabel}
@@ -3607,18 +3716,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             onToggle={props.inputExpansion.onToggle}
                                         />
                                     ) : null}
-                                    {fieldAccessory ? (
-                                        <View
-                                            style={[
-                                                styles.fieldAccessory,
-                                                // Takes the toggle's slot while it is hidden; drops
-                                                // one row beneath it when the toggle appears.
-                                                shouldShowInputExpansionToggle ? styles.fieldAccessoryBelowToggle : null,
-                                            ]}
-                                        >
-                                            {fieldAccessory}
-                                        </View>
-                                    ) : null}
+                                    <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker}
+                                        accessory={fieldAccessory} belowToggle={shouldShowInputExpansionToggle} />
                                 </View>
                             </View>
                             )}
@@ -3764,8 +3863,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             </View>
                         </View>
                     )}
+                </GlassSurface>
                 </WebDropTargetView>
-                </View>
             </View>
             </View>
         </SyncPerformanceReactProfiler>

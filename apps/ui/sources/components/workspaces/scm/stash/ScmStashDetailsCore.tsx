@@ -487,7 +487,8 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
             <DetailsTabHeader
                 testID="scm-stash-details-header"
                 title={selectedTitle}
-                controls={stashes.length > 1 ? (
+                leading={<Icon name="archive" size={20} color={theme.colors.text.secondary} />}
+                titleControl={stashes.length > 1 ? (
                     <DropdownMenu
                         open={stashSelectorOpen}
                         onOpenChange={setStashSelectorOpen}
@@ -507,13 +508,16 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                         placement="bottom"
                         popoverAnchorAlign="start"
                         trigger={({ toggle }) => (
-                            <ToolbarButton
+                            <Pressable
                                 testID="scm-stash-switcher"
                                 onPress={toggle}
                                 accessibilityLabel={t('detailsSurface.history.stashSwitcherA11y')}
-                                label={t('detailsSurface.history.stashCount', { count: stashes.length })}
-                                trailing={<Icon name="caret-down" size={12} color={theme.colors.text.tertiary} />}
-                            />
+                                accessibilityRole="button"
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}
+                            >
+                                <Text style={{ color: theme.colors.text.primary, fontSize: 15, ...Typography.default('semiBold'), flexShrink: 1 }}>{selectedTitle}</Text>
+                                <Icon name="caret-down" size={12} color={theme.colors.text.tertiary} />
+                            </Pressable>
                         )}
                     />
                 ) : null}
@@ -564,7 +568,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                     removed={totalRemoved}
                     trailing={(
                         <>
-                            {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                            {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton presentation="segmented" /> : null}
                             <WrapLinesToggleButton />
                         </>
                     )}

@@ -103,7 +103,7 @@ export type MachineCapabilitiesInvokeResult =
 export async function machineCapabilitiesInvoke(
     machineId: string,
     request: CapabilitiesInvokeRequest,
-    options?: { timeoutMs?: number; serverId?: string | null },
+    options?: { timeoutMs?: number; serverId?: string | null; accountId?: string | null },
 ): Promise<MachineCapabilitiesInvokeResult> {
     try {
         const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 30_000;
@@ -113,6 +113,7 @@ export async function machineCapabilitiesInvoke(
                 method: RPC_METHODS.CAPABILITIES_INVOKE,
                 payload: request,
                 serverId: options?.serverId,
+                accountId: options?.accountId,
                 timeoutMs,
             }),
             new Promise<{ error: string }>((resolve) => {

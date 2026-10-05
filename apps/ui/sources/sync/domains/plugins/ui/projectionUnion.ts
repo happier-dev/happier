@@ -11,6 +11,10 @@ import {
     type PluginUiPhysicalSurfacePlacementProjection,
     type PluginUiTranslationsProjection,
     type PluginVoiceProviderProjection,
+    type PluginUiDragSourceProjection,
+    type PluginUiDropTargetProjection,
+    type PluginUiResourceProjection,
+    type PluginUiInputTypeProjection,
 } from './projection';
 import {
     arePluginMachineExecutionOriginsEqual,
@@ -323,7 +327,23 @@ function memberHasAdmittedContribution(input: Readonly<{
         || Object.values(projection.settingsPagesById).some(owns)
         || Object.values(projection.actionsById).some(owns)
         || Object.values(projection.voiceProvidersById).some(owns)
+        || Object.values(projection.dragSourcesById).some(owns)
+        || Object.values(projection.dropTargetsById).some(owns)
+        || Object.values(projection.inputTypesById).some(entry => entryHasCurrentOccurrence(projection, entry) && owns(entry))
+        || Object.values(projection.resourcesById).some(entry => resourceHasCurrentProducerOrigin(projection, entry) && owns(entry))
         || Object.values(projection.unknownEntriesById).some(owns);
+}
+
+/** A Resource without a View still has its own producer and current runtime slot. */
+function resourceHasCurrentProducerOrigin(projection: PluginUiProjectionModel, entry: PluginUiResourceProjection): boolean {
+    return readPluginUiProjectionEntryExecutionOrigin(entry) !== null && entryHasCurrentOccurrence(projection, entry);
+}
+
+function entryHasCurrentOccurrence(projection: PluginUiProjectionModel, entry: Readonly<{ pluginId: string; occurrenceId?: string }>): boolean {
+    const occurrenceId = readString(entry.occurrenceId);
+    const installedPackage = projection.installedPackagesById[entry.pluginId];
+    return occurrenceId !== null
+        && installedPackage?.enabled === true && installedPackage.occurrenceId === occurrenceId;
 }
 
 /**
@@ -398,6 +418,9 @@ export function unionPluginUiProjections(
             ...Object.values(model.settingsPagesById),
             ...Object.values(model.actionsById),
             ...Object.values(model.voiceProvidersById),
+            ...Object.values(model.dragSourcesById),
+            ...Object.values(model.dropTargetsById),
+            ...Object.values(model.inputTypesById),
             ...Object.values(model.unknownEntriesById),
         ];
         for (const entry of entries) {
@@ -456,6 +479,10 @@ export function unionPluginUiProjections(
     const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = {};
     const actionsById: Record<string, PluginUiActionProjection> = {};
     const voiceProvidersById: Record<string, PluginVoiceProviderProjection> = {};
+    const dragSourcesById: Record<string, PluginUiDragSourceProjection> = {};
+    const dropTargetsById: Record<string, PluginUiDropTargetProjection> = {};
+    const resourcesById: Record<string, PluginUiResourceProjection> = {};
+    const inputTypesById: Record<string, PluginUiInputTypeProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
 
     // Exact selected origins are unique. Originless replicas admit only the
@@ -469,6 +496,7 @@ export function unionPluginUiProjections(
     for (const member of admittedContributing) {
         const model = member.projection;
         const admittedPluginIds = new Set<string>();
+        const admittedOriginsByPluginId = new Map<string, PluginUiContributionOriginV1>();
         const originFor = (entry: UnknownRecord): PluginUiContributionOriginV1 | null => {
             const admission = admitMemberEntry({
                 member,
@@ -488,7 +516,7 @@ export function unionPluginUiProjections(
             const pluginId = executionOrigin?.materializationRef.pluginId
                 ?? readString(entry.pluginId);
             if (pluginId) admittedPluginIds.add(pluginId);
-            return Object.freeze({
+            const origin: PluginUiContributionOriginV1 = Object.freeze({
                 machineId: member.machineId,
                 serverId: member.serverId,
                 generation: model.generation,
@@ -496,6 +524,8 @@ export function unionPluginUiProjections(
                 phase: member.phase,
                 executionOrigin,
             });
+            if (pluginId) admittedOriginsByPluginId.set(pluginId, origin);
+            return origin;
         };
 
         for (const [pluginId, entry] of Object.entries(model.translationsByPluginId)) {
@@ -538,11 +568,34 @@ export function unionPluginUiProjections(
             const origin = originFor(entry);
             if (origin) publishFirstAdmitted(voiceProvidersById, id, stamp(entry, origin));
         }
+        for (const [id, entry] of Object.entries(model.dragSourcesById)) {
+            const origin = originFor(entry);
+            if (origin) publishFirstAdmitted(dragSourcesById, id, stamp(entry, origin));
+        }
+        for (const [id, entry] of Object.entries(model.dropTargetsById)) {
+            const origin = originFor(entry);
+            if (origin) publishFirstAdmitted(dropTargetsById, id, stamp(entry, origin));
+        }
         for (const [id, entry] of Object.entries(model.unknownEntriesById)) {
             const origin = originFor(entry);
             if (origin) {
                 publishFirstAdmitted(unknownEntriesById, id, stamp(entry, origin));
             }
+        }
+        for (const [id, entry] of Object.entries(model.resourcesById)) {
+            const hasProducerStamp = entry.serverIdentityId !== undefined || entry.materializationRef !== undefined;
+            const origin = hasProducerStamp
+                ? resourceHasCurrentProducerOrigin(model, entry) ? originFor(entry) : null
+                // Earlier rows are only contextual facts of an admitted UI
+                // contribution, never independent app-scope read authority.
+                : admittedOriginsByPluginId.get(entry.pluginId);
+            if (origin) publishFirstAdmitted(resourcesById, id, stamp(entry, origin));
+        }
+        for (const [id, entry] of Object.entries(model.inputTypesById)) {
+            const origin = entryHasCurrentOccurrence(model, entry)
+                ? originFor(entry)
+                : null;
+            if (origin) publishFirstAdmitted(inputTypesById, id, stamp(entry, origin));
         }
         // A package catalog fact has no contribution-level origin stamp of its
         // own. It is therefore visible in an app union only after one of that
@@ -574,6 +627,10 @@ export function unionPluginUiProjections(
         + Object.keys(settingsPagesById).length
         + Object.keys(actionsById).length
         + Object.keys(voiceProvidersById).length
+        + Object.keys(dragSourcesById).length
+        + Object.keys(dropTargetsById).length
+        + Object.keys(resourcesById).length
+        + Object.keys(inputTypesById).length
         + Object.keys(unknownEntriesById).length;
 
     if (generation === null && entryCount === 0) {
@@ -609,15 +666,10 @@ export function unionPluginUiProjections(
         settingsPagesById: Object.freeze(settingsPagesById),
         actionsById: Object.freeze(actionsById),
         voiceProvidersById: Object.freeze(voiceProvidersById),
-        // Resources are read through an exact qualified reference by a
-        // session/project-scoped host that already holds its own machine's
-        // projection. App scope has no such consumer, and a Resource carries no
-        // per-contribution producer stamp for `originFor` to select a
-        // materialization from — unioning them would publish exactly the
-        // roaming, origin-less contribution this model exists to prevent. The
-        // canonical empty scope keeps the model shape complete and its identity
-        // stable across republished unions.
-        resourcesById: EMPTY_PLUGIN_UI_PROJECTION.resourcesById,
+        dragSourcesById: Object.freeze(dragSourcesById),
+        dropTargetsById: Object.freeze(dropTargetsById),
+        resourcesById: Object.freeze(resourcesById),
+        inputTypesById: Object.freeze(inputTypesById),
         // Openable viewers are scoped to a session/project details host. There is
         // no app-union consumer, so do not make app scope a second projection
         // owner for them.

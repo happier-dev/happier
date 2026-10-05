@@ -22,18 +22,30 @@ describe('resolveSessionGitPaneActions', () => {
             .toEqual({ key: 'push', count: 3, disabled: false, emphasis: 'primary' });
     });
 
-    it('orders the next step Resolve, Publish, Pull, Push, Create PR, then the open PR or Up to date', () => {
+    it('orders the next step Resolve, Publish, Pull, Push, then the open PR or Up to date', () => {
         expect(resolveSessionGitPaneActions({ ...base, hasConflicts: true, conflictCount: 2, changedCount: 14, commitReady: true }).primary)
             .toMatchObject({ key: 'resolve', count: 2, emphasis: 'primary' });
         expect(resolveSessionGitPaneActions({ ...base, upstream: null, remoteActions: [...available, { key: 'publish', disabled: false }] }).primary)
             .toMatchObject({ key: 'publish', emphasis: 'primary' });
         expect(resolveSessionGitPaneActions({ ...base, ahead: 3, behind: 2 }).primary).toMatchObject({ key: 'pull', count: 2 });
         expect(resolveSessionGitPaneActions({ ...base, ahead: 3 }).primary).toMatchObject({ key: 'push', count: 3 });
-        expect(resolveSessionGitPaneActions({ ...base, changedCount: 11 }).primary).toMatchObject({ key: 'create-pr', emphasis: 'primary' });
+        expect(resolveSessionGitPaneActions({ ...base, changedCount: 11 }).primary).toMatchObject({ key: 'up-to-date', emphasis: 'quiet' });
         expect(resolveSessionGitPaneActions({ ...base, prState: 'open', prNumber: 2501 }).primary)
             .toEqual({ key: 'open-pr', count: 2501, disabled: false, emphasis: 'quiet' });
         expect(resolveSessionGitPaneActions({ ...base, prState: 'open', prNumber: null, canCreatePr: false }).primary)
             .toEqual({ key: 'up-to-date', count: null, disabled: true, emphasis: 'quiet' });
+    });
+
+    it('keeps a clean branch quiet while pull request creation remains available in the menu', () => {
+        const actions = resolveSessionGitPaneActions(base);
+        expect(actions.primary).toMatchObject({ key: 'up-to-date', emphasis: 'quiet' });
+        expect(actions.menu).toContainEqual({ key: 'create-pr', count: null, disabled: false });
+    });
+
+    it('marks the reachable pull recovery after a rejected push as attention, not an ordinary sync primary', () => {
+        expect(resolveSessionGitPaneActions({ ...base, ahead: 3, behind: 2, writeOperation: { phase: 'needs_input', action: 'push', id: 'reject', at: 1, message: '', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_NON_FAST_FORWARD', nextActions: [{ kind: 'choose_reconcile' }] } } }).primary)
+            .toMatchObject({ key: 'pull', count: 2, emphasis: 'attention' });
+        expect(resolveSessionGitPaneActions({ ...base, behind: 2 }).primary.emphasis).toBe('primary');
     });
 
     it('never offers an action the backend or policy does not allow, and keeps every alternative in the menu with its state', () => {
@@ -51,6 +63,14 @@ describe('resolveSessionGitPaneActions', () => {
 });
 
 describe('resolveSessionGitPaneHeaderFacts', () => {
+    it('shows the in-progress repository operation instead of unrelated change counts', () => {
+        expect(resolveSessionGitPaneHeaderFacts({ branch: 'v0.3', changedCount: 6, ahead: 3, behind: 2, primaryKey: 'resolve', operation: { kind: 'merge', sourceRef: 'origin/v0.3' } }))
+            .toEqual([{ kind: 'branch', branch: 'v0.3' }, { kind: 'operation', operation: 'merge', sourceRef: 'origin/v0.3' }]);
+    });
+    it('qualifies retained offline branch facts with their actual snapshot read time', () => {
+        expect(resolveSessionGitPaneHeaderFacts({ branch: 'v0.3', changedCount: 6, ahead: 3, behind: 2, primaryKey: 'push', asOf: 1234 }))
+            .toEqual([{ kind: 'branch', branch: 'v0.3' }, { kind: 'asOf', at: 1234 }]);
+    });
     it('states the branch and the change count, and never repeats the number the action carries', () => {
         expect(resolveSessionGitPaneHeaderFacts({ branch: 'v0.3', changedCount: 14, ahead: 2, behind: 0, primaryKey: 'push' }))
             .toEqual([{ kind: 'branch', branch: 'v0.3' }, { kind: 'changed', count: 14 }]);

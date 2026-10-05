@@ -3,7 +3,7 @@ import { useNavigation, useRouter } from '@/components/appShell/workspace/destin
 
 import {
   PromptInvocationEntryV1Schema,
-  normalizePromptInvocationTokenV1,
+  validatePromptInvocationTokenV1,
   listActionSpecs,
 } from '@happier-dev/protocol';
 
@@ -24,22 +24,6 @@ import { PromptEditorHeader } from '@/components/settings/prompts/collection/Pro
 import { publishPromptCollectionDraftTitle } from '@/components/settings/prompts/collection/PromptCollectionList';
 import { promptCollectionItemHref, promptCollectionRoot } from '@/components/settings/prompts/collection/promptCollectionModel';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
-
-const RESERVED_TOKENS: ReadonlySet<string> = new Set(['/clear', '/compact']);
-
-function isActionTokenCollision(token: string): boolean {
-  const normalized = normalizePromptInvocationTokenV1(token);
-  for (const spec of listActionSpecs()) {
-    if (spec.surfaces.ui !== true) continue;
-    const tokens = spec.slash?.tokens ?? [];
-    for (const t of tokens) {
-      if (typeof t !== 'string') continue;
-      if (!t.startsWith('/')) continue;
-      if (normalizePromptInvocationTokenV1(t) === normalized) return true;
-    }
-  }
-  return false;
-}
 
 type TemplateBehavior = 'insert' | 'insert_on_send' | 'insert_and_send';
 
@@ -171,21 +155,17 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   const save = React.useCallback(async (): Promise<boolean> => {
     if (!complete || saving) return false;
 
-    const rawToken = token.trim().startsWith('/') ? token.trim() : `/${token.trim()}`;
-    const normalized = normalizePromptInvocationTokenV1(rawToken);
-    if (RESERVED_TOKENS.has(normalized)) {
-      setTokenError(t('promptLibrary.templateTokenReserved'));
+    const validation = validatePromptInvocationTokenV1({ token, entries: invocations.entries,
+      excludingInvocationId: props.invocationId,
+      actionTokens: listActionSpecs().filter((spec) => spec.surfaces.ui === true).flatMap((spec) => spec.slash?.tokens ?? []),
+    });
+    if (!validation.ok) {
+      setTokenError(validation.reason === 'reserved' ? t('promptLibrary.templateTokenReserved')
+        : validation.reason === 'actionCollision' ? t('promptLibrary.templateTokenConflictsWithAction')
+        : validation.reason === 'duplicate' ? t('promptLibrary.templateTokenDuplicate') : t('promptLibrary.saveError'));
       return false;
     }
-    if (isActionTokenCollision(rawToken)) {
-      setTokenError(t('promptLibrary.templateTokenConflictsWithAction'));
-      return false;
-    }
-    const other = invocations.entries.find((e) => e.id !== props.invocationId && normalizePromptInvocationTokenV1(e.token) === normalized);
-    if (other) {
-      setTokenError(t('promptLibrary.templateTokenDuplicate'));
-      return false;
-    }
+    const rawToken = validation.token;
 
     try {
       setSaving(true);

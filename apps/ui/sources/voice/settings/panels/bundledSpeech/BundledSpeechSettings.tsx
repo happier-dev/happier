@@ -19,6 +19,7 @@ import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClie
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 import {
   resolveSelectedVoiceCredentialRawGrants,
@@ -42,13 +43,18 @@ import {
   type BundledSpeechSettingsEntry,
   type BundledSpeechSettingsDescriptor as SettingsDescriptor,
 } from './descriptor';
-import { promptSpeechEndpointChange } from './endpointConsent';
 import {
   VoiceCredentialSourceField,
   type VoiceCredentialSourceFieldStatus,
 } from '../realtime/VoiceCredentialSourceField';
 import { VoiceProviderSettingsActions } from '../realtime/VoiceProviderSettingsActions';
 import type { VoiceRemoteCatalogState } from '@/voice/settings/remoteCatalogState';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
+import {
+  getExternalVoiceProviderRegistration,
+  getExternalVoiceProviderProjectionAuthority,
+} from '@/voice/registry/externalVoiceProviderRegistrations';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -187,7 +193,16 @@ function BundledSpeechSettings(props: Readonly<{
   popoverBoundaryRef?: React.RefObject<unknown> | null;
 }>) {
   const { theme } = useUnistyles();
+  const settingRef = useVoiceContributedSettingRefs(props.descriptor.providerId);
   const machine = useVoiceExecutionMachinePresentation();
+  const endpointScope = useAccountSettingsScope();
+  const endpointSettingsRef = React.useRef({ ...props, scope: endpointScope });
+  endpointSettingsRef.current = { ...props, scope: endpointScope };
+  const endpointMountedRef = React.useRef(true);
+  React.useEffect(() => {
+    endpointMountedRef.current = true;
+    return () => { endpointMountedRef.current = false; };
+  }, []);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
   /** The remote select whose own value is being typed inline beneath its menu. */
   const [customKey, setCustomKey] = React.useState<string | null>(null);
@@ -335,6 +350,7 @@ function BundledSpeechSettings(props: Readonly<{
         />
       ))}
       {props.descriptor.fields.map((field) => {
+        const rendered = (() => {
         const value = config[field.key];
         if (field.kind === 'text') {
           const saved = typeof value === 'string' ? value : '';
@@ -353,27 +369,34 @@ function BundledSpeechSettings(props: Readonly<{
                   if (consent?.baseUrlFieldId === field.key) {
                     // The endpoint owner validates the URL and asks before an insecure origin; the field
                     // shows the saved endpoint until its patch lands.
+                    const captured = endpointSettingsRef.current;
+                    const registration = getExternalVoiceProviderRegistration(captured.entry.providerId);
+                    const projection = getExternalVoiceProviderProjectionAuthority();
+                    const occurrenceId = projection?.get(captured.entry.providerId);
+                    const admitted = registration
+                      ? (registration.descriptor === captured.entry
+                        || (registration.descriptor === null && captured.entry.source.kind === 'bundled'))
+                        && (projection === null || (!!occurrenceId && registration.occurrenceId === occurrenceId))
+                      : captured.entry.source.kind === 'bundled' && projection === null;
                     fireAndForget((async () => {
-                      const patch = await promptSpeechEndpointChange({
-                        currentBaseUrl: saved,
-                        currentConsent: typeof config[consent.originConsentFieldId] === 'string'
-                          ? config[consent.originConsentFieldId] as string : '',
-                        currentConsentMachineId: typeof config[consent.machineConsentFieldId] === 'string'
-                          ? config[consent.machineConsentFieldId] as string : '',
-                        machineId: machine.machineId,
-                        machineLabel: machine.machineLabel,
-                        promptBaseUrl: async () => draft,
-                        confirmInsecureOrigin: async ({ origin, machineLabel }) => await Modal.confirm(
-                          t('settingsVoice.local.openAiCompatEndpoint.insecureTitle'),
-                          t('settingsVoice.local.openAiCompatEndpoint.insecureBody', { origin, machine: machineLabel }),
-                          { confirmText: t('settingsVoice.local.openAiCompatEndpoint.allowAction') },
-                        ),
-                        showInvalidEndpoint: async () => await Modal.alert(
-                          t('common.error'),
-                          t('settingsVoice.local.openAiCompatEndpoint.invalidBody'),
-                        ),
+                      const { storage } = await import('@/sync/domains/state/storage');
+                      const { areAccountSettingsScopesEqual } = await import('@/sync/domains/settings/scope/accountSettingsScope');
+                      const { prepareSpeechEndpointSettingChange } = await import('./prepareEndpointSettingChange');
+                      const isCurrent = () => {
+                        const currentProjection = getExternalVoiceProviderProjectionAuthority();
+                        return admitted && endpointMountedRef.current
+                          && endpointSettingsRef.current.entry === captured.entry
+                          && endpointSettingsRef.current.descriptor === captured.descriptor
+                          && getExternalVoiceProviderRegistration(captured.entry.providerId) === registration
+                          && (currentProjection === null) === (projection === null)
+                          && currentProjection?.get(captured.entry.providerId) === occurrenceId
+                          && areAccountSettingsScopesEqual(captured.scope, storage.getState().settingsScope);
+                      };
+                      const intent = await prepareSpeechEndpointSettingChange({
+                        entry: captured.entry, settings: storage.getState().settings, value: draft, isCurrent,
                       });
-                      if (patch) writeConfig({ ...config, ...patch });
+                      const delta = intent?.(storage.getState().settings);
+                      if (delta?.voice) endpointSettingsRef.current.onVoiceChange(delta.voice);
                     })(), { tag: `BundledSpeechSettings.endpoint.${field.key}` });
                     return saved;
                   }
@@ -588,6 +611,9 @@ function BundledSpeechSettings(props: Readonly<{
             />
           </React.Fragment>
         );
+        })();
+        const setting = settingRef(field.key);
+        return setting ? <SettingAnchor key={field.key} setting={setting}>{rendered}</SettingAnchor> : rendered;
       })}
       <VoiceProviderSettingsActions
         providerId={props.descriptor.providerId}

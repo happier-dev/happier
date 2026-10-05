@@ -194,6 +194,13 @@ function createHarness(overrides: HarnessOverrides = {}): AutomationHarness {
 }
 
 describe('injected automation command router', () => {
+    it('returns every matched element through the query collector', () => {
+        document.body.innerHTML = Array.from({ length: 40 }, (_, index) => `<button id="item-${index}">Item ${index}</button>`).join('');
+        const result = createHarness().run('queryElements', { locator: { kind: 'css', value: 'button' } });
+        expect(result.ok).toBe(true);
+        expect(result.data.elementCount).toBe(40);
+        expect(result.data.elements).toHaveLength(40);
+    });
     it('publishes normalized element geometry and its accessible label before completing a click', () => {
         document.body.innerHTML = '<button id="go">Sign in</button>';
         const button = document.querySelector('#go')!;

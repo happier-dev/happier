@@ -65,6 +65,7 @@ describe('createBundledHostedConversationService', () => {
         leaseId: 'lease-1',
         providerConversationId: 'provider-conversation-1',
       },
+      { request: expect.any(Function) },
     );
   });
 
@@ -108,6 +109,7 @@ describe('createBundledHostedConversationService', () => {
     expect(mocks.releaseSession).toHaveBeenCalledWith(
       { token: 'account-token' },
       { leaseId: 'lease-1' },
+      { request: expect.any(Function) },
     );
     expect(mocks.completeSession).not.toHaveBeenCalled();
   });

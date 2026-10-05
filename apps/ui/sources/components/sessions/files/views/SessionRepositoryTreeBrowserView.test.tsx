@@ -26,7 +26,7 @@ installSessionFilesViewCommonModuleMocks({
         return createStorageModuleStub({
             storage: { getState: () => ({ getSessionRepositoryTreeExpandedPaths: () => stableExpandedPaths, setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy }) } as any,
             useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1', host: 'mbp', path: sessionPath } }) as any,
-            useProjectForSession: () => ({ key: { serverId: 'server', machineId: 'm1', rootPath: projectPath } }) as any,
+            useProjectForSession: () => ({ key: { serverId: workspaceServerId, machineId: 'm1', rootPath: projectPath } }) as any,
             useAllMachines: () => (
                 machineReachable
                     ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
@@ -76,10 +76,22 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
 }));
 
 const searchWorkspaceFilesSpy = vi.fn();
-vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
-    searchWorkspaceFiles: (...args: any[]) => searchWorkspaceFilesSpy(...args),
-    workspaceFileSearchCache: { clearCache: vi.fn() },
+// RPC boundary: keep the filename owner and shared query lifecycle real.
+vi.mock('@/sync/ops/machineWorkspaceFileList', () => ({
+    machineWorkspaceFileList: (...args: unknown[]) => searchWorkspaceFilesSpy(...args),
 }));
+// The tree reaches the real exact-Home credential owner; secure storage is the boundary.
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({
+        importOriginal,
+        tokenStorage: {
+            getCredentialsForServerUrl: async () => ({
+                token: `header.${Buffer.from(JSON.stringify({ sub: 'tree-account' })).toString('base64')}.signature`,
+            }),
+        },
+    });
+});
 
 let workspaceRepositoryTreeListProps: any = null;
 vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
@@ -107,6 +119,7 @@ let projectPath: string | null = '/repo';
 let machineRpcTargetAvailable = true;
 let workspaceTargetAvailable = true;
 let workspaceRootPath = '/repo';
+let workspaceServerId = 'server';
 const invalidateFromUserSpy = vi.fn();
 
 vi.mock('@/components/sessions/agents/presentation/useSessionMachineName', () => ({
@@ -125,10 +138,10 @@ vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
     useSessionWorkspaceTarget: () => (
         workspaceTargetAvailable
             ? {
-                workspaceCacheKey: `server:m1:${workspaceRootPath}`,
+                workspaceCacheKey: `${workspaceServerId}:m1:${workspaceRootPath}`,
                 machineId: 'm1',
                 rootPath: workspaceRootPath,
-                serverId: 'server',
+                serverId: workspaceServerId,
             }
             : null
     ),
@@ -144,10 +157,10 @@ vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
     resolveWorkspaceTargetForSession: () => (
         workspaceTargetAvailable
             ? {
-                workspaceCacheKey: `server:m1:${workspaceRootPath}`,
+                workspaceCacheKey: `${workspaceServerId}:m1:${workspaceRootPath}`,
                 machineId: 'm1',
                 rootPath: workspaceRootPath,
-                serverId: 'server',
+                serverId: workspaceServerId,
             }
             : null
     ),
@@ -208,10 +221,14 @@ async function waitForTestId(screen: Awaited<ReturnType<typeof renderRepositoryT
 }
 
 describe('SessionRepositoryTreeBrowserView', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        workspaceServerId = (await upsertServerProfile({ serverUrl: 'https://tree.example.test' })).id;
         setExpandedPathsSpy.mockClear();
         searchFilesSpy.mockReset();
         searchWorkspaceFilesSpy.mockReset();
+        const { workspaceFileSearchCache } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
+        workspaceFileSearchCache.clearAll();
         latestWorkspaceTransferParams = null;
         workspaceRepositoryTreeListProps = null;
         workspaceTransferApi.startUploads.mockClear();
@@ -285,7 +302,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
     });
 
     it('reveals a matching folder in the tree without opening or replacing file details', async () => {
-        searchWorkspaceFilesSpy.mockResolvedValueOnce([{ fileName: 'nested/', filePath: 'src/', fullPath: 'src/nested/', fileType: 'folder' }]);
+        searchWorkspaceFilesSpy.mockResolvedValueOnce({ ok: true, paths: ['src/nested/file.ts'], truncated: false });
         const { screen, onOpenFile } = await renderRepositoryTreeBrowserView();
         await updateSearchQuery(screen, 'nested');
         await waitForTestId(screen, 'search-results:src/nested/');
@@ -296,10 +313,8 @@ describe('SessionRepositoryTreeBrowserView', () => {
         expect(onOpenFile).not.toHaveBeenCalled();
     });
 
-    it('searches via searchFiles and calls onOpenFile from results', async () => {
-        searchWorkspaceFilesSpy.mockResolvedValueOnce([
-            { fileName: 'api.ts', filePath: 'src/', fullPath: 'src/api.ts', fileType: 'file' },
-        ]);
+    it('searches via the filename owner and calls onOpenFile from results', async () => {
+        searchWorkspaceFilesSpy.mockResolvedValueOnce({ ok: true, paths: ['src/api.ts'], truncated: false });
 
         const { screen, onOpenFile } = await renderRepositoryTreeBrowserView();
 
@@ -316,34 +331,28 @@ describe('SessionRepositoryTreeBrowserView', () => {
 
     it('reruns file search after upload success when the query stays the same', async () => {
         searchWorkspaceFilesSpy
-            .mockResolvedValueOnce([
-                { fileName: 'before.txt', filePath: '', fullPath: 'before.txt', fileType: 'file' },
-            ])
-            .mockResolvedValueOnce([
-                { fileName: 'after.txt', filePath: '', fullPath: 'after.txt', fileType: 'file' },
-        ]);
+            .mockResolvedValueOnce({ ok: true, paths: ['before-manual-qa-upload.txt'], truncated: false })
+            .mockResolvedValueOnce({ ok: true, paths: ['after-manual-qa-upload.txt'], truncated: false });
 
         const { screen } = await renderRepositoryTreeBrowserView();
 
         await updateSearchQuery(screen, 'manual-qa-upload');
-        await waitForTestId(screen, 'search-results:before.txt');
+        await waitForTestId(screen, 'search-results:before-manual-qa-upload.txt');
 
-        expect(screen.findByTestId('search-results:before.txt')).toBeTruthy();
+        expect(screen.findByTestId('search-results:before-manual-qa-upload.txt')).toBeTruthy();
         expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             await latestWorkspaceTransferParams.onAfterUploadSuccess();
         });
-        await waitForTestId(screen, 'search-results:after.txt');
+        await waitForTestId(screen, 'search-results:after-manual-qa-upload.txt');
 
         expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(2);
-        expect(screen.findByTestId('search-results:after.txt')).toBeTruthy();
+        expect(screen.findByTestId('search-results:after-manual-qa-upload.txt')).toBeTruthy();
     });
 
     it('retains previous query rows while searching but never shows them for another session', async () => {
-        searchWorkspaceFilesSpy.mockResolvedValueOnce([
-            { fileName: 'api.ts', filePath: 'src/', fullPath: 'src/api.ts', fileType: 'file' },
-        ]);
+        searchWorkspaceFilesSpy.mockResolvedValueOnce({ ok: true, paths: ['src/api.ts'], truncated: false });
         const { screen, SessionRepositoryTreeBrowserView } = await renderRepositoryTreeBrowserView();
         await updateSearchQuery(screen, 'api');
         await waitForTestId(screen, 'search-results:src/api.ts');
@@ -366,7 +375,10 @@ describe('SessionRepositoryTreeBrowserView', () => {
      * in-flight RPC, and the newest call must carry a fresh, live signal.
      */
     it('aborts the in-flight file search RPC when the query changes', async () => {
-        searchWorkspaceFilesSpy.mockImplementation(async () => new Promise(() => undefined));
+        searchWorkspaceFilesSpy.mockImplementation((_machineId: string, _input: unknown, options: { signal: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+                options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            }));
 
         const { screen } = await renderRepositoryTreeBrowserView();
 
@@ -377,7 +389,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
                 await new Promise((resolve) => setTimeout(resolve, 5));
             });
         }
-        const firstSignal = searchWorkspaceFilesSpy.mock.calls[0]?.[0]?.signal as AbortSignal;
+        const firstSignal = searchWorkspaceFilesSpy.mock.calls[0]?.[2]?.signal as AbortSignal;
         expect(firstSignal).toBeInstanceOf(AbortSignal);
         expect(firstSignal.aborted).toBe(false);
 
@@ -387,7 +399,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
                 await new Promise((resolve) => setTimeout(resolve, 5));
             });
         }
-        const secondSignal = searchWorkspaceFilesSpy.mock.calls[1]?.[0]?.signal as AbortSignal;
+        const secondSignal = searchWorkspaceFilesSpy.mock.calls[1]?.[2]?.signal as AbortSignal;
 
         expect(firstSignal.aborted).toBe(true);
         expect(secondSignal.aborted).toBe(false);

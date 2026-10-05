@@ -115,6 +115,7 @@ export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
   sessionId: string;
   limit: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveTranscriptAuthorizationHeaders;
 }>): Promise<TranscriptRow[]> {
   const serverUrl = resolveServerHttpBaseUrl();
@@ -129,6 +130,7 @@ export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
       'Content-Type': 'application/json',
     },
     timeout: resolveTranscriptFetchTimeoutMs(params.timeoutMs),
+    ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
 

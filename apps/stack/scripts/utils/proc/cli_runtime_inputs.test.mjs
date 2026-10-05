@@ -6,6 +6,23 @@ import test from 'node:test';
 
 import { readHappyCliRuntimeInputFreshness } from './cli_runtime_inputs.mjs';
 
+test('dedicated build checkout preserves the producer consumed-input identity', async () => {
+  await withTempRepo(async (root) => {
+    const producer = join(root, 'producer');
+    const worker = join(root, 'worker');
+    for (const repo of [producer, worker]) {
+      await mkdir(join(repo, 'apps/cli/src'), { recursive: true });
+      await writeFile(join(repo, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
+      await writeFile(join(repo, 'apps/cli/src/index.ts'), 'export const value = 1;');
+    }
+    const original = await readHappyCliRuntimeInputFreshness(join(producer, 'apps/cli'));
+    const relocated = await readHappyCliRuntimeInputFreshness(join(worker, 'apps/cli'), { identityRepoDir: producer });
+    assert.equal(relocated.fingerprint, original.fingerprint);
+    await writeFile(join(worker, 'apps/cli/src/index.ts'), 'export const value = 2;');
+    assert.notEqual((await readHappyCliRuntimeInputFreshness(join(worker, 'apps/cli'), { identityRepoDir: producer })).fingerprint, original.fingerprint);
+  });
+});
+
 async function withTempRepo(run) {
   const root = await mkdtemp(join(tmpdir(), 'happy-cli-runtime-inputs-'));
   try {

@@ -1,4 +1,3 @@
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
     readExecutionRunStartRunCreation,
     resolveExecutionRunImplicitRoleIdV1,
@@ -10,20 +9,15 @@ import { useHomeAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildRolesRailPickerOption, ROLES_RAIL_PICKER_OPTION_ID } from '@/components/roles/rail/buildRolesRailPickerOption';
 import type { RoleRailItem } from '@/components/roles/rail/rolesRailTypes';
 import { useRoleRailItems } from '@/components/roles/rail/useRoleRailItems';
-import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
-import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { createRepositoryComposerDocumentOwner } from '@/components/sessions/composer/repositoryComposerDocumentOwner';
 import {
     promoteAcceptedComposerDocument,
@@ -39,41 +33,26 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { useExecutionRunMachineName } from '@/components/sessions/runs/details/useExecutionRunMachineName';
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { Typography } from '@/constants/Typography';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionBrowserContextRuntimeContext } from '@/components/sessions/browser/sessionBrowserContextRuntime';
 import {
-    createSessionInputFailureError,
     getSessionInputFailureLabelKey,
 } from '@/components/sessions/pending/pendingMessageVisualState';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { randomUUID } from '@/platform/randomUUID';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    resolveSessionActionDefaultBackend,
-    resolveSessionActionDefaultTarget,
-} from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { useSettings } from '@/sync/domains/state/storage';
-import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
-import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
-import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import {
     sessionExecutionRunList,
     sessionExecutionRunStart,
 } from '@/sync/ops/sessionExecutionRuns';
-import { createUiExecutionRunActionDeps } from '@/sync/ops/actions/executionRunActionDeps';
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { ensureExecutionRunHostSessionActive } from './ensureExecutionRunHostSessionActive';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { ExecutionRunLauncherOptions } from './ExecutionRunLauncherOptions';
 import {
@@ -97,6 +76,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
 
 type DraftIdentity = Readonly<{ correlationId: string; inputLocalId: string }>;
 
@@ -198,26 +178,13 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         sessionId: props.sessionId,
     });
     const serverId = preferredServerId;
-    const session = useSessionViewShellSession(props.sessionId, serverId);
+    const { session, accountBinding, accountLifetime, exactSettings, settings, enabledAgentIds, defaultBackend,
+        backendTarget, machineId, admitExactTarget: admitTarget, startAction } = useExecutionRunLaunchContext(props.sessionId, serverId);
     const [mountedComposerRef, setMountedComposerRef] = React.useState<Extract<ComposerRefV1, { kind: 'participantMessage' }> | null>(null);
     React.useEffect(() => {
         if (!props.autoFocusComposer || !mountedComposerRef) return;
         requestRegisteredComposerFocus(mountedComposerRef);
     }, [mountedComposerRef, props.autoFocusComposer]);
-    const activeSettings = useSettings();
-    const activeSettingsScope = useAccountSettingsScope();
-    const requestedServerIds = React.useMemo(() => [serverId], [serverId]);
-    const accountBindings = useServerCredentialAccountScopeBindings(requestedServerIds);
-    const accountBinding = React.useMemo(() => [...accountBindings.values()][0] ?? null, [accountBindings]);
-    const exactSettings = React.useMemo(() => {
-        if (!accountBinding?.isCurrent()) return null;
-        if (activeSettingsScope && areAccountSettingsScopesEqual(activeSettingsScope, accountBinding.scope)) {
-            return activeSettings;
-        }
-        const persisted = loadAccountSettings(accountBinding.scope);
-        return persisted.version === null ? null : settingsParse(persisted.settings);
-    }, [accountBinding, activeSettings, activeSettingsScope]);
-    const settings = exactSettings ?? settingsDefaults;
     const sharedSavedSecretsEnabled = useFeatureEnabled('teams', {
         scopeKind: 'spawn',
         serverId,
@@ -227,20 +194,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         () => resolveExecutionRunSessionLaunchProfile(settings, session?.metadata, launchProfiles),
         [session?.metadata, settings, launchProfiles],
     );
-    const enabledAgentIds = React.useMemo(() => getEnabledAgentIds({
-        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), [settings.backendEnabledByTargetKey]);
-    const defaultBackend = React.useMemo(() => resolveSessionActionDefaultBackend({
-        session,
-        enabledAgentIds,
-        fallbackAgentId: resolveAgentIdFromSessionMetadata(session?.metadata) ?? undefined,
-    }), [enabledAgentIds, session]);
-    const backendTarget = React.useMemo(
-        () => resolveSessionActionDefaultTarget(defaultBackend),
-        [defaultBackend],
-    );
-    const machineTarget = useSessionMachineTarget(props.sessionId, serverId);
-    const machineId = machineTarget?.machineId ?? null;
+    const defaultSecretBindings = React.useMemo(() => sessionLaunchProfile
+        ? { ...sessionLaunchProfile.secretBindings, ...settings.currentSecretBindingsByProfileId[sessionLaunchProfile.id] }
+        : null, [sessionLaunchProfile, settings.currentSecretBindingsByProfileId]);
     const { canLaunchExecutionRuns, launchUnavailableReason, executionRunsBackends } = useSessionExecutionRunLaunchability(
         props.sessionId,
         session,
@@ -258,20 +214,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         enabled: Boolean(machineId),
         staleMs: 60_000,
     });
-    const { resumeCapabilityOptions } = useResumeCapabilityOptions({
-        agentId: defaultBackend?.defaultAgentId ?? null,
-        machineId: machineTarget?.machineId ?? null,
-        serverId,
-        settings,
-        enabled: session?.active === false,
-    });
-    const { machineReachable } = useSessionMachineReachability(props.sessionId, serverId);
     const browserContextRuntime = useSessionBrowserContextRuntimeContext();
-    const accountLifetime = React.useMemo(() => {
-        if (!accountBinding) return null;
-        const scope = createServerAccountScope(accountBinding.serverId, accountBinding.accountId);
-        return scope ? { scope, isCurrent: accountBinding.isCurrent } : null;
-    }, [accountBinding]);
     const [identity, setIdentity] = React.useState<DraftIdentity>(() => ({
         correlationId: props.launchOrigin?.draftCorrelationId ?? randomUUID(),
         inputLocalId: randomUUID(),
@@ -281,7 +224,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const [secretOverlayState, setSecretOverlayState] = React.useState<ExecutionRunSecretReferenceOverlayState>({
         readiness: { ok: true },
     });
-    const executionRunActionDeps = React.useMemo(() => createUiExecutionRunActionDeps(), []);
     const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(() => buildExecutionRunActionDraftInputForUi({
         actionId: resolveExecutionRunLauncherActionId(optionsIntent),
         sessionId: props.sessionId,
@@ -323,10 +265,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         setActionInput,
         onSelectionChange: () => setError(null),
     });
-    const actionExecutor = React.useMemo(
-        () => createDefaultActionExecutor({ resolveServerIdForSessionId: () => serverId }),
-        [serverId],
-    );
     const machine = useExecutionRunMachineName(session?.metadata ?? null);
     const runIdRef = React.useRef<string | null>(null);
     const notifiedRunIdRef = React.useRef<string | null>(null);
@@ -373,62 +311,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
      * or a Team credential model is admitted by the exact daemon, and a stopped Session resumes.
      * Throws with the person-facing reason; nothing has been created when it does.
      */
-    const admitExactTarget = React.useCallback(async (requires: Readonly<{
-        secretReferenceOverlay: boolean;
-        teamCredentialModel: boolean;
-        /** A chosen role binds its engine at the target, so the daemon must speak run-scoped bindings. */
-        roleBinding?: boolean;
-    }>) => {
-        if (!session) throw new Error(t('common.unavailable'));
-        let admittedMachineId: string | undefined;
-        const runScopedAgentBindings = requires.teamCredentialModel || requires.roleBinding === true;
-        if (requires.secretReferenceOverlay || runScopedAgentBindings) {
-            const capability = await executionRunActionDeps.executionRunCheckProtocolV2?.(
-                props.sessionId,
-                {
-                    detachedScope: false,
-                    startAndWait: false,
-                    exactInputResults: false,
-                    runScopedAgentBindings,
-                    secretReferenceOverlay: requires.secretReferenceOverlay,
-                },
-                {
-                    ...(serverId ? { serverId } : {}),
-                    ...(machineId ? { targetMachineId: machineId } : {}),
-                },
-            );
-            if (!capability) {
-                throw createSessionInputFailureError('execution_run_target_changed');
-            }
-            if (capability.ok === false) {
-                if (requires.secretReferenceOverlay && capability.errorCode === 'execution_run_protocol_unsupported') {
-                    throw createSessionInputFailureError('execution_run_secret_reference_overlay_update_required');
-                }
-                throw new Error(capability.error);
-            }
-            if (capability.exactMachineId !== machineId) {
-                throw createSessionInputFailureError('execution_run_target_changed');
-            }
-            admittedMachineId = capability.exactMachineId;
-        }
-        const active = await ensureExecutionRunHostSessionActive({
-            sessionId: props.sessionId,
-            session,
-            machineReachable,
-            resumeCapabilityOptions,
-            sessionActionDefaultBackend: defaultBackend,
-            agentId: defaultBackend?.defaultAgentId ?? null,
-            settings,
-            serverId,
-            readinessOperationId: identity.correlationId,
-            ...(admittedMachineId ? { expectedMachineId: admittedMachineId } : {}),
-        });
-        if (!active.ok) {
-            throw new Error(active.reason === 'machine_offline'
-                ? t('session.machineOfflineCannotResume')
-                : active.error ?? t('session.resumeFailed'));
-        }
-    }, [defaultBackend, executionRunActionDeps.executionRunCheckProtocolV2, identity.correlationId, machineId, machineReachable, props.sessionId, resumeCapabilityOptions, serverId, session, settings]);
+    const admitExactTarget = React.useCallback((requires: Parameters<typeof admitTarget>[0]) => (
+        admitTarget(requires, identity.correlationId)
+    ), [admitTarget, identity.correlationId]);
 
     /**
      * A review, plan or delegated task: the first message is its instructions, started through the
@@ -462,15 +347,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         setError(null);
         setPhase('starting');
         try {
-            await admitExactTarget({
-                secretReferenceOverlay: secretOverlayState.overlay !== undefined,
-                teamCredentialModel: teamCredential.selected !== null,
-            });
-            const result = await actionExecutor.execute(
-                options.actionId,
-                { sessionId: props.sessionId, ...input },
-                { defaultSessionId: props.sessionId, ...(serverId ? { serverId } : {}) },
-            );
+            const result = await startAction(options.actionId, input, identity.correlationId);
             const output = result.ok && result.result && typeof result.result === 'object'
                 ? result.result as { results?: readonly { key?: unknown; ok?: boolean; result?: { runId?: unknown } }[] }
                 : null;
@@ -509,7 +386,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, actionExecutor, actionInput, admitExactTarget, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, serverId, teamCredential.available, teamCredential.selected]);
+    }, [accountLifetime, startAction, identity.correlationId, actionInput, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
 
     const submitConversationStart = React.useCallback(async (submission: ParticipantComposerPreparedSubmission) => {
         if (submitInFlightRef.current) {
@@ -999,9 +876,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 machineId={machineId}
                 serverId={serverId}
                 accountScope={accountBinding?.scope ?? null}
-                defaultBindings={sessionLaunchProfile
-                    ? { ...sessionLaunchProfile.secretBindings, ...settings.currentSecretBindingsByProfileId[sessionLaunchProfile.id] }
-                    : null}
+                defaultBindings={defaultSecretBindings}
                 personalSecrets={settings.secrets}
                 sharedEnabled={sharedSavedSecretsEnabled}
                 editable={editable}

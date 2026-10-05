@@ -15,8 +15,6 @@ import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDa
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 
@@ -162,24 +160,16 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
                     theme={presentationTheme}
                     title={t('settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureTitle')}
                     description={t('settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureBody')}
-                    renderContent={({ color }) => (
-                        <>
-                            <Text selectable style={{ ...Typography.rowTitle(), color }}>
-                                {t('settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureTitle')}
-                            </Text>
-                            <Text selectable style={{ ...Typography.rowMeta(), color: theme.colors.text.secondary }}>
-                                {t('settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureBody')}
-                            </Text>
-                            <RoundButton
-                                size="small"
-                                testID="automation-history-gap-recovery-retry"
-                                title={t('common.retry')}
-                                accessibilityLabel={t('common.retry')}
-                                disabled={!canRecover || recovering}
-                                loading={recovering}
-                                onPress={canRecover && !recovering ? recover : undefined}
-                            />
-                        </>
+                    action={(
+                        <RoundButton
+                            size="small"
+                            testID="automation-history-gap-recovery-retry"
+                            title={t('common.retry')}
+                            accessibilityLabel={t('common.retry')}
+                            disabled={!canRecover || recovering}
+                            loading={recovering}
+                            onPress={canRecover && !recovering ? recover : undefined}
+                        />
                     )}
                 />
             ) : null}

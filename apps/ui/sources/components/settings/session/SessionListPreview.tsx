@@ -10,6 +10,7 @@ import {
     type SessionListRowDensity,
 } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import type { SessionListLayoutChoice } from '@/sync/domains/session/listing/sessionListLayout';
+import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { t } from '@/text';
 
 // A viewport onto normal-sized rows, matching the other session settings previews.
@@ -73,4 +74,60 @@ export function SessionListLayoutPreview(props: Readonly<{
         </View>
         <PreviewRows density="minimal" ids={SAMPLE_IDS.slice(index * 2, index * 2 + 2)} project={heading} />
     </React.Fragment>)}</PreviewStage>;
+}
+
+export type SessionListSampleRow = Readonly<{
+    id: string;
+    title: string;
+    project: string;
+    /** The row's state word, in the tone the live row uses for it. */
+    status?: Readonly<{ label: string; tone: 'neutral' | 'attention' }>;
+}>;
+
+export type SessionListSampleGroup = Readonly<{ heading: string; rows: readonly SessionListSampleRow[] }>;
+
+/**
+ * A sessions column at full size for a larger preview stage (Personalize Happier): the same physical
+ * row presentation as the mounted list under a density, with the groups the caller arranged. The
+ * groups are sample data; the live list's arrangement stays with its own owner.
+ */
+export function SessionListSample(props: Readonly<{
+    density: 'detailed' | 'cozy' | 'narrow';
+    groups: readonly SessionListSampleGroup[];
+    width: number;
+}>) {
+    const viewState = resolveSessionListDensityViewState(props.density);
+    const density: SessionListRowDensity = viewState.compactMinimal ? 'minimal' : viewState.compact ? 'compact' : 'default';
+    return <View
+        style={{ width: props.width }}
+        pointerEvents="none"
+        accessible={false}
+        aria-hidden
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden
+    >
+        {props.groups.map((group) => <React.Fragment key={group.heading}>
+            <View style={sessionListStyles.groupHeaderSection}>
+                <Eyebrow style={sessionListStyles.groupHeaderTitle}>{group.heading}</Eyebrow>
+            </View>
+            {group.rows.map((row, index) => <SessionListRowPresentation
+                key={row.id}
+                density={density}
+                first={index === 0}
+                last={index === group.rows.length - 1}
+                statusTone={row.status?.tone === 'attention' ? 'attention' : undefined}
+                identity={density === 'minimal' ? null : <AvatarGradient id={row.id} size={SESSION_LIST_ROW_IDENTITY_METRICS[density].slotSize} />}
+                title={<SessionListRowTitle density={density}>{row.title}</SessionListRowTitle>}
+                trailing={density === 'minimal' && row.status
+                    ? <SessionListRowSubtitle density={density} style={workStatusWordStyle(row.status.tone)}>{row.status.label}</SessionListRowSubtitle>
+                    : null}
+            >
+                {density !== 'minimal' ? (
+                    <SessionListRowSubtitle density={density} style={row.status ? workStatusWordStyle(row.status.tone) : null}>
+                        {row.status?.label ?? row.project}
+                    </SessionListRowSubtitle>
+                ) : null}
+            </SessionListRowPresentation>)}
+        </React.Fragment>)}
+    </View>;
 }

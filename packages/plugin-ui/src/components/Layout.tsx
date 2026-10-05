@@ -93,6 +93,8 @@ export type ScreenProps = Readonly<{
 export type ScrollAreaProps = Readonly<{
   children?: ReactNode;
   horizontal?: boolean;
+  /** Keep the viewport mounted while a bounded child owns scrolling. */
+  scrollEnabled?: boolean;
   keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
   onScroll?: (event: HappierScrollEvent) => void;
   scrollEventThrottle?: number;

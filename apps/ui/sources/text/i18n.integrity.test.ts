@@ -1693,6 +1693,21 @@ describe('i18n integrity', () => {
         expect(untranslated).toEqual([]);
     });
 
+    it('keeps Find copy complete without English fallback values', () => {
+        const locales = [
+            { code: 'ru', root: ru }, { code: 'pl', root: pl }, { code: 'es', root: es },
+            { code: 'fr', root: fr }, { code: 'it', root: itLocale }, { code: 'pt', root: pt },
+            { code: 'ca', root: ca }, { code: 'de', root: de }, { code: 'zh-Hans', root: zhHans },
+            { code: 'zh-Hant', root: zhHant }, { code: 'ja', root: ja },
+        ];
+        const untranslated = Object.values(auditTranslations({ en, locales }))
+            .flatMap((report) => report.untranslatedStrings)
+            .filter((entry) => entry.key.startsWith('find.') || entry.key === 'settingsAppearance.themeProfiles.groups.find')
+            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key))
+            .map((entry) => `${entry.locale}: ${entry.key} = ${JSON.stringify(entry.value)}`);
+        expect(untranslated).toEqual([]);
+    });
+
     it('keeps Session access translations complete without unintended English fallback', () => {
         const locales = [
             { code: 'ru', root: ru }, { code: 'pl', root: pl }, { code: 'es', root: es },
@@ -1894,6 +1909,29 @@ describe('i18n integrity', () => {
         expect(untranslatedStrings).toEqual([]);
         expect(untranslatedFunctions).toEqual([]);
         expect(placeholderMismatches).toEqual([]);
+    });
+
+    it('keeps text-in-files Search copy complete without English fallback values', () => {
+        const locales = [
+            { code: 'ru', root: ru }, { code: 'pl', root: pl },
+            { code: 'es', root: es }, { code: 'fr', root: fr },
+            { code: 'it', root: itLocale }, { code: 'pt', root: pt },
+            { code: 'ca', root: ca }, { code: 'de', root: de },
+            { code: 'zh-Hans', root: zhHans }, { code: 'zh-Hant', root: zhHant },
+            { code: 'ja', root: ja },
+        ];
+        const keys = [
+            ...flattenTranslationLeaves(en.universalSearch.content).map((leaf) => `universalSearch.content.${leaf.key}`),
+            'commandPalette.placeholder',
+            'settingsKeyboard.commands.searchTextInFiles',
+        ];
+        const missingOrInherited = locales.flatMap(({ code, root }) => keys.flatMap((key) => {
+            const value = readTranslationLeaf(root, key);
+            return typeof value === 'string' && value.length > 0 && value !== readTranslationLeaf(en, key)
+                ? []
+                : [`${code}: ${key}`];
+        }));
+        expect(missingOrInherited).toEqual([]);
     });
 
     it('does not increase the number of untranslated English strings', () => {

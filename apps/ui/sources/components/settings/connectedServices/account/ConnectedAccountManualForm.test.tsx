@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ConnectedAccountManualForm } from './ConnectedAccountManualForm';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { PluginSettingFieldV2 } from '@happier-dev/protocol';
@@ -14,20 +15,10 @@ vi.mock('@react-navigation/native', async () => {
     return createReactNavigationNativeMock();
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: unknown) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { text: 'text', background: 'background', placeholder: 'placeholder' },
-                border: { default: 'border', strong: 'border-strong' },
-                text: { primary: 'primary', secondary: 'secondary' },
-                surface: { base: 'surface' },
-                state: { danger: { foreground: 'danger' } },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -68,9 +59,21 @@ describe('ConnectedAccountManualForm', () => {
         clearActiveUnsavedChangesGuard();
     });
 
+    it('submits an optional account label separately from the descriptor secret fields in guided key setup', async () => {
+        const onSubmit = vi.fn();
+        const screen = await renderScreen(<ConnectedAccountManualForm embedded title="API key" submitting={false}
+            fields={[fields[1]]} guided={{ consoleUrl: 'https://provider.example/keys', createKeyTitle: 'Create a key', billingNote: 'Billed by the service' }}
+            onSubmit={onSubmit} />);
+        await act(async () => {
+            screen.tree.find((node) => node.type === ('TextInput' as never) && node.props.testID === 'connected-account-manual:token').props.onChangeText('secret-key');
+            screen.tree.find((node) => node.type === ('TextInput' as never) && node.props.testID === 'connected-account-manual:name').props.onChangeText('Build server');
+        });
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        expect(onSubmit).toHaveBeenCalledWith({ fields: { token: 'secret-key' }, displayName: 'Build server' });
+    });
+
     it('submits every descriptor field as a string without retaining prior secret values', async () => {
         const onSubmit = vi.fn(async () => {});
-        const { ConnectedAccountManualForm } = await import('./ConnectedAccountManualForm');
         const tree = (await renderScreen(
             <ConnectedAccountManualForm
                 title="Manual authentication"
@@ -105,7 +108,6 @@ describe('ConnectedAccountManualForm', () => {
 
     it('does not submit when a required descriptor string is empty', async () => {
         const onSubmit = vi.fn();
-        const { ConnectedAccountManualForm } = await import('./ConnectedAccountManualForm');
         const tree = (await renderScreen(
             <ConnectedAccountManualForm
                 title="Manual authentication"
@@ -134,7 +136,6 @@ describe('ConnectedAccountManualForm', () => {
     });
 
     it('registers a dirty manual secret draft with the shared shell-navigation guard', async () => {
-        const { ConnectedAccountManualForm } = await import('./ConnectedAccountManualForm');
         const tree = (await renderScreen(
             <ConnectedAccountManualForm
                 title="Manual authentication"
@@ -155,7 +156,6 @@ describe('ConnectedAccountManualForm', () => {
     });
 
     it('clears a secret draft when the same mounted attempt receives a changed manual descriptor', async () => {
-        const { ConnectedAccountManualForm } = await import('./ConnectedAccountManualForm');
         const screen = await renderScreen(
             <ConnectedAccountManualForm
                 title="Manual authentication"

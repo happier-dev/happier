@@ -31,6 +31,10 @@ describe('webUnistylesFontOverrides', () => {
         expect(appended).toBe(2);
 
         const css = overrideEl.textContent ?? '';
+        const unscaledText = document.createElement('span');
+        unscaledText.setAttribute('data-happier-ui-font-scaling', 'disabled');
+        document.body.appendChild(unscaledText);
+        expect(dom.window.getComputedStyle(unscaledText).getPropertyValue(HAPPIER_UI_FONT_SCALE_CSS_VAR)).toBe('1');
         expect(css).toContain(`.${'unistyles_a1'}`);
         expect(css).toContain(`font-size: calc(16px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}))`);
         expect(css).toContain(`line-height: calc(24px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}))`);

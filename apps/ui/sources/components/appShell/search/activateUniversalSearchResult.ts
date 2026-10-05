@@ -1,4 +1,6 @@
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import type { OpenProjectOptions } from '@/components/projects/useOpenProject';
+import type { FileFindSeed as FindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 import type { UniversalSearchTarget } from './universalSearchResult';
 
@@ -34,10 +36,8 @@ export type UniversalSearchActivationOwners = Readonly<{
     /** Canonical router push for non-session destinations. */
     push: (path: string) => void;
     /** Canonical project opener, including persisted surface/worktree state. */
-    openProject: (workspaceRefId: string, options?: Readonly<{
-        activeRootPath?: string;
-        initialResource?: Readonly<{ kind: 'file'; path: string }> | Readonly<{ kind: 'commit'; sha: string }>;
-    }>) => boolean;
+    openProject: (workspaceRefId: string, options?: OpenProjectOptions) => boolean;
+    stageFileFindSeed?: (target: Extract<UniversalSearchTarget, { kind: 'workspaceFile' }>, seed: FindSeed) => (() => void) | null;
     /**
      * Re-resolves whether the exact target still exists for this reader RIGHT
      * NOW. Returning `false` keeps the surface coherent instead of navigating to
@@ -82,25 +82,36 @@ export async function activateUniversalSearchResult(
                 return { ok: true };
             }
             case 'workspaceFile': {
-                if (target.workspaceRefId) {
-                    return owners.openProject(target.workspaceRefId, {
-                        activeRootPath: target.scope.rootPath,
-                        initialResource: { kind: 'file', path: target.path },
-                    }) ? { ok: true } : { ok: false, reason: 'unavailable' };
+                const cancelSeed = target.find ? owners.stageFileFindSeed?.(target, target.find) : undefined;
+                if (target.find && cancelSeed === null) return { ok: false, reason: 'unavailable' };
+                try {
+                    if (target.workspaceRefId) {
+                        const opened = owners.openProject(target.workspaceRefId, {
+                            activeRootPath: target.scope.rootPath,
+                            initialResource: { kind: 'file', path: target.path, ...(target.anchor ? { anchor: target.anchor } : {}),
+                                ...(target.anchorSource ? { anchorSource: target.anchorSource } : {}), ...(target.find ? { find: target.find } : {}) },
+                        });
+                        if (!opened) cancelSeed?.();
+                        return opened ? { ok: true } : { ok: false, reason: 'unavailable' };
+                    }
+                    // The canonical file-detail owner is the session pane's details
+                    // tab, addressed through the same URL state that owner already
+                    // parses — not a second file-opening path.
+                    if (!target.sessionId) { cancelSeed?.(); return { ok: false, reason: 'unavailable' }; }
+                    await owners.navigateToSession(target.sessionId, {
+                        ...(target.serverId ? { serverId: target.serverId } : {}),
+                        query: {
+                            ...serializeSessionPaneUrlState({
+                                rightTabId: 'files',
+                                details: { kind: 'file', path: target.path, ...(target.anchor ? { anchor: target.anchor } : {}),
+                                    ...(target.anchorSource ? { anchorSource: target.anchorSource } : {}) },
+                            }),
+                        },
+                    });
+                } catch (error) {
+                    cancelSeed?.();
+                    throw error;
                 }
-                // The canonical file-detail owner is the session pane's details
-                // tab, addressed through the same URL state that owner already
-                // parses — not a second file-opening path.
-                if (!target.sessionId) return { ok: false, reason: 'unavailable' };
-                await owners.navigateToSession(target.sessionId, {
-                    ...(target.serverId ? { serverId: target.serverId } : {}),
-                    query: {
-                        ...serializeSessionPaneUrlState({
-                            rightTabId: 'files',
-                            details: { kind: 'file', path: target.path },
-                        }),
-                    },
-                });
                 return { ok: true };
             }
             case 'workspaceCommit': {

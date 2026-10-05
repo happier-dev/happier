@@ -53,6 +53,8 @@ import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const SESSION_AUTHORING_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = [
     'file',
@@ -113,7 +115,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
         custody: AuthoringComposerCustodyEntry;
         scope: AuthoringComposerScope;
         document: ScopedAuthoringDocument;
-        onChangeDocument: (document: ScopedAuthoringDocument) => void;
+        onChangeDocument?: (document: ScopedAuthoringDocument) => void;
         attachmentsEnabled: boolean;
         editable?: boolean;
         placeholder: string;
@@ -139,11 +141,19 @@ export const ScopedAuthoringComposer = React.forwardRef<
             currentPath?: string | null;
             profileId?: string | null;
             onProfileClick?: () => void;
+            agentPickerOptions?: React.ComponentProps<typeof AgentInput>['agentPickerOptions'];
+            agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
+            onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
+            onAgentClick?: () => void;
         }>;
     }>
 >((props, forwardedRef) => {
     const { scope } = props;
+    const editable = props.editable !== false && props.onChangeDocument !== undefined;
     const composerRef = props.custody.ref;
+    const layoutPresented = useLayoutPresentationActive();
+    const layoutPresentedRef = React.useRef(layoutPresented);
+    layoutPresentedRef.current = layoutPresented;
     const sessionId = scope.kind === 'session' ? scope.sessionId : null;
     const preferredServerId = usePreferredServerIdForSession(
         { serverId: scope.serverId, sessionId: sessionId ?? '' },
@@ -168,8 +178,8 @@ export const ScopedAuthoringComposer = React.forwardRef<
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const mountedRef = React.useRef(true);
     const focusedRef = React.useRef(false);
-    const editableRef = React.useRef(props.editable !== false);
-    editableRef.current = props.editable !== false;
+    const editableRef = React.useRef(editable);
+    editableRef.current = editable;
     const actionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const focusRequestRef = React.useRef<(() => void) | null>(null);
     React.useImperativeHandle(forwardedRef, () => ({
@@ -188,7 +198,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
             text: true,
             references: true,
             attachments: props.attachmentsEnabled,
-            submit: props.onSubmit !== undefined,
+            submit: editable && props.onSubmit !== undefined,
         },
         createInitialDocument: () => ({
             text: props.document.text,
@@ -203,7 +213,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
         }),
         isCurrent,
         onDocumentChange: (next) => {
-            onChangeDocumentRef.current(projectPortableAuthoringDocument(next));
+            if (editableRef.current) onChangeDocumentRef.current?.(projectPortableAuthoringDocument(next));
             notifyComposerPresentationTargetChanged(composerRef);
         },
     });
@@ -222,6 +232,12 @@ export const ScopedAuthoringComposer = React.forwardRef<
         return host;
     }, [daemonProjection.inputs?.pluginProjectionV2, daemonProjection.phase, isCurrent, machineId, serverId]);
     referenceHostRef.current = referenceHost;
+    const dropReferenceHost = React.useMemo<ComposerReferenceSearchHost | null>(() => (
+        referenceHost ? {
+            ...referenceHost,
+            isCurrent: () => referenceHostRef.current === referenceHost && isCurrent() && layoutPresentedRef.current,
+        } : null
+    ), [isCurrent, layoutPresented, referenceHost]);
     const pluginPresentation = useComposerScopePluginPresentation({
         composer: composerRef,
         // A captured Session is a real physical surface and Resource context. A
@@ -282,7 +298,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
             state: {
                 focused: focusedRef.current,
                 editable: editableRef.current && lock?.mode !== 'editAndSubmit',
-                submittable: props.onSubmit !== undefined && lock === null,
+                submittable: editableRef.current && props.onSubmit !== undefined && lock === null,
                 submitting: false,
                 running: false,
                 ...(lock ? { inputLock: lock } : {}),
@@ -294,12 +310,14 @@ export const ScopedAuthoringComposer = React.forwardRef<
         mutation: ComposerPresentationDocumentMutation;
     }>): ComposerTransactionResultV1 => documentOwner.apply(input.expectedRevision, input.mutation), [documentOwner]);
     const target = useStableComposerPresentationTarget(composerRef, {
+        readScope: () => accountLifetime?.scope ?? null,
         readRevision: () => documentOwner.read().revision,
         replace: (text, expectedRevision) => {
             if (documentOwner.read().revision !== expectedRevision) return documentOwner.read().revision;
             return documentOwner.replaceDocument({ ...documentOwner.read().document, text });
         },
         readSnapshot,
+        isPresented: () => layoutPresented,
         commitDocument,
         ...(props.attachmentsEnabled ? { createAttachmentInstanceId: randomUUID } : {}),
         setComposerDecorations: inputEffects.setComposerDecorations,
@@ -368,7 +386,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
     ));
     const attachmentRowItems = projectComposerAttachmentRowItems({
         attachments: attachmentViews,
-        ...(props.editable !== false && inputEffects.composerInputLock?.mode !== 'editAndSubmit'
+        ...(editable && inputEffects.composerInputLock?.mode !== 'editAndSubmit'
             ? { onRemove: removeAttachment }
             : {}),
         entriesById: pluginPresentation.attachmentEntriesById ?? undefined,
@@ -400,12 +418,12 @@ export const ScopedAuthoringComposer = React.forwardRef<
             {pluginPresentation.beforeComposer}
             <AgentInput
                 value={current.text}
-                onChangeText={(text) => documentOwner.replaceDocument({ ...documentOwner.read().document, text })}
+                onChangeText={editable ? (text) => documentOwner.replaceDocument({ ...documentOwner.read().document, text }) : undefined}
                 structuredInputMentions={current.structuredInputMentions as readonly ComposerStructuredInputMention[]}
-                onStructuredInputMentionsChange={(mentions) => documentOwner.replaceDocument({
+                onStructuredInputMentionsChange={editable ? (mentions) => documentOwner.replaceDocument({
                     ...documentOwner.read().document,
                     structuredInputMentions: mentions,
-                })}
+                }) : undefined}
                 onComposerFocusChange={(focused) => {
                     focusedRef.current = focused;
                     notifyComposerPresentationTargetChanged(composerRef);
@@ -420,6 +438,15 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 composerDecorations={inputEffects.composerDecorations}
                 composerInputLock={inputEffects.composerInputLock}
                 composerRef={composerRef}
+                composerReferenceHost={dropReferenceHost}
+                composerFileScope={sessionId !== null
+                    ? resolveWorkspaceTargetForSession(voiceSessionAddress ?? sessionId)
+                    : resolveNewSessionFileSuggestionScope({
+                        targetServerId: serverId,
+                        selectedMachineId: machineFileScope?.machineId ?? null,
+                        selectedMachineHomeDir: machineFileScope?.machineHomeDir ?? null,
+                        selectedPath: machineFileScope?.directory ?? null,
+                    })}
                 inputPersistence={inputPersistence}
                 sessionAddress={voiceSessionAddress}
                 {...(sessionId === null ? {} : { sessionId })}
@@ -430,10 +457,10 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 autocompleteKinds={suggestionKinds}
                 autocompleteSuggestions={resolveSuggestions}
                 // Absent means authoring only: AgentInput offers no submit path at all.
-                {...(props.onSubmit === undefined ? {} : { onSend: props.onSubmit })}
+                {...(!editable || props.onSubmit === undefined ? {} : { onSend: props.onSubmit })}
                 submitAccessibilityLabel={props.submitAccessibilityLabel}
                 isSendDisabled={props.isSubmitDisabled || inputEffects.composerInputLock !== null}
-                disabled={props.editable === false || inputEffects.composerInputLock?.mode === 'editAndSubmit'}
+                disabled={!editable || inputEffects.composerInputLock?.mode === 'editAndSubmit'}
                 extraActionChips={extraActionChips}
                 attachmentRowItems={attachmentRowItems}
                 hasSendableAttachments={attachmentViews.some((attachment) => attachment.availability.status === 'ready')}
@@ -446,6 +473,10 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 currentPath={context?.currentPath ?? undefined}
                 profileId={context?.profileId ?? undefined}
                 onProfileClick={context?.onProfileClick}
+                agentPickerOptions={context?.agentPickerOptions}
+                agentPickerSelectedOptionId={context?.agentPickerSelectedOptionId}
+                onAgentPickerSelect={editable ? context?.onAgentPickerSelect : undefined}
+                onAgentClick={context?.onAgentClick}
                 contentPaddingHorizontal={0}
             />
             {pluginPresentation.afterComposer}

@@ -2,7 +2,6 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
-import type { ActionInputFieldHint } from '@happier-dev/protocol';
 import {
     HappierValidationMessage,
     resolveHappierFormPending,
@@ -11,7 +10,9 @@ import {
 import type { CustomModalInjectedProps } from '@/modal';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
-import { ActionInputFields, type ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
+import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
+import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 
@@ -44,10 +45,6 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-function staticFieldOptions(field: Pick<ActionInputFieldHint, 'options'>): readonly ActionFieldOption[] {
-    return field.options ?? [];
-}
-
 function isSuccessfulSubmit(
     outcome: ActionInputFormSubmitOutcome<
         ActionInputFormSubmissionResult,
@@ -60,6 +57,8 @@ function isSuccessfulSubmit(
 
 export type ActionInputFormModalProps = Readonly<{
     form: AnyActionInputForm;
+    pickerContext?: InputTypePickerHostContext;
+    actionId?: string;
     /** Releases the host's modal/currentness binding; idempotent by contract. */
     onRetire?: () => void;
 }> & CustomModalInjectedProps;
@@ -86,6 +85,11 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     const input = props.form.getInput();
     const fields = props.form.getFields();
+    const fieldOptions = useInputFieldOptions({
+        ...props.pickerContext,
+        requests: fields.map((field) => ({ field, actionId: props.actionId, draftInput: input })),
+        enabled: fields.some((field) => field.inputType !== undefined || field.optionsSourceId !== undefined),
+    });
     const isSubmitting = props.form.isSubmitting();
     const pending = resolveHappierFormPending({ busy: isSubmitting });
     const title = props.form.presentation.inputHints.title ?? props.form.presentation.title;
@@ -181,7 +185,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 input={{ ...input }}
                 editable={!pending}
                 busy={pending}
-                resolveFieldOptions={staticFieldOptions}
+                resolveFieldOptions={fieldOptions.resolveOptions}
                 onPatch={(patch) => {
                     setError(null);
                     props.form.replaceInput({ ...props.form.getInput(), ...patch });

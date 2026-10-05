@@ -63,13 +63,21 @@ export function normalizeParticipantRecipientRoutingIdentityV1(input: unknown): 
   return ParticipantRecipientRoutingIdentityV1Schema.parse(recipient);
 }
 
-/** Derives the one authored routing fact; omission leaves the main record untouched. */
+/** Projects participant metadata unless canonical Pending routing already owns a typed Run input. */
 export function withParticipantRecipientV1(
   meta: Record<string, unknown>,
   input: ParticipantRecipientV1 | undefined,
 ): Record<string, unknown> {
   if (input === undefined) return meta;
   const recipient = normalizeParticipantRecipientRoutingIdentityV1(input);
+  const content = meta.happier;
+  // Attached Run routing lives in the canonical Pending target, independently
+  // of the existing typed comment/media envelope. Their admission owners still
+  // validate permissions, content and size; routing must not replace that input.
+  if (recipient.kind === 'execution_run' && content !== null && typeof content === 'object'
+    && 'kind' in content && (content.kind === 'review_comments.v1' || content.kind === 'attachments.v1')) {
+    return meta;
+  }
   if (meta.happier !== undefined) {
     const envelope = z.object({
       kind: z.literal('participant_message.v1'),

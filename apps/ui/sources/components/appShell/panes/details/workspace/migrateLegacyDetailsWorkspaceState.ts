@@ -2,7 +2,7 @@ import { createEmptyPaneDetailsState } from './detailsWorkspaceReducer';
 import {
     isPluginDetailsDestinationResourceCandidate,
     normalizePluginDetailsDestinationResource,
-} from '../surfaces/pluginDetailsDestination';
+} from './pluginDetailsDestinationResource';
 import {
     createDetailsWorkspaceLeafNode,
     DETAILS_WORKSPACE_LEAF_KIND,

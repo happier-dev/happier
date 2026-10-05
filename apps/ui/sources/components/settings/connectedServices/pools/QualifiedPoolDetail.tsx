@@ -4,7 +4,9 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import type { QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, type QualifiedConnectedAccountPurposeBindingTargetV1, type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { buildConnectedServiceSetupRoute } from '../setup/connectMoreBlocks';
+import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 import { useAgentDefaultChoices } from '../defaults/useAgentDefaultChoices';
 import {
@@ -58,6 +60,8 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             presentIdentity={present}
             agentDefaults={agentDefaults}
             onOpenAccount={openAccount}
+            legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
+            onConnectAccount={() => router.push(buildConnectedServiceSetupRoute({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(service) }))}
         />
     );
 });

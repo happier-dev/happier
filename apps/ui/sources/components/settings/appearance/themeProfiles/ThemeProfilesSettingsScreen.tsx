@@ -57,7 +57,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         // The mode's own tile is its base theme: no profile.
         const profileId = optionId === mode ? null : optionId;
         if (themeProfiles.activeProfileIds[mode] === profileId) return;
-        applyThemeSelection(themePreference, setActiveThemeProfileForMode(themeProfiles, mode, profileId));
+        return applyThemeSelection(themePreference, setActiveThemeProfileForMode(themeProfiles, mode, profileId));
     }, [applyThemeSelection, themePreference, themeProfiles]);
 
     const openCreate = React.useCallback(() => {

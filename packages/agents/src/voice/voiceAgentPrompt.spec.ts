@@ -14,11 +14,37 @@ import {
   GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID,
   GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
   buildVoiceClientToolAgentPrompt,
+  buildVoiceRealtimeAttemptPolicy,
   buildGlobalVoiceAgentStartupInstructionsPlanV1,
   buildLocalVoiceAgentSystemPrompt,
 } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
+  it('admits a localized literal only for an immediate realtime welcome in both policy and model instructions', () => {
+    const input = {
+      availableToolNames: ['readCurrentUiContext'],
+      assistantLanguage: 'fr-FR',
+      welcome: { enabled: true, mode: 'immediate' as const },
+    };
+    const text = 'Bonjour, je vous écoute — que souhaitez-vous faire ?';
+    const policy = buildVoiceRealtimeAttemptPolicy({ ...input, welcomeText: text });
+    expect(policy.welcome).toEqual({ ...input.welcome, text });
+    expect(policy.assistantLanguage).toBe('fr-FR');
+    expect(policy.instructions).toContain(JSON.stringify(text));
+    expect(policy.instructions).toContain('wait for the user');
+    expect(buildVoiceRealtimeAttemptPolicy(input).welcome).toEqual(input.welcome);
+    expect(buildVoiceRealtimeAttemptPolicy(input).instructions).toBe(buildVoiceClientToolAgentPrompt(input));
+    for (const welcome of [
+      { enabled: false, mode: 'immediate' as const },
+      { enabled: true, mode: 'on_first_turn' as const },
+    ]) {
+      expect(buildVoiceRealtimeAttemptPolicy({ ...input, welcome, welcomeText: text }).welcome)
+        .toEqual(welcome);
+      expect(buildVoiceRealtimeAttemptPolicy({ ...input, welcome, welcomeText: text }).instructions)
+        .toBe(buildVoiceClientToolAgentPrompt({ ...input, welcome }));
+    }
+  });
+
   it('composes attempt policy with only admitted tools, language, greeting and user prompt blocks', () => {
     const prompt = buildVoiceClientToolAgentPrompt({
       actionSpecs: listVoiceToolActionSpecs(),

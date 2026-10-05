@@ -41,6 +41,7 @@ export type CodexExternalSessionCandidate = Readonly<{
   activity?: 'running' | 'active_recently' | 'idle' | 'unknown';
   archived?: boolean;
   thread?: CodexSessionThread;
+  match?: AgentExternalSessionCandidate['match'];
   details?: Readonly<Record<string, unknown>>;
 }>;
 
@@ -174,6 +175,7 @@ export function projectCodexExternalSessionCandidateToAgent(
     ...(candidate.createdAtMs !== undefined ? { createdAtMs: candidate.createdAtMs } : {}),
     ...(candidate.archived !== undefined ? { archived: candidate.archived } : {}),
     ...(candidate.thread ? { thread: candidate.thread } : {}),
+    ...(candidate.match ? { match: candidate.match } : {}),
     ...(Object.keys(linkData).length > 0 ? { linkData } : {}),
   };
 }

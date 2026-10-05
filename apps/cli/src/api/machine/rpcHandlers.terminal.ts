@@ -286,8 +286,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!parsed.success) return err('terminal_invalid_request');
     if (
       params.deps?.requiredSessionId
-      && parsed.data.launch?.kind === 'session_attach'
-      && parsed.data.launch.sessionId !== params.deps.requiredSessionId
+      && (
+        (parsed.data.sessionId !== undefined && parsed.data.sessionId !== params.deps.requiredSessionId)
+        || (parsed.data.launch?.kind === 'session_attach' && parsed.data.launch.sessionId !== params.deps.requiredSessionId)
+      )
     ) return err('terminal_invalid_request');
 
     const cwd = resolveCwd(parsed.data.cwd);
@@ -302,7 +304,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       rows: parsed.data.rows,
       initialCommand: launch.initialCommand ?? parsed.data.initialCommand,
       ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
-      ...(params.deps?.requiredSessionId ? { sessionId: params.deps.requiredSessionId } : {}),
+      ...(params.deps?.requiredSessionId || parsed.data.sessionId
+        ? { sessionId: params.deps?.requiredSessionId ?? parsed.data.sessionId }
+        : {}),
     });
   });
 

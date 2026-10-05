@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ScrollViewProps } from 'react-native';
 import type { useUnistyles } from 'react-native-unistyles';
 
-import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeRowSelection } from '@/components/projects/files/WorkspaceRepositoryTreeList';
+import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeRowProposal, type WorkspaceRepositoryTreeRowSelection } from '@/components/projects/files/WorkspaceRepositoryTreeList';
 import type { FilesystemBrowserRowActionsControl } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import {
     activeReviewFileKeyForSession,
@@ -26,8 +26,13 @@ export type GitChangesTreeProps = Readonly<{
     snapshot: ScmWorkingSnapshot;
     /** The files of the current scope (each one of `selectScmChangedFiles(snapshot)`). */
     files: readonly ScmFileStatus[];
+    preferredPaths?: ReadonlySet<string>;
     selectedPaths: ReadonlySet<string>;
     selectionEnabled: boolean;
+    /** While a proposed commit is selected the checkboxes keep their meaning but do not write. */
+    selectionReadOnly?: boolean;
+    /** The selected proposed commit's exact files, as the list highlights them (lab WT4-C2). */
+    proposal?: Readonly<{ paths: ReadonlySet<string>; notes: ReadonlyMap<string, string> }> | null;
     onToggleFile: (file: ScmFileStatus) => void;
     /** Every changed file beneath a folder, and whether to select (true) or clear (false) them. */
     onToggleFolder: (paths: readonly string[], select: boolean) => void;
@@ -63,8 +68,9 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
     );
     const folderByPath = React.useMemo(() => {
         const selected = Array.from(selectedPaths);
-        return new Map(selectScmFolderSelections(scopedSnapshot, selected).map((folder) => [folder.path, folder]));
-    }, [scopedSnapshot, selectedPaths]);
+        const selectableSnapshot = narrowScmSnapshotToPaths(scopedSnapshot, new Set(Array.from(fileByPath.values()).filter((file) => file.status !== 'conflicted').map((file) => file.fullPath)));
+        return new Map(selectScmFolderSelections(selectableSnapshot, selected).map((folder) => [folder.path, folder]));
+    }, [scopedSnapshot, selectedPaths, fileByPath]);
     const selectionRevision = React.useMemo(
         () => Array.from(folderByPath.values(), (folder) => `${folder.path}:${folder.state}`).join('|')
             + `#${Array.from(selectedPaths).sort().join('|')}`,
@@ -78,6 +84,10 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
         if (!selectionEnabled) return null;
         return {
             revision: selectionRevision,
+            isSelectable: (node) => node.type === 'directory'
+                ? (latestRef.current.folderByPath.get(node.path)?.filePaths.length ?? 0) > 0
+                : latestRef.current.fileByPath.get(node.path)?.status !== 'conflicted',
+            ...(props.selectionReadOnly ? { isDisabled: () => true } : {}),
             getState: (node: LazyDirectoryTreeNode) => {
                 const current = latestRef.current;
                 if (node.type === 'directory') return stateOf(current.folderByPath.get(node.path)?.state);
@@ -91,13 +101,13 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
                     return;
                 }
                 const file = current.fileByPath.get(node.path);
-                if (file) current.onToggleFile(file);
+                if (file && file.status !== 'conflicted') current.onToggleFile(file);
             },
             accessibilityLabel: (node: LazyDirectoryTreeNode) => node.type === 'directory'
                 ? t('sessionGitDisplay.selectFolder', { folder: node.name })
                 : t('sessionGitDisplay.selectFile', { file: node.name }),
         };
-    }, [selectionEnabled, selectionRevision]);
+    }, [selectionEnabled, selectionRevision, props.selectionReadOnly]);
 
     const renderTrailing = props.renderTrailingActions;
     const renderRowActions = React.useMemo(() => {
@@ -120,6 +130,12 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
         [activeReviewPath],
     );
 
+    const proposal = props.proposal ?? null;
+    const rowProposal = React.useMemo((): WorkspaceRepositoryTreeRowProposal | null => (proposal ? {
+        ...proposal,
+        revision: [...proposal.paths].sort().map((path) => `${path}:${proposal.notes.get(path) ?? ''}`).join('|'),
+    } : null), [proposal]);
+
     const scope = React.useMemo(() => ({
         serverId: props.serverId ?? '',
         machineId: props.machineId ?? '',
@@ -132,6 +148,7 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
             scope={scope}
             scmSnapshot={scopedSnapshot}
             changedOnly
+            preferredChangedPaths={props.preferredPaths}
             directoryListing={false}
             expandedPaths={NO_EXPANDED_PATHS}
             onExpandedPathsChange={noop}
@@ -140,6 +157,7 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
             selectedPath={activeReviewPath}
             revealRequest={revealRequest}
             rowSelection={rowSelection}
+            rowProposal={rowProposal}
             renderRowActions={renderRowActions}
             listFooter={props.listFooter}
             onLayout={props.onLayout}

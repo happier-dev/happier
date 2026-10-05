@@ -9,11 +9,14 @@ import {
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
   readConnectedServiceLimitCategoryV1,
   ProviderBrokerAdmissionFailureCodeV1Schema,
+  SPAWN_SESSION_ERROR_CODES,
   SessionRuntimeIssueSourceV1Schema,
   SessionRuntimeTeamCredentialDenialDetailsV1Schema,
 } from '@happier-dev/protocol';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
+import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
+import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 
 export type PrimarySessionRuntimeIssueCause =
@@ -424,6 +427,7 @@ function readTeamCredentialDenial(error: unknown): TeamCredentialDenial | null {
 export function classifyPrimarySessionRuntimeIssue(
   input: ClassifyPrimarySessionRuntimeIssueInput,
 ): SessionRuntimeIssueV1 {
+  const errorCode = inspectOwnErrorCodeDataProperty(input.error);
   const runtimeAuthClassification = readRuntimeAuthClassification(input.error);
   const runtimeAuthUsageLimit = buildUsageLimitDetailsFromRuntimeAuthClassification(
     runtimeAuthClassification,
@@ -437,7 +441,12 @@ export function classifyPrimarySessionRuntimeIssue(
   // act on, so it outranks the Agent-shaped cause that carried it.
   const teamCredentialDenial = readTeamCredentialDenial(input.error);
   const teamCredential = teamCredentialDenial?.details ?? null;
-  const source = teamCredentialDenial
+  const missingCli = !teamCredentialDenial
+    && errorCode.kind === 'string'
+    && errorCode.value === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING;
+  const source = missingCli
+    ? 'dependency_failure' as const
+    : teamCredentialDenial
     ? 'team_credential' as const
     : runtimeAuthSource
     ? runtimeAuthSource
@@ -463,13 +472,14 @@ export function classifyPrimarySessionRuntimeIssue(
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: temporaryThrottle ? 'provider_temporary_throttle' : source,
+    code: missingCli ? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING : temporaryThrottle ? 'provider_temporary_throttle' : source,
     source,
     occurredAt,
     ...(sessionSeq === null ? {} : { sessionSeq }),
     ...(agentId === null ? {} : { agentId }),
     ...(agentTurnId === null ? {} : { agentTurnId }),
-    sanitizedPreview: buildSafeModelNotFoundPreview(input.error)
+    sanitizedPreview: (missingCli ? AGENT_CLI_MISSING_PREVIEW : null)
+      ?? buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests' : sanitizedPreviewBySource[source]),
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),

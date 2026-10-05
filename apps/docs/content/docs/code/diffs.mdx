@@ -53,7 +53,127 @@ The **All** action is scope-aware:
 - in Session-attributed changes, it selects only files in that session scope;
 - in Selected for commit, it keeps the selection bounded to the already selected set.
 
-Repository view remains the source of truth. Turn/session scopes are convenience filters that depend on the quality of provider/runtime attribution.
+Repository view remains the source of truth for pending work. These turn/session
+list filters depend on the quality of Agent/runtime attribution. They are
+distinct from the captured comparisons used by the development Walkthrough
+feature below.
+
+## Walk through changes
+
+<Callout type="info">
+  Walkthroughs describe **unreleased 0.3 development behavior**. The reading,
+  editing and generation paths are implemented, but integrated runtime and
+  platform validation is still in progress, including the captured comparison
+  and review journeys.
+</Callout>
+
+You need a reachable session machine, permission to control its analysis Runs,
+and an offered Summary model that supports structured output. An unavailable or
+unverified model cannot start a walkthrough. Chat continuation is a separate
+capability, so a model that can write an explanation may not support discussion.
+
+Choose **Walk me through** on a turn's changes card, or open **Walkthrough** from
+the comparison surface. Pending changes in Git, Companion's Changes glance, the
+command palette and a Walkthrough board widget also open that surface. Opening
+it does not run a model. Select a model and choose **Start** when you want an
+explanation; an existing saved result can reopen without generation.
+
+The explanation is an ordered set of stops, with prose beside the captured code.
+Use **Contents** to jump between stops, or expand **Overview** for the code map.
+**Other changes** keeps changes outside the story reachable. Generated files and
+lockfiles stay in the inventory and begin collapsed; binary or unreadable content
+keeps its availability notice. A missing patch is not evidence of an empty file.
+
+**Files** and **Walkthrough** share the comparison destination. In Files,
+**Explain** displays a one-sentence gist beside the corresponding hunk, with
+**Read in Walkthrough** to open the full explanation. On phones the note follows
+its hunk. A secondary stop on the same hunk shows only its title, and repeated
+stops are deduplicated within each file. These notes use the same saved explanation
+and personal reviewed marks; they do not generate a second explanation.
+The turn card's **Open in Files** keeps the selected turn, even after a later turn.
+List/tree presentation shares the existing changed-files preference with Git.
+
+### What the comparison means
+
+Pending changes include staged, unstaged and untracked work. A captured **This
+session** comparison measures net change from the initial pre-dispatch checkpoint
+to the captured current worktree: initial dirt is the baseline, and a later
+reversion disappears from the net change. Missing initial evidence is reported
+as unavailable; it does not substitute pending changes. A checkpoint turn compares
+that turn's endpoints. Agent-reported turn fragments remain labelled incomplete.
+Exact repository content does not prove that the Session Agent authored it all.
+
+In this development integration, **This session**, branch, commit and PR Files
+use captured inventory. Branch comparisons use merge-base to head; commits use
+their selected parent (a merge needs an explicit parent); PR evidence uses its
+source-attested endpoints. These comparisons open in the shared Files destination;
+the scope picker also keeps the current comparison reachable. An unpinned turn
+can use its existing turn evidence projection. A changed-files list is not proof
+of complete captured evidence, and the composed live journey remains unverified.
+
+### Coverage and your reviewed marks
+
+The surface distinguishes source availability, model analysis and **your** review.
+An inventory can be incomplete even after the requested explanation finishes.
+Large analyses can continue in parts in one conversation; failure or cancellation
+keeps earlier prose and available evidence. Unanalysed changes remain visible.
+
+Choose **Mark reviewed** explicitly after reading a stop; select its reviewed
+control again to clear the mark. Marks sync with your Account for the exact
+comparison. Generating prose, resolving a finding or opening code does not mark
+it reviewed. Loading marks is an unknown state, not a confirmed zero count.
+Refreshing to a different code basis does not transfer marks by similar lines.
+
+### Edit or discuss a saved walkthrough
+
+Use **Edit walkthrough** to change titles or explanations, reorder stops, or
+merge with the next stop. **Refine** asks the model to revise selected output;
+**Undo** restores the immediate previous output change. These operations compare
+the saved revision. If another device edited it first, your draft stays available:
+choose **Load latest version**, review the differences and save again. A late
+model response cannot replace a newer manual edit.
+
+**Ask about this** hands the stop to the existing Session composer with the
+generator as recipient. **Open the walkthrough conversation** opens its actual
+Run transcript. Asking an ordinary question does not itself replace saved prose.
+When continuation is unavailable, **Start a new conversation** selects a pending
+recipient; your first message starts a labelled conversation seeded from the
+saved explanation and evidence. **Ask this session** targets the Session Agent.
+
+Saved results live on their owning machine beyond the generator's lifetime.
+Already-loaded content can remain readable while that machine is unavailable;
+fresh capture, generation, editing and commit acceptance need reconnection.
+Cold offline recovery is not guaranteed.
+
+### Preparation, costs and Clear
+
+In **Settings → Source control**, **Summary model** selects an offered model.
+**Prepare after each turn** is off by default and applies only to
+completed durable checkpoint turns, not pending changes or PRs. The seven-day
+cost is a subtotal from retained Run reports, not a complete charge ledger.
+It is labelled partial when priced records exist, or unavailable when none do.
+
+**Clear** names the selected machine and confirms loss of saved edits and the
+associated personal marks. It does not clear other machines or review findings.
+An unavailable machine or a revision conflict can leave results undeleted, with
+partial failures reported. Failed mark cleanup keeps the result so you can retry;
+a concurrent edit can preserve the result after its marks were cleared. Clear is
+not an atomic operation across your Account and machine.
+
+### Review narration
+
+The development review contract can request a walkthrough after findings are
+published. Findings remain usable if narration fails. One eligible reviewer can
+continue; several reviewers or a findings-only reviewer use one selected narrator.
+A seeded narrator reads the diffs and findings without claiming another review.
+Updating a findings overlay does not regenerate prose; explaining findings is an
+explicit request. Failed, partial or stale reviews are not clean reviews.
+
+The review dialog and finished-review **Walk me through this** integration are
+implemented, with composed live validation still open. **Start review** uses the
+shared review launcher, forwards the captured comparison and defaults walkthrough
+output on from Files and Walkthrough. See [Review comments](/code/review-comments)
+for the established findings and comment workflow.
 
 ## Opening a file diff
 

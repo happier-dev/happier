@@ -33,6 +33,8 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     bug: 'bug',
     pin: 'push-pin',
     conversations: 'chats-circle',
+    waveform: 'waveform',
+    desktop: 'desktop',
     pause: 'pause-circle',
     failure: 'warning-circle',
     unavailable: 'cloud-slash',

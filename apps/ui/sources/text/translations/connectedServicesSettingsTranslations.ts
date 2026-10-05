@@ -2,7 +2,32 @@
  * Copy for the Connected services settings pages (index, service, account and pool pages) in their
  * configuration-surface composition. Kept in its own module so the pages' copy moves as one unit.
  */
+// English placeholders for new setup copy are deliberately shared until locale review.
+const setupFidelityCopy = {
+    catalogClaude: 'Pro or Max plan. Sign in with a browser, or paste a setup token.',
+    catalogChatGpt: 'Plus, Pro or Team plan. Sign in with a code or a browser.',
+    catalogGemini: 'API key or a Google Cloud service account.',
+    catalogAnthropic: 'Pay per use, billed to your Anthropic organization.',
+    catalogOpenAi: 'Pay per use, billed to your OpenAI organization.',
+    keyCreateAnthropic: 'Create a key in the Anthropic console',
+    keyBillingAnthropic: 'Use is billed to that Anthropic organization. API keys report no limits, so Happier can’t show what’s left.',
+    keyShapeAnthropic: 'Looks like an Anthropic key',
+    keyOpenConsole: 'Open console',
+    keyPaste: 'Paste it here',
+    keyName: 'Name it',
+    keyNameOptional: 'Optional. Shown wherever the key is chosen.',
+    keyAdd: 'Add key',
+    keyReveal: 'Show key',
+    keyHide: 'Hide key',
+    keyClear: 'Clear key',
+    methodBrowser: 'With a browser',
+    methodCode: 'With a code',
+    methodToken: 'With a setup token',
+    methodRecommended: 'Recommended',
+};
+
 const en = {
+    ...setupFidelityCopy,
     accountCount: ({ count }: { count: number }) => count === 1 ? '1 account' : `${count} accounts`,
     defaultAccount: ({ name }: { name: string }) => `Default: ${name}`,
     poolCount: ({ count }: { count: number }) => count === 1 ? '1 pool' : `${count} pools`,
@@ -121,6 +146,7 @@ const en = {
     detailLeavePool: ({ pool }: { pool: string }) => `Remove from ${pool}…`,
     detailRemovePooledNote: ({ pool }: { pool: string }) => `${pool} uses this account; remove it from the pool first. Removing deletes it from your account and every machine.`,
     detailUsageSignedOut: 'Last known · can’t refresh while signed out',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Last known at ${time} · can’t refresh while signed out`,
     detailResetsIn: ({ countdown }: { countdown: string }) => `in ${countdown}`,
     detailUsedByTitle: 'Used by',
     detailUsedByDefault: 'Its default account',
@@ -149,6 +175,7 @@ const en = {
 type ConnectedServicesSettingsCopy = typeof en;
 
 const ca: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 compte' : `${count} comptes`,
     defaultAccount: ({ name }) => `Per defecte: ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 grup' : `${count} grups`,
@@ -267,6 +294,7 @@ const ca: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Treu-lo de ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} fa servir aquest compte; primer treu-lo del conjunt. Suprimir-lo l’esborra del teu compte i de totes les màquines.`,
     detailUsageSignedOut: 'Últim valor conegut · no es pot actualitzar sense sessió',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Últim valor conegut a les ${time} · no es pot actualitzar sense sessió`,
     detailResetsIn: ({ countdown }) => `d’aquí a ${countdown}`,
     detailUsedByTitle: 'El fan servir',
     detailUsedByDefault: 'El seu compte predeterminat',
@@ -293,6 +321,7 @@ const ca: ConnectedServicesSettingsCopy = {
 };
 
 const de: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 Konto' : `${count} Konten`,
     defaultAccount: ({ name }) => `Standard: ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 Pool' : `${count} Pools`,
@@ -411,6 +440,7 @@ const de: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Aus ${pool} entfernen…`,
     detailRemovePooledNote: ({ pool }) => `${pool} nutzt dieses Konto; entferne es zuerst aus dem Pool. Entfernen löscht es aus deinem Konto und von jeder Maschine.`,
     detailUsageSignedOut: 'Zuletzt bekannt · ohne Anmeldung keine Aktualisierung',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Zuletzt bekannt um ${time} · ohne Anmeldung keine Aktualisierung`,
     detailResetsIn: ({ countdown }) => `in ${countdown}`,
     detailUsedByTitle: 'Genutzt von',
     detailUsedByDefault: 'Sein Standardkonto',
@@ -437,6 +467,7 @@ const de: ConnectedServicesSettingsCopy = {
 };
 
 const es: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 cuenta' : `${count} cuentas`,
     defaultAccount: ({ name }) => `Predeterminada: ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 grupo' : `${count} grupos`,
@@ -555,6 +586,7 @@ const es: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Quitar de ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} usa esta cuenta; quítala primero del grupo. Eliminarla la borra de tu cuenta y de todas las máquinas.`,
     detailUsageSignedOut: 'Último valor conocido · no se puede actualizar sin sesión',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Último valor conocido a las ${time} · no se puede actualizar sin sesión`,
     detailResetsIn: ({ countdown }) => `en ${countdown}`,
     detailUsedByTitle: 'Lo usan',
     detailUsedByDefault: 'Su cuenta predeterminada',
@@ -581,6 +613,7 @@ const es: ConnectedServicesSettingsCopy = {
 };
 
 const fr: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 compte' : `${count} comptes`,
     defaultAccount: ({ name }) => `Par défaut : ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 pool' : `${count} pools`,
@@ -699,6 +732,7 @@ const fr: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Retirer de ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} utilise ce compte ; retirez-le d’abord du groupe. Le supprimer l’efface de votre compte et de chaque machine.`,
     detailUsageSignedOut: 'Dernière valeur connue · actualisation impossible sans connexion',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Dernière valeur connue à ${time} · actualisation impossible sans connexion`,
     detailResetsIn: ({ countdown }) => `dans ${countdown}`,
     detailUsedByTitle: 'Utilisé par',
     detailUsedByDefault: 'Son compte par défaut',
@@ -725,6 +759,7 @@ const fr: ConnectedServicesSettingsCopy = {
 };
 
 const it: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 account' : `${count} account`,
     defaultAccount: ({ name }) => `Predefinito: ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 pool' : `${count} pool`,
@@ -843,6 +878,7 @@ const it: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Rimuovi da ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} usa questo account; rimuovilo prima dal gruppo. Rimuoverlo lo elimina dal tuo account e da ogni macchina.`,
     detailUsageSignedOut: 'Ultimo valore noto · non aggiornabile senza accesso',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Ultimo valore noto alle ${time} · non aggiornabile senza accesso`,
     detailResetsIn: ({ countdown }) => `tra ${countdown}`,
     detailUsedByTitle: 'Usato da',
     detailUsedByDefault: 'Il suo account predefinito',
@@ -869,6 +905,7 @@ const it: ConnectedServicesSettingsCopy = {
 };
 
 const ja: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => `${count} 件のアカウント`,
     defaultAccount: ({ name }) => `デフォルト: ${name}`,
     poolCount: ({ count }) => `${count} 件のプール`,
@@ -987,6 +1024,7 @@ const ja: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `${pool} から外す…`,
     detailRemovePooledNote: ({ pool }) => `${pool} がこのアカウントを使っています。先にプールから外してください。削除するとアカウントとすべてのマシンから消えます。`,
     detailUsageSignedOut: '最終取得値 · サインアウト中は更新できません',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `${time}の最終取得値 · サインアウト中は更新できません`,
     detailResetsIn: ({ countdown }) => `あと ${countdown}`,
     detailUsedByTitle: '使用中のエージェント',
     detailUsedByDefault: '既定のアカウント',
@@ -1013,6 +1051,7 @@ const ja: ConnectedServicesSettingsCopy = {
 };
 
 const pl: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 konto' : `Konta: ${count}`,
     defaultAccount: ({ name }) => `Domyślne: ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 pula' : `Pule: ${count}`,
@@ -1131,6 +1170,7 @@ const pl: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Usuń z ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} używa tego konta; najpierw usuń je z puli. Usunięcie kasuje je z konta i ze wszystkich maszyn.`,
     detailUsageSignedOut: 'Ostatnio znane · bez logowania nie można odświeżyć',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Ostatnio znane o ${time} · bez logowania nie można odświeżyć`,
     detailResetsIn: ({ countdown }) => `za ${countdown}`,
     detailUsedByTitle: 'Używane przez',
     detailUsedByDefault: 'Jego domyślne konto',
@@ -1157,6 +1197,7 @@ const pl: ConnectedServicesSettingsCopy = {
 };
 
 const pt: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => count === 1 ? '1 conta' : `${count} contas`,
     defaultAccount: ({ name }) => `Padrão: ${name}`,
     poolCount: ({ count }) => count === 1 ? '1 grupo' : `${count} grupos`,
@@ -1275,6 +1316,7 @@ const pt: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Remover de ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} usa esta conta; remova-a primeiro do grupo. Remover apaga da sua conta e de todas as máquinas.`,
     detailUsageSignedOut: 'Último valor conhecido · não atualiza sem login',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Último valor conhecido às ${time} · não atualiza sem login`,
     detailResetsIn: ({ countdown }) => `em ${countdown}`,
     detailUsedByTitle: 'Usado por',
     detailUsedByDefault: 'A conta padrão dele',
@@ -1301,6 +1343,7 @@ const pt: ConnectedServicesSettingsCopy = {
 };
 
 const ru: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => `Аккаунтов: ${count}`,
     defaultAccount: ({ name }) => `По умолчанию: ${name}`,
     poolCount: ({ count }) => `Пулов: ${count}`,
@@ -1419,6 +1462,7 @@ const ru: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `Убрать из ${pool}…`,
     detailRemovePooledNote: ({ pool }) => `${pool} использует этот аккаунт; сначала уберите его из пула. Удаление стирает его из аккаунта и со всех машин.`,
     detailUsageSignedOut: 'Последние известные данные · без входа обновить нельзя',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `Последние известные данные на ${time} · без входа обновить нельзя`,
     detailResetsIn: ({ countdown }) => `через ${countdown}`,
     detailUsedByTitle: 'Используют',
     detailUsedByDefault: 'Аккаунт по умолчанию',
@@ -1445,6 +1489,7 @@ const ru: ConnectedServicesSettingsCopy = {
 };
 
 const zhHans: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => `${count} 个账号`,
     defaultAccount: ({ name }) => `默认：${name}`,
     poolCount: ({ count }) => `${count} 个账号池`,
@@ -1563,6 +1608,7 @@ const zhHans: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `从 ${pool} 移除…`,
     detailRemovePooledNote: ({ pool }) => `${pool} 正在使用此账户，请先将其从账户池中移除。移除会将其从你的账户和所有机器上删除。`,
     detailUsageSignedOut: '上次已知 · 退出登录时无法刷新',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `上次已知时间 ${time} · 退出登录时无法刷新`,
     detailResetsIn: ({ countdown }) => `${countdown} 后`,
     detailUsedByTitle: '使用者',
     detailUsedByDefault: '其默认账户',
@@ -1589,6 +1635,7 @@ const zhHans: ConnectedServicesSettingsCopy = {
 };
 
 const zhHant: ConnectedServicesSettingsCopy = {
+    ...setupFidelityCopy,
     accountCount: ({ count }) => `${count} 個帳號`,
     defaultAccount: ({ name }) => `預設：${name}`,
     poolCount: ({ count }) => `${count} 個帳號池`,
@@ -1707,6 +1754,7 @@ const zhHant: ConnectedServicesSettingsCopy = {
     detailLeavePool: ({ pool }) => `從 ${pool} 移除…`,
     detailRemovePooledNote: ({ pool }) => `${pool} 正在使用此帳號，請先將其從帳號池中移除。移除會將其從你的帳號和所有機器上刪除。`,
     detailUsageSignedOut: '上次已知 · 登出時無法重新整理',
+    detailUsageSignedOutAt: ({ time }: { time: string }) => `上次已知時間 ${time} · 登出時無法重新整理`,
     detailResetsIn: ({ countdown }) => `${countdown} 後`,
     detailUsedByTitle: '使用者',
     detailUsedByDefault: '其預設帳號',
@@ -1733,5 +1781,6 @@ const zhHant: ConnectedServicesSettingsCopy = {
 };
 
 export const connectedServicesSettingsTranslations = {
-    en, ca, de, es, fr, it, ja, pl, pt, ru, zhHans, zhHant,
+    en,
+    ca, de, es, fr, it, ja, pl, pt, ru, zhHans, zhHant,
 };

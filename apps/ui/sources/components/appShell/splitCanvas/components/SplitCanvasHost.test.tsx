@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { createSplitCanvasState, splitCanvasReduce } from '../model/splitCanvasReducer';
-import type { SplitCanvasDropTarget, SplitCanvasLeafNode, SplitCanvasNode, SplitCanvasState } from '../model/splitCanvasTypes';
+import type { SplitCanvasLeafNode, SplitCanvasNode, SplitCanvasState } from '../model/splitCanvasTypes';
 import type { SplitCanvasHostControls } from './SplitCanvasHost';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -14,18 +14,6 @@ installPanelCommonModuleMocks();
 afterEach(() => {
     vi.unstubAllGlobals();
 });
-
-const webDropTargetViewSpy = vi.hoisted(() => vi.fn((props: any) => React.createElement('WebDropTargetView', props, props.children)));
-const splitCanvasDividerSpy = vi.hoisted(() => vi.fn((props: any) => React.createElement('SplitCanvasDivider', props, props.children)));
-
-vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
-    WebDropTargetView: (props: any) => webDropTargetViewSpy(props),
-}));
-
-vi.mock('./SplitCanvasDivider', () => ({
-    SplitCanvasDivider: (props: any) => splitCanvasDividerSpy(props),
-    SPLIT_CANVAS_DIVIDER_SIZE_PX: { row: 10, column: 18 },
-}));
 
 function createLeaf(id: string) {
     return {
@@ -78,6 +66,11 @@ function findLeafFrameInstance(screen: Awaited<ReturnType<typeof renderScreen>>,
     );
 }
 
+function findDivider(screen: Awaited<ReturnType<typeof renderScreen>>, splitId: string) {
+    return screen.find((instance) => instance.props.splitId === splitId
+        && typeof instance.props.onDragRatio === 'function');
+}
+
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
         return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
@@ -101,6 +94,55 @@ function findAncestorWithFlattenedStyle(
 }
 
 describe('SplitCanvasHost', () => {
+    it('preserves member state when the same member moves between leaves', async () => {
+        const { SplitCanvasHost } = await import('./SplitCanvasHost');
+        let mounts = 0;
+        function MemberProbe() {
+            const [mount] = React.useState(() => ++mounts);
+            const [draft, setDraft] = React.useState('initial');
+            return React.createElement('MemberProbe', { mount, draft, setDraft });
+        }
+        const state = createNestedState();
+        const dispatch = vi.fn();
+        const render = () => <MemberProbe />;
+        const tree = (leafId: string, maximizedLeafId: string | null = null) => <SplitCanvasHost state={{ ...state, maximizedLeafId }} dispatch={dispatch}
+            renderLeafHeader={() => null} retainedLeafContents={[{ id: 'member', leafId, isActive: true, render }]} />;
+        const screen = await renderScreen(tree('leaf-a'));
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', { nativeEvent: { layout: { width: 1000, height: 600 } } });
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-content-slot-leaf-a'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 50, width: 495, height: 550 } } });
+            invokeTestInstanceHandler(screen.findByTestId('split-canvas-content-slot-leaf-b'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 40, width: 495, height: 251 } } });
+        });
+        await act(async () => { screen.root.findByType('MemberProbe').props.setDraft('unsent'); });
+        const original = screen.root.findByType('MemberProbe').props.mount;
+        await act(async () => { screen.update(tree('leaf-b')); });
+        expect(screen.root.findByType('MemberProbe').props).toMatchObject({ mount: original, draft: 'unsent' });
+        expect(flattenStyle(screen.findByTestId('split-canvas-retained-content-member')?.props.style)).toMatchObject({ left: 505, top: 40, width: 495, height: 251 });
+        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-member:member'), 'onStartShouldSetResponderCapture', {});
+        expect(dispatch).toHaveBeenLastCalledWith({ type: 'focusLeaf', leafId: 'leaf-b' });
+        await act(async () => { screen.update(tree('leaf-b', 'leaf-a')); });
+        expect(screen.findByTestId('split-canvas-retained-content-member')?.props.pointerEvents).toBe('none');
+        await act(async () => { screen.update(tree('leaf-b')); });
+        expect(screen.root.findByType('MemberProbe').props).toMatchObject({ mount: original, draft: 'unsent' });
+        expect(mounts).toBe(1);
+    });
+    it('preserves an existing leaf mount when a new split changes its ancestry', async () => {
+        const { SplitCanvasHost } = await import('./SplitCanvasHost');
+        let sequence = 0;
+        function LeafProbe(props: Readonly<{ leafId: string }>) {
+            const [mount] = React.useState(() => ++sequence);
+            return React.createElement('LeafMount', { leafId: props.leafId, mount });
+        }
+        const leaf = createLeaf('leaf-a');
+        const renderLeaf = ({ leaf: current }: Readonly<{ leaf: SplitCanvasLeafNode<string> }>) => <LeafProbe leafId={current.id} />;
+        const state = { root: leaf, focusedLeafId: leaf.id, maximizedLeafId: null, maxLeaves: Infinity };
+        const screen = await renderScreen(<SplitCanvasHost state={state} dispatch={() => {}} renderLeaf={renderLeaf} />);
+        const original = screen.root.findByType('LeafMount').props.mount;
+        await act(async () => { screen.tree.update(<SplitCanvasHost state={{ ...state, root: {
+            id: 'split', kind: 'split', axis: 'row', ratio: 0.5, first: leaf, second: createLeaf('leaf-b'),
+        } }} dispatch={() => {}} renderLeaf={renderLeaf} />); });
+        expect(screen.root.findAllByType('LeafMount').find(node => node.props.leafId === leaf.id)?.props.mount).toBe(original);
+    });
     it('propagates visibility changes into a retained hidden subtree when its tree node stays unchanged', async () => {
         const { SplitCanvasHost } = await import('./SplitCanvasHost');
         const state = createNestedState();
@@ -322,246 +364,8 @@ describe('SplitCanvasHost', () => {
         expect(dispatch).toHaveBeenCalledWith({ type: 'focusLeaf', leafId: 'leaf-b' });
     });
 
-    it('uses one shared web drop target and resolves drop placement from host hit testing', async () => {
-        const dispatch = vi.fn();
-        const onLeafDrop = vi.fn();
-        const onActiveDropTargetChange = vi.fn();
 
-        const { SplitCanvasHost } = await import('./SplitCanvasHost');
 
-        const state: SplitCanvasState<string> = {
-            root: {
-                id: 'split-root',
-                kind: 'split',
-                axis: 'row',
-                ratio: 0.5,
-                first: createLeaf('leaf-a'),
-                second: createLeaf('leaf-b'),
-            } satisfies SplitCanvasNode<string>,
-            focusedLeafId: 'leaf-a',
-            maximizedLeafId: null,
-            maxLeaves: 4,
-        };
-
-        const screen = await renderScreen(
-            <SplitCanvasHost
-                state={state}
-                dispatch={dispatch}
-                renderLeaf={({ leaf }) => React.createElement('LeafContent', { leafId: leaf.id })}
-                getLeafMinimumSizePx={(leaf) => ({ width: leaf.id === 'leaf-b' ? 250 : 100, height: 180 })}
-                onActiveDropTargetChange={onActiveDropTargetChange}
-                onLeafDrop={onLeafDrop}
-            />,
-        );
-
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-host'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    width: 800,
-                    height: 400,
-                },
-            },
-        });
-
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-a'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 0,
-                    width: 400,
-                    height: 400,
-                },
-            },
-        });
-
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-b'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 400,
-                    y: 0,
-                    width: 400,
-                    height: 400,
-                },
-            },
-        });
-
-        const dropTargets = screen.tree.root.findAllByType('WebDropTargetView');
-        expect(dropTargets).toHaveLength(1);
-
-        const dropTarget = dropTargets[0];
-
-        await act(async () => {
-            dropTarget.props.onDragOver?.({
-                clientX: 412,
-                clientY: 120,
-                preventDefault: vi.fn(),
-                currentTarget: {
-                    getBoundingClientRect: () => ({
-                        left: 0,
-                        top: 0,
-                        width: 800,
-                        height: 400,
-                    }),
-                },
-            });
-        });
-
-        expect(onActiveDropTargetChange).toHaveBeenCalledWith({
-            leafId: 'leaf-b',
-            placement: 'left',
-        } satisfies SplitCanvasDropTarget);
-
-        await act(async () => {
-            dropTarget.props.onDrop?.({
-                clientX: 412,
-                clientY: 120,
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-                dataTransfer: {
-                    getData: () => JSON.stringify({ sessionId: 'sess_2' }),
-                },
-                currentTarget: {
-                    getBoundingClientRect: () => ({
-                        left: 0,
-                        top: 0,
-                        width: 800,
-                        height: 400,
-                    }),
-                },
-            });
-        });
-
-        expect(onLeafDrop).toHaveBeenCalledWith({
-            payload: JSON.stringify({ sessionId: 'sess_2' }),
-            target: {
-                leafId: 'leaf-b',
-                placement: 'left',
-            },
-            availableSizePx: 390,
-            minimumExistingSizePx: 250,
-        });
-        expect(onActiveDropTargetChange).toHaveBeenLastCalledWith(null);
-    });
-
-    it('does not recompute unaffected leaf content when only the active drop target changes', async () => {
-        const dispatch = vi.fn();
-        const renderCounts = new Map<string, number>();
-        const renderLeaf = ({ leaf }: Readonly<{ leaf: SplitCanvasLeafNode }>) => {
-            renderCounts.set(leaf.id, (renderCounts.get(leaf.id) ?? 0) + 1);
-            return React.createElement('LeafContent', { leafId: leaf.id });
-        };
-
-        const { SplitCanvasHost } = await import('./SplitCanvasHost');
-
-        const state: SplitCanvasState<string> = {
-            root: {
-                id: 'split-root',
-                kind: 'split',
-                axis: 'row',
-                ratio: 0.5,
-                first: createLeaf('leaf-a'),
-                second: createLeaf('leaf-b'),
-            } satisfies SplitCanvasNode<string>,
-            focusedLeafId: 'leaf-a',
-            maximizedLeafId: null,
-            maxLeaves: 4,
-        };
-
-        const screen = await renderScreen(
-            <SplitCanvasHost
-                state={state}
-                dispatch={dispatch}
-                renderLeaf={renderLeaf}
-            />,
-        );
-
-        expect(renderCounts.get('leaf-a')).toBe(1);
-        expect(renderCounts.get('leaf-b')).toBe(1);
-
-        await act(async () => {
-            screen.tree.update(
-                <SplitCanvasHost
-                    state={state}
-                    dispatch={dispatch}
-                    renderLeaf={renderLeaf}
-                    activeDropTarget={{
-                        leafId: 'leaf-b',
-                        placement: 'right',
-                    }}
-                />,
-            );
-        });
-
-        expect(renderCounts.get('leaf-a')).toBe(1);
-        expect(renderCounts.get('leaf-b')).toBe(2);
-    });
-
-    it('does not remount leaf content when split drag availability toggles', async () => {
-        const dispatch = vi.fn();
-        const renderCounts = new Map<string, number>();
-        const renderLeaf = ({ leaf }: Readonly<{ leaf: SplitCanvasLeafNode }>) => {
-            renderCounts.set(leaf.id, (renderCounts.get(leaf.id) ?? 0) + 1);
-            return React.createElement('LeafContent', { leafId: leaf.id });
-        };
-
-        const { SplitCanvasHost } = await import('./SplitCanvasHost');
-
-        const state: SplitCanvasState<string> = {
-            root: {
-                id: 'split-root',
-                kind: 'split',
-                axis: 'row',
-                ratio: 0.5,
-                first: createLeaf('leaf-a'),
-                second: createLeaf('leaf-b'),
-            } satisfies SplitCanvasNode<string>,
-            focusedLeafId: 'leaf-a',
-            maximizedLeafId: null,
-            maxLeaves: 4,
-        };
-
-        const onActiveDropTargetChange = vi.fn();
-        const onLeafDrop = vi.fn();
-
-        const screen = await renderScreen(
-            <SplitCanvasHost
-                state={state}
-                dispatch={dispatch}
-                renderLeaf={renderLeaf}
-            />,
-        );
-
-        expect(renderCounts.get('leaf-a')).toBe(1);
-        expect(renderCounts.get('leaf-b')).toBe(1);
-
-        await act(async () => {
-            screen.tree.update(
-                <SplitCanvasHost
-                    state={state}
-                    dispatch={dispatch}
-                    renderLeaf={renderLeaf}
-                    onActiveDropTargetChange={onActiveDropTargetChange}
-                    onLeafDrop={onLeafDrop}
-                />,
-            );
-        });
-
-        expect(renderCounts.get('leaf-a')).toBe(1);
-        expect(renderCounts.get('leaf-b')).toBe(1);
-
-        await act(async () => {
-            screen.tree.update(
-                <SplitCanvasHost
-                    state={state}
-                    dispatch={dispatch}
-                    renderLeaf={renderLeaf}
-                />,
-            );
-        });
-
-        expect(renderCounts.get('leaf-a')).toBe(1);
-        expect(renderCounts.get('leaf-b')).toBe(1);
-    });
 
     it('does not recompute leaf content whose focused state did not change', async () => {
         const dispatch = vi.fn();
@@ -621,7 +425,7 @@ describe('SplitCanvasHost', () => {
         expect(renderCounts.get('leaf-c')).toBe(1);
     });
 
-    it('does not rerender hidden nested split chrome while another leaf is maximized', async () => {
+    it('hides nested split chrome while another leaf is maximized', async () => {
         const dispatch = vi.fn();
 
         const { SplitCanvasHost } = await import('./SplitCanvasHost');
@@ -636,11 +440,7 @@ describe('SplitCanvasHost', () => {
             />,
         );
 
-        expect(splitCanvasDividerSpy.mock.calls.map(([props]) => props.splitId)).toEqual(
-            expect.arrayContaining(['split-root', 'split-nested']),
-        );
-
-        splitCanvasDividerSpy.mockClear();
+        expect(screen.findByTestId('split-canvas-divider-split-nested')).not.toBeNull();
 
         await act(async () => {
             screen.tree.update(
@@ -655,7 +455,7 @@ describe('SplitCanvasHost', () => {
             );
         });
 
-        expect(splitCanvasDividerSpy.mock.calls.map(([props]) => props.splitId)).not.toContain('split-nested');
+        expect(screen.findByTestId('split-canvas-divider-split-nested')).toBeNull();
     });
 
     it('applies live divider ratios before committing them to the reducer', async () => {
@@ -685,7 +485,7 @@ describe('SplitCanvasHost', () => {
             />,
         );
 
-        const divider = screen.tree.root.findByType('SplitCanvasDivider');
+        const divider = findDivider(screen, 'split-root');
 
         await act(async () => {
             divider.props.onDragRatio?.(0.7, {
@@ -729,7 +529,7 @@ describe('SplitCanvasHost', () => {
             });
         });
 
-        const divider = screen.tree.root.findByType('SplitCanvasDivider');
+        const divider = findDivider(screen, 'split-measured');
         expect(divider.props.minRatio).toBeCloseTo(400 / 690);
         expect(divider.props.maxRatio).toBeCloseTo(1 - 100 / 690);
 
@@ -775,7 +575,7 @@ describe('SplitCanvasHost', () => {
             />,
         );
 
-        const divider = screen.tree.root.findByType('SplitCanvasDivider');
+        const divider = findDivider(screen, 'split-root');
 
         await act(async () => {
             divider.props.onDragRatio?.(0.6, null);
@@ -813,317 +613,6 @@ describe('SplitCanvasHost', () => {
         });
     });
 
-    it('resolves nested drop targets through shared host ref geometry instead of parent-relative leaf layouts', async () => {
-        const dispatch = vi.fn();
-        const onActiveDropTargetChange = vi.fn();
 
-        const { SplitCanvasHost } = await import('./SplitCanvasHost');
 
-        const screen = await renderScreen(
-            <SplitCanvasHost
-                state={createNestedState()}
-                dispatch={dispatch}
-                renderLeaf={({ leaf }) => React.createElement('LeafContent', { leafId: leaf.id })}
-                onActiveDropTargetChange={onActiveDropTargetChange}
-                onLeafDrop={vi.fn()}
-            />,
-        );
-
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-a'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 0,
-                    width: 400,
-                    height: 600,
-                },
-            },
-        });
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-b'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 0,
-                    width: 400,
-                    height: 300,
-                },
-            },
-        });
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-c'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 300,
-                    width: 400,
-                    height: 300,
-                },
-            },
-        });
-
-        const leafAFrame = findLeafFrameInstance(screen, 'leaf-a');
-        const leafBFrame = findLeafFrameInstance(screen, 'leaf-b');
-        const leafCFrame = findLeafFrameInstance(screen, 'leaf-c');
-
-        await act(async () => {
-            leafAFrame?.props.onHostRefChange?.(createLeafHostRect({
-                left: 0,
-                top: 0,
-                width: 400,
-                height: 600,
-            }));
-            leafBFrame?.props.onHostRefChange?.(createLeafHostRect({
-                left: 400,
-                top: 0,
-                width: 400,
-                height: 300,
-            }));
-            leafCFrame?.props.onHostRefChange?.(createLeafHostRect({
-                left: 400,
-                top: 300,
-                width: 400,
-                height: 300,
-            }));
-        });
-
-        const dropTarget = screen.tree.root.findByType('WebDropTargetView');
-
-        await act(async () => {
-            dropTarget.props.onDragOver?.({
-                clientX: 412,
-                clientY: 420,
-                preventDefault: vi.fn(),
-                currentTarget: {
-                    getBoundingClientRect: () => ({
-                        left: 0,
-                        top: 0,
-                        width: 800,
-                        height: 600,
-                    }),
-                },
-            });
-        });
-
-        expect(onActiveDropTargetChange).toHaveBeenLastCalledWith({
-            leafId: 'leaf-c',
-            placement: 'left',
-        } satisfies SplitCanvasDropTarget);
-    });
-
-    it('clears stale shared host geometry after leaf removal so nested drops target surviving leaves', async () => {
-        const dispatch = vi.fn();
-        const onActiveDropTargetChange = vi.fn();
-
-        const { SplitCanvasHost } = await import('./SplitCanvasHost');
-
-        const screen = await renderScreen(
-            <SplitCanvasHost
-                state={createNestedState()}
-                dispatch={dispatch}
-                renderLeaf={({ leaf }) => React.createElement('LeafContent', { leafId: leaf.id })}
-                onActiveDropTargetChange={onActiveDropTargetChange}
-                onLeafDrop={vi.fn()}
-            />,
-        );
-
-        const registerNestedLeafHosts = async () => {
-            const leafAFrame = findLeafFrameInstance(screen, 'leaf-a');
-            const leafBFrame = findLeafFrameInstance(screen, 'leaf-b');
-            const leafCFrame = findLeafFrameInstance(screen, 'leaf-c');
-
-            await act(async () => {
-                leafAFrame?.props.onHostRefChange?.(createLeafHostRect({
-                    left: 0,
-                    top: 0,
-                    width: 400,
-                    height: 600,
-                }));
-                leafBFrame?.props.onHostRefChange?.(createLeafHostRect({
-                    left: 400,
-                    top: 0,
-                    width: 400,
-                    height: 300,
-                }));
-                leafCFrame?.props.onHostRefChange?.(createLeafHostRect({
-                    left: 400,
-                    top: 300,
-                    width: 400,
-                    height: 300,
-                }));
-            });
-
-            return {
-                leafBFrame,
-                leafCFrame,
-            };
-        };
-
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-a'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 0,
-                    width: 400,
-                    height: 600,
-                },
-            },
-        });
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-b'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 0,
-                    width: 400,
-                    height: 300,
-                },
-            },
-        });
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-c'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 0,
-                    y: 300,
-                    width: 400,
-                    height: 300,
-                },
-            },
-        });
-
-        const initialLeafFrames = await registerNestedLeafHosts();
-
-        await act(async () => {
-            initialLeafFrames.leafCFrame?.props.onHostRefChange?.(null);
-            screen.tree.update(
-                <SplitCanvasHost
-                    state={{
-                        root: {
-                            id: 'split-root',
-                            kind: 'split',
-                            axis: 'row',
-                            ratio: 0.5,
-                            first: createLeaf('leaf-a'),
-                            second: createLeaf('leaf-b'),
-                        },
-                        focusedLeafId: 'leaf-a',
-                        maximizedLeafId: null,
-                        maxLeaves: 4,
-                    }}
-                    dispatch={dispatch}
-                    renderLeaf={({ leaf }) => React.createElement('LeafContent', { leafId: leaf.id })}
-                    onActiveDropTargetChange={onActiveDropTargetChange}
-                    onLeafDrop={vi.fn()}
-                />,
-            );
-        });
-
-        invokeTestInstanceHandler(screen.findByTestId('split-canvas-leaf-interaction-surface-leaf-b'), 'onLayout', {
-            nativeEvent: {
-                layout: {
-                    x: 400,
-                    y: 0,
-                    width: 400,
-                    height: 600,
-                },
-            },
-        });
-
-        const nextLeafBFrame = findLeafFrameInstance(screen, 'leaf-b');
-
-        await act(async () => {
-            nextLeafBFrame?.props.onHostRefChange?.(createLeafHostRect({
-                left: 400,
-                top: 0,
-                width: 400,
-                height: 600,
-            }));
-        });
-
-        const dropTarget = screen.tree.root.findByType('WebDropTargetView');
-
-        await act(async () => {
-            dropTarget.props.onDragOver?.({
-                clientX: 412,
-                clientY: 420,
-                preventDefault: vi.fn(),
-                currentTarget: {
-                    getBoundingClientRect: () => ({
-                        left: 0,
-                        top: 0,
-                        width: 800,
-                        height: 600,
-                    }),
-                },
-            });
-        });
-
-        expect(onActiveDropTargetChange).toHaveBeenLastCalledWith({
-            leafId: 'leaf-b',
-            placement: 'left',
-        } satisfies SplitCanvasDropTarget);
-    });
-
-    it('keeps global drag cleanup listeners stable across equivalent rerenders and still uses the latest callback', async () => {
-        const fakeWindow = new (globalThis as any).EventTarget();
-        const originalAddEventListener = fakeWindow.addEventListener.bind(fakeWindow);
-        const originalRemoveEventListener = fakeWindow.removeEventListener.bind(fakeWindow);
-        const addEventListener = vi.fn((...args: Parameters<typeof originalAddEventListener>) => originalAddEventListener(...args));
-        const removeEventListener = vi.fn((...args: Parameters<typeof originalRemoveEventListener>) => originalRemoveEventListener(...args));
-        fakeWindow.addEventListener = addEventListener;
-        fakeWindow.removeEventListener = removeEventListener;
-        vi.stubGlobal('window', fakeWindow);
-
-        const dispatch = vi.fn();
-        const firstCallback = vi.fn();
-        const latestCallback = vi.fn();
-
-        const { SplitCanvasHost } = await import('./SplitCanvasHost');
-
-        const state: SplitCanvasState<string> = {
-            root: {
-                id: 'split-root',
-                kind: 'split',
-                axis: 'row',
-                ratio: 0.5,
-                first: createLeaf('leaf-a'),
-                second: createLeaf('leaf-b'),
-            } satisfies SplitCanvasNode<string>,
-            focusedLeafId: 'leaf-a',
-            maximizedLeafId: null,
-            maxLeaves: 4,
-        };
-
-        const screen = await renderScreen(
-            <SplitCanvasHost
-                state={state}
-                dispatch={dispatch}
-                renderLeaf={({ leaf }) => React.createElement('LeafContent', { leafId: leaf.id })}
-                onActiveDropTargetChange={firstCallback}
-                onLeafDrop={vi.fn()}
-            />,
-        );
-
-        const initialAttachCount = addEventListener.mock.calls.length;
-        const initialDetachCount = removeEventListener.mock.calls.length;
-
-        await act(async () => {
-            screen.tree.update(
-                <SplitCanvasHost
-                    state={state}
-                    dispatch={dispatch}
-                    renderLeaf={({ leaf }) => React.createElement('LeafContent', { leafId: leaf.id })}
-                    onActiveDropTargetChange={latestCallback}
-                    onLeafDrop={vi.fn()}
-                />,
-            );
-        });
-
-        expect(addEventListener.mock.calls.length).toBe(initialAttachCount);
-        expect(removeEventListener.mock.calls.length).toBe(initialDetachCount);
-
-        await act(async () => {
-            fakeWindow.dispatchEvent(new Event('drop'));
-        });
-
-        expect(firstCallback).not.toHaveBeenCalled();
-        expect(latestCallback).toHaveBeenCalledWith(null);
-    });
 });

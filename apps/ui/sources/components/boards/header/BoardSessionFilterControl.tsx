@@ -71,11 +71,10 @@ export const BoardSessionFilterControl = React.memo(function BoardSessionFilterC
         boardId: board.id,
         patch: {
             source: {
-                ...(board.source.sections && board.source.sections.length > 0 ? { sections: board.source.sections } : {}),
                 filter: toBoardSessionFilter(next),
             },
         },
-    }), [board.id, board.source.sections, dispatch]);
+    }), [board.id, dispatch]);
     const latestFilters = React.useRef(filters);
     latestFilters.current = filters;
 

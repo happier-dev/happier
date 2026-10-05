@@ -1,9 +1,10 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, type SessionTerminalActionId, type SessionTerminalTargetV1 } from '@happier-dev/protocol';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
-import { dispatchSessionTerminalWorkspaceCommand, getSplitMeasurementsForScope, readSessionTerminalWorkspaceForScope, resizeSessionTerminalSplitForScope } from './sessionTerminalWorkspaceRuntime';
+import { dispatchSessionTerminalWorkspaceCommand, getSplitMeasurementsForScope, openSessionTerminalInDetailsForScope, readSessionTerminalWorkspaceForScope, resizeSessionTerminalSplitForScope } from './sessionTerminalWorkspaceRuntime';
 import { reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
 import { closeOwnedSessionTerminals } from './closeOwnedSessionTerminals';
+import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
 
 export function sessionTerminalActionFailure(errorCode: string) {
     return { ok: false as const, errorCode, error: errorCode };
@@ -32,6 +33,18 @@ export async function invokeSessionTerminalAction(request: Readonly<{
     let terminalId: string | undefined;
     let closedTerminalIds: string[] | undefined;
     switch (request.actionId) {
+        case 'session.terminals.open_in_details': {
+            const input = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS['session.terminals.open_in_details'].parse(request.input);
+            return openSessionTerminalInDetailsForScope(data.scopeId, input.terminalId) ? { ok: true as const } : sessionTerminalActionFailure('unsupported_action');
+        }
+        case 'session.terminals.restart': {
+            const input = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS['session.terminals.restart'].parse(request.input);
+            const member = workspace.tabs.flatMap((item) => item.terminals).find((terminal) => terminal.id === input.terminalId);
+            const handle = createSessionTerminalLeafHandles(data.scopeId).get(input.terminalId);
+            if (!member || member.target.kind === 'terminal_view' || !handle) return sessionTerminalActionFailure('terminal_restart_unavailable');
+            handle.restart();
+            return { ok: true as const };
+        }
         case 'session.terminals.open':
         case 'session.terminals.split':
         case 'session.terminals.run_script': {

@@ -1,49 +1,30 @@
 import * as React from 'react';
-
+import type { EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
+import type { EntityDragDropRuntime } from '@/components/ui/treeDragDrop';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-import type { SessionListMoveSheetTarget } from './buildSessionListMoveSheetTargets';
-
-export type OpenSessionListMoveSheetParams = Readonly<{
-    sourceLabel: string;
-    targets: ReadonlyArray<SessionListMoveSheetTarget>;
-}>;
-
-export type UseSessionListMoveSheetResult = Readonly<{
-    openMoveSheet: (params: OpenSessionListMoveSheetParams) => Promise<SessionListMoveSheetTarget | null>;
-}>;
+export type OpenSessionListMoveSheetParams = Readonly<{ sourceLabel: string; runtime: EntityDragDropRuntime; sourceId: string }>;
+export type UseSessionListMoveSheetResult = Readonly<{ openMoveSheet: (params: OpenSessionListMoveSheetParams) => Promise<EntityDropOutcomeV1 | null> }>;
 
 export function useSessionListMoveSheet(): UseSessionListMoveSheetResult {
     const openMoveSheet = React.useCallback(async (params: OpenSessionListMoveSheetParams) => {
         const { SessionListMoveSheet } = await import('./SessionListMoveSheet');
-        return new Promise<SessionListMoveSheetTarget | null>((resolve) => {
+        return new Promise<EntityDropOutcomeV1 | null>(resolve => {
             let settled = false;
             let modalId: string | null = null;
-
-            const settle = (target: SessionListMoveSheetTarget | null) => {
+            const settle = (outcome: EntityDropOutcomeV1 | null) => {
                 if (settled) return;
                 settled = true;
-                if (modalId) {
-                    Modal.hide(modalId);
-                }
-                resolve(target);
+                if (modalId) Modal.hide(modalId);
+                resolve(outcome);
             };
-
-            modalId = Modal.show({
-                component: SessionListMoveSheet,
+            modalId = Modal.show({ component: SessionListMoveSheet,
                 chrome: { kind: 'card', title: t('sessionsList.moveSheetTitle', { item: params.sourceLabel }) },
-                closeOnBackdrop: true,
-                onRequestClose: () => settle(null),
-                props: {
-                    sourceLabel: params.sourceLabel,
-                    targets: params.targets,
-                    onSelectTarget: settle,
-                    onCancel: () => settle(null),
-                },
+                closeOnBackdrop: true, onRequestClose: () => settle(null),
+                props: { ...params, onComplete: settle, onCancel: () => settle(null) },
             });
         });
     }, []);
-
     return { openMoveSheet };
 }

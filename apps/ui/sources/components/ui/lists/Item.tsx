@@ -81,14 +81,22 @@ function splitForWebMiddleEllipsis(value: string): Readonly<{ head: string; tail
     return { head: value.slice(0, cut), tail: value.slice(cut) };
 }
 
+/** The share of a wide row an adaptive control may take beside its label (the accessory slot's cap). */
+const ADAPTIVE_ACCESSORY_MAX_ROW_SHARE = 0.5;
+
 export interface ItemProps {
     testID?: string;
+    /** Native/web metadata on the primary row host, never on secondary controls. */
+    /** RN Web metadata; native ViewProps intentionally omit this web-only carrier. */
+    dataSet?: Readonly<Record<string, unknown>>;
     /** Imperative focus target for list owners that restore focus after row removal. */
     pressableRef?: React.Ref<React.ComponentRef<typeof Pressable>>;
     title: React.ReactNode;
     subtitle?: React.ReactNode;
     subtitleTestID?: string;
     subtitleAccessory?: React.ReactNode;
+    /** Full-width row content below identity and controls, before this row's divider. */
+    bottomElement?: React.ReactNode;
     /** An inline mark after a string title, such as a "Beta" badge. */
     titleAccessory?: React.ReactNode;
     /** An inline mark before a string subtitle, such as a status dot that flags trouble. */
@@ -187,10 +195,10 @@ export interface ItemProps {
      */
     rightElementOutsidePressable?: boolean;
     /**
-     * Where the right accessory sits on a configuration page. `inline` (default) keeps it beside the
+     * Where the right accessory sits. `inline` (default) keeps it beside the
      * label; `stacked` always places it under the label at full width (visual pickers, text areas);
      * `adaptive` moves it under the label only when the row is too narrow for both (segmented controls,
-     * field selects). Outside page presentation the accessory is always inline.
+     * field selects), using the row's own width in pages, grouped sections and popovers.
      */
     accessoryLayout?: 'inline' | 'stacked' | 'adaptive';
     showDivider?: boolean;
@@ -390,6 +398,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         maxWidth: '50%',
+        minWidth: 0,
+        flexShrink: 1,
         marginLeft: 8,
     },
     splitPressable: {
@@ -449,6 +459,21 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     pageDivider: {
         height: StyleSheet.hairlineWidth,
     },
+    accessoryMeasure: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexShrink: 0,
+    },
+    accessoryInline: {
+        // Bound the accessory's root to its slot. Its internal flexible content can then
+        // shrink around controls instead of painting past the row's trailing edge.
+        minWidth: 0,
+        maxWidth: '100%',
+        flexShrink: 1,
+    },
+    accessoryMeasureStacked: {
+        alignSelf: 'stretch',
+    },
     rightSectionStacked: {
         maxWidth: '100%',
         marginLeft: 0,
@@ -478,11 +503,13 @@ export const Item = React.memo<ItemProps>((props) => {
     
     const {
         testID,
+        dataSet,
         pressableRef,
         title,
         subtitle,
         subtitleTestID,
         subtitleAccessory,
+        bottomElement,
         titleAccessory,
         subtitleLeading,
         titleLines,
@@ -750,16 +777,31 @@ export const Item = React.memo<ItemProps>((props) => {
         : null;
     const pageRowStyles = pageRowMetrics ? resolvePageRowStyles(pageRowMetrics) : null;
     const [isNarrowRow, setIsNarrowRow] = React.useState(false);
-    const measuresRowWidth = isPageRow && accessoryLayout === 'adaptive';
+    const [rowWidthPx, setRowWidthPx] = React.useState<number | null>(null);
+    const [accessoryWidthPx, setAccessoryWidthPx] = React.useState<number | null>(null);
+    const measuresRowWidth = accessoryLayout === 'adaptive';
     const handleRowLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
         if (!Number.isFinite(widthPx) || widthPx <= 0) return;
         const next = widthPx < PAGE_LIST_METRICS.rowStackBelowWidthPx;
         setIsNarrowRow((current) => (current === next ? current : next));
+        setRowWidthPx((current) => (current === widthPx ? current : widthPx));
     }, []);
-    const stackAccessory = isPageRow
-        && rightElement != null
-        && (accessoryLayout === 'stacked' || (accessoryLayout === 'adaptive' && isNarrowRow));
+    // An adaptive control also moves beneath the label when its natural width does not fit its half of
+    // a wide row (a segmented bar of long labels), instead of overflowing the sheet.
+    const accessoryOverflows = rowWidthPx !== null && accessoryWidthPx !== null
+        && accessoryWidthPx > rowWidthPx * ADAPTIVE_ACCESSORY_MAX_ROW_SHARE;
+    const stackAccessory = rightElement != null
+        && (accessoryLayout === 'stacked' || (accessoryLayout === 'adaptive' && (isNarrowRow || accessoryOverflows)));
+    const stackAccessoryRef = React.useRef(stackAccessory);
+    stackAccessoryRef.current = stackAccessory;
+    const handleAccessoryLayout = React.useCallback((event: LayoutChangeEvent) => {
+        // Only the inline position reports the control's natural width; a stacked control spans the row.
+        if (stackAccessoryRef.current) return;
+        const widthPx = event.nativeEvent.layout.width;
+        if (!Number.isFinite(widthPx) || widthPx <= 0) return;
+        setAccessoryWidthPx((current) => (current === widthPx ? current : widthPx));
+    }, []);
     // On a shared page-section sheet (`HappierPageSheet`: a page section, or a flat section in a pane)
     // the row follows the sheet's policy: its row inset, so its text lines up with the sheet's
     // sub-headings and the list around it, and its hairline. A menu row keeps the menu anatomy.
@@ -879,12 +921,18 @@ export const Item = React.memo<ItemProps>((props) => {
     const rightAccessory = React.useMemo(() => {
         const normalized = normalizeNodeForView(rightElement ?? null);
         if (normalized == null) return null;
-        return (
+        const named = (
             <ItemRowAccessibleNameProvider value={accessoryAccessibleName}>
                 {normalized}
             </ItemRowAccessibleNameProvider>
         );
-    }, [accessoryAccessibleName, rightElement]);
+        if (!measuresRowWidth) return <View style={stackAccessory ? styles.accessoryMeasureStacked : styles.accessoryInline}>{named}</View>;
+        return (
+            <View onLayout={handleAccessoryLayout} style={stackAccessory ? styles.accessoryMeasureStacked : styles.accessoryMeasure}>
+                {named}
+            </View>
+        );
+    }, [accessoryAccessibleName, handleAccessoryLayout, measuresRowWidth, rightElement, stackAccessory]);
     const subtitleAccessoryNode = React.useMemo(() => normalizeNodeForView(subtitleAccessory ?? null), [subtitleAccessory]);
     const chevronAccessory = React.useMemo(() => {
         if (!showAccessory) return null;
@@ -1148,16 +1196,19 @@ export const Item = React.memo<ItemProps>((props) => {
         theme.colors.text.secondary,
     ]);
 
+    const bottom = bottomElement ? <View style={{ paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, paddingBottom: PAGE_LIST_METRICS.rowPaddingVerticalPx }}>{bottomElement}</View> : null;
     const content = React.useMemo(() => (
         <>
             <View style={[containerCore, containerPadding, style]} onLayout={measuresRowWidth ? handleRowLayout : undefined}>
                 {renderRowContent()}
             </View>
 
+            {bottom}
             {dividerNode}
         </>
     ), [
         containerCore,
+        bottom,
         containerPadding,
         dividerNode,
         handleRowLayout,
@@ -1254,6 +1305,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     <Pressable
                         ref={assignPressableRef}
                         testID={testID}
+                        {...{ dataSet }}
                         {...webTestIdProps}
                         {...webDisabledProps}
                         {...webOptionIdentityProps}
@@ -1331,6 +1383,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         {rightAccessory}
                     </View>
                 </View>
+                {bottom}
                 {dividerNode}
             </>
         );
@@ -1341,6 +1394,7 @@ export const Item = React.memo<ItemProps>((props) => {
             <Pressable
                 ref={assignPressableRef}
                 testID={testID}
+                {...{ dataSet }}
                 {...webTestIdProps}
                 {...webDisabledProps}
                 {...webOptionIdentityProps}
@@ -1407,8 +1461,10 @@ export const Item = React.memo<ItemProps>((props) => {
     return (
         <View
             testID={testID}
+            {...{ dataSet }}
             {...webTestIdProps}
             {...webOptionIdentityProps}
+            {...(isWeb && !disabled && !loading ? { onContextMenu, onKeyDown, onFocus, onBlur } : {})}
             {...(passiveWebRole ? { role: passiveWebRole } : undefined)}
             accessibilityRole={isWeb ? undefined : accessibilityRole}
             accessibilityLabel={accessibilityLabel ?? (passiveWebRole ? generatedAccessibilityLabel : undefined)}
@@ -1424,7 +1480,9 @@ export const Item = React.memo<ItemProps>((props) => {
             aria-checked={isRadioRole || isCheckboxRole ? accessibilityChecked ?? selected === true : undefined}
             aria-expanded={accessibilityExpanded}
             aria-disabled={disabled || loading ? true : undefined}
-            tabIndex={isWeb && webRole && (disabled || loading) ? -1 : undefined}
+            tabIndex={isWeb && (webRole || onKeyDown || onContextMenu || webTabIndex !== undefined)
+                ? disabled || loading ? -1 : webTabIndex ?? (onKeyDown || onContextMenu ? 0 : undefined)
+                : undefined}
             // A selected choice keeps its mark while it cannot be pressed (read-only, or its owner is
             // unavailable), exactly as the pressable row draws it.
             style={showSelectedBackground

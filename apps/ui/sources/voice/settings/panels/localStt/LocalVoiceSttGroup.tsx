@@ -11,6 +11,8 @@ import { t } from '@/text';
 import { getLocalSttProviderSpec, useLocalSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { Icon } from '@/components/ui/icons/Icon';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 export function LocalVoiceSttGroup(props: {
   cfgStt: VoiceLocalSttSettings | any;
@@ -19,6 +21,8 @@ export function LocalVoiceSttGroup(props: {
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  /** Rows of the Hear section that follow the recognizer (how you talk, interrupting). */
+  children?: React.ReactNode;
 }) {
   const { theme } = useUnistyles();
   const providerSpecs = useLocalSttProviderSpecs();
@@ -35,7 +39,11 @@ export function LocalVoiceSttGroup(props: {
   const providerSpec = getLocalSttProviderSpec(normalized.provider);
 
   return (
-    <ItemGroup title={t('settingsVoice.local.sttBaseUrlTitle')}>
+    <ItemGroup
+      title={t('settingsVoice.pages.conversations.hearTitle')}
+      description={t('settingsVoice.pages.conversations.hearDescription')}
+    >
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.sttProvider}>
       <DropdownMenu
         open={openMenu === 'sttProvider'}
         onOpenChange={(next) => setOpenMenu(next ? 'sttProvider' : null)}
@@ -48,7 +56,7 @@ export function LocalVoiceSttGroup(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: t('settingsVoice.local.sttProvider'),
+          title: t('settingsVoice.pages.conversations.speechRecognitionTitle'),
         }}
         items={providerSpecs.map((spec) => ({
           id: spec.id,
@@ -61,6 +69,7 @@ export function LocalVoiceSttGroup(props: {
           setOpenMenu(null);
         }}
       />
+      </SettingAnchor>
 
       {providerSpec ? (
         <providerSpec.Settings
@@ -74,6 +83,7 @@ export function LocalVoiceSttGroup(props: {
       ) : (
         <Item title={t('common.unavailable')} />
       )}
+      {props.children}
     </ItemGroup>
   );
 }

@@ -263,13 +263,24 @@ export function createBrowserDaemonRuntimeActionExecutor(
       if (sessionBrowserMismatch) return invalidParametersResult;
       return await executeBrowserAutomationAction(args, input.automation, input.provisionAutomationRuntime);
     }
-    if (sessionBrowserMismatch) return invalidParametersResult;
     if (BROWSER_CONTROL_ACTION_IDS.has(args.actionId)) {
       if (!featureGate.isEnabled('browser.sidecar')) {
         return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
       }
+      if (args.actionId === 'browser.control.takeControl' || args.actionId === 'browser.control.handBack') {
+        const parsed = parseRuntimeActionInput(args);
+        if (!parsed.ok) return parsed.result;
+        const view = parsed.input as Readonly<{ browserSessionId: string; viewId: string }>;
+        if (input.ownsAutomationView && !input.ownsAutomationView(view)) {
+          return input.uiAutomation
+            ? await input.uiAutomation({ ...args, input: parsed.input })
+            : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
+        }
+      }
+      if (sessionBrowserMismatch) return invalidParametersResult;
       return await executeBrowserControlAction(args, input.control, input.provisionAutomationRuntime);
     }
+    if (sessionBrowserMismatch) return invalidParametersResult;
     if (BROWSER_DIAGNOSTICS_ACTION_IDS.has(args.actionId)) {
       if (!featureGate.isEnabled('browser.diagnostics')) {
         return browserRuntimeActionDisabledResult('browser_diagnostics_route_unavailable');

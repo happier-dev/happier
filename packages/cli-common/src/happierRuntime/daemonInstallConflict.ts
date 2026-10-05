@@ -58,8 +58,7 @@ export function daemonServiceMatchesInstallTarget(service: HappierService, targe
         return false;
     }
     const targetHomeDir = normalizeHomeDir(target.happierHomeDir, target.platform);
-    const serviceHomeDir = normalizeHomeDir(service.happierHomeDir, target.platform);
-    if (targetHomeDir !== null && serviceHomeDir !== targetHomeDir) {
+    if (targetHomeDir !== null && !happierHomeDirsMatch(service.happierHomeDir, target.happierHomeDir, target.platform)) {
         return false;
     }
     if (target.targetMode === 'default-following') {
@@ -77,6 +76,12 @@ export function daemonServiceMatchesInstallTarget(service: HappierService, targe
         service.ring === target.ring &&
         service.instanceId === target.instanceId
     );
+}
+
+/** Unknown homes cannot establish authority over an installed service. */
+export function happierHomeDirsMatch(left: string | null | undefined, right: string | null | undefined, platform: HappierServicePlatform): boolean {
+    const leftKey = normalizeHomeDir(left, platform);
+    return leftKey !== null && leftKey === normalizeHomeDir(right, platform);
 }
 
 function isVerifiedDaemonService(service: HappierService): boolean {
@@ -121,7 +126,7 @@ function sharesServerUrl(service: HappierService, target: DaemonServiceInstallTa
 }
 
 function isCompetingService(service: HappierService, target: DaemonServiceInstallTarget): boolean {
-    if (!isVerifiedDaemonService(service) || daemonServiceMatchesInstallTarget(service, target)) {
+    if (service.serviceType !== 'daemon' || daemonServiceMatchesInstallTarget(service, target)) {
         return false;
     }
     if (target.targetMode === 'default-following') {
@@ -142,7 +147,7 @@ function isCompetingService(service: HappierService, target: DaemonServiceInstal
 function isForeignHomeConflict(service: HappierService, target: DaemonServiceInstallTarget): boolean {
     const targetHomeDir = normalizeHomeDir(target.happierHomeDir, target.platform);
     if (targetHomeDir === null) return false;
-    return normalizeHomeDir(service.happierHomeDir, target.platform) !== targetHomeDir;
+    return !happierHomeDirsMatch(service.happierHomeDir, target.happierHomeDir, target.platform);
 }
 
 function isReplaceAllAllowedForeignHomeCleanup(
@@ -161,7 +166,9 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     services: readonly HappierService[];
 }>): DaemonServiceInstallConflictPlan {
     const verifiedDaemons = params.services.filter(isVerifiedDaemonService);
-    const exactTargetServices = verifiedDaemons.filter((service) => daemonServiceMatchesInstallTarget(service, params.target));
+    const exactTargetServices = params.services.filter((service) => service.serviceType === 'daemon' && daemonServiceMatchesInstallTarget(service, params.target));
+    const unverifiedConflicts = params.services.filter((service) => service.serviceType === 'daemon' && service.installed && service.verification !== 'verified'
+        && (daemonServiceMatchesInstallTarget(service, params.target) || isCompetingService(service, params.target)));
     const exactTargetExists = exactTargetServices.length > 0;
     const exactTargetRunning = exactTargetServices.some((service) => service.running);
     const duplicateTupleKeys = new Set<string>();
@@ -172,26 +179,27 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
         countsByTuple.set(tupleKey, nextCount);
         if (nextCount > 1) duplicateTupleKeys.add(tupleKey);
     }
-    const competingServices = verifiedDaemons.filter((service) =>
+    const competingServices = [...verifiedDaemons.filter((service) =>
         isCompetingService(service, params.target) || duplicateTupleKeys.has(resolveTupleKey(service)),
-    );
+    ), ...unverifiedConflicts];
     const foreignHomeConflicts = competingServices.filter((service) => (
         isForeignHomeConflict(service, params.target)
         && (params.strategy !== 'replace-all' || !isReplaceAllAllowedForeignHomeCleanup(service, params.target))
     ));
     const resolveServicesToRemove = (): readonly HappierService[] => {
         if (params.strategy === 'replace-all') {
-            return competingServices.filter((service) => !foreignHomeConflicts.includes(service));
+            return competingServices.filter((service) => service.verification === 'verified' && !foreignHomeConflicts.includes(service));
         }
         if (params.strategy === 'replace-ring') {
             if (params.target.targetMode === 'default-following') {
                 return competingServices.filter((service) => (
-                    (service.targetMode ?? 'pinned') === 'default-following'
+                    service.verification === 'verified'
+                    && (service.targetMode ?? 'pinned') === 'default-following'
                     && (params.target.ring === null || service.ring === params.target.ring)
                     && !foreignHomeConflicts.includes(service)
                 ));
             }
-            return competingServices.filter((service) => service.ring === params.target.ring && !foreignHomeConflicts.includes(service));
+            return competingServices.filter((service) => service.verification === 'verified' && service.ring === params.target.ring && !foreignHomeConflicts.includes(service));
         }
         return [];
     };
@@ -201,7 +209,7 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     return {
         exactTargetExists,
         exactTargetRunning,
-        exactTargetIsConverged: exactTargetExists && (
+        exactTargetIsConverged: exactTargetExists && unverifiedConflicts.length === 0 && (
             competingServices.length === 0
             || competingServices.every((service) => removableServices.has(service))
         ),

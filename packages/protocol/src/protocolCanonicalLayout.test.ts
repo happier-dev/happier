@@ -229,6 +229,7 @@ describe('protocol canonical layout', () => {
         const protocolExports = readProtocolExports();
 
         expect(Object.keys(protocolExports)).toEqual([
+            './profiles/v2/profileId',
             '.',
             './tools/v2',
             './tools/v2/subAgentFamilies',

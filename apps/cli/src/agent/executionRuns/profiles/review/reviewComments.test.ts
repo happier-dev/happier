@@ -18,17 +18,23 @@ import {
   type ReviewCommentPreparedRecordV1,
   createReviewCommentPrincipalSigningInputV1,
   createActionExecutor,
+  ScmComparisonSchema,
+  ScmDiffSummaryGenerateOutputSchema,
   type ActionExecutorDeps,
   type ReviewCommentV1,
 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { finishExecutionRun } from '@/agent/runtime/bridges/executionRun/finishExecutionRun';
+import { publishExecutionRunTurn } from '@/agent/runtime/bridges/executionRun/publishExecutionRunTurn';
+import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { applyExecutionRunAction } from '@/agent/runtime/bridges/executionRun/executionRunApplyAction';
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { createReviewRunCommentService, projectReviewRunTriage } from './reviewComments';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
+import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 
 // Only HTTP and environment configuration are substituted. Snapshot, protocol,
 // signing, event envelopes, triage mapping, and terminalization remain real.
@@ -103,6 +109,138 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it('exposes saved publication refusal through public Run/get without replacing the manual output, then clears only superseded operation errors', async () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
+    const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: comparison.id, comparison,
+      metadata: { source: comparison.source, sourceKey: comparison.id }, requestedOutputs: ['summary'],
+      summaryMarkdown: 'Original', outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Original' } } },
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } });
+    const saved = await scmDiffSummaryResultStore.create({ cwd: root, sessionId: 'session-1', output });
+    const scope = { cwd: root, sessionId: 'session-1', resultId: saved.resultId };
+    const initial = { ...run(), intent: 'scm_diff_summary' as const, runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
+      intentInput: { cwd: root, comparison, source: comparison.source, sourceKey: comparison.id,
+        metadata: output.metadata, resultId: saved.resultId, outputs: ['summary'] } };
+    const manager = new ExecutionRunHostBridge({ cwd: root, parentProvider: 'claude', sendAcp: async () => {} });
+    const host = manager as unknown as { runs: Map<string, ExecutionRunState>; controllers: Map<string, ExecutionRunBackendController> };
+    // Provider identity/permission ports are the boundary; profile, saved CAS and public RPC projection are real.
+    const controller = { kind: 'backend', cancelled: false, backend: { readPendingPermissionRequestIds: () => [] } } as unknown as ExecutionRunBackendController;
+    host.runs.set(initial.runId, initial);
+    host.controllers.set(initial.runId, controller);
+    const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: root }, isExecutionRunsEnabled: () => true,
+      policy: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+        allowIoModes: new Set(['streaming', 'request_response']) } });
+    await scmDiffSummaryResultStore.beginInput({ ...scope, inputId: 'stale-input', expectedRevision: saved.revision });
+    const edited = await scmDiffSummaryResultStore.edit({ ...scope, expectedRevision: saved.revision,
+      edit: { kind: 'replaceSummary', value: { summaryMarkdown: 'Manual draft' } } });
+    if (!edited.success) throw new Error(edited.error);
+    const publish = (inputId: string, summaryMarkdown: string) => publishExecutionRunTurn({ runId: initial.runId, turnId: inputId, inputIds: [inputId],
+      rawText: JSON.stringify({ summaryMarkdown }), finishedAtMs: 2, controller, controllers: host.controllers, runs: host.runs,
+      parentProvider: 'claude', sendAcp: async () => {} });
+    await publish('stale-input', 'Agent overwrite');
+    expect(await rpc.executionRunGet!('session-1', { runId: initial.runId, includeStructured: true })).toMatchObject({
+      run: { status: 'running', error: { code: 'revision_conflict' } }, latestToolResult: { summaryMarkdown: 'Manual draft' },
+      structuredMeta: { payload: { summaryMarkdown: 'Manual draft' } },
+    });
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: '', rawText: '', started: true, finishedAtMs: 2,
+      controller, controllers: host.controllers, runs: host.runs, parentProvider: 'claude', sendAcp: async () => {} });
+    expect(manager.get(initial.runId)?.error?.code).toBe('revision_conflict');
+    const publishCurrent = async (inputId: string) => {
+      const current = await scmDiffSummaryResultStore.read(scope);
+      if (!current.success) throw new Error(current.error);
+      await scmDiffSummaryResultStore.beginInput({ ...scope, inputId, expectedRevision: current.result.revision });
+      await publish(inputId, `Reconciled ${inputId}`);
+    };
+    await publishCurrent('current-input');
+    expect(manager.get(initial.runId)).not.toHaveProperty('error');
+    expect(manager.getLatestToolResult(initial.runId)).toMatchObject({ summaryMarkdown: 'Reconciled current-input' });
+    for (const code of ['execution_run_send_outcome_unknown', 'review_comment_materialization_failed']) {
+      host.runs.set(initial.runId, { ...host.runs.get(initial.runId)!, error: { code, message: 'Previous operation' } });
+      await publishCurrent(code);
+      expect(manager.get(initial.runId)?.error?.code).toBe(code === 'execution_run_send_outcome_unknown' ? undefined : code);
+    }
+  });
+  it('persists retained review findings before transcript publication through the same signed comment owner', async () => {
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const };
+    const runs = new Map([[initial.runId, initial]]);
+    // The provider controller is an external runtime boundary; its identity scopes publication.
+    const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
+    const published: unknown[] = [];
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller, controllers: new Map([[initial.runId, controller]]), runs,
+      rawText: JSON.stringify({ summary: 'Findings', findings }), finishedAtMs: 2, parentProvider: 'claude', reviewComments: service(),
+      sendAcp: async (_provider, _message, options) => { published.push(options?.meta?.happier); },
+    });
+    expect(published).toMatchObject([{ kind: 'review_findings.v2', payload: {
+      reviewedFingerprint: 'launch-fingerprint', commentIds: ['comment-file-finding', 'comment-global-finding'], materialization: { kind: 'complete' },
+      findings: [{ comment: { id: 'comment-file-finding' } }, { comment: { id: 'comment-global-finding' } }],
+    } }]);
+    expect(runs.get(initial.runId)).toMatchObject({ status: 'running', latestToolResult: { materialization: { kind: 'complete' } } });
+  });
+  it('carries persisted findings and partial materialization into the same retained narration input', async () => {
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
+    const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: root },
+      endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
+      intentInput: { cwd: root, reviewedFingerprint: 'launch-fingerprint', source: comparison.source, comparison,
+        sourceKey: comparison.id, metadata: { source: comparison.source, sourceKey: comparison.id }, outputs: ['walkthrough'] } };
+    const runs = new Map([[initial.runId, initial]]);
+    // Identity only: provider controller behavior remains outside this publisher boundary.
+    const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller, controllers: new Map([[initial.runId, controller]]), runs,
+      rawText: JSON.stringify({ summary: 'Findings', findings: [findings[0], { ...findings[1], filePath: 'missing.ts' }] }),
+      finishedAtMs: 2, parentProvider: 'claude', reviewComments: service(), sendAcp: async () => {},
+      admitNextInput: async () => ({ status: 'accepted' }),
+    });
+    expect(runs.get(initial.runId)).toMatchObject({ status: 'running', intentInput: { reviewNarration: {
+      reviewStatus: 'failed',
+      reviewFindings: [{ reviewOutcome: 'partial', commentIds: ['comment-file-finding'], materialization: { kind: 'partial' },
+        findings: [{ comment: { id: 'comment-file-finding' } }, { id: 'global-finding' }] }],
+      provenance: { reviewedRuns: [{ runId: initial.runId, status: 'failed', hasOutput: true, reviewOutcome: 'partial' }] },
+    } } });
+    expect(runs.get(initial.runId)?.intentInput).not.toHaveProperty('reviewStatus');
+  });
+  it('retains the original review publication receipts after the same Run publishes its walkthrough', async () => {
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
+    const comparison = ScmComparisonSchema.parse({ id: 'receipt-comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
+      intentInput: { cwd: root, reviewedFingerprint: 'launch-fingerprint', comparison, comparisonId: comparison.id,
+        source: comparison.source, sourceKey: comparison.id, metadata: { source: comparison.source, sourceKey: comparison.id }, outputs: ['walkthrough'] } };
+    const runs = new Map([[initial.runId, initial]]);
+    // The native controller and HTTP service are genuine external boundaries; both profiles and publishers remain real.
+    const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
+    const controllers = new Map([[initial.runId, controller]]);
+    let nextLocalId = '';
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller, controllers, runs,
+      rawText: JSON.stringify({ summary: 'Findings', findings }), finishedAtMs: 2, parentProvider: 'claude',
+      reviewComments: service(), sendAcp: async () => {},
+      admitNextInput: async (input) => { nextLocalId = input.localId; return { status: 'accepted' }; },
+    });
+    expect(runs.get(initial.runId)?.latestToolResult).toMatchObject({ commentIds: ['comment-file-finding', 'comment-global-finding'] });
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'walkthrough-turn', inputIds: [nextLocalId],
+      controller, controllers, runs, rawText: JSON.stringify({ walkthrough: { title: 'Reading', intro: '', stops: [], otherChangeRefs: [] } }),
+      finishedAtMs: 3, parentProvider: 'claude', reviewComments: service(), sendAcp: async () => {},
+    });
+    expect(runs.get(initial.runId)?.latestToolResult).toMatchObject({ producer: { kind: 'review', reviewedRuns: [{
+      runId: initial.runId, reviewedFingerprint: 'launch-fingerprint',
+      commentIds: ['comment-file-finding', 'comment-global-finding'], materialization: { kind: 'complete' },
+    }] } });
+  });
+  it('persists valid findings from a failed retained review without claiming a complete review', async () => {
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const };
+    const runs = new Map([[initial.runId, initial]]);
+    const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'failed-review', controller, controllers: new Map([[initial.runId, controller]]), runs,
+      rawText: JSON.stringify({ status: 'failed', summary: 'Incomplete review', findings }), finishedAtMs: 2,
+      parentProvider: 'claude', reviewComments: service(), sendAcp: async () => {},
+    });
+    expect(runs.get(initial.runId)).toMatchObject({ status: 'running', structuredMeta: { payload: {
+      reviewOutcome: 'failed', materialization: { kind: 'complete' }, commentIds: ['comment-file-finding', 'comment-global-finding'],
+      perEngineOutcome: [{ key: initial.backendId, runId: initial.runId, outcome: 'failed' }],
+    } }, latestToolResult: { status: 'failed', perEngineOutcome: [{ key: initial.backendId, runId: initial.runId, outcome: 'failed' }] } });
+  });
   it('keeps an admitted Workflow identity in private exact-daemon transport context, not request JSON', async () => {
     let observed = false;
     const deps = createCliActionDeps({
@@ -360,6 +498,35 @@ describe('canonical review Run comments', () => {
       enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: service(),
     });
     expect(runs.get(initial.runId)).toMatchObject({ status: 'failed', error: { code: 'review_comment_materialization_failed' }, latestToolResult: { reviewedFingerprint, commentIds: [] } });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it('rejects finding attribution to a different Run before persisting comments', async () => {
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
+    const initial = run();
+    const runs = new Map([[initial.runId, initial]]);
+    await finishExecutionRun({ runId: initial.runId, next: { status: 'succeeded', finishedAtMs: 2 }, toolResult: { output: { findings } },
+      structuredMeta: { kind: 'review_findings.v2', payload: { runRef: { runId: 'foreign-run', callId: initial.callId, backendId: initial.backendId },
+        summary: 'Findings', overviewMarkdown: 'Findings', findings, questions: [], assumptions: [], generatedAtMs: 2 } },
+      runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+      enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: service() });
+    expect(runs.get(initial.runId)).toMatchObject({ status: 'failed', latestToolResult: { materialization: { errorCode: 'review_findings_invalid' } } });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it('retains a strict walkthrough envelope when a review narrator is terminalized', async () => {
+    const initial = run();
+    const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
+    const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: comparison.id, comparison,
+      metadata: { source: comparison.source, sourceKey: comparison.id }, requestedOutputs: ['walkthrough'],
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+      outputs: { walkthrough: { state: 'complete', value: { title: 'Explanation', intro: '', stops: [], otherChangeRefs: [] } } } });
+    const runs = new Map([[initial.runId, initial]]);
+    await finishExecutionRun({ runId: initial.runId, next: { status: 'succeeded', finishedAtMs: 2 },
+      toolResult: { output }, structuredMeta: { kind: 'scm_diff_summary.v1', payload: output }, runs, controllers: new Map(),
+      budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+      enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: service() });
+    expect(runs.get(initial.runId)).toMatchObject({ status: 'succeeded', latestToolResult: output });
+    expect(ScmDiffSummaryGenerateOutputSchema.safeParse(runs.get(initial.runId)?.latestToolResult).success).toBe(true);
     expect(axios.post).not.toHaveBeenCalled();
   });
 

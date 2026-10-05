@@ -1,5 +1,14 @@
 import * as React from 'react';
+import type { PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { getInstalledPluginUiClientExecutableComposition, resolvePluginUiClientDragSourceRegistration, resolvePluginUiClientDropTargetRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { createHostedEntityDragDropHandlers } from '@/components/plugins/hostApi/hostedEntityDragDrop';
+import { createPluginEntityDragDropBinding, executeMountedPluginEntityDropAction, type PluginEntityDragDropBinding } from './entityDragDrop/pluginEntityDragDropBinding';
+import { PluginEntityDragSourceView, PluginEntityDropTargetView } from './entityDragDrop/PluginEntityDragDropView';
 import { PluginLiveStreamViewer } from './PluginLiveStreamViewer';
+import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -222,6 +231,8 @@ import {
     type PluginUiPrivateTargetedSurfacePresentation,
 } from './pluginUiPrivatePresentationHost';
 import { PluginSessionPartMountScope, renderPluginSessionPart } from './PluginSessionPartHost';
+import { PluginPageWidgetArea } from '@/components/widgets/area/PluginPageWidgetArea';
+import { createDeclarativeWidgetAreaRender, type DeclarativeWidgetAreaRender } from './declarativeWidgetArea';
 import { usePluginDestinationRowRenderer } from '@/components/appShell/workspace/usePluginDestinationRowRenderer';
 import { useIsBeneathPluginSurfaceNestingBoundary } from './pluginSurfaceNesting';
 import {
@@ -538,6 +549,8 @@ type DeclarativePluginSurfaceWithDocumentSourceProps = Readonly<{
     ) => React.ReactNode;
     /** The B mount owns diagnostics for its intentionally unavailable C bridge. */
     reportUnsupportedNestedTargetedSurface?: () => void;
+    /** The page's declared widget areas, through this mount's one area facade. */
+    renderWidgetArea?: DeclarativeWidgetAreaRender;
     /** `content` stays in the parent's scroll owner; root `fill` owns its own. */
     embeddedPresentation?: 'content' | 'fill';
     /** A host-stamped Composer ref is private and exists only for Composer mounts. */
@@ -642,6 +655,7 @@ function DeclarativePluginSurfaceDocumentContent(
             }}
             renderTargetedSurface={props.renderTargetedSurface}
             reportUnsupportedNestedTargetedSurface={props.reportUnsupportedNestedTargetedSurface}
+            {...(props.renderWidgetArea ? { renderWidgetArea: props.renderWidgetArea } : {})}
             embeddedPresentation={props.embeddedPresentation}
             contrast={props.contrast}
         />
@@ -749,6 +763,7 @@ function DeclarativePluginSurfaceWithDocumentSource(
                 dataClient={props.dataClient}
                 renderTargetedSurface={props.renderTargetedSurface}
                 reportUnsupportedNestedTargetedSurface={props.reportUnsupportedNestedTargetedSurface}
+                {...(props.renderWidgetArea ? { renderWidgetArea: props.renderWidgetArea } : {})}
                 embeddedPresentation={props.embeddedPresentation}
                 contrast={environment.contrast}
             />
@@ -1268,6 +1283,7 @@ function PluginHostedWebBrowserArtifactFramePane(props: Readonly<{
 }
 
 function PluginReactNativeSurfaceHost(props: Readonly<{
+    entityDragBinding?: PluginEntityDragDropBinding | null;
     readLiveStreamViewing: BoundPluginSurfaceController['readLiveStreamViewing'];
     liveStreamMachineId: string | null;
     liveStreamServerId: string | null;
@@ -1284,6 +1300,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     load?: () => Promise<PluginReactNativeSurfaceModule>;
     unavailableAction?: SurfaceStateAction;
     hostApi: PluginSurfaceHostApiV1;
+    resourceStore?: PluginUiResourceStore;
     /** Targeted caller fallback for a contributor render crash. */
     targetedFallback?: React.ReactNode;
     /** The targeted physical mount's incumbent bounded crash diagnostic. */
@@ -1581,7 +1598,15 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                     : { targetedSurfaceUnavailableReason: props.targetedSurfaceUnavailableReason }),
                 // Same-realm RN/RNW mounts only: hosted-web and declarative adapters never receive it.
                 renderSessionPart: renderPluginSessionPart,
+                // The page's declared areas, named for this plugin ("Add to PRs & Issues").
+                renderWidgetArea: (input) => (
+                    <PluginPageWidgetArea {...input} surfaceName={canonicalRenderIdentity.brand?.displayName ?? canonicalRenderIdentity.pluginId} />
+                ),
                 renderDestinationRow,
+                ...(props.entityDragBinding ? {
+                    renderDragSource: input => <PluginEntityDragSourceView binding={props.entityDragBinding!} {...input} />,
+                    renderDropTarget: input => <PluginEntityDropTargetView binding={props.entityDragBinding!} {...input} />,
+                } : {}),
                 isFocusEligible,
                 palette: hostPalette,
                 pageChrome: hostPageChrome,
@@ -1592,6 +1617,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         ),
         [
             renderDestinationRow,
+            props.entityDragBinding,
             hostStateSize,
             detailsPaneBinding,
             paneHeaderBinding,
@@ -1600,6 +1626,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             signal,
             canonicalAccountLifetime,
             canonicalRenderIdentity.brand,
+            canonicalRenderIdentity.pluginId,
             brandTargetPresentation?.fallbackBrandDisplayName,
             brandTargetPresentation?.machineId,
             brandTargetPresentation?.resolveBrandTarget,
@@ -1627,6 +1654,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         presentationActive: hostActivelyViewed && isFocusEligible(),
         accountLifetime: canonicalPrivateResourceMountScope.accountLifetime,
         resourceStoreGeneration: canonicalPrivateResourceMountScope.occurrenceId,
+        ...(props.resourceStore ? { resourceStore: props.resourceStore } : {}),
         ...(canonicalPrivatePresentationHost === undefined
             ? {}
             : { presentationHost: canonicalPrivatePresentationHost }),
@@ -1645,6 +1673,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         canonicalPrivateDataClient,
         canonicalPrivatePresentationHost,
         canonicalPrivateResourceMountScope,
+        props.resourceStore,
         props.composerRef,
         canonicalEphemeralSharedScope,
     ]);
@@ -2466,11 +2495,16 @@ function PluginSurfaceHostMount(props: Readonly<(
             projection: mountedPluginUiProjection,
             pluginId: mountedPluginId,
             locale: surfaceLocale,
+            contributorPluginIds: targetedContributions?.points.flatMap((point) => (
+                point.protocols.flatMap((protocol) => (
+                    protocol.contributions.map((contribution) => contribution.contributor.pluginId)
+                ))
+            )),
         }),
         // Framework-owned chrome is projected after author strings so a plugin
         // cannot replace a fixed host action by declaring the same key.
         ...resolvePluginUiFrameworkTranslations(),
-    }), [mountedPluginId, mountedPluginUiProjection, surfaceLocale]);
+    }), [mountedPluginId, mountedPluginUiProjection, surfaceLocale, targetedContributions]);
     const surfacePlatform = props.platform ?? 'web';
     const surfaceEnvironment = usePluginSurfaceEnvironment(surfacePlatform);
     const declarativePresentationEnvironment = React.useMemo(
@@ -2810,6 +2844,12 @@ function PluginSurfaceHostMount(props: Readonly<(
     // resolved at admission time anyway, so read the current projection then.
     const mountedPluginUiProjectionRef = React.useRef(mountedPluginUiProjection);
     mountedPluginUiProjectionRef.current = mountedPluginUiProjection;
+    const entityDragRuntime = useEntityDragDropRuntime();
+    const entityDragMountKey = React.useId();
+    const entityDragBindingRef = React.useRef<PluginEntityDragDropBinding | null>(null);
+    const entityDragHostControllerRef = React.useRef<BoundPluginSurfaceController | null>(null);
+    const entityDragEligibleRef = React.useRef(false);
+    entityDragEligibleRef.current = accountLocalInteractionEnabled && presentationFocusEligible;
     const mountedComposerAttachmentLocalize = React.useCallback<PluginLocalizedTextResolver>(
         (pluginId, value) => resolvePluginLocalizedText({
             projection: mountedPluginUiProjectionRef.current,
@@ -2899,6 +2939,39 @@ function PluginSurfaceHostMount(props: Readonly<(
     const baseCreateMountedHostApiHandlers = controllerBindingWithConnectedAccounts.createMountedHostApiHandlers;
     const createMountedHostApiHandlers = React.useCallback<BoundPluginSurfaceMountedHostApiHandlersFactory>((input) => {
         const mountedBundle = baseCreateMountedHostApiHandlers?.(input);
+        const entityBinding = accountLifetime ? createPluginEntityDragDropBinding({
+            runtime: entityDragRuntime, pluginId: mountedPluginId, mountKey: entityDragMountKey,
+            scope: accountLifetime.scope, isCurrent: () => input.isCurrent() && accountLifetime.isCurrent(),
+            isInteractionEnabled: () => entityDragEligibleRef.current,
+            subscribeRegistrations: listener => getInstalledPluginUiClientExecutableComposition().subscribe(listener),
+            isSourceDeclared: localId => Boolean(mountedPluginUiProjectionRef.current?.dragSourcesById[`${mountedPluginId}/${localId}`]),
+            isTargetDeclared: localId => Boolean(mountedPluginUiProjectionRef.current?.dropTargetsById[`${mountedPluginId}/${localId}`]),
+            readSource: localId => {
+                const source = mountedPluginUiProjectionRef.current?.dragSourcesById[`${mountedPluginId}/${localId}`];
+                if (!source) return null;
+                const resolved = resolvePluginUiClientDragSourceRegistration({ source, platform: resolvePluginUiClientExecutablePlatform() });
+                return resolved ? { descriptor: source.definition, describe: resolved.runtime.describe,
+                    fallbackDescription: { title: mountedComposerAttachmentLocalize(mountedPluginId, source.definition.title),
+                        ...(source.definition.preview?.subtitle === undefined ? {} : { subtitle: mountedComposerAttachmentLocalize(mountedPluginId, source.definition.preview.subtitle) }) },
+                    isCurrent: resolved.registration.lifecycle.isCurrent } : null;
+            },
+            readTarget: localId => {
+                const target = mountedPluginUiProjectionRef.current?.dropTargetsById[`${mountedPluginId}/${localId}`];
+                if (!target) return null;
+                const resolved = resolvePluginUiClientDropTargetRegistration({ target, platform: resolvePluginUiClientExecutablePlatform() });
+                return resolved ? { descriptor: target.definition, resolve: resolved.runtime.resolve,
+                    isCurrent: resolved.registration.lifecycle.isCurrent } : null;
+            },
+            executeAction: async (action, actionInput) => {
+                const mounted = entityDragHostControllerRef.current;
+                if (!mounted || !input.isCurrent()) return { status: 'refused', reason: { code: 'plugin-drag-mount-retired', message: 'plugin-drag-mount-retired' } };
+                return executeMountedPluginEntityDropAction(mounted, action, actionInput);
+            },
+        }) : null;
+        entityDragBindingRef.current = entityBinding;
+        const hostedEntity = entityBinding ? createHostedEntityDragDropHandlers({ binding: entityBinding,
+            isCurrent: input.isCurrent, readSessionItem: () => controllerFacts.sessionId && accountLifetime?.isCurrent()
+                ? { kind: 'session', scope: accountLifetime.scope, address: { serverId: accountLifetime.scope.serverId, sessionId: controllerFacts.sessionId } } : null }) : null;
         // Factory construction happens during render. Creating this small
         // closure is inert; the bound controller activates it only after the
         // exact physical surface commits.
@@ -2957,10 +3030,11 @@ function PluginSurfaceHostMount(props: Readonly<(
                 currentUiContext?.restore();
             }
             : undefined;
-        const setCurrentUiContextEligibility = mountedBundle?.setCurrentUiContextEligibility || currentUiContext
+        const setCurrentUiContextEligibility = mountedBundle?.setCurrentUiContextEligibility || currentUiContext || entityBinding
             ? (nextEligible: boolean): void => {
                 mountedBundle?.setCurrentUiContextEligibility?.(nextEligible);
                 eligible = nextEligible;
+                entityBinding?.refresh();
                 if (!activated) return;
                 if (eligible) {
                     currentUiContext?.restore();
@@ -2970,15 +3044,20 @@ function PluginSurfaceHostMount(props: Readonly<(
             }
             : undefined;
         return Object.freeze({
-            handlers: mountedBundle?.handlers ?? {},
+            handlers: { ...mountedBundle?.handlers, ...hostedEntity?.handlers },
             ...(currentUiContext ? { currentUiContext } : {}),
             ...(activate ? { activate } : {}),
             ...(setCurrentUiContextEligibility ? { setCurrentUiContextEligibility } : {}),
-            ...(mountedBundle?.dispose ? { dispose: mountedBundle.dispose } : {}),
+            dispose: () => {
+                hostedEntity?.dispose();
+                entityBinding?.dispose();
+                mountedBundle?.dispose?.();
+                if (entityDragBindingRef.current === entityBinding) entityDragBindingRef.current = null;
+            },
         });
-    }, [baseCreateMountedHostApiHandlers, currentUiContextMountPublisher]);
+    }, [accountLifetime, baseCreateMountedHostApiHandlers, controllerFacts.sessionId, currentUiContextMountPublisher, entityDragMountKey, entityDragRuntime, mountedPluginId]);
     const effectiveControllerBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(() => {
-        if (!baseCreateMountedHostApiHandlers && !currentUiContextMountPublisher) {
+        if (!baseCreateMountedHostApiHandlers && !currentUiContextMountPublisher && !accountLifetime) {
             return controllerBindingWithConnectedAccounts;
         }
         return Object.freeze({
@@ -2990,11 +3069,18 @@ function PluginSurfaceHostMount(props: Readonly<(
         controllerBindingWithConnectedAccounts,
         createMountedHostApiHandlers,
         currentUiContextMountPublisher,
+        accountLifetime,
     ]);
     const controller = useBoundPluginSurfaceController({
         facts: controllerFacts,
         ...(effectiveControllerBinding ? { binding: effectiveControllerBinding } : {}),
     });
+    entityDragHostControllerRef.current = controller;
+    const entityDragBinding = entityDragBindingRef.current;
+    const entityDragPresentationHost = React.useMemo(() => entityDragBinding ? createPluginUiPrivatePresentationHost(undefined, {
+        renderDragSource: dragInput => <PluginEntityDragSourceView binding={entityDragBinding} {...dragInput} />,
+        renderDropTarget: dropInput => <PluginEntityDropTargetView binding={entityDragBinding} {...dropInput} />,
+    }) : undefined, [entityDragBinding]);
     React.useLayoutEffect(() => {
         // Presentation focus remains available to every renderer, while the
         // existing layout owner separately names the one semantic-current
@@ -3089,6 +3175,9 @@ function PluginSurfaceHostMount(props: Readonly<(
             ? composerMount.fallback
             : ephemeralMount?.fallback;
     const renderWithTargetedSurfaceBoundary = (child: React.ReactElement): React.ReactElement => {
+        if (renderer.kind === 'declarative' && entityDragPresentationHost) {
+            child = <PluginUiHostPresentationScope environment={declarativePresentationEnvironment} presentationHost={entityDragPresentationHost}>{child}</PluginUiHostPresentationScope>;
+        }
         if (!targetedBinding && !composerBinding && !ephemeralBinding) return child;
         // The physical B mount owns this boundary so its bound controller can
         // publish through the incumbent currentness-aware diagnostic handler.
@@ -3172,6 +3261,10 @@ function PluginSurfaceHostMount(props: Readonly<(
             : undefined,
         [mountedBrandTarget],
     );
+    // A declarative page's `widgetArea` nodes reach its declared areas through this mount's facade.
+    const renderDeclarativeWidgetArea = React.useMemo<DeclarativeWidgetAreaRender | undefined>(() => (controller.widgetArea
+        ? createDeclarativeWidgetAreaRender({ dispatch: controller.widgetArea, surfaceName: projectedBrand?.displayName ?? mountedPluginId })
+        : undefined), [controller.widgetArea, mountedPluginId, projectedBrand?.displayName]);
     const brandTargetPresentation = React.useMemo(
         () => resolveBrandTarget
             ? Object.freeze({
@@ -3367,7 +3460,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         : composerBinding
             ? composerBinding.mount.input
             : ephemeralBinding
-                ? null
+                ? props.launchInput ?? null
             : props.launchInput;
     const mountSubPath = hasEmbeddedRendererMount ? undefined : props.subPath;
     const mountInstanceKey = targetedBinding
@@ -3421,6 +3514,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 accountLifetime={accountLifetime}
                 dataClient={mountedPluginUiDataClient}
                 renderTargetedSurface={hasEmbeddedMount ? undefined : renderTargetedSurface}
+                {...(renderDeclarativeWidgetArea ? { renderWidgetArea: renderDeclarativeWidgetArea } : {})}
                 // Nesting is structurally unsupported for EVERY embedded mount,
                 // not only the targeted arm: an embedded Composer surface has no
                 // B->C bridge either, and it was committing the same fallback
@@ -3475,6 +3569,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                     reportUnsupportedNestedTargetedSurface={hasEmbeddedMount
                         ? reportUnsupportedNestedTargetedSurface
                         : undefined}
+                    {...(renderDeclarativeWidgetArea ? { renderWidgetArea: renderDeclarativeWidgetArea } : {})}
                     embeddedPresentation={surfaceMount.kind === 'embedded' ? surfaceMount.presentation : undefined}
                     {...(composerBinding ? { composerRef: composerBinding.mount.composer } : {})}
                 />
@@ -3870,6 +3965,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 ?? descriptor!.id;
         return renderWithTargetedSurfaceBoundary(
             <PluginReactNativeSurfaceHost
+                entityDragBinding={entityDragBinding}
                 readLiveStreamViewing={controller.readLiveStreamViewing}
                 liveStreamMachineId={machineId ?? null}
                 liveStreamServerId={serverId ?? null}
@@ -3900,6 +3996,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                     } : {}),
                 } : {})}
                 mountLifetime={controller}
+                resourceStore={controller.resourceStore}
                 interactionEnabled={reactNativeInteractionEnabled}
                 focusEligible={presentationFocusEligible}
                 {...(cacheIdentity ? {
@@ -3938,6 +4035,10 @@ function PluginSurfaceHostMount(props: Readonly<(
     // the already-admitted arm to the shared physical renderer dispatcher.
     if (!isUiSurfaceRendererKind(renderer.kind)) return null;
     return (
+        <InputTypePickerHostProvider enabled={renderer.kind === 'reactNative'}
+            machineId={machineId ?? undefined} serverId={serverId} sessionId={props.sessionId}
+            accountLifetime={accountLifetime ?? undefined} isCurrent={controller.isCurrent}
+            contextKey={surfaceTargetAuthorityKey ?? undefined}>
         <UiSurfaceRendererHost
             kind={renderer.kind}
             renderers={{
@@ -3947,6 +4048,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 reactNative: renderReactNative,
             }}
         />
+        </InputTypePickerHostProvider>
     );
 }
 

@@ -91,7 +91,7 @@ describe('createDaemonExternalActionTargetResolver', () => {
       resolveCurrentPermissionMode: async () => 'default',
     });
     const executionOrigin = { v: 1 as const, authority: 'account_automation' as const, surface: 'agent' as const,
-      caller: { kind: 'session' as const, sessionId: 'local-caller' }, serverId: 'home-1', accountId: 'account-1',
+      caller: { kind: 'session' as const, sessionId: 'local-caller', starterDepth: 0, turnDepth: 0 }, serverId: 'home-1', accountId: 'account-1',
       machineId: 'machine-local', sessionId: 'led-remote', target: { kind: 'session' as const, sessionId: 'led-remote' },
       callerPermissionMode: 'default' as const, actionId: 'session.trigger.add' as const, requestId: 'approved-request' };
     await expect(isCurrent({ origin: executionOrigin })).resolves.toBe(true);

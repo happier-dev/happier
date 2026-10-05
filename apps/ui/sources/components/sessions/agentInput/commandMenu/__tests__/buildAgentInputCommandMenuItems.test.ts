@@ -11,6 +11,14 @@ vi.mock('@/text', async () => {
 const { buildAgentInputCommandMenuItems } = await import('../buildAgentInputCommandMenuItems');
 
 describe('buildAgentInputCommandMenuItems', () => {
+    it('adds one typed picker entry after slash suggestions without pretending it is a command', () => {
+        const items = buildAgentInputCommandMenuItems([
+            { kind: 'slashCommand', key: 'help', text: '/help' },
+        ], { includePromptPicker: true });
+        expect(items.map((item) => item.id)).toEqual(['slashCommand:help', 'prompt-picker']);
+        expect(items[1]?.meta).toEqual({ kind: 'promptPicker' });
+        expect(buildAgentInputCommandMenuItems([], { includePromptPicker: true })).toHaveLength(1);
+    });
     it('maps a label-based suggestion to a CommandMenuItem with id, label, description, and rowHeight', () => {
         const suggestions: readonly AutocompleteSuggestion[] = [
             { kind: 'slashCommand', key: 'cmd-goal', text: '/goal', label: 'goal', description: 'Set a goal', rowHeight: 52 },

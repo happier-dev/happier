@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type NativeSyntheticEvent, type TextInput as RNTextInput, type TextInputKeyPressEventData, type ViewStyle } from 'react-native';
+import { Platform, View, type NativeSyntheticEvent, type TextInput as RNTextInput, type TextInputKeyPressEventData, type TextStyle, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -59,12 +59,12 @@ const NO_SELECTION = undefined;
  * On the web the field's resting/focused swaps cross-fade (the capsule's centred face giving way to the
  * full address, Copy surfacing in its slot) instead of switching in one frame. Native swaps at once.
  */
-const FADE_ON_WEB: ViewStyle | null = Platform.OS === 'web'
+const FADE_ON_WEB: (TextStyle & ViewStyle) | null = Platform.OS === 'web'
     ? {
         transitionProperty: 'opacity, color',
         transitionDuration: `${motionTokens.durationMs.fast}ms`,
         transitionTimingFunction: motionTokens.easingCss.standard,
-    } as unknown as ViewStyle
+    } as unknown as TextStyle & ViewStyle
     : null;
 
 const stylesheet = StyleSheet.create((theme) => ({

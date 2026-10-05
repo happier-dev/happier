@@ -27,6 +27,20 @@ boundary, and this workspace README does not claim that release or loaded
 validation. Preview status does not waive correctness, installability,
 lifecycle cleanup, security disclosure, examples, or documentation.
 
+## Voice presentation (0.3 development)
+
+In the 0.3 development Voice contract, `VoiceProviderSettings.privacyFacts`
+declares localized `audioDestination`, `processor`, `retention`, and optional
+`details`. `VoicePrivacyFacts` is available from `/voice`. The host presents
+these facts only in Settings → Voice → Privacy & data, with the existing full
+`privacyDisclosure` behind Details. Declare the actual service policy; do not
+infer retention or training guarantees from a service name.
+
+Contributed numeric settings can request the host's shared stepper with
+`numericControl: 'stepper'`, an explicit positive `step`, existing setting bounds,
+and optional localized `unitKey`. This changes presentation, not saved values.
+See the [Voice guide](../../apps/docs/content/docs/plugins/guides/voice.mdx).
+
 ## Cross-plugin protocol authoring
 
 Use the [SDK protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution)

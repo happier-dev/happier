@@ -58,6 +58,8 @@ export async function cleanupForkChildBestEffort(
                     credentials: params.credentials,
                     machineId,
                     method: RPC_METHODS.STOP_SESSION,
+                    // Stop completion belongs to the relay's finite forwarding lifecycle.
+                    timeoutMs: null,
                     request: { sessionId: params.sessionId },
                     authorization: {
                         kind: 'session.write',

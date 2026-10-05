@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Stack } from 'expo-router';
+import { Stack } from '@/components/appShell/workspace/destinationRoute';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SettingsShell } from '@/components/settings/shell/SettingsShell';
@@ -7,11 +8,13 @@ import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader
 import { RouteModalPortalScope } from '@/components/navigation/RouteModalPortalScope';
 import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/components/navigation/createAppStackScreenOptions';
 import { getSettingsStackScreenDefinitions } from '@/components/settings/navigation/settingsRouteRegistry';
+import { createSettingsLayoutRoute } from '@/components/settings/navigation/createSettingsLayoutRoute';
 import { SettingsPresentationRouteKeeper } from '@/components/settings/navigation/SettingsPresentationRouteKeeper';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { getPreferredLanguage, t } from '@/text';
 
-export default React.memo(function SettingsLayoutRoute() {
+function SettingsLayoutBody() {
+    const hosted = useDestinationInstanceKey() !== null;
     const { theme } = useUnistyles();
     const preferredLanguage = getPreferredLanguage();
 
@@ -33,24 +36,22 @@ export default React.memo(function SettingsLayoutRoute() {
         [preferredLanguage, isModalPresentation],
     );
 
+    const navigator = <Stack screenOptions={screenOptions}>
+        {screenDefinitions.map((definition) => <Stack.Screen key={definition.name}
+            name={definition.name} options={definition.options} />)}
+    </Stack>;
     return (
         <RouteModalPortalScope>
             {/* Crossing the phone width remounts this navigator; this keeps the page that was open. */}
-            <SettingsPresentationRouteKeeper deviceType={deviceType} />
+            {hosted ? null : <SettingsPresentationRouteKeeper deviceType={deviceType} />}
             {/* Phones keep the native stack header (which shows the title); the modal has none. */}
-            <NavigationTitleChromeProvider showsTitle={!isModalPresentation}>
+            <NavigationTitleChromeProvider showsTitle={!isModalPresentation && !hosted}>
             <SettingsShell>
-                <Stack screenOptions={screenOptions}>
-                    {screenDefinitions.map((definition) => (
-                        <Stack.Screen
-                            key={definition.name}
-                            name={definition.name}
-                            options={definition.options}
-                        />
-                    ))}
-                </Stack>
+                {navigator}
             </SettingsShell>
             </NavigationTitleChromeProvider>
         </RouteModalPortalScope>
     );
-});
+}
+
+export default createSettingsLayoutRoute(SettingsLayoutBody);

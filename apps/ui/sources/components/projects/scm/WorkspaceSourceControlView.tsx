@@ -357,6 +357,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                     selectedCount={repositorySelectedCount}
                     writeEnabled={scmWriteEnabled}
                     onRefresh={refresh}
+                    onShowConflicts={props.onOpenReviewAllChanges}
                 />
             ) : null}
             <VirtualizedList

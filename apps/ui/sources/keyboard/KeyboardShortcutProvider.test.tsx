@@ -6,7 +6,12 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { Modal } from '@/modal';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { KeyboardShortcutProvider, useKeyboardShortcutHandlers } from './KeyboardShortcutProvider';
+import { KeyboardShortcutProvider, useKeyboardShortcutHandlers, useFindSurfaceRegistration, useEmbeddedFindKeyboard, useNativeKeyboardInput } from './KeyboardShortcutProvider';
+import type { FindController } from '@happier-dev/plugin-ui/presentation';
+import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
+import { SessionCockpitSurfaceNavigationProvider } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
+import { useReviewComposerHandoff } from '@/components/sessions/reviews/comments/useReviewComposerHandoff';
 
 const testState = vi.hoisted(() => ({
     platformOS: 'web',
@@ -77,6 +82,52 @@ vi.mock('@/components/sessions/agentInput/subscribeToIosHardwareShiftEnter', () 
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    it('routes native keys to the focused input before composer shortcuts and releases them on blur', async () => {
+        testState.platformOS = 'ios';
+        const insert = vi.fn();
+        const send = vi.fn();
+        const underlyingSend = vi.fn();
+        function Input({ focused }: { focused: boolean }) {
+            useNativeKeyboardInput(focused ? {
+                bindings: ['Enter', 'Mod+Enter'],
+                handleKey: (event) => {
+                    if (event.key !== 'Enter') return false;
+                    if (event.metaKey) send(); else insert();
+                    return true;
+                },
+            } : null);
+            return <Child />;
+        }
+        const element = (focused: boolean) => <KeyboardShortcutProvider handlers={{ 'composer.sendImmediate': underlyingSend }}><Input focused={focused} /></KeyboardShortcutProvider>;
+        const screen = await renderScreen(element(true));
+        expect(nativeKeyboardState.configureConsumableSignatures.mock.calls.at(-1)?.[0]).toContain('Enter|shift=false|ctrl=false|meta=false|alt=false');
+        const event = { key: 'Enter', repeat: false, modifiers: { shift: false, ctrl: false, meta: true, alt: false } };
+        await act(async () => nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0](event));
+        expect(send).toHaveBeenCalledOnce();
+        expect(underlyingSend).not.toHaveBeenCalled();
+        await act(async () => nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0]({ ...event, modifiers: { ...event.modifiers, meta: false } }));
+        expect(insert).toHaveBeenCalledOnce();
+        await screen.update(element(false));
+        expect(nativeKeyboardState.configureConsumableSignatures.mock.calls.at(-1)?.[0]).not.toContain('Enter|shift=false|ctrl=false|meta=false|alt=false');
+        await act(async () => nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0](event));
+        expect(underlyingSend).toHaveBeenCalledOnce();
+    });
+
+    it('gives embedded renderers only configured Find chords and releases disabled bindings', async () => {
+        testState.platformOS = 'ios';
+        testState.settings = { ...testState.settings, keyboardShortcutOverridesV1: { 'find.open': [{ binding: 'Mod+P' }] } };
+        let bridge: ReturnType<typeof useEmbeddedFindKeyboard> | undefined;
+        const open = vi.fn();
+        function Embedded() { bridge = useEmbeddedFindKeyboard(); return <Child />; }
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{ 'find.open': open, 'session.new': () => {} }}><Embedded /></KeyboardShortcutProvider>);
+        expect(bridge?.signatures).toContain('p|shift=false|ctrl=false|meta=true|alt=false');
+        expect(bridge?.signatures.some((signature) => signature.startsWith('g|'))).toBe(false);
+        await act(async () => { bridge?.dispatch({ key: 'p', code: 'KeyP', repeat: false, modifiers: { shift: false, ctrl: false, meta: true, alt: false } }); });
+        expect(open).toHaveBeenCalledOnce();
+        testState.settings = { ...testState.settings, keyboardShortcutDisabledCommandIdsV1: ['find.open'] };
+        await screen.update(<KeyboardShortcutProvider handlers={{ 'find.open': open }}><Embedded /></KeyboardShortcutProvider>);
+        expect(bridge?.signatures).toEqual([]);
+    });
     beforeEach(() => {
         vi.clearAllMocks();
         testState.platformOS = 'web';
@@ -94,6 +145,80 @@ describe('KeyboardShortcutProvider', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('captures handled Find before terminal input, passes the second Find and never steps during composition', async () => {
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        let opened = false;
+        let focused = false;
+        let steps = 0;
+        const controller: FindController = { query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' }, capabilities: { regex: true, stop: false },
+            setQuery() {}, setOptions() {}, step(direction) { steps += direction; }, stop() {}, close() { opened = false; focused = false; } };
+        function Surface() {
+            useFindSurfaceRegistration({ surfaceId: 'terminal:leaf', containsFocus: () => true, open: () => { opened = true; focused = true; }, isOpen: () => opened, isInputFocused: () => focused, controller });
+            return <Child />;
+        }
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><Surface /></KeyboardShortcutProvider>);
+        expect(window.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+        const first = createKeyboardEvent({ key: 'f', code: 'KeyF', metaKey: true });
+        window.dispatchEvent(first);
+        expect(opened).toBe(true);
+        expect(first.preventDefault).toHaveBeenCalledOnce();
+        expect(first.stopImmediatePropagation).toHaveBeenCalledOnce();
+        const second = createKeyboardEvent({ key: 'f', code: 'KeyF', metaKey: true });
+        window.dispatchEvent(second);
+        expect(second.preventDefault).not.toHaveBeenCalled();
+        window.dispatchEvent(createKeyboardEvent({ key: 'Enter', code: 'Enter', isComposing: true }));
+        expect(steps).toBe(0);
+        window.dispatchEvent(createKeyboardEvent({ key: 'Enter', code: 'Enter' }));
+        expect(steps).toBe(1);
+        window.dispatchEvent(createKeyboardEvent({ key: 'Escape', code: 'Escape' }));
+        expect(opened).toBe(false);
+    });
+
+    it.each(['browser', 'desktop'] as const)('routes Next from an editable field using the %s host chord', async (host) => {
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        if (host === 'desktop') vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => undefined });
+        let navigations = 0;
+        function ShellHost() {
+            useKeyboardShortcutHandlers({ 'session.pending.next': () => { navigations += 1; } });
+            return <Child />;
+        }
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><ShellHost /></KeyboardShortcutProvider>);
+        const event = { key: 'j', code: 'KeyJ', shiftKey: true, target: { tagName: 'TEXTAREA' } as unknown as EventTarget };
+        await act(async () => {
+            window.dispatchEvent(createKeyboardEvent({ ...event, metaKey: host === 'desktop', altKey: host === 'browser' }));
+        });
+        expect(navigations).toBe(1);
+        await act(async () => {
+            window.dispatchEvent(createKeyboardEvent({ ...event, metaKey: host === 'browser', altKey: host === 'desktop' }));
+            window.dispatchEvent(createKeyboardEvent({ ...event, metaKey: true, shiftKey: false }));
+        });
+        expect(navigations).toBe(1);
+    });
+
+    it('admits the rebound Voice command in an editor but ignores keys consumed by a modal and held-key repeats', async () => {
+        testState.settings = {
+            ...testState.settings,
+            keyboardShortcutOverridesV1: { 'voice.toggle': [{ binding: 'Ctrl+Alt+B' }] },
+        };
+        let toggles = 0;
+        function VoiceRuntime() {
+            useKeyboardShortcutHandlers({ 'voice.toggle': () => { toggles += 1; } });
+            return <Child />;
+        }
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><VoiceRuntime /></KeyboardShortcutProvider>);
+        const event = { key: 'b', code: 'KeyB', ctrlKey: true, altKey: true, target: { tagName: 'TEXTAREA' } as unknown as EventTarget };
+        await act(async () => {
+            window.dispatchEvent(createKeyboardEvent({ ...event, defaultPrevented: true }));
+            window.dispatchEvent(createKeyboardEvent({ ...event, repeat: true }));
+        });
+        expect(toggles).toBe(0);
+        await act(async () => { window.dispatchEvent(createKeyboardEvent(event)); });
+        expect(toggles).toBe(1);
+        await act(async () => { screen.tree.update(<KeyboardShortcutProvider handlers={{}}><Child /></KeyboardShortcutProvider>); });
+        await act(async () => { window.dispatchEvent(createKeyboardEvent(event)); });
+        expect(toggles).toBe(1);
     });
 
     it('invokes the current scoped command from an explicit action even when shortcuts are disabled', async () => {
@@ -125,10 +250,6 @@ describe('KeyboardShortcutProvider', () => {
         testState.settings = { ...testState.settings, keyboardShortcutsV2Enabled: false };
         const { renderScreen } = await import('@/dev/testkit');
         const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
-        const { AppPaneProvider, useAppPaneContext } = await import('@/components/appShell/panes/AppPaneProvider');
-        const { buildDetailsWorkspaceStateView } = await import('@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors');
-        const { SessionCockpitSurfaceNavigationProvider } = await import('@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation');
-        const { useReviewComposerHandoff } = await import('@/components/sessions/reviews/comments/useReviewComposerHandoff');
         type Surface = import('@/components/workspaceCockpit/session/sessionCockpitState').SessionMobileSurface;
         let surface: Surface = 'tabs';
         let focusedSurface: Surface | null = null;
@@ -230,6 +351,33 @@ describe('KeyboardShortcutProvider', () => {
         });
 
         expect(openCommandPalette).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes native Cmd+G and Shift+Cmd+G from the focused Find field using the registered commands', async () => {
+        testState.platformOS = 'ios';
+        const steps: number[] = [];
+        const controller: FindController = {
+            query: 'needle', options: { matchCase: false, regex: false }, status: { kind: 'idle' },
+            capabilities: { regex: true, stop: false }, setQuery() {}, setOptions() {},
+            step: (direction) => { steps.push(direction); }, stop() {}, close() {},
+        };
+        function Surface() {
+            useFindSurfaceRegistration({ surfaceId: 'chat', containsFocus: () => true, open() {},
+                isOpen: () => true, isInputFocused: () => true, controller });
+            return <Child />;
+        }
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><Surface /></KeyboardShortcutProvider>);
+        const listener = nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0];
+        expect(listener).toBeTypeOf('function');
+        await act(async () => {
+            for (const shift of [false, true]) listener?.({ key: 'g', code: 'KeyG',
+                modifiers: { shift, ctrl: false, meta: true, alt: false }, repeat: false,
+                target: 'reactNativeTextInput', isEditableTarget: true });
+        });
+        expect(steps).toEqual([1, -1]);
+        expect(nativeKeyboardState.configureConsumableSignatures.mock.calls.at(-1)?.[0]).toEqual(expect.arrayContaining([
+            'g|shift=false|ctrl=false|meta=true|alt=false', 'g|shift=true|ctrl=false|meta=true|alt=false',
+        ]));
     });
 
     it('does not dispatch a native shortcut that is disallowed in the focused editable target', async () => {
@@ -525,9 +673,9 @@ function installKeyboardWindowMock() {
     Object.defineProperty(globalThis, 'window', {
         configurable: true,
         value: {
-            addEventListener: (type: string, listener: (event: KeyboardEvent) => void) => {
+            addEventListener: vi.fn((type: string, listener: (event: KeyboardEvent) => void) => {
                 if (type === 'keydown') listeners.add(listener);
-            },
+            }),
             removeEventListener: (type: string, listener: (event: KeyboardEvent) => void) => {
                 if (type === 'keydown') listeners.delete(listener);
             },
@@ -552,6 +700,7 @@ function createKeyboardEvent(event: Partial<KeyboardEvent>): KeyboardEvent {
         repeat: false,
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
+        stopImmediatePropagation: vi.fn(),
         target: null,
         ...event,
     } as KeyboardEvent;

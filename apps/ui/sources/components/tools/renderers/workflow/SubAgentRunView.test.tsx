@@ -65,6 +65,7 @@ describe('SubAgentRunView', () => {
             id: `message-${index}`,
             localId: null,
             createdAt: index + 2,
+            children: [],
             tool: {
                 id: `tool-${index}`,
                 name: 'Read',

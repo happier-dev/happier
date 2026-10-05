@@ -10,7 +10,7 @@ import {
 import {
   TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE,
   type UploadTransferFinalizeResult,
-} from './uploadTransferTarget';
+} from '@happier-dev/transfers/node';
 
 export type WorkspaceFileFinalizeOperations = MoveFileOperations;
 

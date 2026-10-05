@@ -1,9 +1,10 @@
-import type { AcpCatalogSettingsV1, EffectiveActionInputField, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { AcpCatalogSettingsV1, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { getActionSpec, PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
 import * as React from 'react';
 
 import type { MergedBackendProjectionEntry, MergedProviderProjectionEntry } from '@/agents/backendCatalog/mergedProjectionTypes';
 import type { ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
+import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { getValueAtPath, setValueAtTopLevelPatch } from '@/components/sessions/actions/ActionInputFields';
 import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
@@ -69,7 +70,7 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
         label: choice.title,
         ...(choice.disabled ? { disabled: true as const } : {}),
     })), [backendChoices, params.intent]);
-    const resolveFieldOptions = React.useCallback((field: EffectiveActionInputField): readonly ActionFieldOption[] => {
+    const resolveFieldOptions = React.useCallback<ResolveSessionActionFieldOptions>((field): readonly ActionFieldOption[] => {
         const sourceId = typeof field.optionsSourceId === 'string' ? field.optionsSourceId : '';
         if (sourceId === 'review.engines.available' || sourceId === 'execution.backends.enabled') return backendOptions;
         return field.options ?? [];

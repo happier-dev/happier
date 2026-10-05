@@ -56,6 +56,8 @@ import {
 } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { openArtifactStoredContentBytes, storePlainArtifactDbBytes } from "@/app/artifacts/artifactStoredContent";
+import { prepareArtifactBlobWrite, completeArtifactBlobCandidateCustodyInTx, openArtifactBlobBytes } from '@/app/artifacts/artifactBlobService';
+import { stageArtifactBlobAccountEncryptionConversion } from '@/app/artifacts/artifactEncryptionConversionBlobService';
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 
 const SESSION_OWNER_MATERIAL = {
@@ -379,6 +381,7 @@ describe("account encryption migration .7 SQLite matrix", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-account-encryption-migrate-v7-",
             initEncrypt: true,
+            initFiles: true,
             env: { HAPPIER_SQLITE_CONNECTION_LIMIT: "2" },
         });
     }, 120_000);
@@ -408,7 +411,7 @@ describe("account encryption migration .7 SQLite matrix", () => {
         await harness.close();
     });
 
-    it("preserves retained Artifact bodies through plain to E2EE to plain transitions and exact replay", async () => {
+    it.each(['text', 'binary'] as const)("preserves retained Artifact %s bodies through plain to E2EE to plain transitions and exact replay", async kind => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -422,17 +425,27 @@ describe("account encryption migration .7 SQLite matrix", () => {
             contentPublicKeySig: Buffer.from(binding.contentPublicKeySig, "base64"), encryptionMode: "plain",
         } });
         const artifactId = randomUUID();
+        const privateBlobs = [Uint8Array.of(0, 255, 12), Uint8Array.of(255, 0, 128)].map(bytes => ({ blobId: randomUUID(), bytes }));
+        const binaryBody = (index: number) => ({ blobId: privateBlobs[index]!.blobId, mime: 'application/octet-stream',
+            sizeBytes: privateBlobs[index]!.bytes.length, sha256: createHash('sha256').update(privateBlobs[index]!.bytes).digest('hex') });
         const plainHeader = encodePlainArtifactStoredContent({ title: "History" });
-        const plainBody = encodePlainArtifactStoredContent({ body: "Current" });
-        const plainRevision = encodePlainArtifactStoredContent({ body: "Retained private body" });
+        const plainBody = encodePlainArtifactStoredContent({ body: kind === 'binary' ? binaryBody(0) : 'Current' });
+        const plainRevision = encodePlainArtifactStoredContent({ body: kind === 'binary' ? binaryBody(1) : 'Retained private body' });
         const sealPlain = (field: "header" | "body", value: string) => storePlainArtifactDbBytes({
             accountId: account.id, artifactId, field, content: Buffer.from(value, "base64"),
         })!;
         await db.artifact.create({ data: { id: artifactId, accountId: account.id,
             header: sealPlain("header", plainHeader), body: sealPlain("body", plainBody),
             headerVersion: 1, bodyVersion: 3, dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, "base64"),
-            revisions: { create: [{ bodyVersion: 1, body: sealPlain("body", plainRevision), createdAt: new Date(1234) }] },
+            currentBlobId: kind === 'binary' ? privateBlobs[0]!.blobId : null,
+            revisions: { create: [{ bodyVersion: 1, body: sealPlain("body", plainRevision), createdAt: new Date(1234),
+                blobId: kind === 'binary' ? privateBlobs[1]!.blobId : null }] },
         } });
+        if (kind === 'binary') for (const blob of privateBlobs) {
+            const prepared = await prepareArtifactBlobWrite({ accountId: account.id, artifactId,
+                blob: { blobId: blob.blobId, content: { t: 'plain', v: Buffer.from(blob.bytes).toString('base64') } } });
+            await inTx(async tx => { await tx.artifactBlob.create({ data: prepared!.row }); await completeArtifactBlobCandidateCustodyInTx(tx, prepared!); });
+        }
         // The server's E2EE boundary is deliberately opaque. Client codec
         // round-trip tests separately prove these replacement bodies are opened.
         const encryptedKey = privacyKit.encodeBase64(new Uint8Array(sealEncryptedDataKeyEnvelopeV1({
@@ -448,6 +461,14 @@ describe("account encryption migration .7 SQLite matrix", () => {
                 const sourceAccount = await db.account.findUniqueOrThrow({ where: { id: account.id } });
                 const source = await db.artifact.findUniqueOrThrow({ where: { id: artifactId }, include: { revisions: true } });
                 const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(sourceAccount);
+                const convertedBlobs = kind === 'binary' ? await Promise.all(privateBlobs.map(async blob => {
+                    const row = await db.artifactBlob.findUniqueOrThrow({ where: { id: blob.blobId } });
+                    const sourceBytes = await openArtifactBlobBytes(account.id, row);
+                    const content = toMode === 'plain' ? { t: 'plain' as const, v: Buffer.from(blob.bytes).toString('base64') }
+                        : { t: 'encrypted' as const, c: Buffer.from(Uint8Array.of(2, ...blob.bytes)).toString('base64') };
+                    return { blobId: blob.blobId, expectedContentSha256: createHash('sha256').update(sourceBytes).digest('hex'),
+                        content: await stageArtifactBlobAccountEncryptionConversion({ accountId: account.id, artifactId, blobId: blob.blobId, content }) };
+                })) : [];
                 const unsigned = {
                     toMode, expectedAccountVersion: sourceAccount.seq,
                     expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
@@ -462,7 +483,7 @@ describe("account encryption migration .7 SQLite matrix", () => {
                         header: toMode === "plain" ? plainHeader : encryptedHeader,
                         body: toMode === "plain" ? plainBody : encryptedBody,
                         dataEncryptionKey: toMode === "plain" ? ARTIFACT_PLAIN_DATA_KEY_MARKER : encryptedKey,
-                        blobs: [],
+                        blobs: convertedBlobs,
                         revisions: [{ bodyVersion: 1, expectedBody: toMode === "plain" ? encryptedRevision : plainRevision,
                             body: toMode === "plain" ? plainRevision : encryptedRevision }],
                     }] },

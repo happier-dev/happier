@@ -7,8 +7,8 @@
  * and as the edit request built from one.
  */
 export type MessageDisplayTextSource = Readonly<{
-    text?: string | null;
-    displayText?: string | null;
+    text?: unknown;
+    displayText?: unknown;
 }>;
 
 /**

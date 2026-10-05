@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildVoiceAgentBootstrapPrompt, buildVoiceAgentSeededUserTurnPrompt } from './voiceAgentPrompts';
 
 describe('voiceAgentPrompts', () => {
   it('filters disabled actions out of the embedded local voice system prompt', async () => {
@@ -10,7 +11,6 @@ describe('voiceAgentPrompts', () => {
       },
     });
     try {
-      const { buildVoiceAgentBootstrapPrompt } = await import('./voiceAgentPrompts');
       const prompt = buildVoiceAgentBootstrapPrompt({
         verbosity: 'short',
         initialContext: '',
@@ -24,7 +24,6 @@ describe('voiceAgentPrompts', () => {
   }, 15_000);
 
   it('filters explicitly disabled discovery actions from seeded prompts', async () => {
-    const { buildVoiceAgentSeededUserTurnPrompt } = await import('./voiceAgentPrompts');
     const prompt = buildVoiceAgentSeededUserTurnPrompt({
       verbosity: 'short',
       initialContext: 'CTX',
@@ -38,7 +37,6 @@ describe('voiceAgentPrompts', () => {
   });
 
   it('forwards memory recall guidance into the embedded local voice system prompt', async () => {
-    const { buildVoiceAgentBootstrapPrompt } = await import('./voiceAgentPrompts');
     const prompt = buildVoiceAgentBootstrapPrompt({
       verbosity: 'short',
       initialContext: '',
@@ -51,8 +49,6 @@ describe('voiceAgentPrompts', () => {
   });
 
   it('appends resolved voice prompt stack blocks to bootstrap and seeded prompts', async () => {
-    const { buildVoiceAgentBootstrapPrompt, buildVoiceAgentSeededUserTurnPrompt } = await import('./voiceAgentPrompts');
-
     const bootstrapPrompt = buildVoiceAgentBootstrapPrompt({
       verbosity: 'short',
       initialContext: '',

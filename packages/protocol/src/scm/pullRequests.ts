@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
+import { ScmCommitPublicationSchema } from './commitPublication.js';
 
 import {
   ProviderRefreshPolicySchema,
@@ -538,11 +539,14 @@ export const ScmPullRequestRunStackedResponseSchema = z.union([
       composeUrl: z.string().url().optional(),
       branch: z.string().min(1).nullable().optional(),
       commitSha: z.string().min(1).nullable().optional(),
+      commitPublication: ScmCommitPublicationSchema.optional(),
       nextAction: ScmFollowupActionSchema,
       events: z.array(ScmPullRequestRunStackedProgressEventSchema).default([]),
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema.extend({
+    commitSha: z.string().min(1).nullable().optional(),
+    commitPublication: ScmCommitPublicationSchema.optional(),
     events: z.array(ScmPullRequestRunStackedProgressEventSchema).default([]),
   }).passthrough(),
 ]);

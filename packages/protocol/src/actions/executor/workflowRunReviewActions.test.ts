@@ -16,11 +16,13 @@ import {
   serializeWorkflowStoredContentEnvelopeV1,
   type WorkflowDefinitionV1, type WorkflowProgressEnvelopeV1, type WorkflowMaterializedLeafV1,
   type WorkflowAcceptedAuthorizationV1,
+  validateWorkflowDefinition,
 } from '../../workflows/index.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const rootId = '22222222-2222-4222-8222-222222222222';
 const heldId = '33333333-3333-4333-8333-333333333333';
+const childRunId = '44444444-4444-4444-8444-444444444444';
 const timestamp = '2026-01-01T00:00:00.000Z';
 const actor = { surface: 'ui', authority: 'present_user', callerPermissionMode: 'safe-yolo' } as const;
 const target = { runId, invocation: { recordId: heldId }, expectedContentRevision: '4' };
@@ -41,6 +43,9 @@ function harness(options: Readonly<{
   materializedLeaves?: WorkflowMaterializedLeafV1[];
   access?: 'view' | 'edit';
   authorization?: WorkflowAcceptedAuthorizationV1;
+  startedPlan?: WorkflowDefinitionV1;
+  startedPlanSource?: 'inline' | 'saved';
+  materializedStartedPlan?: WorkflowDefinitionV1;
 }> = {}) {
   const runDataKey = options.e2ee ? randomBytes(32) : undefined;
   const ownerMachineKey = options.e2ee ? randomBytes(32) : undefined;
@@ -112,8 +117,24 @@ function harness(options: Readonly<{
     },
     storage: { execute: async operation => {
       operations.push(operation);
-      if (operation.operation === 'get') return snapshot;
+      if (operation.operation === 'get') {
+        if (operation.runId === runId) return snapshot;
+        if (operation.runId !== childRunId || !options.startedPlan) throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        return { ...snapshot, run: { ...run, id: childRunId, sourceArtifactId: options.startedPlanSource === 'saved' ? childRunId : null }, keyCensus: { ...snapshot.keyCensus, runId: childRunId },
+          acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...crypto,
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId: childRunId }, acceptedSnapshot: {
+              definition: options.materializedStartedPlan ?? options.startedPlan, authoredDefinition: options.startedPlan, workDepth: 0, startedBy: 'user',
+              metadata: null, frozenChildren: {}, materializedLeaves: [],
+              source: options.startedPlanSource === 'saved'
+                ? { kind: 'saved', definitionId: childRunId, revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null }
+                : { kind: 'inline' }, inputs: {},
+              machineId: 'machine-a', executionTarget: { kind: 'session' },
+              workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+              origin: { kind: 'direct' }, authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
+            } })) };
+      }
       if (operation.operation === 'run-key.census') return snapshot.keyCensus;
+      if (operation.operation === 'invocations.list') return { invocations: [], parentRevision: run.revision };
       if (operation.operation === 'invocations.get') {
         const invocation = rows.get(String(operation.invocationId));
         if (!invocation) throw Object.assign(new Error('invocation_not_found'), { code: 'invocation_not_found' });
@@ -153,6 +174,45 @@ function harness(options: Readonly<{
 }
 
 describe('Account review Actions', () => {
+  it.each([false, true])('refuses attaching an earlier Plan Run to a changed proposal (supplied=%s)', async supplied => {
+    const proposalA = WorkflowDefinitionV1Schema.parse({ ...program, defaults: {
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+    } });
+    const proposalB = WorkflowDefinitionV1Schema.parse({ ...proposalA, blocks: [{ ...program.blocks[0],
+      document: { text: 'A different proposal', references: [], attachments: [] } }] });
+    expect(validateWorkflowDefinition(proposalA).valid).toBe(true);
+    expect(validateWorkflowDefinition(proposalB).valid).toBe(true);
+    const definition = WorkflowDefinitionV1Schema.parse({ ...program, blocks: [{ ...program.blocks[0],
+      result: { kind: 'json', schema: { type: 'object' } } }] });
+    const value = { document: 'Proposal B', proposal: proposalB };
+    const h = harness({ definition, startedPlan: proposalA, progress: { result: supplied ? { document: 'Proposal A', proposal: proposalA } : value } });
+    const before = h.rows.get(heldId)!.contentEnvelope;
+    await expect(h.owner.execute({ actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode: 'use_result',
+      ...(supplied ? { value } : {}), followUp: { kind: 'run_started', runId: childRunId } }, context: actor }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    expect(h.rows.get(heldId)!.contentEnvelope).toBe(before);
+    expect(h.operations.some(operation => operation.operation === 'invocations.complete_review')).toBe(false);
+  });
+
+  it.each(['inline', 'saved'] as const)('accepts a matching normalized Plan proposal and rejoins its lost completion response (source=%s)', async startedPlanSource => {
+    const definition = WorkflowDefinitionV1Schema.parse({ ...program, blocks: [{ ...program.blocks[0],
+      result: { kind: 'json', schema: { type: 'object' } } }] });
+    const proposal = WorkflowDefinitionV1Schema.parse({ ...program, defaults: {
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+    } });
+    expect(validateWorkflowDefinition(proposal).valid).toBe(true);
+    const materialized = WorkflowDefinitionV1Schema.parse({ ...proposal, defaults: { ...proposal.defaults, permissionMode: 'read-only' } });
+    const h = harness({ definition, startedPlan: proposal, startedPlanSource, materializedStartedPlan: materialized,
+      progress: { result: { document: 'Proposal A', proposal } }, loseResponse: true });
+    const child = await h.owner.execute({ actionId: 'workflow.run.get', input: { runId: childRunId }, context: actor });
+    expect(child).toMatchObject({ definition: materialized, authoredDefinition: proposal });
+    const args = { actionId: 'workflow.run.invocations.complete_review', input: { ...target, mode: 'use_result',
+      followUp: { kind: 'run_started', runId: childRunId } }, context: actor } as const;
+    await expect(h.owner.execute(args)).resolves.toMatchObject({ disposition: 'completed' });
+    await expect(h.owner.execute(args)).resolves.toMatchObject({ disposition: 'completed' });
+    expect(h.progress().review?.decision).toMatchObject({ followUp: { kind: 'run_started', runId: childRunId } });
+    expect(h.operations.filter(operation => operation.operation === 'invocations.complete_review')).toHaveLength(1);
+  });
   it('records a later offline Generate against the last retained same-conversation attempt', async () => {
     const historicalId = '44444444-4444-4444-8444-444444444444';
     const h = harness({ canContinue: false, progress: { execution: undefined, attempt: '1',

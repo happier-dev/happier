@@ -547,6 +547,8 @@ describe('packed external Voice provider author contract', () => {
     for (const platform of ['web', 'ios', 'android'] as const) {
       const registeredProviders = new Map<string, RealtimeVoiceProviderRuntime>();
       const api: PluginClientApi = {
+        dragSources: { register() { throw new Error('Unexpected drag source'); } },
+        dropTargets: { register() { throw new Error('Unexpected drop target'); } },
         actions: { register() {} },
         voiceProviders: {
           register(localId, runtime) {
@@ -649,6 +651,8 @@ describe('packed external Voice provider author contract', () => {
       const registeredActions = new Set<string>();
       const registeredProviders = new Map<string, RealtimeVoiceProviderRuntime>();
       const api: PluginClientApi = {
+        dragSources: { register() { throw new Error('Unexpected drag source'); } },
+        dropTargets: { register() { throw new Error('Unexpected drop target'); } },
         actions: {
           register(localId) {
             registeredActions.add(localId);

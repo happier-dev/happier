@@ -838,10 +838,14 @@ export function registerLocalServicePreviewRoutes(
             if (method === "GET") {
                 dataPlane.get(PREVIEW_ROUTE_PATH, { exposeHeadRoute: false }, handler);
                 if (hostRouteConstraint) {
-                    dataPlane.get(PREVIEW_HOST_ROUTE_PATH, {
-                        exposeHeadRoute: false,
-                        constraints: { host: hostRouteConstraint },
-                    }, handler);
+                    // An unconstrained static UI root wins over a constrained wildcard.
+                    // Match that path explicitly while keeping the same preview policy.
+                    for (const path of ["/", PREVIEW_HOST_ROUTE_PATH]) {
+                        dataPlane.get(path, {
+                            exposeHeadRoute: false,
+                            constraints: { host: hostRouteConstraint },
+                        }, handler);
+                    }
                 }
                 continue;
             }
@@ -849,9 +853,12 @@ export function registerLocalServicePreviewRoutes(
             if (method === "OPTIONS" || !hostRouteConstraint) {
                 continue;
             }
-            dataPlane[method.toLowerCase() as Lowercase<typeof method>](PREVIEW_HOST_ROUTE_PATH, {
-                constraints: { host: hostRouteConstraint },
-            }, handler);
+            const hostPaths = method === "HEAD" ? ["/", PREVIEW_HOST_ROUTE_PATH] : [PREVIEW_HOST_ROUTE_PATH];
+            for (const path of hostPaths) {
+                dataPlane[method.toLowerCase() as Lowercase<typeof method>](path, {
+                    constraints: { host: hostRouteConstraint },
+                }, handler);
+            }
         }
     });
 }

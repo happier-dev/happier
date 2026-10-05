@@ -76,7 +76,7 @@ describe('sync socket offline duration tracking', () => {
     });
 
     it('captures the last offline duration across disconnected→connected transition', async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 

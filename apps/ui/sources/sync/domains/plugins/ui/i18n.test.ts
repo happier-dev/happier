@@ -7,6 +7,7 @@ import {
 import {
     createPluginLocalizedTextResolver,
     resolvePluginLocalizedText,
+    resolvePluginUiTranslationBundle,
 } from './i18n';
 
 const pluginId = 'acme.review';
@@ -58,5 +59,47 @@ describe('resolvePluginLocalizedText', () => {
         expect(french(pluginId, keyed)).toBe('Tableau de revue');
         expect(english(pluginId, keyed)).toBe('Review dashboard');
         expect(french(pluginId, 'Authored literal')).toBe('Authored literal');
+    });
+});
+
+describe('surface translation bundles', () => {
+    it('projects admitted contributors in the selected locale without replacing the target’s own strings', () => {
+        const contributorId = 'acme.source';
+        const contributorProjection = {
+            ...projection,
+            translationsByPluginId: {
+                ...projection.translationsByPluginId,
+                [contributorId]: {
+                    id: `translations:${contributorId}`,
+                    pluginId: contributorId,
+                    contributionKind: 'translations' as const,
+                    locales: ['en', 'fr'],
+                    bundles: {
+                        en: { 'source.tab.stack': 'Stack trace', 'source.tab.release': 'Release' },
+                        fr: { 'source.tab.stack': 'Trace de pile', 'review.dashboard.title': 'Contributor collision' },
+                    },
+                },
+                'acme.unadmitted': {
+                    id: 'translations:acme.unadmitted',
+                    pluginId: 'acme.unadmitted',
+                    contributionKind: 'translations' as const,
+                    locales: ['en'],
+                    bundles: { en: { 'unadmitted.tab': 'Unadmitted' } },
+                },
+            },
+        } satisfies PluginUiProjectionModel;
+
+        expect(resolvePluginUiTranslationBundle({
+            projection: contributorProjection,
+            pluginId,
+            locale: 'fr',
+            contributorPluginIds: [contributorId, contributorId, 'acme.unknown'],
+        })).toEqual({
+            'source.tab.stack': 'Trace de pile',
+            'source.tab.release': 'Release',
+            'review.dashboard.title': 'Tableau de revue',
+        });
+        expect(resolvePluginUiTranslationBundle({ projection: contributorProjection, pluginId, locale: 'fr' }))
+            .toEqual({ 'review.dashboard.title': 'Tableau de revue' });
     });
 });

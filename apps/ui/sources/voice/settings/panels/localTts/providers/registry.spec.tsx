@@ -77,13 +77,25 @@ describe('local TTS provider registry', () => {
       },
       settings: {
         schemaVersion: 2,
-        fields: [{
-          id: 'voiceName',
-          title: 'Voice',
-          schema: { type: 'string', minLength: 1, maxLength: 256 },
-          default: 'acme-v1',
-          presentation: { control: 'text' },
-        }],
+        fields: [
+          {
+            id: 'voiceName',
+            title: 'Voice',
+            schema: { type: 'string', minLength: 1, maxLength: 256 },
+            default: 'acme-v1',
+            presentation: { control: 'text' },
+          },
+          {
+            id: 'format',
+            title: 'Audio format',
+            schema: { type: 'string', enum: ['mp3', 'wav'] },
+            default: 'mp3',
+            presentation: {
+              control: 'select',
+              options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }],
+            },
+          },
+        ],
       },
     });
     if (declaration.kind !== 'speech') throw new Error('expected speech declaration');
@@ -102,11 +114,18 @@ describe('local TTS provider registry', () => {
             detailKey: 'acme.detail',
             iconName: 'speaker-high',
             credential: { titleKey: 'acme.key', promptTitleKey: 'acme.key', promptBodyKey: 'acme.key' },
-            fields: [{
-              fieldId: 'voiceName',
-              titleKey: 'acme.voice.title',
-              subtitleKey: 'acme.voice.subtitle',
-            }],
+            fields: [
+              {
+                fieldId: 'voiceName',
+                titleKey: 'acme.voice.title',
+                subtitleKey: 'acme.voice.subtitle',
+              },
+              {
+                fieldId: 'format',
+                titleKey: 'acme.format.title',
+                subtitleKey: 'acme.format.subtitle',
+              },
+            ],
             test: {
               missingValueMessageKey: 'acme.voice.missing',
             },

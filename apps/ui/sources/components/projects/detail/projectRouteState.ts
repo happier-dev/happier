@@ -1,4 +1,6 @@
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { parseSessionFileDeepLinkAnchor, serializeFileTargetAnchor, type FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import {
@@ -8,6 +10,15 @@ import {
     resolveProjectRoutePathForSurface,
     type ProjectMobileSurface,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
+
+export type ProjectFileRouteTarget = Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource }>;
+
+export function readProjectFileRouteTarget(params: Readonly<Record<string, unknown>>): ProjectFileRouteTarget | null {
+    const path = readProjectRouteStringParam(typeof params.initialFile === 'string' || Array.isArray(params.initialFile) ? params.initialFile : undefined);
+    if (!path) return null;
+    const parsed = parseSessionFileDeepLinkAnchor({ ...params, path });
+    return { kind: 'file', path, ...(parsed ? { anchor: parsed.anchor } : {}), ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}) };
+}
 
 export type ProjectRouteSegment = 'details' | 'files' | 'git';
 export const PROJECT_ROUTE_ROOT_SENTINEL = '@root';
@@ -143,6 +154,34 @@ export function resolveProjectRouteSelectionQuery(input: Readonly<{
     };
 }
 
+export function resolveProjectCockpitIndexRedirectHref(input: Readonly<{
+    workspaceRefId: string;
+    surface: ProjectMobileSurface;
+    explicitMobileSurfaceHint: string | null;
+    requestedRootPath: string | null;
+    requestedWorktreeId: string | null;
+    activeRootPath: string;
+    defaultRootPath: string;
+    activeWorktreeId: string | null;
+}>): string | null {
+    const selectionQuery = resolveProjectRouteSelectionQuery(input);
+    const canonicalHref = resolveProjectRoutePathForSurface({
+        workspaceRefId: input.workspaceRefId,
+        surface: input.surface,
+        ...selectionQuery,
+    });
+    const indexPathname = resolveProjectRoutePathForSurface({
+        workspaceRefId: input.workspaceRefId,
+        surface: 'overview',
+    }).split('?', 1)[0];
+    const surfaceNeedsRedirect = canonicalHref.split('?', 1)[0] !== indexPathname
+        || (input.surface !== 'overview' && input.explicitMobileSurfaceHint !== input.surface);
+    const shouldCanonicalize = surfaceNeedsRedirect
+        || input.requestedRootPath !== input.activeRootPath
+        || (input.requestedWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL) !== (selectionQuery.rawWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL);
+    return shouldCanonicalize ? canonicalHref : null;
+}
+
 export function normalizeProjectDetailsSourceSurface(value: unknown): ProjectDetailsSourceSurface | null {
     const raw = Array.isArray(value) ? value[0] : value;
     const normalized = typeof raw === 'string' ? raw.trim() : '';
@@ -166,7 +205,7 @@ export function buildProjectRouteHref(input: Readonly<{
     activeWorktreeId?: string | null;
     showWorktrees?: boolean;
     sourceSurface?: ProjectDetailsSourceSurface | null;
-    initialResource?: Readonly<{ kind: 'file'; path: string }> | Readonly<{ kind: 'commit'; sha: string }>;
+    initialResource?: ProjectFileRouteTarget | Readonly<{ kind: 'commit'; sha: string }>;
 }>): string {
     const basePath = input.segment
         ? `/projects/${encodeURIComponent(input.workspaceRefId)}/${input.segment}`
@@ -189,6 +228,9 @@ export function buildProjectRouteHref(input: Readonly<{
     if (input.initialResource) {
         queryParams.set(input.initialResource.kind === 'file' ? 'initialFile' : 'initialCommit',
             input.initialResource.kind === 'file' ? input.initialResource.path : input.initialResource.sha);
+        if (input.initialResource.kind === 'file' && input.initialResource.anchor) {
+            for (const [key, value] of Object.entries(serializeFileTargetAnchor(input.initialResource.anchor, input.initialResource.anchorSource))) queryParams.set(key, value);
+        }
     }
     const query = queryParams.toString();
     if (!query) return basePath;

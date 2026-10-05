@@ -15,27 +15,23 @@ type SourceControlOperationsHistoryLoadMoreButtonProps = Readonly<{
 }>;
 
 export const SourceControlOperationsHistoryLoadMoreButton = React.memo((props: SourceControlOperationsHistoryLoadMoreButtonProps) => {
-    const backgroundColor = props.theme.colors.surface.inset ?? props.theme.colors.input.background;
-
     return (
         <Pressable
             disabled={props.historyLoading}
             testID="scm-commit-load-more"
+            accessibilityRole="button"
             onPress={props.onPress}
             style={(state) => ({
                 marginTop: 8,
-                marginLeft: 40,
+                marginLeft: 74,
                 paddingVertical: 10,
                 paddingHorizontal: 12,
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: props.theme.colors.border.default,
-                backgroundColor,
+                alignSelf: 'flex-start',
                 opacity: props.historyLoading ? 0.6 : state.pressed ? motionTokens.press.opacitySubtle : 1,
             })}
         >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: props.theme.colors.text.link, fontSize: 12, ...Typography.default('semiBold') }}>
+                <Text style={{ color: props.theme.colors.text.secondary, fontSize: 12, ...Typography.default('medium') }}>
                     {props.historyLoading ? t('common.loading') : t('files.operationsHistory.loadMore')}
                 </Text>
                 <Icon name="caret-down" size={14} color={props.theme.colors.text.secondary} />

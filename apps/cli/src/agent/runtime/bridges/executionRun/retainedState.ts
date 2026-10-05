@@ -7,6 +7,7 @@ import {
   ExecutionRunRetentionPolicySchema, ExecutionRunStatusSchema, ExecutionRunInputTurnV1Schema,
   PluginSourceCustodyV1Schema, PortableRuntimeDescriptorV1Schema, ProviderBoundModelRefSchema,
   SecretReferenceOverlayV1Schema, SessionMcpSelectionV1Schema, TeamCredentialProviderModelSelectionV1Schema,
+  ExecutionRunVoiceAgentIntentInputV1Schema,
 } from '@happier-dev/protocol';
 import type { ExecutionRunState } from './executionRunTypes';
 
@@ -43,6 +44,7 @@ const RetainedRunStateSchema = z.object({
     chatModelSelection: ProviderBoundModelRefSchema.optional(), commitModelSelection: ProviderBoundModelRefSchema.optional(),
     commitIsolation: z.boolean(), permissionIntent: z.enum(PERMISSION_INTENTS), idleTtlSeconds: z.number(),
     initialContext: z.string(), initialContextMode: z.enum(['bootstrap', 'first_turn']), verbosity: z.enum(['short', 'balanced']),
+    voicePolicy: ExecutionRunVoiceAgentIntentInputV1Schema.shape.voicePolicy,
     bootstrapTimeoutMs: z.number().optional(), disabledActionIds: z.array(z.string()),
     transcript: z.object({ persistenceMode: z.enum(['ephemeral', 'persistent']), epoch: z.number().int().nonnegative() }).strict(),
   }).strict().optional(),

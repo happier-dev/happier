@@ -9,12 +9,18 @@ import {
     deriveAutomationOccurrenceEvidenceEqualityTagV1,
     deriveAutomationTriggerEvidenceEqualityKeyV1,
     openAccountScopedBlobCiphertext,
+    openAutomationTemplateStoredV1,
+    openAutomationTemplateStoredForMigrationV1,
+    parseAutomationStoredDefinitionExecutionRecipeV1,
+    parseAutomationStoredWorkflowDefinitionRecipeV2,
+    parseAutomationRunResultStoredEnvelopeV1,
     sealAccountScopedBlobCiphertext,
     type AccountScopedBlobKind,
     type AccountScopedCryptoMaterial,
     type AvailableAutomationAccountEncryptionV1,
     type AccountEncryptionMigrateAutomationsDirective,
     type AccountEncryptionMigrateAutomationsInventoryResponse,
+    type AccountEncryptionAutomationTemplatesRecoverResultV1,
 } from '@happier-dev/protocol';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
@@ -25,22 +31,77 @@ import { encodeAutomationTemplateForTransport, resolveAutomationTemplatePayload,
 import { AutomationTemplateEncryptionMaterialUnavailableError } from '@/sync/domains/automations/automationTemplateAvailability';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 
+type MigrationTemplateSession = Readonly<{ sessionId: string; encryptionMode: 'plain' | 'e2ee' }>;
+type MigrationTemplateSessionResolver = (sessionId: string) => Promise<MigrationTemplateSession | null>;
+
+/**
+ * Authenticated plain-Account inventory already validates current Run codecs on the server.
+ * The explicit Forget listing also identifies retained summaries and trigger envelopes returned unchanged.
+ */
+export function isAccountEncryptionMigrationAutomationContentPlain(
+    inventory: AccountEncryptionMigrateAutomationsInventoryResponse,
+): boolean {
+    const triggersPlain = inventory.templates.every(row => row.triggerDefinitionEnvelopes.every(trigger => {
+        try {
+            const envelope = AutomationStoredContentEnvelopeV1Schema.safeParse(JSON.parse(trigger.envelope));
+            return envelope.success && envelope.data.t === 'plain';
+        } catch { return false; }
+    }));
+    if (!triggersPlain) return false;
+    return inventory.runs.every(run => {
+        if (run.summaryCiphertext !== null) return false;
+        const result = parseAutomationRunResultStoredEnvelopeV1(run.resultEnvelope);
+        return result?.t !== 'legacySummaryCiphertext' && result?.t !== 'encrypted';
+    });
+}
+
+/** Complete plain-content assessment shared by recovery and the explicit Forget listing. */
+export function readAccountEncryptionMigrationPlainAutomationTarget(
+    templateCiphertext: string,
+): Readonly<{ existingSessionId: string | null }> | null {
+    const definition = parseAutomationStoredDefinitionExecutionRecipeV1(templateCiphertext);
+    if (definition.kind === 'available') return definition.recipe.template.t === 'plain'
+        ? { existingSessionId: definition.recipe.target.kind === 'existingSession' ? definition.recipe.target.sessionId : null }
+        : null;
+    const workflow = parseAutomationStoredWorkflowDefinitionRecipeV2(templateCiphertext);
+    if (workflow.kind === 'available') return workflow.recipe.workflow.t === 'plain' ? { existingSessionId: null } : null;
+    const legacy = openAutomationTemplateStoredV1({ accountMode: 'plain', templateCiphertext });
+    return legacy.ok ? { existingSessionId: legacy.template.existingSessionId ?? null } : null;
+}
+
 /** The existing template transition, also used by schedule-only V4 request callers. */
 export async function convertAccountEncryptionMigrationTemplate(params: Readonly<{
     id: string; templateCiphertext: string; toMode: 'plain' | 'e2ee';
     decryptRaw?: (ciphertext: string) => Promise<unknown | null>;
     targetMaterial?: AccountScopedCryptoMaterial;
+    historicalMaterial?: AccountScopedCryptoMaterial;
+    resolveSession?: MigrationTemplateSessionResolver;
 }>): Promise<string> {
     const envelope = tryDecodeAutomationTemplateEnvelope(params.templateCiphertext);
     if (!envelope) throw new Error(`Invalid automation template envelope (${params.id})`);
     if (params.toMode === 'e2ee' && envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND) return params.templateCiphertext;
-    const opened = await resolveAutomationTemplatePayload({ templateCiphertext: params.templateCiphertext, decryptRaw: params.decryptRaw });
+    const historical = params.historicalMaterial ? openAutomationTemplateStoredForMigrationV1({
+        templateCiphertext: params.templateCiphertext, material: params.historicalMaterial,
+    }) : null;
+    const opened = historical
+        ? historical.ok ? { kind: 'ready' as const, payload: historical.template } : { kind: 'locked' as const }
+        : await resolveAutomationTemplatePayload({ templateCiphertext: params.templateCiphertext, decryptRaw: params.decryptRaw });
     if (opened.kind === 'locked') throw new AutomationTemplateEncryptionMaterialUnavailableError();
     if (opened.kind !== 'ready') throw new Error(`Invalid automation template envelope (${params.id})`);
-    const template = decodeAutomationTemplate(JSON.stringify(opened.payload));
+    let template = decodeAutomationTemplate(JSON.stringify(opened.payload));
     if (!template) throw new Error(`Invalid automation template payload (${params.id})`);
-    // Existing-session templates retain their independently scoped Session key.
-    if (params.toMode === 'plain' && template.sessionEncryptionKeyBase64?.trim()) return params.templateCiphertext;
+    if (params.toMode === 'plain' && template.existingSessionId) {
+        const session = await params.resolveSession?.(template.existingSessionId);
+        if (!session || session.sessionId !== template.existingSessionId) throw new AutomationTemplateEncryptionMaterialUnavailableError();
+        // Session mode, not an embedded key or Account mode, owns retained E2EE custody.
+        if (session.encryptionMode === 'e2ee') return params.templateCiphertext;
+        const { sessionEncryptionKeyBase64: _key, sessionEncryptionVariant: _variant, ...plainTemplate } = template;
+        template = { ...plainTemplate, sessionEncryptionMode: 'plain' };
+    } else if (params.toMode === 'plain') {
+        const { sessionEncryptionKeyBase64: _key, sessionEncryptionVariant: _variant,
+            sessionEncryptionMode: _mode, ...plainTemplate } = template;
+        template = plainTemplate;
+    }
     return encodeAutomationTemplateForTransport({ accountMode: params.toMode, template,
         ...(params.targetMaterial ? { encryptRaw: async (payload: unknown) => sealAccountScopedBlobCiphertext({
             kind: 'automation_template_payload', material: params.targetMaterial!, payload, randomBytes: getRandomBytes,
@@ -48,11 +109,61 @@ export async function convertAccountEncryptionMigrationTemplate(params: Readonly
     });
 }
 
+export type AccountEncryptionAutomationRecoveryResult = Readonly<AccountEncryptionAutomationTemplatesRecoverResultV1['templates'][number]>;
+
+/** Same transition converter, with per-template CAS for predecessor data on an already-plain Account. */
+export async function recoverAccountEncryptionMigrationAutomations(params: Readonly<{
+    templates: readonly Readonly<{ automationId: string; expectedTemplateVersion: number; templateCiphertext: string }>[];
+    historicalMaterial?: AccountScopedCryptoMaterial;
+    resolveSession: MigrationTemplateSessionResolver;
+    commitTemplate: (automationId: string, expectedTemplateVersion: number, templateCiphertext: string) => Promise<void>;
+    isCurrent?: () => boolean;
+}>): Promise<readonly AccountEncryptionAutomationRecoveryResult[]> {
+    const assertCurrent = () => {
+        if (params.isCurrent && !params.isCurrent()) throw new Error('Account encryption scope changed');
+    };
+    const results: AccountEncryptionAutomationRecoveryResult[] = [];
+    for (const row of params.templates) {
+        assertCurrent();
+        if (readAccountEncryptionMigrationPlainAutomationTarget(row.templateCiphertext)) {
+            results.push({ automationId: row.automationId, status: 'already_plain' });
+            continue;
+        }
+        let templateCiphertext: string;
+        try {
+            templateCiphertext = await convertAccountEncryptionMigrationTemplate({ id: row.automationId,
+                templateCiphertext: row.templateCiphertext, toMode: 'plain', historicalMaterial: params.historicalMaterial,
+                resolveSession: params.resolveSession });
+        } catch {
+            assertCurrent();
+            results.push({ automationId: row.automationId, status: 'locked' });
+            continue;
+        }
+        assertCurrent();
+        if (templateCiphertext === row.templateCiphertext) {
+            results.push({ automationId: row.automationId, status: 'retained_e2ee' });
+            continue;
+        }
+        try {
+            await params.commitTemplate(row.automationId, row.expectedTemplateVersion, templateCiphertext);
+        } catch (error) {
+            assertCurrent();
+            if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'automation_template_version_conflict') throw error;
+            results.push({ automationId: row.automationId, status: 'conflict' });
+            continue;
+        }
+        assertCurrent();
+        results.push({ automationId: row.automationId, status: 'recovered' });
+    }
+    return results;
+}
+
 export async function buildAccountEncryptionMigrationAutomations(params: Readonly<{
     accountId: string; fromMode: 'plain' | 'e2ee'; toMode: 'plain' | 'e2ee';
     inventory: AccountEncryptionMigrateAutomationsInventoryResponse;
     sourceCredentials: AuthCredentials; targetCredentials: AuthCredentials | null;
     sourceEncryption: Encryption | null; targetEncryption: Encryption | null;
+    resolveSession?: MigrationTemplateSessionResolver;
 }>): Promise<AccountEncryptionMigrateAutomationsDirective> {
     if (!params.inventory.templates.length && !params.inventory.runs.length) return { action: 'assert_empty' };
     const snapshot = (mode: 'plain' | 'e2ee', credentials: AuthCredentials | null, encryption: Encryption | null) => {
@@ -88,7 +199,8 @@ export async function buildAccountEncryptionMigrationAutomations(params: Readonl
             templateCiphertext: row.templateCiphertext, toMode: params.toMode,
             decryptRaw: sourceMaterial ? async ciphertext => openAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
                 material: sourceMaterial.material, ciphertext })?.value ?? null : undefined,
-            targetMaterial: targetMaterial?.material }),
+            targetMaterial: targetMaterial?.material, historicalMaterial: sourceMaterial?.material,
+            resolveSession: params.resolveSession }),
         triggerDefinitionEnvelopes: row.triggerDefinitionEnvelopes.map(trigger => ({ ...trigger,
             envelope: convert(trigger.envelope, 'automation_trigger_definition')! })),
     })));

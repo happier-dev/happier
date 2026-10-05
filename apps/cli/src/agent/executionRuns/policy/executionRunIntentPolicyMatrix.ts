@@ -16,7 +16,7 @@ export type ExecutionRunIntentPolicyConstraint = Readonly<{
 export const EXECUTION_RUN_INTENT_POLICY_MATRIX: Readonly<Record<ExecutionRunIntent, ExecutionRunIntentPolicyConstraint>> = Object.freeze({
   review: {
     allowedRetentionPolicies: ['ephemeral', 'resumable'],
-    allowedRunClasses: ['bounded'],
+    allowedRunClasses: ['bounded', 'long_lived'],
     allowedIoModes: ['request_response', 'streaming'],
     invariant: 'Keep review structured-output semantics and follow-up action behavior.',
   },
@@ -63,9 +63,9 @@ export const EXECUTION_RUN_INTENT_POLICY_MATRIX: Readonly<Record<ExecutionRunInt
     invariant: 'Keep SCM commit-message generation read-only and execution-run-owned.',
   },
   scm_diff_summary: {
-    allowedRetentionPolicies: ['ephemeral'],
-    allowedRunClasses: ['bounded'],
+    allowedRetentionPolicies: ['resumable'],
+    allowedRunClasses: ['long_lived'],
     allowedIoModes: ['request_response', 'streaming'],
-    invariant: 'Keep SCM diff-summary generation read-only and execution-run-owned.',
+    invariant: 'Keep SCM analysis read-only with structured publication on each retained turn.',
   },
 });
