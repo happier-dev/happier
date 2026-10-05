@@ -440,8 +440,6 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "widgets.instance.move",
   "widgets.instance.remove",
   "widgets.instance.rename",
-  "widgets.instance.viewerInputs.reset",
-  "widgets.instance.viewerInputs.set",
   "widgets.instance.width.set",
   "widgets.snapshot.post",
   "workflow.authoring.conversation.bind",
@@ -1761,11 +1759,6 @@ export type GeneratedActions = Readonly<{
       readonly refresh: (input: PublicActionInputById["widgets.instance.refresh"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.refresh">>;
       readonly remove: (input: PublicActionInputById["widgets.instance.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.remove">>;
       readonly rename: (input: PublicActionInputById["widgets.instance.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.rename">>;
-      readonly viewerInputs: Readonly<{
-        readonly get: (input: PublicActionInputById["widgets.instance.viewerInputs.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.viewerInputs.get">>;
-        readonly reset: (input: PublicActionInputById["widgets.instance.viewerInputs.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.viewerInputs.reset">>;
-        readonly set: (input: PublicActionInputById["widgets.instance.viewerInputs.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.viewerInputs.set">>;
-      }> ;
       readonly width: Readonly<{
         readonly set: (input: PublicActionInputById["widgets.instance.width.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"widgets.instance.width.set">>;
       }> ;
@@ -3144,11 +3137,6 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         refresh: (input: PublicActionInputById["widgets.instance.refresh"], options?: ActionExecutionOptions) => execute("widgets.instance.refresh", input, options),
         remove: (input: PublicActionInputById["widgets.instance.remove"], options?: ActionExecutionOptions) => execute("widgets.instance.remove", input, options),
         rename: (input: PublicActionInputById["widgets.instance.rename"], options?: ActionExecutionOptions) => execute("widgets.instance.rename", input, options),
-        viewerInputs: {
-          get: (input: PublicActionInputById["widgets.instance.viewerInputs.get"], options?: ActionExecutionOptions) => execute("widgets.instance.viewerInputs.get", input, options),
-          reset: (input: PublicActionInputById["widgets.instance.viewerInputs.reset"], options?: ActionExecutionOptions) => execute("widgets.instance.viewerInputs.reset", input, options),
-          set: (input: PublicActionInputById["widgets.instance.viewerInputs.set"], options?: ActionExecutionOptions) => execute("widgets.instance.viewerInputs.set", input, options),
-        },
         width: {
           set: (input: PublicActionInputById["widgets.instance.width.set"], options?: ActionExecutionOptions) => execute("widgets.instance.width.set", input, options),
         },

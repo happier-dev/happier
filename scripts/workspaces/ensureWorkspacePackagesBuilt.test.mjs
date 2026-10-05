@@ -51,6 +51,33 @@ import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation
 import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { resolveRuntimeBuildRequestIdentity } from '../../apps/stack/scripts/build/runtime_build_request_identity.mjs';
 
+test('workspace input identity includes excluded config files reached through extends', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-extended-inputs-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@fixture/extended' }));
+  writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ extends: './tsconfig.tests.json' }));
+  const extended = join(root, 'tsconfig.tests.json');
+  writeFileSync(extended, JSON.stringify({ compilerOptions: { strict: true } }));
+  const before = readWorkspacePackageInputFingerprint({ packageDir: root });
+  writeFileSync(extended, JSON.stringify({ compilerOptions: { strict: false } }));
+  assert.notEqual(readWorkspacePackageInputFingerprint({ packageDir: root }), before);
+});
+
+test('workspace input identity retains origin labels in a dedicated captured checkout', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-relocated-inputs-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const producer = join(root, 'producer');
+  const worker = join(root, 'worker');
+  for (const repo of [producer, worker]) {
+    const dir = join(repo, 'packages/example');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@fixture/relocated' }));
+    writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true } }));
+  }
+  assert.equal(readWorkspacePackageInputFingerprint({ packageDir: join(worker, 'packages/example'), identitySourceRepoDir: worker, identityRepoDir: producer }),
+    readWorkspacePackageInputFingerprint({ packageDir: join(producer, 'packages/example') }));
+});
+
 test('QA runtime builds use coherent last-green package outputs only for compiler diagnostics', async (t) => {
   for (const scenario of ['last-green', 'forced-last-green', 'no-output', 'strict', 'release', 'damaged', 'process-failure', 'drift']) {
     await t.test(scenario, async (t) => {
