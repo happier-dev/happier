@@ -1,4 +1,5 @@
-import { readComposerReferenceMentionV1, type ComposerRefV1, type ComposerSnapshotV1 } from '@happier-dev/protocol';
+import { ComposerOperationV1Schema, buildQualifiedPluginContributionKey, validatePluginDragSourceReferenceV1, readComposerReferenceMentionV1,
+    type PluginContributionClientPlatform, type ComposerRefV1, type ComposerSnapshotV1 } from '@happier-dev/protocol';
 import type { EntityDragItemV1, EntityDragScopeV1, EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
@@ -7,6 +8,10 @@ import type { ComposerSessionSuggestionItem } from '@/sync/domains/input/suggest
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
 import { buildComposerFileReferenceSelection, buildComposerSessionReferenceSelection, buildContributedComposerReferenceSelection } from '@/sync/domains/input/composerReferenceSelection';
 import { isAbsoluteLocalPath, normalizeLocalPathForComparison, resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
+import { normalizePluginUiProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { resolvePluginUiClientDragSourceRegistration, type PluginUiClientExecutableRegistrationReader } from '@/components/plugins/reactNative/clientExecutableContributions';
+import type { ComposerPresentationAttachmentComposition } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 
 export type ComposerEntityDropContext = Readonly<{
     scope: EntityDragScopeV1;
@@ -15,6 +20,10 @@ export type ComposerEntityDropContext = Readonly<{
     sessions: readonly ComposerSessionSuggestionItem[];
     workspace: FileSuggestionScope | null;
     referenceHost?: ComposerReferenceSearchHost | null;
+    attachmentComposition?: ComposerPresentationAttachmentComposition | null;
+    platform?: PluginContributionClientPlatform;
+    dragSourceReader?: PluginUiClientExecutableRegistrationReader;
+    dragSources?: PluginUiProjectionModel['dragSourcesById'];
     resolveDestinationFile?: (href: string) => Extract<EntityDragItemV1, { kind: 'repository-file' }> | null;
     preview: Readonly<{ verb: string; target: string }>;
     reason: (code: string) => string;
@@ -27,6 +36,34 @@ export function resolveComposerEntityDrop(item: EntityDragItemV1, context: Compo
     const snapshot = context.snapshot;
     if (!snapshot || !composerRefsV1Equal(snapshot.ref, context.ref)) return refuse('composerUnavailable');
     if (!snapshot.state.editable || snapshot.state.inputLock?.mode === 'editAndSubmit') return refuse('notEditable');
+    if (item.kind === 'plugin') {
+        const host = context.referenceHost;
+        if (!host || host.serverId !== context.scope.serverId || !host.isCurrent()) return refuse('referenceUnavailable');
+        const platform = context.platform ?? resolvePluginUiClientExecutablePlatform();
+        const sources = context.dragSources ?? normalizePluginUiProjection(host.projection, platform).dragSourcesById;
+        const source = sources[buildQualifiedPluginContributionKey(item.contribution)];
+        const localId = source?.definition.composerAttachment;
+        if (source && localId) {
+            if (!snapshot.capabilities.attachments) return refuse('referenceUnavailable');
+            const identity = { pluginId: source.pluginId, localId };
+            const attachment = context.attachmentComposition?.composerAttachmentsById[buildQualifiedPluginContributionKey(identity)];
+            const registrationInput = { source, platform, reader: context.dragSourceReader };
+            const registration = resolvePluginUiClientDragSourceRegistration(registrationInput);
+            if (!attachment || attachment.occurrenceId !== source.occurrenceId || attachment.identity.pluginId !== identity.pluginId
+                || attachment.identity.localId !== identity.localId || !registration?.runtime.toComposerAttachment) return refuse('referenceUnavailable');
+            try {
+                if (!validatePluginDragSourceReferenceV1(source.definition, item.reference)) return refuse('referenceUnavailable');
+                const value = registration.runtime.toComposerAttachment(item.reference);
+                const operation = ComposerOperationV1Schema.safeParse({ kind: 'attachment.add', attachmentLocalId: localId, value });
+                if (!operation.success || operation.data.kind !== 'attachment.add' || !attachment.valueValidator?.(operation.data.value.value)
+                    || !host.isCurrent() || resolvePluginUiClientDragSourceRegistration(registrationInput)?.registration !== registration.registration) return refuse('referenceUnavailable');
+                return { status: 'allowed', effect: { actionId: 'composer.transaction.apply', input: {
+                    scope: context.scope, ref: context.ref, attachmentContributor: identity,
+                    transaction: { expectedRevision: snapshot.revision, operations: [operation.data] },
+                }, preview: context.preview } };
+            } catch { return refuse('referenceUnavailable'); }
+        }
+    }
     if (!snapshot.capabilities.references) return refuse('referenceUnavailable');
     if (item.kind === 'destination') {
         const file = context.resolveDestinationFile?.(item.href);
