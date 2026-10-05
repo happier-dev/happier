@@ -3,6 +3,28 @@ import { describe, expect, it } from 'vitest';
 import { classifyPrimarySessionRuntimeIssue } from './classifyPrimarySessionRuntimeIssue';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it('does not infer a missing Agent CLI from arbitrary errors or unrelated unavailable system tools', () => {
+    for (const error of [
+      new ReferenceError('Agent CLI missing: secret startup detail'),
+      { code: 'plugin_exec_system_tool_unavailable', message: 'secret startup detail' },
+    ]) {
+      expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error })).toMatchObject({
+        code: 'agent_session_error', source: 'agent_session_error', sanitizedPreview: 'Provider session failed',
+      });
+    }
+  });
+
+  it('uses static missing-CLI remediation without exposing carried error text', () => {
+    const issue = classifyPrimarySessionRuntimeIssue({
+      cause: 'status_error',
+      error: { code: 'agent_cli_missing', message: 'Bearer secret-startup-token at /private/agent' },
+    });
+    expect(issue).toMatchObject({ code: 'agent_cli_missing', source: 'dependency_failure' });
+    expect(issue.sanitizedPreview).toMatch(/install.*CLI|CLI.*install/iu);
+    expect(JSON.stringify(issue)).not.toContain('secret-startup-token');
+    expect(JSON.stringify(issue)).not.toContain('/private/agent');
+  });
+
   it('maps connected-service runtime auth classifications into usage-limit details', () => {
     const error = new Error('provider limit reached') as Error & {
       runtimeAuthClassification: {
