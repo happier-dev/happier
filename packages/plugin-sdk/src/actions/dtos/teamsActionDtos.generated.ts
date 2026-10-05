@@ -1082,6 +1082,7 @@ export type TeamsActionResultById = {
                 capabilities?: {
                     toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
                     reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                    structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
                 } | undefined;
             };
             application: {
@@ -1395,6 +1396,7 @@ export type TeamsActionResultById = {
                     capabilities?: {
                         toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
                         reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
                     } | undefined;
                 };
                 application: {

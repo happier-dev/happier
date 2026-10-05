@@ -54,3 +54,5 @@ export { ProtocolComposerReferenceResolutionV1Schema } from './composerReference
  */
 export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
 export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';
+/** Canonical Launch Profile V2 identity admission for feature Action references. */
+export { ProtocolLaunchProfileIdV2Schema } from './launchProfileId.js';

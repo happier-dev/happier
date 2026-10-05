@@ -112,6 +112,14 @@ export type SessionTerminalsActionInputById = {
         scopeId: string;
         terminalId: string;
     };
+    readonly "session.terminals.restart": {
+        scopeId: string;
+        terminalId: string;
+    };
+    readonly "session.terminals.open_in_details": {
+        scopeId: string;
+        terminalId: string;
+    };
     readonly "session.terminals.close": {
         scopeId: string;
         terminalId: string;
@@ -229,6 +237,12 @@ export type SessionTerminalsActionResultById = {
         terminalId: string;
     };
     readonly "session.terminals.focus": {
+        ok: true;
+    };
+    readonly "session.terminals.restart": {
+        ok: true;
+    };
+    readonly "session.terminals.open_in_details": {
         ok: true;
     };
     readonly "session.terminals.close": {

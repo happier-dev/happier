@@ -29,6 +29,7 @@ import type {
 import type {
   ActionSpec as CanonicalActionSpec,
   PluginActionInputById as CanonicalPluginActionInputById,
+  PLUGIN_ACTION_INPUT_SCHEMAS as canonicalPluginActionInputSchemas,
   PluginActionResultById as CanonicalPluginActionResultById,
   PluginInvocableActionId as CanonicalPluginInvocableActionId,
   SessionTranscriptGetExternalShareableInputV1 as CanonicalSessionTranscriptGetExternalShareableInputV1,
@@ -253,21 +254,32 @@ describe('ActionsService source contract', () => {
         expectTypeOf<ActionSpec['inputHints']>()
             .toEqualTypeOf<CanonicalActionSpec['inputHints']>();
         expectTypeOf<ActionSpec['inputSchema']>().toEqualTypeOf<unknown>();
-        // Public author inputs deliberately accept ordinary readonly JSON;
-        // Protocol parser output remains the normalized mutable projection.
+        // Public author inputs deliberately accept ordinary readonly JSON.
+        // Preprocessors accept unknown wire input, so only validated canonical
+        // inputs can be assigned to the typed author contract. The external
+        // author fixture separately proves rejection of invalid inline blocks.
         // `expectTypeOf(...).toMatchTypeOf(...)` distributes object-union
         // properties into a synthetic shape with impossible `never` members.
         // Assignment functions prove the intended one-way public projections
         // without changing the public map. Protocol validator brands are
         // deliberately erased from SDK results, so arbitrary public strings
         // do not flow back into canonical parser-output types.
+        // Birth triggers contain the same preprocessed inline Workflow target.
+        type InlineWorkflowInputActionId = 'workflow.trigger.add' | 'workflow.trigger.update' | 'session.trigger.add' | 'session.trigger.update' | 'session.spawn_new';
+        type ParsedCanonicalInlineInputs = {
+            [Id in InlineWorkflowInputActionId]: ReturnType<(typeof canonicalPluginActionInputSchemas)[Id]['parse']>;
+        };
         const canonicalInputsFitPublic = (
-            value: CanonicalPluginActionInputById,
-        ): PluginActionInputById => value;
+            value: Omit<CanonicalPluginActionInputById, InlineWorkflowInputActionId>,
+        ): Omit<PluginActionInputById, InlineWorkflowInputActionId> => value;
+        const canonicalParsedInlineInputsFitPublic = (
+            value: ParsedCanonicalInlineInputs,
+        ): Pick<PluginActionInputById, InlineWorkflowInputActionId> => value;
         const canonicalResultsFitPublic = (
             value: CanonicalPluginActionResultById,
         ): PluginActionResultById => value;
         void canonicalInputsFitPublic;
+        void canonicalParsedInlineInputsFitPublic;
         void canonicalResultsFitPublic;
         expectTypeOf<PluginInvocableActionId>()
             .toEqualTypeOf<CanonicalPluginInvocableActionId>();

@@ -2,10 +2,15 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
+    "rootDir": ".",
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/tsc/plugin-sdk.tests.typecheck.tsbuildinfo",
     "module": "ESNext",
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
+    "paths": {
+      "@happier-dev/plugin-sdk": ["./src/index.ts"],
+      "@happier-dev/plugin-sdk/*": ["./src/*/index.ts", "./src/*.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

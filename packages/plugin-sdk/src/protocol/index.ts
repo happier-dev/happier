@@ -8,6 +8,7 @@ export { ProtocolComposerRefV1Schema } from './composerRef.js';
 export { ProtocolComposerReferenceResolutionV1Schema } from './composerReferenceResolution.js';
 export type { ProtocolJsonValue } from './protocolFacade.js';
 export type { ProtocolJsonValueOptions } from './protocolFacade.js';
+export { ProtocolLaunchProfileIdV2Schema } from './launchProfileId.js';
 export type { ProtocolNumberOptions } from './protocolFacade.js';
 export type { ProtocolObjectEvolutionPolicy } from './protocolFacade.js';
 export type { ProtocolObjectOptions } from './protocolFacade.js';

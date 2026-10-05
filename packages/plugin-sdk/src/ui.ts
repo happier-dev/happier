@@ -17,6 +17,7 @@ import type {
 } from './ui/publicContract.js';
 
 export type {
+    PluginUiWidgetAreaDeclarationV1,
     PluginUiAppPageColumnV1,
     PluginUiDestinationPlacementV1,
     PluginUiDestinationContainerV1,

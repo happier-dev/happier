@@ -19,38 +19,38 @@ export type ScmDiffSummaryActionInputById = {
     readonly "scm.diffSummary.capture": {
         cwd: string;
         source: {
-            readonly kind: 'turnCheckpoint';
-            readonly sessionId?: string;
-            readonly turnId?: string;
-            readonly checkpointReceiptId?: string;
-            readonly evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
         } | {
-            readonly kind: 'session';
-            readonly sessionId: string;
+            kind: 'session';
+            sessionId: string;
         } | {
-            readonly kind: 'workingTree';
+            kind: 'workingTree';
         } | {
-            readonly kind: 'branch';
-            readonly head: string;
-            readonly base: string;
+            kind: 'branch';
+            head: string;
+            base: string;
         } | {
-            readonly kind: 'commit';
-            readonly commit: string;
-            readonly parent?: string;
+            kind: 'commit';
+            commit: string;
+            parent?: string;
         } | {
-            readonly kind: 'pullRequest';
-            readonly locator: {
-                readonly providerId: string;
-                readonly repository: string;
-                readonly number: number;
-                readonly baseOid?: string;
-                readonly headOid?: string;
-                readonly sourceAction?: {
-                    readonly action: {
+            kind: 'pullRequest';
+            locator: {
+                providerId: string;
+                repository: string;
+                number: number;
+                baseOid?: string;
+                headOid?: string;
+                sourceAction?: {
+                    action: {
                         pluginId: string;
                         localId: string;
                     };
-                    readonly input?: JsonValue;
+                    input?: JsonValue;
                 };
             };
         };
@@ -67,38 +67,38 @@ export type ScmDiffSummaryActionInputById = {
     readonly "scm.diffSummary.generate": {
         cwd: string;
         source: {
-            readonly kind: 'turnCheckpoint';
-            readonly sessionId?: string;
-            readonly turnId?: string;
-            readonly checkpointReceiptId?: string;
-            readonly evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
         } | {
-            readonly kind: 'session';
-            readonly sessionId: string;
+            kind: 'session';
+            sessionId: string;
         } | {
-            readonly kind: 'workingTree';
+            kind: 'workingTree';
         } | {
-            readonly kind: 'branch';
-            readonly head: string;
-            readonly base: string;
+            kind: 'branch';
+            head: string;
+            base: string;
         } | {
-            readonly kind: 'commit';
-            readonly commit: string;
-            readonly parent?: string;
+            kind: 'commit';
+            commit: string;
+            parent?: string;
         } | {
-            readonly kind: 'pullRequest';
-            readonly locator: {
-                readonly providerId: string;
-                readonly repository: string;
-                readonly number: number;
-                readonly baseOid?: string;
-                readonly headOid?: string;
-                readonly sourceAction?: {
-                    readonly action: {
+            kind: 'pullRequest';
+            locator: {
+                providerId: string;
+                repository: string;
+                number: number;
+                baseOid?: string;
+                headOid?: string;
+                sourceAction?: {
+                    action: {
                         pluginId: string;
                         localId: string;
                     };
-                    readonly input?: JsonValue;
+                    input?: JsonValue;
                 };
             };
         };

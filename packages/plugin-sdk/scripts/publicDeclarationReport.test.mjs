@@ -3,9 +3,11 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import ts from 'typescript';
 
 import {
   createPublicSurfaceProgram,
+  PUBLIC_SURFACE_PROGRAM_OPTIONS,
   projectPublicDeclarationReport,
 } from './publicDeclarationReport.mjs';
 
@@ -115,6 +117,41 @@ test('the declaration record is byte-identical across repeated projections', asy
   const root = await createFixture({ timeoutOptional: true });
   try {
     assert.equal(projectFixtureReport(root), projectFixtureReport(root));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('public surface inputs include explicit external types without ambient application packages', async () => {
+  const root = await createFixture({ timeoutOptional: true });
+  try {
+    const ambient = join(root, 'node_modules/@types/unrelated/index.d.ts');
+    const external = join(root, 'node_modules/explicit-contract/index.d.ts');
+    await mkdir(join(root, 'node_modules/@types/unrelated'), { recursive: true });
+    await mkdir(join(root, 'node_modules/explicit-contract'), { recursive: true });
+    await writeFile(ambient, 'declare const unrelatedApplicationGlobal: unique symbol;\n');
+    await writeFile(join(root, 'node_modules/explicit-contract/package.json'),
+      JSON.stringify({ name: 'explicit-contract', types: './index.d.ts', type: 'module' }));
+    await writeFile(external, 'export interface ExternalContract { value: string; }\n');
+    await writeFile(join(root, CONTRACT_MODULE),
+      "import type { ExternalContract } from 'explicit-contract'; export type Envelope = { nested: ExternalContract };\n");
+    const program = createPublicSurfaceProgram([resolve(root, CONTRACT_MODULE)], root);
+    const physicalRoot = await realpath(root);
+    const inputs = new Set(program.getSourceFiles().map(file => resolve(file.fileName)));
+    assert.ok(inputs.has(resolve(physicalRoot, 'node_modules/explicit-contract/index.d.ts')),
+      'explicitly imported external contracts remain in the public surface');
+    assert.ok(!inputs.has(resolve(physicalRoot, 'node_modules/@types/unrelated/index.d.ts')),
+      'application ambient types must not enter the public declaration input graph');
+    const report = projectPublicDeclarationReport({ program, packageRoot: root, title: 'Fixture',
+      rows: ROWS.filter(row => row.exportName === 'Envelope') });
+    assert.match(report, /ExternalContract/u);
+    const previousOptions = { ...PUBLIC_SURFACE_PROGRAM_OPTIONS, types: undefined };
+    const previousHost = ts.createCompilerHost(previousOptions);
+    previousHost.getCurrentDirectory = () => root;
+    const previousProgram = ts.createProgram([resolve(root, CONTRACT_MODULE)], previousOptions, previousHost);
+    assert.equal(report, projectPublicDeclarationReport({ program: previousProgram, packageRoot: root, title: 'Fixture',
+      rows: ROWS.filter(row => row.exportName === 'Envelope') }),
+    'narrowing ambient admission preserves the generated public declaration bytes');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
