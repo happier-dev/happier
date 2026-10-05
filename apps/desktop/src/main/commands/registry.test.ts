@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import type { App } from 'electron';
+import type { App, BrowserWindow } from 'electron';
 
 import { isNotImplementedError, NOT_IMPLEMENTED_ERROR_PREFIX } from '../../shared/bridge';
 import { DesktopEventBus } from '../ipc/eventBus';
@@ -357,6 +357,23 @@ test('macOS keeps native traffic lights while other platforms get custom control
     assert.equal(resolveWindowChromeStrategy('darwin'), 'native-macos-traffic-lights');
     assert.equal(resolveWindowChromeStrategy('win32'), 'custom-controls');
     assert.equal(resolveWindowChromeStrategy('linux'), 'custom-controls');
+});
+
+test('the initial window state reports fullscreen alongside maximize state and handles an absent window', async () => {
+    const { registry, context } = createHarness();
+    // BrowserWindow is the native boundary; both getters represent the current OS state.
+    const window = {
+        isMaximized: () => false,
+        isFullScreen: () => true,
+    } as unknown as BrowserWindow;
+    assert.deepEqual(await runCommand(registry, 'desktop_get_window_state', {}, { ...context, window }), {
+        kind: 'implemented',
+        value: { isMaximized: false, isFullscreen: true },
+    });
+    assert.deepEqual(await runCommand(registry, 'desktop_get_window_state', {}, context), {
+        kind: 'implemented',
+        value: { isMaximized: false, isFullscreen: false },
+    });
 });
 
 test('login startup follows the shared service mode, never a second app preference', async () => {
