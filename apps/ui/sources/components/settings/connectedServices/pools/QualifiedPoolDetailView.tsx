@@ -36,13 +36,13 @@ import type { UseQualifiedConnectedAccountGroupsResult } from '@/hooks/server/co
 import { Modal } from '@/modal';
 import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
-import { isPoolUsageLimitSwitchEnabled } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
+import { getPoolStrategyPresentation, isPoolUsageLimitSwitchEnabled } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
 import {
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiGroupMember,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
-import { compareConnectedServicePoolMemberOrderV1, resolveAnchoredListMoveV1, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupStrategyV1Schema, compareConnectedServicePoolMemberOrderV1, resolveAnchoredListMoveV1, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountPresentationAccount,
@@ -67,7 +67,7 @@ import { PoolMembersSelectField, type PoolMembershipCandidate } from './PoolMemb
 import { PoolMemberRow, type PoolMemberNote, type PoolMemberUsage } from './PoolMemberRow';
 import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './PoolQuotaLimitsSelectField';
 import { computePoolMembershipDiff } from './poolMembershipDiff';
-import { derivePoolUsage, resolvePoolNextMember, type PoolUsage } from './derivePoolUsage';
+import { derivePoolUsage, resolvePoolManualSwitchSuggestion, type PoolUsage } from './derivePoolUsage';
 
 type GroupStrategy = ConnectedServiceAuthGroupPolicyV1['strategy'];
 type GroupRecoveryMode = ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
@@ -370,13 +370,11 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         })),
     }), [countedSnapshotByAccountId, group.members, now]);
 
-    const nextAccountId = React.useMemo(() => resolvePoolNextMember({
-        strategy: group.policy.strategy,
+    const nextAccountId = React.useMemo(() => resolvePoolManualSwitchSuggestion({
         activeAccountId: group.activeAccountId,
         members: group.members.map((member) => ({ accountId: member.ref.accountId, enabled: member.enabled, priority: member.priority })),
         roomByAccountId: usage.roomByAccountId,
-        lowestRemainingByAccountId: usage.lowestRemainingByAccountId,
-    }), [group.activeAccountId, group.members, group.policy.strategy, usage]);
+    }), [group.activeAccountId, group.members, usage]);
 
     const binding: EntityFlatReorderBinding = {
         scope, kind: 'pool-member', items: memberItems,
@@ -530,9 +528,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         nowTitle = group.activeSince
             ? t('connectedServicesPool.usingSince', { name: activeName, time: formatAsOfTime(group.activeSince.atMs, now) })
             : t('connectedServicesPool.using', { name: activeName });
-        const lead = group.policy.strategy === 'least_limited'
-            ? t('connectedServicesPool.leadLeastLimited')
-            : group.policy.strategy === 'priority' ? t('connectedServicesPool.leadInOrder') : null;
+        const lead = getPoolStrategyPresentation(group.policy.strategy).lead;
         if (onlyOneOn) {
             nowDetail = t('connectedServicesPool.onlyOneOn', { name: activeName });
             if (firstOff) {
@@ -548,9 +544,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         } else if (!isPoolUsageLimitSwitchEnabled(group.policy)) {
             nowDetail = `${lead ?? ''} ${t('connectedServicesPool.fallbackOff', { name: activeName })}`.trim();
         } else {
-            nowDetail = `${lead ?? ''} ${nextName
-                ? t('connectedServicesPool.nextOnRunOut', { name: activeName, next: nextName })
-                : t('connectedServicesPool.noNextOnRunOut', { name: activeName })}`.trim();
+            nowDetail = `${lead ?? ''} ${t('connectedServicesPool.fallbackDescription')}`.trim();
         }
         if (!nowAction && nextMember && nextName && fallbackControlsEnabled) {
             // Switch now = the pool's one active-member writer; it moves new turns, it does not claim
@@ -726,7 +720,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                     <Item
                         testID={`${TEST_ID}:now`}
                         title={nowTitle}
-                        subtitle={compact && !waiting ? group.policy.strategy === 'least_limited' ? t('connectedServicesPool.leadLeastLimited') : group.policy.strategy === 'priority' ? t('connectedServicesPool.leadInOrder') : nowDetail : nowDetail}
+                        subtitle={compact && !waiting ? getPoolStrategyPresentation(group.policy.strategy).lead ?? nowDetail : nowDetail}
                         subtitleLines={0}
                         leftElement={<Icon name={waiting ? 'clock' : 'circle'} size={18} color={waiting ? theme.colors.state.warning.foreground : theme.colors.text.secondary} />}
                         rightElement={nowAction && !compact ? (
@@ -889,11 +883,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                     disabled={!fallbackControlsEnabled}
                     value={group.policy.strategy}
                     onChange={(strategy) => { void patchPolicy({ strategy }); }}
-                    options={[
-                        { id: 'least_limited', label: t('connectedServicesPool.strategyLeastLimited'), description: t('connectedServicesPool.strategyLeastLimitedDescription') },
-                        { id: 'priority', label: t('connectedServicesPool.strategyInOrder'), description: t('connectedServicesPool.strategyInOrderDescription') },
-                        { id: 'manual', label: t('connectedServicesPool.strategyManual'), description: t('connectedServicesPool.strategyManualDescription') },
-                    ]}
+                    options={ConnectedServiceAuthGroupStrategyV1Schema.options.map((id) => ({ id, ...getPoolStrategyPresentation(id) }))}
                 />
                 <Item
                     testID={`${TEST_ID}:auto-switch`}
