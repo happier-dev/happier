@@ -267,9 +267,10 @@ jobs:
       - name: Check compiler diagnostics without governance or test phases
         id: gate-compiler
         env:
-          # The native compiler exhausted this 16 GiB runner; collect more often
-          # without changing compiler scope or imposing a soft heap ceiling.
+          # OOM persisted with GOGC 50 after a 10 GiB live heap. Keep room for
+          # runtime/host overhead; this Go soft target is not an RSS hard limit.
           GOGC: "50"
+          GOMEMLIMIT: "12GiB"
         run: |
           export GODEBUG="${GODEBUG:+$GODEBUG,}gctrace=1"
           echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
