@@ -6,7 +6,7 @@ import {
   CrossDeviceMoveSourceCleanupError,
   moveFileWithCrossDeviceFallback,
 } from '@/utils/fs/moveFileWithCrossDeviceFallback';
-import { writeFileHandleFully } from '@/utils/fs/writeFileHandleFully';
+import { writeFileHandleFully } from '@happier-dev/transfers/node';
 
 export type TransferPayloadFileResult = Readonly<{
   destinationPath: string;

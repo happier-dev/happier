@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 
-import { createTransferManifestHash } from './transferChunkEncryption';
+import { createTransferManifestHash } from '@happier-dev/transfers/node';
 
 type TransferPayloadDispose = () => Promise<void> | void;
 

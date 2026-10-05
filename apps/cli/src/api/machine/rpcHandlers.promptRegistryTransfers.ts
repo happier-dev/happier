@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
-import { type TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { type TransferSessionStore } from '@happier-dev/transfers/node';
 import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/resolvePromptRegistryItemDownloadSource';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';

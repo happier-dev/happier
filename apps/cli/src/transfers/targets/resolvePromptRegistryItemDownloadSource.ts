@@ -3,7 +3,7 @@ import type { PromptRegistryFetchItemRequestV1 } from '@happier-dev/protocol';
 import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { writePromptRegistryTransferPayload } from '@/prompts/registries/shared/promptRegistryTransferPayload';
 
-import type { DownloadTransferSource } from './downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 
 type PromptRegistryItemDownloadSourceResult =
   | Readonly<{ success: true; source: DownloadTransferSource }>

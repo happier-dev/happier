@@ -12,7 +12,7 @@ import {
   VoiceSpeechDiagnosticsStatusResponseV1Schema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createVoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 

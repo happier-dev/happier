@@ -3,7 +3,7 @@ import { networkInterfaces } from 'node:os';
 import { parseBooleanEnv } from '@happier-dev/protocol';
 
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
-import { clampTransferChunkBytes } from './transferChunkSizeLimit';
+import { clampTransferChunkBytes } from '@happier-dev/transfers/node';
 import { resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 
 const DEFAULT_DIRECT_PEER_TTL_MS = 10 * 60_000;

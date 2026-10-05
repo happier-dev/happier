@@ -2,15 +2,15 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
-import { TransferSessionStore } from '../core/transferSessionStore';
-import type { DownloadTransferSource } from '../targets/downloadTransferSource';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 import {
   abortDownloadTransferSession,
   createTransferSessionLifecycle,
   finalizeDownloadTransferSession,
   openDownloadTransferSession,
   readDownloadTransferChunk,
-} from '../core/transferSessionLifecycle';
+} from '@happier-dev/transfers/node';
 import {
   buildTransferLifecycleDiagnosticFields,
   classifyTransferFailureForLog,

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { TransferSessionStore } from './transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 
 const rootsToRemove: string[] = [];
 

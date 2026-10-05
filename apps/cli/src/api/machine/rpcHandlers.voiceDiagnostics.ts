@@ -14,9 +14,9 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
-import { parseTransferRecipientPublicKeyBase64 } from '@/machines/transfer/transferChunkEncryption';
-import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { parseTransferRecipientPublicKeyBase64 } from '@happier-dev/transfers/node';
+import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
 export function registerMachineVoiceDiagnosticsRpcHandlers(input: Readonly<{

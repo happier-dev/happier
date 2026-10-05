@@ -7,7 +7,7 @@ import type { PromptAssetReadResponseV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
-import type { DownloadTransferSource } from '@/transfers/targets/downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 
 export type PromptAssetTransferPayload = Extract<PromptAssetReadResponseV1, { ok: true }>['item'];
 

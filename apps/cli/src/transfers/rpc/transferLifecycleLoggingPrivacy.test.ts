@@ -47,8 +47,8 @@ describe('transfer lifecycle logging privacy', () => {
       import('./registerTransferUploadRpcHandlers'),
       import('./registerTransferDownloadRpcHandlers'),
       import('./registerDownloadTransferLifecycleHandlers'),
-      import('../core/transferSessionStore'),
-      import('@/machines/transfer/transferChunkEncryption'),
+      import('@happier-dev/transfers/node'),
+      import('@happier-dev/transfers/node'),
       import('@happier-dev/protocol/rpc'),
       import('@/ui/logger'),
     ]);

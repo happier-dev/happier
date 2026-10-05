@@ -13,7 +13,7 @@ import {
     finalizeWorkspaceFileUpload,
     type WorkspaceFileFinalizeOperations,
 } from './finalizeWorkspaceFileUpload';
-import type { UploadTransferTarget } from './uploadTransferTarget';
+import type { UploadTransferTarget } from '@happier-dev/transfers/node';
 
 export type WorkspaceFileUploadTarget = UploadTransferTarget & Readonly<{
     destPath: string;

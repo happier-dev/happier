@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeUploadChunkBase64 } from './decodeUploadChunkBase64';
+import { decodeUploadChunkBase64 } from '@happier-dev/transfers/node';
 
 describe('decodeUploadChunkBase64', () => {
   it('returns null for invalid base64 input', () => {

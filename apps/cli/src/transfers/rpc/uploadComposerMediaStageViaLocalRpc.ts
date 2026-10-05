@@ -9,7 +9,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
-import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 
 export type ComposerMediaStageUploadCarrierResult =
   | Readonly<{ success: true; handle: ComposerContentHandleV1 }>

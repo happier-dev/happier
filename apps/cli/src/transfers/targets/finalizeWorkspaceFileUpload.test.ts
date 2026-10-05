@@ -5,13 +5,13 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { TransferSessionStore } from '../core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import {
   createTransferSessionLifecycle,
   finalizeUploadTransferSession,
   openUploadTransferSession,
   writeUploadTransferChunk,
-} from '../core/transferSessionLifecycle';
+} from '@happier-dev/transfers/node';
 
 let renameAttemptCount = 0;
 let firstRenameErrorCode: string | null = 'EXDEV';

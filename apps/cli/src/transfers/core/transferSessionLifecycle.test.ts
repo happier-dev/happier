@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 
-import { TransferSessionStore } from './transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import {
     abortDownloadTransferSession,
     abortUploadTransferSession,
@@ -17,7 +17,7 @@ import {
     openUploadTransferSession,
     readDownloadTransferChunk,
     writeUploadTransferChunk,
-} from './transferSessionLifecycle';
+} from '@happier-dev/transfers/node';
 
 type BufferFileWrite = (
     buffer: Uint8Array,

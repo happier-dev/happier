@@ -12,7 +12,7 @@ import type {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { configuration } from '@/configuration';
-import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { resolveVoiceInferencePaths } from '@/daemon/voiceInference/voiceInferencePaths';
 
 import { registerMachineVoiceInferenceRpcHandlers } from './rpcHandlers.voiceInference';

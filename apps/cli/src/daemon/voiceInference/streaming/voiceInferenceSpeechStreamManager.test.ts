@@ -23,7 +23,7 @@ import { createVoiceInferenceSpeechStreamManager } from './voiceInferenceSpeechS
 import type { VoiceInferenceWorkerStreamingTranscriptionSession } from '../voiceInferenceWorker.execution';
 import type { VoiceDiagnosticsController } from '../../voiceDiagnostics/controller';
 import { createDiagnosticsControllerWithRemovalFailure } from '../../voiceDiagnostics/controller.testkit';
-import { openAes256GcmBytes, sealAes256GcmBytes } from '@/utils/crypto/aes256GcmBytes';
+import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 
 type RuntimeStreamSession = VoiceInferenceWorkerStreamingTranscriptionSession;
 

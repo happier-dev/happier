@@ -8,13 +8,13 @@ import {
   SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR,
 } from './serverRoutedTransferPolicy';
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
-import { clampTransferChunkBytes } from './transferChunkSizeLimit';
+import { clampTransferChunkBytes } from '@happier-dev/transfers/node';
 import {
   createEncryptedTransferChunkEnvelope,
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
   parseTransferRecipientPublicKeyBase64,
-} from './transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 import {
   resolveServerRoutedTransferChunkBytes,
   resolveServerRoutedTransferMaxActiveTransfers,

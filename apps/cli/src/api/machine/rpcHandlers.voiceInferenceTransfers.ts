@@ -28,9 +28,9 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { configuration } from '@/configuration';
-import { createTransferRecipientKeyPair } from '@/machines/transfer/transferChunkEncryption';
-import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
+import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import {
   resolveVoiceInferenceAcceptedInputMimeTypes,
   resolveVoiceInferenceSttMaxUploadBytes,

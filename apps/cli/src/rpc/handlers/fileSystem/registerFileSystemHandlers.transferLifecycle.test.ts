@@ -6,7 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { describe, expect, it } from 'vitest';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
-import { createTransferRecipientKeyPair } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
 
 import { registerFileSystemHandlers } from './registerFileSystemHandlers';
 

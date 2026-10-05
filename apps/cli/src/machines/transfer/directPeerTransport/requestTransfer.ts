@@ -1,4 +1,4 @@
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '../transferChunkEncryption';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createTransferPayloadFileSink, type TransferPayloadFileResult } from '../transferPayloadFileSink';
 import {
   resolveDirectPeerTransferChunkBytes,

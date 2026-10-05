@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
+import { TRANSFER_CHUNK_HARD_MAX_BYTES } from '@happier-dev/transfers/node';
 import {
   createEncryptedTransferChunkEnvelope,
   decryptEncryptedTransferChunkEnvelope,
   parseTransferRecipientPublicKeyBase64,
-} from './transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 
 import {
   createDeterministicRandomBytesFromBase64,

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createTransferRecipientKeyPair } from '@/machines/transfer/transferChunkEncryption';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 
 import { registerMachineDownloadTransferRpcHandlers } from './registerMachineDownloadTransferRpcHandlers';
 

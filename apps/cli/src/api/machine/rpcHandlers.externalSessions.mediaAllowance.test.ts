@@ -10,7 +10,7 @@ import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/
 import {
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
-} from '@/machines/transfer/transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
-import { TransferSessionStore } from '../core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { registerUploadTransferLifecycleHandlers } from './registerUploadTransferLifecycleHandlers';
 
 describe('registerUploadTransferLifecycleHandlers (hardening)', () => {
