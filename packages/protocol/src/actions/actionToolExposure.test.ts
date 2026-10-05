@@ -45,6 +45,9 @@ describe('actionToolExposure', () => {
       expect(resolveActionToolExposureMode(spec, 'agent'), id).toBe('discoverable_only');
       expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }).available, id).toBe(false);
     }
+    const picker = getActionSpec('ui.prompts.picker.open');
+    expect(isActionDiscoverableOnToolSurface(picker, 'agent')).toBe(true);
+    expect(resolveActionSurfaceAvailability({ actionId: picker.id, surface: 'mcp' }).available).toBe(false);
   });
   it('makes landed explanation Actions reachable through the existing UI and Voice catalogs', () => {
     const voiceIds = new Set(listVoiceToolActionSpecs().map((spec) => spec.id));
