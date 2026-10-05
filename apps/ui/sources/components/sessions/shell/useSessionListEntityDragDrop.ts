@@ -29,8 +29,9 @@ import {
     type SessionReportsToEligibilitySnapshot,
 } from '@/sync/ops/relations/sessionReportsToEligibility';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
-import { requireSessionOrganizationMutationScope, type SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization';
+import type { SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization';
 import { t } from '@/text';
+import { parseToken } from '@/utils/auth/parseToken';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import { resolveSessionListDragTree, type CommitSessionListDragIntentContext, type SessionListDragAdmission } from './drag/commitSessionListDragIntent';
@@ -67,6 +68,7 @@ export type UseSessionListEntityDragDropInput = Readonly<{
     resolvePointerGeometry: (pointer: WindowPointer | null) => UseSessionInlineDragResolvedDrop;
     getCommitContext: (mutationScope?: SessionOrganizationMutationScope) => SessionListBaseCommitContext;
     getListBounds: () => WindowBounds | null;
+    getSourceBounds?: (rowId: string) => WindowBounds | null;
 }>;
 
 export type SessionListCarry = Readonly<{
@@ -220,11 +222,11 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
     }, []);
 
     // The mounted list answers `session.organization.move` for menus, keyboard and agents alike.
-    const buildActionContext = React.useCallback(async () => {
+    const buildActionContext = React.useCallback((mutationScope: SessionOrganizationMutationScope) => {
         const captured = scopeRef.current;
         if (!captured) return null;
-        const mutationScope = await requireSessionOrganizationMutationScope(captured.serverId, { expectedAccountId: captured.accountId });
-        if (scopeRef.current?.serverId !== captured.serverId || scopeRef.current?.accountId !== captured.accountId) return null;
+        if (parseToken(mutationScope.credentials.token) !== captured.accountId) return null;
+        if (mutationScope.serverId !== captured.serverId && !mutationScope.serverIdAliases.includes(captured.serverId)) return null;
         return buildContext(mutationScope);
     }, [buildContext]);
     React.useEffect(() => registerMountedSessionListOrganizationAction(createSessionListOrganizationActionAdapter(buildActionContext)), [buildActionContext]);
@@ -331,6 +333,7 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 const title = rowName(sourceMetadata);
                 return title ? { title } : null;
             },
+            getBounds: () => inputRef.current.getSourceBounds?.(snapshot.source.sourceRowId) ?? null,
         });
         const abort = new AbortController();
         factsRef.current?.dispose();

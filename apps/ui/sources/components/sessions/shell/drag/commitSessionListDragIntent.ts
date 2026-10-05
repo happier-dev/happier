@@ -110,9 +110,9 @@ export type CommitSessionListDragIntentContext = Readonly<{
     manualSessionOrderingEnabled?: boolean;
     isFolderOrganizationEnabled?: (serverId: string | null) => boolean;
     now: () => number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => void | Promise<void>;
-    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void | Promise<void>;
-    setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => void | Promise<void>;
+    setSessionFoldersV1: (next: SessionFoldersV1) => Promise<void>;
+    setSessionListGroupOrderV1: (next: Record<string, string[]>) => Promise<void>;
+    setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => Promise<void>;
     setSessionFolderAssignment: (assignment: Readonly<{
         serverId: string;
         sessionId: string;

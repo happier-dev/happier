@@ -7,8 +7,11 @@ export async function reorderSessionOrganization(params: Readonly<{
     credentials: AuthCredentials;
     serverId: string;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
+    assertCurrent?: () => void;
     request: ReorderSessionOrganizationRequest;
 }>): Promise<void> {
+    params.assertCurrent?.();
     const optimisticEntries = params.request.entries.map((entry) => ({
         scopeKind: params.request.scopeKind,
         scopeKey: params.request.scopeKey,
@@ -21,13 +24,18 @@ export async function reorderSessionOrganization(params: Readonly<{
         const response = await reorderSessionOrganizationApi({
             credentials: params.credentials,
             serverUrl: params.serverUrl,
+            requestAtEndpoint: params.requestAtEndpoint,
             request: params.request,
         });
+        params.assertCurrent?.();
         getStorage().getState().commitSessionOrganizationOptimistic(recordId);
         const reconcileRecordId = getStorage().getState().applySessionOrganizationOrderEntriesOptimistic(params.serverId, response.orderEntries);
         getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {
-        getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
+        try {
+            params.assertCurrent?.();
+            getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
+        } catch { /* The retired Account owns its optimistic record. */ }
         throw error;
     }
 }

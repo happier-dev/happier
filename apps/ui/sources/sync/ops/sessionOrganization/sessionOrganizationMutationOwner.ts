@@ -29,7 +29,29 @@ export type SessionOrganizationMutationScope = Readonly<{
     serverId: string;
     serverIdAliases: readonly string[];
     serverUrl: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
+    assertCurrent?: () => void;
 }>;
+
+/** Project the Action's existing Account binding; never select credentials a second time. */
+export function createSessionOrganizationMutationScopeForAccount(account: Readonly<{
+    credentials: AuthCredentials;
+    serverId: string;
+    request: (path: string, init?: RequestInit) => Promise<Response>;
+    assertCurrent: () => void;
+}>): SessionOrganizationMutationScope {
+    account.assertCurrent();
+    const profile = getServerProfileById(account.serverId);
+    if (!profile) throw new Error('action_home_not_found');
+    return {
+        credentials: account.credentials,
+        serverId: account.serverId,
+        serverIdAliases: uniqueAliases(account.serverId, [profile.id, profile.serverIdentityId, ...(profile.legacyServerIds ?? [])]),
+        serverUrl: profile.serverUrl,
+        requestAtEndpoint: account.request,
+        assertCurrent: account.assertCurrent,
+    };
+}
 
 export type SessionOrganizationMutationScopeUnavailable = Readonly<
     | {

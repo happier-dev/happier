@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { HAPPIER_CARRIED_SOURCE_OPACITY } from '@happier-dev/plugin-ui/presentation';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { treeRowId } from './drop-resolution/treeRowId';
 import {
     TREE_DROP_OVERLAY_KIND_LINE,
     TREE_DROP_OVERLAY_KIND_NONE,
@@ -24,16 +29,19 @@ vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
-vi.mock('react-native-reanimated', () => ({
+vi.mock('react-native-reanimated', async () => {
+    const { useRef } = await import('react');
+    return ({
     Easing: {
         bezier: () => () => 0,
         linear: () => 0,
     },
-    useSharedValue: (initial: any) => ({ value: initial }),
+    useSharedValue: (initial: unknown) => useRef({ value: initial }).current,
     useAnimatedStyle: (fn: any) => fn(),
     withSpring: (value: any) => value,
     withTiming: (value: any) => value,
-}));
+    });
+});
 
 type MockGesture = Readonly<{
     kind: 'pan' | 'longPress' | 'simultaneous';
@@ -131,6 +139,29 @@ vi.mock('react-native-gesture-handler', () => ({
 }));
 
 describe('useSessionInlineDrag', () => {
+    it.each(['session', 'session-folder', 'session-workspace'] as const)('restores %s source opacity on realm cancellation without gesture callbacks', async (kind) => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+        const runtime = useEntityDragDropRuntime();
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const item = kind === 'session'
+            ? { kind, scope, address: { serverId: scope.serverId, sessionId: 'child' } }
+            : kind === 'session-folder' ? { kind, scope, folderId: 'folder-a' }
+                : { kind, scope, workspaceId: 'workspace-a' };
+        const sessionKey = kind === 'session' ? sessionAddressKey({ serverId: scope.serverId, sessionId: 'child' })
+            : kind === 'session-folder' ? treeRowId.folder(scope.serverId, 'folder-a') : treeRowId.workspaceRoot('workspace-a');
+        const retire = runtime.registerSource({ id: 'source-opacity', scope, getItem: () => item, isCurrent: () => true });
+        const hook = await renderHook(() => useSessionInlineDrag(dragParams({ sessionKey, onDragStart: () => { runtime.begin('source-opacity'); } })));
+        const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+        await act(async () => { gesture.handlers.onStart?.(); gesture.handlers.onUpdate?.({ absoluteX: 18, absoluteY: 64 }); });
+        await hook.rerender();
+        expect(hook.getCurrent().animatedStyle.opacity).toBe(HAPPIER_CARRIED_SOURCE_OPACITY);
+        await act(async () => { runtime.cancel('window-blur'); });
+        await hook.rerender();
+        expect(hook.getCurrent().animatedStyle.opacity).toBe(1);
+        retire();
+        await hook.unmount();
+    });
+
     function sharedOverlayValues(): TreeDropOverlaySharedValues {
         return {
             overlayVisible: { value: 0 },

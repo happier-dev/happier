@@ -8,7 +8,11 @@ import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 // Load the real owner during collection, not against the first interaction's timeout.
-import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowValueReference, WorkflowStepDataEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
+import { formatWorkflowLoopSentence } from './WorkflowLoopEditor';
+import { KEEP_GOING_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/keepGoing';
+import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 
 /**
  * Where a binding's value comes from, which workflow input it reads and which step produces it
@@ -76,6 +80,18 @@ function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstan
 }
 
 describe('WorkflowStepDataEditor field selects', () => {
+    it('reads builtin loop conditions as human reference labels, including typed stop reasons', () => {
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'keep-going', name: 'Keep going', definition: KEEP_GOING_WORKFLOW_V1 });
+        const loop = draft.blocks[0]!;
+        const condition = draft.blocks[1]!;
+        if (loop.kind !== 'loop' || condition.kind !== 'if') throw new Error('Invalid builtin fixture');
+        const label = formatWorkflowConditionSentence(draft, condition.when);
+        expect(label).not.toContain('"kind"');
+        expect(label).toContain('workflows.input.stopCondition');
+        expect(formatWorkflowLoopSentence(draft, loop)).toContain('workflows.input.tokensUsed');
+        expect(formatWorkflowValueReference(draft, { kind: 'iteration', field: 'position' })).toBe('workflows.input.iterationField.position');
+        expect(formatWorkflowValueReference(draft, { kind: 'session_context', recentTurns: 1 })).toContain('workflows.input.sessionContext');
+    });
     it('offers where a value comes from as one labelled select with the current kind selected', async () => {
         const step = stepBlock('step-a', [{ kind: 'literal', value: '' }]);
         const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [step] });

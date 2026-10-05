@@ -34,9 +34,6 @@ describe('mounted WorkBoard Action settlement', () => {
         const credentials = { token };
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
         storage.setState({ profileScope: { serverId: home.id, accountId: 'board-account' }, settingsScope: { serverId: home.id, accountId: 'board-account' }, isDataReady: true });
-        expect((await import('@/sync/runtime/orchestration/connectionManager')).getAppliedActiveServerSnapshot().serverId).toBe(home.id);
-        expect((await import('@/sync/domains/state/storageStateReaderBridge')).readRegisteredStorageState()?.profileScope).toEqual(storage.getState().profileScope);
-        expect((await import('@/sync/domains/scope/activeServerAccountScope')).getActiveServerAccountScope()).toEqual({ serverId: home.id, accountId: 'board-account' });
         const ref = { kind: 'machine', qualifiedId: { serverId: home.id, id: 'machine-a' } } as const;
         const key = buildWorkBoardItemKeyV1(ref);
         const board = { ...createWorkBoardV1({ id: 'board-a', name: 'Board' }), source: { picked: [ref] }, positionsByItemRef: { [key]: { x: 24, y: 24 } } };

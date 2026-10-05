@@ -51,7 +51,7 @@ export async function applyWorkspaceOrderUpdate(params: Readonly<{
     containerId: string;
     beforeRowId?: string | null;
     afterRowId?: string | null;
-    setSessionWorkspaceOrderV1: (next: Record<string, string[]>) => void | Promise<void>;
+    setSessionWorkspaceOrderV1: (next: Record<string, string[]>) => Promise<void>;
 }>): Promise<boolean> {
     const next = buildSessionWorkspaceOrderAfterTreeDrop(params);
     if (!next) return false;

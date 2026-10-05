@@ -59,8 +59,8 @@ installRepositoryTreeCommonModuleMocks({
 
 const webDropTargetViewModule = import('./WebDropTargetView');
 
-function createFileDragEvent(type: string): Event {
-    const event = new Event(type, { bubbles: true, cancelable: true });
+function createFileDragEvent(type: string, point = { x: 0, y: 0 }): Event {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y });
     Object.defineProperty(event, 'dataTransfer', {
         value: { types: ['Files'] },
         configurable: true,
@@ -69,6 +69,43 @@ function createFileDragEvent(type: string): Event {
 }
 
 describe('WebDropTargetView.web', () => {
+    it('keeps Upload here beside the OS pointer without rerendering the repository target on dragover', async () => {
+        const { WebDropTargetView } = await webDropTargetViewModule;
+        const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
+        let targetRenders = 0;
+        function Target() {
+            targetRenders += 1;
+            const [active, setActive] = React.useState(false);
+            const handlers = useWebFileDropZone({ enabled: true, onFilesDropped: () => {}, onFileDragActiveChange: setActive });
+            return <WebDropTargetView testID="upload-target" {...handlers}>
+                <RepositoryTreeDropOverlay visible={active} destinationLabel="src" />
+            </WebDropTargetView>;
+        }
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => root.render(<Target />));
+            const target = container.querySelector('[data-testid="upload-target"]')!;
+            await act(async () => target.dispatchEvent(createFileDragEvent('dragenter', { x: 96, y: 128 })));
+            const pill = document.querySelector<HTMLElement>('[data-testid="repository-tree-drop-overlay"]')!;
+            expect(pill.textContent).toContain('src');
+            expect(getComputedStyle(pill).position).toBe('fixed');
+            expect(parseFloat(getComputedStyle(pill).left)).toBeGreaterThan(96);
+            expect(parseFloat(getComputedStyle(pill).top)).toBeGreaterThan(128);
+            const rendersAtPickup = targetRenders;
+            await act(async () => target.dispatchEvent(createFileDragEvent('dragover', { x: 240, y: 320 })));
+            expect(parseFloat(getComputedStyle(pill).left)).toBeGreaterThan(240);
+            expect(parseFloat(getComputedStyle(pill).top)).toBeGreaterThan(320);
+            expect(targetRenders).toBe(rendersAtPickup);
+            await act(async () => target.dispatchEvent(createFileDragEvent('drop', { x: 240, y: 320 })));
+            expect(document.querySelector('[data-testid="repository-tree-drop-overlay"]')).toBeNull();
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it.each([false, true])('retires a retained pane drag without reviving a stale release (presented again=%s)', async resumed => {
         const { WebDropTargetView } = await webDropTargetViewModule;
         const active = vi.fn();

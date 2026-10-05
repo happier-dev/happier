@@ -86,7 +86,7 @@ export async function applyGroupOrderUpdate(params: Readonly<{
     beforeRowId?: string | null;
     afterRowId?: string | null;
     childKind?: SessionListGroupOrderChildKind;
-    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void | Promise<void>;
+    setSessionListGroupOrderV1: (next: Record<string, string[]>) => Promise<void>;
 }>): Promise<boolean> {
     const next = buildSessionListGroupOrderAfterTreeDrop(params);
     if (!next) return false;
