@@ -81,7 +81,7 @@ export const ServerSelectionGroupSchema = z.object({
  * device. They deliberately live outside the Protocol Account Settings catalog so they cannot
  * be emitted by account-settings writers.
  */
-export const LOCAL_ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
+const localAccountSettingInputs = {
     sessionSplitCanvasLayoutsV1: {
         schema: SessionSplitCanvasLayoutsSchema,
         default: {},
@@ -148,9 +148,11 @@ export const LOCAL_ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Trusted device-local minimum Account and Session encryption policy',
         storageScope: 'local',
     },
-});
+} as const;
 
-export const LOCAL_ACCOUNT_SETTING_ARTIFACTS = buildSettingArtifacts(LOCAL_ACCOUNT_SETTING_DEFINITIONS);
+export const LOCAL_ACCOUNT_SETTING_DEFINITIONS: ReturnType<typeof defineSettingDefinitions<typeof localAccountSettingInputs>> = defineSettingDefinitions(localAccountSettingInputs);
+
+export const LOCAL_ACCOUNT_SETTING_ARTIFACTS: ReturnType<typeof buildSettingArtifacts<typeof LOCAL_ACCOUNT_SETTING_DEFINITIONS>> = buildSettingArtifacts(LOCAL_ACCOUNT_SETTING_DEFINITIONS);
 
 export const LOCAL_ACCOUNT_SETTING_KEYS = [
     'sessionSplitCanvasLayoutsV1',

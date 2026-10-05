@@ -50,7 +50,7 @@ const UiSurfaceExecutableApprovalsSchema = z.record(
     && entry.approval.requestedCapabilitiesDigest === createUiSurfaceRequestedCapabilitiesDigestV1(entry.capabilities)
 )), { message: 'Surface approval must match its reviewed scope and capabilities' });
 
-export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
+const localSettingInputs = {
     hideConnectedAccountIdentities: {
         schema: z.boolean().catch(false),
         default: false,
@@ -410,6 +410,8 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     ...ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS,
     ...LAYOUT_LOCAL_SETTING_DEFINITIONS,
-});
+} as const;
 
-export const LOCAL_SETTING_ARTIFACTS = buildSettingArtifacts(LOCAL_SETTING_DEFINITIONS);
+export const LOCAL_SETTING_DEFINITIONS: ReturnType<typeof defineSettingDefinitions<typeof localSettingInputs>> = defineSettingDefinitions(localSettingInputs);
+
+export const LOCAL_SETTING_ARTIFACTS: ReturnType<typeof buildSettingArtifacts<typeof LOCAL_SETTING_DEFINITIONS>> = buildSettingArtifacts(LOCAL_SETTING_DEFINITIONS);

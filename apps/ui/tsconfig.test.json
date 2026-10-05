@@ -13,7 +13,17 @@
     "**/*.test.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
-    "**/*.d.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts",
+    "sources/components/onboarding/tour/stage/react-native-view-shot-web.d.ts",
+    "sources/dev/jsdom.d.ts",
+    "sources/dev/why-is-node-running.d.ts",
+    "sources/types/expo-router-routes.d.ts",
+    "sources/types/react-native-svg.d.ts",
+    "sources/types/react-native-web.d.ts",
+    "sources/types/react-native-webrtc-web-shim.d.ts",
+    "sources/types/react-test-renderer-host-types.d.ts",
+    "sources/types/stylesheets.d.ts",
     ".expo/types/**/*.ts"
   ]
 }

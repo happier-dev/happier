@@ -26,7 +26,7 @@ const titiSpritesheetSource = require('@/assets/pets/titi/spritesheet.webp') as 
 
 export const DEFAULT_BUILT_IN_PET_ID = 'blink' satisfies BuiltInPetId;
 
-export const BUILT_IN_PET_PACKAGES = {
+export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPackage>> = {
     blink: {
         id: 'blink',
         manifest: {

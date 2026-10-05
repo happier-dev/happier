@@ -16,14 +16,14 @@ export type ApiChangesResponse = z.infer<typeof ApiChangesResponseSchema>;
 // Updates
 //
 
-export const ApiUpdateSchema = UpdateBodySchema;
+export const ApiUpdateSchema: typeof UpdateBodySchema = UpdateBodySchema;
 export type ApiUpdate = z.infer<typeof ApiUpdateSchema>;
 
 //
 // API update container
 //
 
-export const ApiUpdateContainerSchema = UpdateContainerSchema;
+export const ApiUpdateContainerSchema: typeof UpdateContainerSchema = UpdateContainerSchema;
 export type ApiUpdateContainer = z.infer<typeof ApiUpdateContainerSchema>;
 
 //

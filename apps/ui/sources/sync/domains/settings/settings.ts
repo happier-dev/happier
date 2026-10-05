@@ -38,7 +38,15 @@ export const SUPPORTED_SCHEMA_VERSION = ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSIO
  * UI facade metadata only. Its Account fields are direct references to the Protocol catalog;
  * device-local fields are owned by the separate local catalog below.
  */
-export const SettingsSchema = z.object({
+type SettingsSchemaCatalogShape = Omit<
+    typeof ACCOUNT_SETTING_ARTIFACTS.shape,
+    keyof typeof LOCAL_ACCOUNT_SETTING_ARTIFACTS.shape
+> & typeof LOCAL_ACCOUNT_SETTING_ARTIFACTS.shape;
+type SettingsSchemaShape = {
+    -readonly [Key in keyof SettingsSchemaCatalogShape]: SettingsSchemaCatalogShape[Key];
+};
+
+export const SettingsSchema: z.ZodObject<SettingsSchemaShape> = z.object({
     ...ACCOUNT_SETTING_ARTIFACTS.shape,
     ...LOCAL_ACCOUNT_SETTING_ARTIFACTS.shape,
 });

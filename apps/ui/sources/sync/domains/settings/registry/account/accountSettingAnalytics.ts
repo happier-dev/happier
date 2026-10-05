@@ -35,7 +35,7 @@ import { ACCOUNT_WORKSPACE_FILE_VIEWER_SETTING_ANALYTICS } from './accountWorksp
  * Presentation-only metadata keyed by Protocol-owned Account setting definitions. Voice contributes
  * a serializer-only overlay while its persistence artifacts remain Protocol-owned.
  */
-export const ACCOUNT_SETTING_ANALYTICS = mergeAccountSettingAnalytics(
+export const ACCOUNT_SETTING_ANALYTICS: ReturnType<typeof mergeAccountSettingAnalytics> = mergeAccountSettingAnalytics(
     ACCOUNT_ACTIONS_SETTING_ANALYTICS,
     ACCOUNT_BACKEND_SETTING_ANALYTICS,
     ACCOUNT_CODING_PROMPT_BEHAVIOR_SETTING_ANALYTICS,
@@ -98,4 +98,4 @@ function buildAccountSettingAnalyticsArtifacts(): AnalyticsSettingArtifacts<Sett
  * Derived projection for analytics consumers only. It attaches UI metadata to Protocol
  * definitions, but deliberately has no schema shape or defaults and cannot back persistence.
  */
-export const ACCOUNT_SETTING_ANALYTICS_ARTIFACTS = buildAccountSettingAnalyticsArtifacts();
+export const ACCOUNT_SETTING_ANALYTICS_ARTIFACTS: ReturnType<typeof buildAccountSettingAnalyticsArtifacts> = buildAccountSettingAnalyticsArtifacts();
