@@ -428,9 +428,25 @@ the same policy owner, and older 0.2 readers reach their released compatibility
 projection rather than the V4 transport.
 
 `windowDurationMs` is an optional additive quota-meter fact. Updated readers use
-it only for presentation; absence preserves existing meter semantics and older
-readers ignore it. Pool-selected display projection filters only meters and
+it for presentation and expiry-first pool ranking; older readers ignore it.
+Pool-selected display projection filters only meters and
 preserves account-, subscription-, freshness-, and recovery-credit fields.
+
+Expiry-first is the development default for new or absent pool policies. Explicit
+`least_limited`, `priority`, and `manual` choices remain unchanged. Among eligible
+members with fresh headroom above the existing soft-switch threshold, the daemon
+prefers the earliest future reset of the longest selected usage allowance or an
+independently fresh subscription end with renewal off. Unknown durations use the
+effective allowance; stale, missing, renewing, and passed dates add no preference.
+Ties and inadequate-headroom recovery retain headroom then member-order ranking.
+Healthy active members remain sticky; this does not schedule swaps or restart sessions.
+
+Qualified V4 pools consume the canonical policy directly. The retired V3 routes
+remain retired: the 0.2 old-reader strategy projection and authoring-support bit
+are not added to V4. Runtime quota-store and Provider Account Usage projections
+share one meter normalizer, while policy-specific allowance filtering remains
+selector-owned. UI summaries describe the strategy rather than duplicating the
+daemon's automatic ranking; explicit manual switch suggestions use member order.
 
 ### Provider Account subscription facets (development)
 
