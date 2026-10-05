@@ -2,7 +2,7 @@ import type { MessageMeta } from "./messageMetaTypes.js";
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export function buildOutgoingMessageMeta(params: {
-    sentFrom: string;
+    sentFrom: NonNullable<MessageMeta['sentFrom']>;
     permissionMode: NonNullable<MessageMeta['permissionMode']>;
     model?: MessageMeta['model'];
     fallbackModel?: MessageMeta['fallbackModel'];
