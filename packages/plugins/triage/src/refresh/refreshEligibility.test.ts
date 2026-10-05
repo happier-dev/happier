@@ -75,9 +75,15 @@ describe('triage refresh pacing', () => {
         });
         expect(ourBackoff).toEqual({
             kind: 'blocked',
-            reason: 'failureBackoff',
-            nextEligibleAtMs: NOW_MS + 40_000,
+            reason: 'sourceRetryDeadline',
+            nextEligibleAtMs: NOW_MS + 1_000,
         });
+
+        expect(evaluateRefreshEligibility({
+            trigger: 'manual', nowMs: NOW_MS, lastReadStartedAtMs: NOW_MS,
+            backoff: { retryNotBeforeMs: null, failureBackoffUntilMs: NOW_MS + 40_000,
+                consecutivePacingFailures: 3 },
+        })).toEqual({ kind: 'eligible' });
 
         expect(evaluateRefreshEligibility({
             trigger: 'manual',

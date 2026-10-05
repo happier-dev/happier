@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -83,8 +84,7 @@ export function useAzureEntryLocalRef(input: TriageDetailSurfaceInputV1) {
 
 function useEntryInput(input: TriageDetailSurfaceInputV1) {
   const { locator } = input.observation;
-  const { instance } = input;
-  const localRef = useAzureEntryLocalRef(input);
+  const { instance, localRef } = useTriageDetailRequest(input);
   return useMemo(() => ({
     v: 1 as const,
     instance,
@@ -108,12 +108,19 @@ function useAzureSettledRead<T>(
   | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>>,
   active: boolean,
   activeSignal: AbortSignal,
+  retain = false,
 ): Readonly<{ state: AzureReadStateV1<T>; refresh: () => void }> {
   const [state, setState] = useState<AzureReadStateV1<T>>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  const settled = useRef<Readonly<{ read: typeof read; attempt: number }> | null>(null);
+  const previousRead = useRef(read);
+  if (previousRead.current !== read) {
+    previousRead.current = read;
+    setState({ kind: 'loading' });
+  }
 
   useEffect(() => {
-    if (!active) return undefined;
+    if (!active || activeSignal.aborted || (retain && settled.current?.read === read && settled.current.attempt === attempt)) return undefined;
     // `attempt` is the reader's explicit refresh. It re-enters this effect,
     // which is the same code path the first read takes — there is no second read
     // owner and no automatic poll.
@@ -129,6 +136,7 @@ function useAzureSettledRead<T>(
       try {
         const outcome = await read(readSignal);
         if (left || readSignal.aborted) return;
+        settled.current = { read, attempt };
         setState((current) => {
           if (outcome.kind === 'ready') {
             return { kind: 'ready', value: outcome.value, pending: false, failure: null };
@@ -146,13 +154,13 @@ function useAzureSettledRead<T>(
       superseded.abort();
       mergedSignal.dispose();
     };
-  }, [active, activeSignal, attempt, read]);
+  }, [active, activeSignal, attempt, read, retain]);
 
   // A discarded tab clears only when it actually leaves. Refresh supersession
   // uses the cleanup above but deliberately keeps the last-known-good value.
   useEffect(() => {
-    if (!active) setState({ kind: 'loading' });
-  }, [active]);
+    if (!active && !retain) setState({ kind: 'loading' });
+  }, [active, retain]);
 
   const refresh = useCallback(() => {
     setAttempt((current) => current + 1);
@@ -180,14 +188,15 @@ export type AzureIterationsControllerV1 = Readonly<{
  * The ONE iteration read of a mounted detail body.
  *
  * It is called from the detail root, not from a tab, and it is deliberately not
- * scoped to a tab's active interval: `Activity` and `Files` both consume its
+ * scoped to a source panel's active interval: `Activity` and `Files` both consume its
  * projection, and a read that died when one tab was left would leave the other
- * comparing against nothing.
+ * comparing against nothing. The enclosing source interval aborts unfinished
+ * work while Session hides it, retaining a settled projection on return.
  */
 export function useAzureIterations(
   input: TriageDetailSurfaceInputV1,
-  signal: AbortSignal,
 ): AzureIterationsControllerV1 {
+  const { active, activeSignal } = useTabPanelActivity();
   const action = useMemo(
     () => ({
       pluginId: AZURE_DEVOPS_PLUGIN_ID,
@@ -223,7 +232,7 @@ export function useAzureIterations(
     };
   }, [entry, execute]);
 
-  return useAzureSettledRead(read, true, signal);
+  return useAzureSettledRead(read, active, activeSignal, true);
 }
 
 /* -------------------------------------------------------------- paged planes */

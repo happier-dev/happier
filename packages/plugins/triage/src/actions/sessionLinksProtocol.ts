@@ -50,7 +50,7 @@ const triageSessionId = defineProtocolString({
  * the writer's decision, and a caller that resolved it first would be a second
  * place that rule lives.
  */
-const TriageEntrySessionLinkDisplayV1Schema = defineProtocolObject({
+export const TriageEntrySessionLinkDisplayV1Schema = defineProtocolObject({
     locator: TriageEntryLocatorV1Schema,
     scopeLabel: triageText,
 }, { policy: 'closed' });

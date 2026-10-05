@@ -176,28 +176,27 @@ describe('triage refresh coordinator', () => {
         expect(harness.passes).toHaveLength(2);
     });
 
-    it('clears process-local failure pacing after a completed walk', async () => {
+    it('allows manual recovery while preserving automatic pacing', async () => {
         const harness = createHarness({ random: () => 1 });
         const failing = request(harness.coordinator, INSTANCE_A, 'manual');
         harness.passes[0]!.settle(transientFailure());
         await failing.settled;
 
-        expect(request(harness.coordinator, INSTANCE_A, 'manual').blocked[0]?.reason)
-            .toEqual({ reason: 'failureBackoff', nextEligibleAtMs: NOW_MS + 5_000 });
+        expect(request(harness.coordinator, INSTANCE_A, 'view').disposition).toBe('blocked');
 
-        harness.advanceMs(5_000);
         const recovering = request(harness.coordinator, INSTANCE_A, 'manual');
         expect(recovering.disposition).toBe('started');
         harness.passes[1]!.settle({ kind: 'completed' });
         await recovering.settled;
 
-        // The next failure starts the ceiling over rather than continuing the
-        // pre-recovery sequence.
+        // Another local failure must not disable an explicit recovery press.
         const afterRecovery = request(harness.coordinator, INSTANCE_A, 'manual');
         harness.passes[2]!.settle(transientFailure());
         await afterRecovery.settled;
-        expect(request(harness.coordinator, INSTANCE_A, 'manual').blocked[0]?.reason)
-            .toEqual({ reason: 'failureBackoff', nextEligibleAtMs: NOW_MS + 5_000 + 5_000 });
+        const retried = request(harness.coordinator, INSTANCE_A, 'manual');
+        expect(retried.disposition).toBe('started');
+        harness.passes[3]!.settle({ kind: 'completed' });
+        await retried.settled;
     });
 
     it('measures the minimum interval from the provider read start', async () => {
@@ -219,12 +218,12 @@ describe('triage refresh coordinator', () => {
         harness.coordinator.retire(INSTANCE_A);
         expect(harness.passes[0]!.input.signal.aborted).toBe(true);
 
-        harness.passes[0]!.settle(transientFailure());
+        harness.passes[0]!.settle(transientFailure({ retryNotBeforeMs: NOW_MS + 60_000 }));
         await view.settled;
 
         // The retired instance's late failure cannot pace a later explicit
         // refresh of the same id. `manual` is the discriminating trigger here:
-        // it bypasses the shared interval but still honours a failure backoff,
+        // it bypasses local pacing but still honours provider retry evidence,
         // so a retained deadline would refuse it.
         expect(request(harness.coordinator, INSTANCE_A, 'manual').disposition)
             .toBe('started');

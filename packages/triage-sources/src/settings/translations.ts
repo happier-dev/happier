@@ -1,3 +1,5 @@
+import { triageDetailStoryTranslations } from '../ui/storyTranslations.js';
+
 /**
  * The shared PRs & Issues settings page's own copy, in every locale the first
  * party ships.
@@ -872,6 +874,7 @@ export function withTriageSourceSettingsTranslationsV1<
     messages: Object.freeze({
       ...TRIAGE_SOURCE_SETTINGS_ENGLISH_V1,
       ...(TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1[row.locale] ?? {}),
+      ...triageDetailStoryTranslations(row.locale),
       ...row.messages,
     }),
   }));

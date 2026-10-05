@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
 import type { TriageEntryRepositoryRefV1 } from '@happier-dev/triage-protocol/v1';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -15,16 +18,14 @@ import { TESTKIT_OBSERVED_REVISION, testkitConfiguredInstance } from '../../sess
 import { testkitLocator } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageStartEntrySessionInputV1 } from '../../actions/entrySessionProtocol.js';
 
-const mocked = vi.hoisted(() => ({
-    host: null as PluginUiHostApi | null,
-}));
-
-vi.mock('@happier-dev/plugin-ui', () => ({
-    usePluginHostApi: () => {
-        if (mocked.host === null) throw new Error('triage:test:hostNotInstalled');
-        return mocked.host;
-    },
-}));
+/** Only host transport handlers are substituted; the public client and provider run for real. */
+type BoundaryHost = Readonly<{
+    executeAction: (actionId: string, input: unknown, options?: Readonly<{
+        signal?: AbortSignal;
+        selectedActionInput?: unknown;
+    }>) => Promise<unknown>;
+    selectActionInput?: (request: unknown) => Promise<unknown>;
+}>;
 
 import {
     resolveTriageBulkStartRouteV1,
@@ -141,27 +142,46 @@ function deferredHost(deferredAction: 'sessions.spawn.profiles.list' | 'projects
                 ), { once: true });
             });
         },
-    } as unknown as PluginUiHostApi;
+    } as unknown as BoundaryHost;
     return { host, readSignal: () => observedSignal };
 }
 
-let root: Root | null = null;
+let fixture: PluginUiTestkit | null = null;
 let controller: TriageBulkSessionsControllerV1 | null = null;
 let nextCreationKey = 1;
+const mintCreationKey = () => `creation-${nextCreationKey++}`;
 
 function MountedController(): React.ReactElement | null {
     controller = useTriageBulkEntrySessions({
-        mintCreationKey: () => `creation-${nextCreationKey++}`,
+        mintCreationKey,
     });
     return null;
 }
 
-async function mount(host: PluginUiHostApi): Promise<void> {
-    mocked.host = host;
-    const container = document.createElement('div');
-    document.body.append(container);
-    root = createRoot(container);
-    await act(async () => { root?.render(<MountedController />); });
+async function mount(host: BoundaryHost): Promise<void> {
+    await act(async () => {
+        fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'bulk-controller-fixture', mountNonce: 'bulk-controller-mount' },
+            authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+            surface: defineUiSurface(MountedController),
+            surfaceContext: createSurfaceContextFixture({ targetedContributions: {
+                target: { pluginId: 'happier.triage', occurrenceId: 'triage-generation',
+                    sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
+                points: [],
+            } }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            handlers: {
+                executeAction: async ({ action, input, signal, selectedActionInput }) => (
+                    await host.executeAction(action, input, { signal, selectedActionInput }) as JsonValue
+                ),
+                ...(host.selectActionInput === undefined ? {} : {
+                    selectActionInput: async ({ request }) => (
+                        await host.selectActionInput!(request) as SelectActionInputResult
+                    ),
+                }),
+            },
+        });
+    });
 }
 
 async function flush(): Promise<void> {
@@ -172,14 +192,12 @@ async function flush(): Promise<void> {
 
 beforeEach(() => {
     controller = null;
-    mocked.host = null;
     nextCreationKey = 1;
 });
 
 afterEach(async () => {
-    await act(async () => { root?.unmount(); });
-    root = null;
-    document.body.replaceChildren();
+    await act(async () => { await fixture?.dispose(); });
+    fixture = null;
 });
 
 describe('bulk cancellation ownership', () => {
@@ -234,7 +252,7 @@ describe('bulk placement ownership', () => {
         const source = ENTRY.entryRef.source;
         const operation = {
             point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } },
-            contributor: { pluginId: source.pluginId, contributionId: source.localId, immutableGenerationId: 'source-generation' },
+            contributor: { pluginId: source.pluginId, contributionId: source.localId, occurrenceId: 'source-generation', sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' } },
             role: 'prepareReviewWorkspace',
             action: { pluginId: source.pluginId, localId: 'prepare-review-workspace' },
         };
@@ -253,8 +271,10 @@ describe('bulk placement ownership', () => {
                     if (recovery === 'cancelledSelection' && authorizationCalls === 2) return { kind: 'cancelled' };
                     const result = {
                         kind: 'submitted', action: operation.action, input: request.draft,
-                        selection: { target: { pluginId: 'happier.triage', immutableGenerationId: 'triage-generation' }, point: operation.point, contributor: operation.contributor },
+                        selection: { target: { pluginId: 'happier.triage', sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } }, point: operation.point,
+                            contributor: { pluginId: operation.contributor.pluginId, contributionId: operation.contributor.contributionId, sourceCustody: operation.contributor.sourceCustody } },
                         connectedAccount: { kind: 'selected', fieldPath: 'instance.binding.account', ref: testkitConfiguredInstance().binding.account },
+                        presentation: { connectedAccountLabel: 'Example forge', machineDisplayName: 'Development machine' },
                     };
                     selections.push(result);
                     return result;
@@ -262,7 +282,7 @@ describe('bulk placement ownership', () => {
                 return { kind: 'serverStartDraft', draft: {
                     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
-                    directory: '/workspace',
+                    directory: { kind: 'path', path: '/workspace' },
                 } };
             },
             executeAction: async (actionId: string, input: TriageStartEntrySessionInputV1, options?: { selectedActionInput?: unknown }) => {
@@ -276,7 +296,7 @@ describe('bulk placement ownership', () => {
                 if (recovery === 'lostReply' && starts.length === 2) throw new Error('lost reply');
                 return { v: 1, type: 'linked', sessionId: `session-${input.entryRef.entryId}`, disposition: starts.length === 1 ? 'created' : 'rejoined', delivery: 'accepted', finalOpen: 'suppressed' };
             },
-        } as unknown as PluginUiHostApi;
+        } as unknown as BoundaryHost;
         await mount(host);
         await act(async () => { controller?.run({ action: { ...repositoryAction(), workspaceMode: 'pull_request' }, destination: 'oneSessionPerEntry', entries }); });
         await flush();
@@ -322,7 +342,7 @@ describe('bulk placement ownership', () => {
                     draft: {
                         executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
-                        directory: '/workspace',
+                        directory: { kind: 'path', path: '/workspace' },
                     },
                 };
             },
@@ -336,7 +356,7 @@ describe('bulk placement ownership', () => {
                 if (starts.length === 1) throw new Error('reply lost after admission');
                 return { v: 1, type: 'linked', sessionId: 'session-original', disposition: 'rejoined', delivery: 'alreadyAccepted', finalOpen: 'suppressed' };
             },
-        } as unknown as PluginUiHostApi;
+        } as unknown as BoundaryHost;
         await mount(host);
         await act(async () => { controller?.run({ action: action(null), destination: 'oneSessionPerEntry', entries: [ENTRY] }); });
         await flush();
@@ -362,7 +382,7 @@ describe('bulk placement ownership', () => {
                 hostCalls += 1;
                 throw new Error('triage:test:shouldNotCallHost');
             },
-        } as unknown as PluginUiHostApi;
+        } as unknown as BoundaryHost;
         await mount(host);
         await act(async () => {
             controller?.run({
@@ -402,7 +422,7 @@ describe('bulk placement ownership', () => {
                             kind: 'agent',
                             identity: { pluginId: 'happier.test.agent', localId: 'agent' },
                         },
-                        directory: `/workspaces/repository-${selection}`,
+                        directory: { kind: 'path', path: `/workspaces/repository-${selection}` },
                     },
                 };
             },
@@ -445,7 +465,7 @@ describe('bulk placement ownership', () => {
                 }
                 throw new Error(`triage:test:unexpectedAction:${actionId}`);
             },
-        } as unknown as PluginUiHostApi;
+        } as unknown as BoundaryHost;
         await mount(host);
         await act(async () => {
             controller?.run({
@@ -483,7 +503,7 @@ describe('bulk placement ownership', () => {
                 return { kind: 'serverStartDraft', draft: {
                     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
-                    directory: '/user-selected-project',
+                    directory: { kind: 'path', path: '/user-selected-project' },
                 } };
             },
             executeAction: async (actionId: string) => {
@@ -494,7 +514,7 @@ describe('bulk placement ownership', () => {
                 }
                 return null;
             },
-        } as unknown as PluginUiHostApi;
+        } as unknown as BoundaryHost;
         await mount(host);
         await act(async () => {
             controller?.run({

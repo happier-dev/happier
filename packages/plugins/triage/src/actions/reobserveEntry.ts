@@ -25,7 +25,7 @@ import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import type { TriageAdmittedGetExecutorV1 } from '../composer/resolveForDispatch.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { isTriageSelfCaller } from './callerSource.js';
+import { isTriageAccountCaller } from './callerSource.js';
 import {
   indexTriageAdmittedSourcesV1,
   type TriageAdmittedSourceV1,
@@ -146,7 +146,7 @@ export function createTriageReobserveEntryActionHandler(): ActionHandler<
   TriageReobserveEntryActionResultV1
 > {
   return async (input, context: PluginInvocationContext) => {
-    if (!isTriageSelfCaller(context)) return { kind: 'invalidCaller' };
+    if (!isTriageAccountCaller(context)) return { kind: 'invalidCaller' };
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
     const result = await reobserveTriageEntry(input, {
       readConfiguredInstance: async (sourceInstanceId, options) => {

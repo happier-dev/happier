@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import React, { act } from 'react';
+import { defineUiSurface, Tabs, Text } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -162,7 +163,10 @@ function createHarness(
     options: Readonly<{
         onExecute?: (localId: string) => void;
         readCodeVariables?: (signal: AbortSignal) => Promise<JsonValue>;
+        readSampled?: (signal: AbortSignal) => Promise<JsonValue>;
         overview?: JsonValue;
+        readOverview?: (signal: AbortSignal) => Promise<JsonValue>;
+        ancestorTabs?: boolean;
     }> = {},
 ) {
     let sampledReads = 0;
@@ -179,7 +183,8 @@ function createHarness(
         const { localId } = action as Readonly<{ localId: string }>;
         options.onExecute?.(localId);
         if (localId === POSTHOG_ACTION_IDS.issueActivity) return activity;
-        if (localId === POSTHOG_ACTION_IDS.issueEvents) return nextSampled();
+        if (localId === POSTHOG_ACTION_IDS.issueEvents) return options.readSampled === undefined
+            ? nextSampled() : await options.readSampled(signal);
         if (localId === POSTHOG_ACTION_IDS.codeVariables) {
             if (options.readCodeVariables !== undefined) {
                 return await options.readCodeVariables(signal);
@@ -188,7 +193,8 @@ function createHarness(
         }
         // The live entry read is not what these cases are about; the body falls back to
         // the observation it was mounted with when it does not settle.
-        if (localId === POSTHOG_ACTION_IDS.nativeOverview) return options.overview ?? { kind: 'unreadable-by-design' };
+        if (localId === POSTHOG_ACTION_IDS.nativeOverview) return options.readOverview === undefined
+            ? options.overview ?? { kind: 'unreadable-by-design' } : await options.readOverview(signal);
         throw new Error(`unexpected action ${localId}`);
     }
     return { executeAction };
@@ -196,21 +202,36 @@ function createHarness(
 
 const mounted: PluginUiTestkit[] = [];
 
+function SourceHostTabs({ children }: Readonly<{ children: React.ReactNode }>) {
+    const [panel, setPanel] = React.useState('source');
+    return <Tabs value={panel} onValueChange={setPanel}>
+        <Tabs.Item value="source" title="Source" retention="retain">{children}</Tabs.Item>
+        <Tabs.Item value="session" title="Session"><Text value="Session content" /></Tabs.Item>
+    </Tabs>;
+}
+
 async function mountDetail(
     activity: JsonValue,
     sampled: JsonValue | readonly JsonValue[] = SAMPLED_EVENTS,
     options: Parameters<typeof createHarness>[2] = {},
+    panel?: string | (() => string),
 ): Promise<PluginUiTestkit> {
     const harness = createHarness(activity, sampled, options);
+    const surface = defineUiSurface((context) => {
+        const source = renderSurface(typeof panel === 'function'
+            ? { ...context, launchInput: { ...DETAIL_INPUT, panel: panel() } as unknown as JsonValue }
+            : context);
+        return options.ancestorTabs ? <SourceHostTabs>{source}</SourceHostTabs> : source;
+    });
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'posthog-detail', mountNonce: 'posthog-detail-mount' },
             authorPlugin: { id: POSTHOG_PLUGIN_ID, version: '0.0.0' },
-            surface: renderSurface,
+            surface,
             surfaceContext: createSurfaceContextFixture(),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-            launchInput: DETAIL_INPUT as unknown as JsonValue,
+            launchInput: { ...DETAIL_INPUT, ...(typeof panel === 'string' ? { panel } : {}) } as unknown as JsonValue,
             handlers: {
                 executeAction: async ({ action, input, signal }) =>
                     await harness.executeAction({ action, input, signal }),
@@ -282,6 +303,77 @@ afterEach(async () => {
 });
 
 describe('the mounted PostHog Overview', () => {
+    it('pauses unfinished root reads while Session hides the source and resumes safely', async () => {
+        const overviewSignals: AbortSignal[] = [];
+        const sampleSignals: AbortSignal[] = [];
+        const overviewSettlers: ((result: JsonValue) => void)[] = [];
+        const sampleSettlers: ((result: JsonValue) => void)[] = [];
+        const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
+            ancestorTabs: true,
+            readOverview: async (signal) => {
+                overviewSignals.push(signal);
+                return await new Promise<JsonValue>((resolve) => { overviewSettlers.push(resolve); });
+            },
+            readSampled: async (signal) => {
+                sampleSignals.push(signal);
+                return await new Promise<JsonValue>((resolve) => { sampleSettlers.push(resolve); });
+            },
+        }, 'occurrences');
+        await selectTab(page, 'Session');
+        expect(overviewSignals[0]?.aborted).toBe(true);
+        expect(sampleSignals[0]?.aborted).toBe(true);
+        await selectTab(page, 'Source');
+        expect(overviewSignals[1]?.aborted).toBe(false);
+        expect(sampleSignals[1]?.aborted).toBe(false);
+        await act(async () => {
+            sampleSettlers[1]?.({ kind: 'sampled', events: [{
+                uuid: 'bbbbbbbb-0000-4000-8000-000000000002',
+                exceptions: [{ type: 'ResumedError', value: 'current sample', frames: [] }],
+            }], omittedRowCount: 0 });
+            sampleSettlers[0]?.(SAMPLED_STOPPED_SHORT);
+            overviewSettlers[0]?.({ kind: 'unreadable-by-design' });
+            overviewSettlers[1]?.({ kind: 'unreadable-by-design' });
+        });
+        await expect(page.getByText('ResumedError: current sample')).resolves.toBeDefined();
+        await expect(page.queryByText('aaaaaaaa-0000-4000-8000-000000000001')).resolves.toBeUndefined();
+    });
+    it('keeps its pending root summary alive when the host changes panels', async () => {
+        let panel = 'overview';
+        let originalSignal: AbortSignal | undefined;
+        let settle!: (result: JsonValue) => void;
+        const pending = new Promise<JsonValue>((resolve) => { settle = resolve; });
+        const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
+            readOverview: async (signal) => { originalSignal ??= signal; return await pending; },
+        }, () => panel);
+        expect(originalSignal?.aborted).toBe(false);
+        panel = 'activity';
+        await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+        expect(originalSignal?.aborted).toBe(false);
+        await act(async () => { settle({
+            observation: {
+                kind: 'present',
+                localRef: { kindId: 'error-issue', collisionScope: COLLISION_SCOPE, entryId: ENTRY_ID },
+                locator: { v: 1 },
+                snapshot: { ...DETAIL_INPUT.observation.snapshot, facts: [{
+                    id: 'posthog/severity', label: 'Severity', importance: 'secondary', value: { kind: 'detailOnly' },
+                }] },
+                viewer: { involvement: [] },
+            },
+            severity: 'critical',
+        }); await pending; });
+        panel = 'overview';
+        await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+        await expect(page.getByText('critical')).resolves.toBeDefined();
+    });
+    it('renders the host Overview as a report with one source-owned occurrence sample', async () => {
+        const dispatched: string[] = [];
+        const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
+            onExecute: (id) => { dispatched.push(id); },
+        }, 'overview');
+        await expect(page.getByRole('heading', { name: 'The report' })).resolves.toBeDefined();
+        await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+        expect(dispatched.filter((id) => id === POSTHOG_ACTION_IDS.issueEvents)).toHaveLength(1);
+    });
     it.each([true, false])('shows CRUD severity and distinguishes failed enrichment from missing optional facts (%s)', async (failed) => {
         const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
             overview: {
@@ -310,6 +402,16 @@ describe('the mounted PostHog Overview', () => {
 });
 
 describe('the mounted PostHog Activity panel', () => {
+    it('composes host Activity as a story while keeping native field changes', async () => {
+        const page = await mountDetail(activityResult({ records: [{
+            id: '01994b1e-0000-4000-8000-0000000000a1',
+            activity: 'updated', isSystem: false, actor: 'Mara', changedFields: ['status'],
+        }] }), SAMPLED_EVENTS, {}, 'activity');
+        await expect(page.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+        await expect(page.getByText('updated: status')).resolves.toBeDefined();
+        await expect(page.getByText('Mara')).resolves.toBeDefined();
+        await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+    });
     it('says the list stops short when PostHog named a page this build will not follow', async () => {
         const page = await mountActivity(activityResult({
             records: [{
@@ -349,6 +451,55 @@ describe('the mounted PostHog Activity panel', () => {
 });
 
 describe('the mounted PostHog Occurrences panel', () => {
+    it('aborts the sampled page read when the detail retires', async () => {
+        let panel = 'occurrences';
+        let pendingSignal: AbortSignal | undefined;
+        let settle!: (result: JsonValue) => void;
+        const pending = new Promise<JsonValue>((resolve) => { settle = resolve; });
+        const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
+            readSampled: async (signal) => { pendingSignal = signal; return await pending; },
+        }, () => panel);
+        expect(pendingSignal?.aborted).toBe(false);
+        const originalSignal = pendingSignal;
+        panel = 'activity';
+        await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+        expect(originalSignal?.aborted).toBe(false);
+        expect(pendingSignal).toBe(originalSignal);
+        await act(async () => { await page.retire(); });
+        expect(originalSignal?.aborted).toBe(true);
+        await act(async () => { settle(SAMPLED_STOPPED_SHORT); await pending; });
+        expect(document.body.textContent).not.toContain('aaaaaaaa-0000-4000-8000-000000000001');
+    });
+    it('keeps the second selected UUID and settled pages when the host changes panels', async () => {
+        let panel = 'occurrences';
+        let reads = 0;
+        const page = await mountDetail(activityResult({}), [{
+            kind: 'sampled',
+            events: [{ uuid: 'aaaaaaaa-0000-4000-8000-000000000001', exceptions: [{ type: 'FirstError', value: 'first occurrence', frames: [] }] }],
+            omittedRowCount: 0,
+            continuation: 'second-page',
+        }, {
+            kind: 'sampled',
+            events: [{ uuid: 'bbbbbbbb-0000-4000-8000-000000000002', exceptions: [{ type: 'SecondError', value: 'second occurrence', frames: [] }] }],
+            omittedRowCount: 0,
+        }], { ancestorTabs: true, onExecute: (id) => { if (id === POSTHOG_ACTION_IDS.issueEvents) reads += 1; } }, () => panel);
+        await act(async () => { await page.press(await page.getByRole('button', { name: 'Load more sampled occurrences' })); });
+        const row = await page.getByRole('option', { name: 'SecondError: second occurrence' });
+        await act(async () => { await page.press(row); });
+        await selectTab(page, 'Session');
+        await selectTab(page, 'Source');
+        panel = 'stack-trace';
+        await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+        await expect(page.getByText('SecondError: second occurrence')).resolves.toBeDefined();
+        panel = 'activity';
+        await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+        panel = 'occurrences';
+        await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+        await expect(page.getByText('FirstError: first occurrence')).resolves.toBeDefined();
+        await expect(page.getByText('SecondError: second occurrence')).resolves.toBeDefined();
+        expect((await page.getByRole('option', { name: 'SecondError: second occurrence' })).state).toMatchObject({ selected: true });
+        expect(reads).toBe(2);
+    });
     it('says the sample stops short when PostHog offered an offset this build refused', async () => {
         const page = await mountDetail(activityResult({}), SAMPLED_STOPPED_SHORT);
         await selectTab(page, 'Occurrences');

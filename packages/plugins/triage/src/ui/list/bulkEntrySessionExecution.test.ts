@@ -21,7 +21,7 @@ const SETTLEMENT = Object.freeze({
         kind: 'agent' as const,
         identity: { pluginId: 'happier.claude', localId: 'claude' },
     },
-    directory: '/workspaces/example',
+    directory: { kind: 'path' as const, path: '/workspaces/example' },
 });
 
 function selectedEntry(entryId: string): TriageBulkSelectedEntryV1 {

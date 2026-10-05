@@ -57,11 +57,9 @@ import type {
  * read; there is no generic `mutate({ operation, payload })` and there will not be one
  * (`sources/SCM.md` §3.8).
  *
- * Every one is declared `surfaces: ['ui']`, and that is the human gate. The gate is
- * **reachability, not a prompt**: with no `agent` and no `mcp` surface none of them is
- * agent-reachable at all. `ui` is the write's whole product reach: the only caller is this
- * plugin's own mounted detail artifact, which reaches the daemon as present-user UI
- * authority through the authenticated mounted provenance.
+ * UI, agent, MCP and CLI invoke the same native write through the shared host
+ * approval policy. Non-safe danger levels and confirmation require approval
+ * by default; exact configured-entry admission and provider preconditions stay here.
  *
  * Completion carries three obligations no other forge's merge has (`sources/SCM.md` §6.7):
  *
@@ -85,23 +83,6 @@ export const AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
   threadCommentCreate: 'pull-request-thread-comment-create',
   threadReply: 'pull-request-thread-reply',
 });
-
-/**
- * This source's own bound on one mutation invocation, end to end.
- *
- * `CONTRACT.md` §5.2 leaves the deadline for an independently invoked source Action to the source;
- * Triage supplies none and there is no public override. It covers the currentness read, the write
- * and the completion poll together, because what it protects is one person waiting on one button.
- */
-/**
- * How long this source waits on a completion Azure queued rather than finished.
- *
- * `mergeStatus: 'queued'` is a documented state and completion runs as a job — `mergeId` is
- * literally *"the ID of the job used to run the pull request merge"*. The poll is bounded and
- * cancellable; when it ends without a terminal state the answer is `pending`.
- */
-const COMPLETION_POLL_ATTEMPTS = 3;
-const COMPLETION_POLL_INTERVAL_MS = 750;
 
 function invalidInput(): TriageSourceFailureV1 {
   return createAzureSourceFailure({
@@ -129,23 +110,6 @@ function entryOutsideInstance(): TriageSourceFailureV1 {
 
 function unavailable(failure: TriageSourceFailureV1): AzureMutationResultV1 {
   return Object.freeze({ kind: 'unavailable' as const, failure });
-}
-
-/** Waits between two poll attempts, and stops waiting the moment the invocation is abandoned. */
-async function pause(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    (timer as unknown as Readonly<{ unref?: () => void }>).unref?.();
-    function onAbort(): void {
-      clearTimeout(timer);
-      resolve();
-    }
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 export type AzureMutationContext = Readonly<{
@@ -385,13 +349,11 @@ export async function completeAzureDevOpsPullRequest(
 
   // The `200` acknowledged the status update. Everything below reads the pull request itself.
   let settled = await observeAzureMutation(mutation);
-  for (
-    let attempt = 1;
-    attempt < COMPLETION_POLL_ATTEMPTS && !isCompletionTerminal(settled.row);
-    attempt += 1
-  ) {
-    if (mutation.signal.aborted) break;
-    await pause(COMPLETION_POLL_INTERVAL_MS, mutation.signal);
+  // Azure supplies no completion window. Confirm serially under the caller's
+  // lifetime, stopping on authoritative success/rejection or a failed read.
+  // Every iteration is a read; the accepted merge is never re-dispatched.
+  while (settled.row !== null && !isCompletionTerminal(settled.row)
+    && !isCompletionRejected(settled.row) && !mutation.signal.aborted) {
     settled = await observeAzureMutation(mutation);
   }
 
@@ -402,7 +364,7 @@ export async function completeAzureDevOpsPullRequest(
     return Object.freeze({ kind: 'pending' as const, observation: settled.observation });
   }
 
-  if (row.mergeStatus === 'conflicts' || row.mergeStatus === 'rejectedByPolicy' || row.mergeStatus === 'failure') {
+  if (isCompletionRejected(row)) {
     const detail = boundedDetail(row.mergeFailureMessage ?? row.mergeFailureType);
     return Object.freeze({
       kind: 'rejected' as const,
@@ -448,6 +410,14 @@ function isCompletionTerminal(row: AzurePullRequestRow | null): boolean {
     && row.status === 'completed'
     && row.mergeStatus === 'succeeded'
     && row.lastMergeCommitId !== null;
+}
+
+function isCompletionRejected(row: AzurePullRequestRow): row is AzurePullRequestRow & {
+  mergeStatus: 'conflicts' | 'rejectedByPolicy' | 'failure';
+} {
+  return row.mergeStatus === 'conflicts'
+    || row.mergeStatus === 'rejectedByPolicy'
+    || row.mergeStatus === 'failure';
 }
 
 /** Field-level proof that Azure retained every completion option this Action sent. */

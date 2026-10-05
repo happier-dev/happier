@@ -103,7 +103,8 @@ const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
     contributor: {
         pluginId: SOURCE.pluginId,
         contributionId: SOURCE.localId,
-        immutableGenerationId: 'generation-1',
+        occurrenceId: 'generation-1',
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'example-source-root' },
     },
     role: 'prepareReviewWorkspace',
     action: { pluginId: SOURCE.pluginId, localId: 'prepare-review-workspace' },
@@ -158,7 +159,7 @@ function projectRow(overrides: Readonly<Record<string, unknown>> = {}) {
 /** What the host settles once the reader has picked an Agent and a directory. */
 const SETTLED_DRAFT = Object.freeze({
     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
-    directory: '/workspaces/example',
+    directory: { kind: 'path', path: '/workspaces/example' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.claude', localId: 'claude' } },
 });
 
@@ -239,7 +240,8 @@ function createHarness(options: Readonly<{
         contributor: {
             pluginId: SOURCE.pluginId,
             contributionId: SOURCE.localId,
-            immutableGenerationId: 'generation-1',
+            occurrenceId: 'generation-1',
+            sourceCustody: { kind: 'development', registeredRootId: 'example-source-root' },
         },
         protocol: {
             id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -395,7 +397,8 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                 targetedContributions: {
                     target: {
                         pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-                        immutableGenerationId: 'target-generation-1',
+                        occurrenceId: 'target-generation-1',
+                        sourceCustody: { kind: 'development', registeredRootId: 'triage-root' },
                     },
                     points: [{
                         pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -408,7 +411,8 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                                 contributor: {
                                     pluginId: SOURCE.pluginId,
                                     contributionId: SOURCE.localId,
-                                    immutableGenerationId: 'generation-1',
+                                    occurrenceId: 'generation-1',
+                                    sourceCustody: { kind: 'development', registeredRootId: 'example-source-root' },
                                 },
                                 protocol: {
                                     id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -439,10 +443,14 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                             selection: {
                                 target: {
                                     pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-                                    immutableGenerationId: 'target-generation-1',
+                                    sourceCustody: { kind: 'development', registeredRootId: 'triage-root' },
                                 },
                                 point: operation.point,
-                                contributor: operation.contributor,
+                                contributor: {
+                                    pluginId: operation.contributor.pluginId,
+                                    contributionId: operation.contributor.contributionId,
+                                    sourceCustody: operation.contributor.sourceCustody,
+                                },
                             },
                             connectedAccount: {
                                 kind: 'selected',
@@ -1251,7 +1259,11 @@ describe('the entry action controls on the mounted detail header', () => {
             },
             prepareReviewWorkspaceSelection: {
                 selection: {
-                    contributor: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor,
+                    contributor: {
+                        pluginId: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor.pluginId,
+                        contributionId: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor.contributionId,
+                        sourceCustody: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor.sourceCustody,
+                    },
                     point: PREPARE_REVIEW_WORKSPACE_OPERATION.point,
                 },
                 credentialRef: configuredInstance().binding.account,
@@ -1301,7 +1313,11 @@ describe('the entry action controls on the mounted detail header', () => {
             },
             prepareReviewWorkspaceSelection: {
                 selection: {
-                    contributor: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor,
+                    contributor: {
+                        pluginId: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor.pluginId,
+                        contributionId: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor.contributionId,
+                        sourceCustody: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor.sourceCustody,
+                    },
                     point: PREPARE_REVIEW_WORKSPACE_OPERATION.point,
                 },
                 credentialRef: configuredInstance().binding.account,

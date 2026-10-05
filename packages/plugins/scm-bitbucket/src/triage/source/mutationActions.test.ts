@@ -773,22 +773,10 @@ describe('Bitbucket pull-request write declarations', () => {
     return declaration;
   });
 
-  it('keeps every write unreachable from any agent surface and behind a host confirmation', () => {
+  it('exposes every write to agents with host confirmation by default', () => {
     for (const declaration of declarations) {
-      // The human gate is reachability, not a prompt. A `danger` level plus an agent surface would
-      // only floor an agent invocation to an approval prompt; omitting the surface means there is
-      // no tool, no prompt and no exposure at all.
-      expect(declaration.surfaces).toContain('ui');
-      // `plugin` is deliberately absent, and its absence is the second half of
-      // the human gate: a direct plugin dispatch — ActionsService — checks only
-      // the `plugin` surface and is refused, while the daemon derives the
-      // invoking surface from the authenticated mounted-UI provenance, so this
-      // source's own mounted detail artifact reaches the write as present-user
-      // `ui` authority.
+      expect(declaration.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(declaration.surfaces).not.toContain('plugin');
-      expect(declaration.surfaces).not.toContain('agent');
-      expect(declaration.surfaces).not.toContain('mcp');
-      expect(declaration.surfaces).not.toContain('cli');
       // The one placement is the details panel the write lives in; global
       // placement discovery is offered no destination.
       expect(declaration.placementBindings).toEqual(['detailsPanel']);

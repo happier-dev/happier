@@ -49,12 +49,17 @@ export type TriageOpenLinkedSessionResultV1 =
 export async function openLinkedSession(input: Readonly<{
     execute: TriageSessionOpenInvokerV1;
     sessionId: SessionId;
+    serverId?: string;
+    destination?: PluginActionInputById['session.open']['destination'];
     signal?: AbortSignal;
 }>): Promise<TriageOpenLinkedSessionResultV1> {
     try {
         await input.execute(
             'session.open',
-            { sessionId: input.sessionId },
+            { sessionId: input.sessionId,
+                ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
+                ...(input.destination === undefined ? {} : { destination: input.destination }),
+            },
             input.signal ? { signal: input.signal } : undefined,
         );
     } catch {

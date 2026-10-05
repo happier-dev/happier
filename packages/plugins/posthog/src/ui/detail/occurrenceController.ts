@@ -16,7 +16,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
-import { useExecutePluginAction } from '@happier-dev/plugin-ui';
+import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import {
     triagePagedPanelInitialState,
     triagePagedPanelReducer,
@@ -37,6 +38,7 @@ import {
     type PosthogSampledEventsResultV1,
 } from '../../source/detail/issueEventsContract.js';
 import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
+import { buildPosthogDetailGetRequest } from './model.js';
 
 /**
  * The sampled-occurrence state.
@@ -204,15 +206,6 @@ export function resolvePosthogSelectedEvidence(state: PosthogSampleStateV1): Rea
     });
 }
 
-function detailIdentity(input: TriageDetailSurfaceInputV1): string {
-    const { entryRef } = input.observation;
-    return [
-        input.instance.instance.sourceInstanceId,
-        entryRef.collisionScope,
-        entryRef.entryId,
-    ].join('\0');
-}
-
 function readSampledResult(result: unknown): PosthogSampledEventsResultV1 | null {
     const parsed = PosthogSampledEventsResultV1Schema.safeParse(result);
     return parsed.success ? parsed.data : null;
@@ -223,29 +216,43 @@ const MALFORMED_RESULT_FAILURE: TriageSourceFailureV1 = Object.freeze({
     code: 'posthog/sampled-result-unreadable',
 });
 
+/** Stable source-owned read authority across freshly parsed host panel inputs. */
+export function usePosthogDetailRequest(input: TriageDetailSurfaceInputV1) {
+    const request = useTriageDetailRequest(input);
+    // Panel inputs are parsed afresh by the host. Only a change to the exact
+    // request authority replaces this detail's sample; object allocation does not.
+    return useMemo(() => ({
+        ...request,
+        overview: buildPosthogDetailGetRequest(input),
+    }), [request]);
+}
+
 /**
- * Drives the sampled read for one mounted detail instance.
- *
- * The first page starts when the surface mounts and restarts only when the exact
- * instance/entry changes. `RenderContext.signal` is the detail-instance lifetime: the
- * host aborts it when the surface is retired, and this hook aborts its own controller
- * when the identity changes, so a late result can reach neither this state nor a panel.
+ * Source panels share one sample. Hiding the source aborts unfinished paging;
+ * its next root interval resumes that position without discarding settled rows.
+ * Replacing the exact authority resets the sample, and retirement rejects late results.
  */
 export function usePosthogOccurrenceController(
     input: TriageDetailSurfaceInputV1,
     signal: AbortSignal,
 ): PosthogOccurrenceControllerV1 {
     const [state, dispatch] = useReducer(posthogSampleReducer, INITIAL);
-    // The current detail session's own lifetime. Paging uses it too, so a page requested
-    // just before an identity change is aborted rather than left to be rejected by its
-    // token after the fact.
+    // Paging shares the exact detail lifetime, not a source panel's interval.
     const lifetime = useRef<AbortController | null>(null);
-    const identity = detailIdentity(input);
     const action = useMemo(
         () => ({ pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.issueEvents }),
         [],
     );
     const { execute } = useExecutePluginAction(action);
+    const request = usePosthogDetailRequest(input);
+    const { active, activeSignal } = useTabPanelActivity();
+    const previousRequest = useRef(request);
+    if (previousRequest.current !== request) {
+        previousRequest.current = request;
+        dispatch({ kind: 'identityChanged' });
+    }
+    const currentState = useRef(state);
+    currentState.current = state;
 
     const readPage = useCallback(async (
         token: number,
@@ -255,12 +262,8 @@ export function usePosthogOccurrenceController(
         dispatch({ kind: 'requestStarted', token });
         const execution = await execute({
             v: 1,
-            instance: input.instance,
-            localRef: {
-                kindId: input.observation.entryRef.kindId,
-                collisionScope: input.observation.entryRef.collisionScope,
-                entryId: input.observation.entryRef.entryId,
-            },
+            instance: request.instance,
+            localRef: request.localRef,
             // The provider contract owns this ceiling; the controller adds no
             // second page-size policy.
             limit: POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
@@ -300,22 +303,27 @@ export function usePosthogOccurrenceController(
             continuation: parsed.continuation ?? null,
             incomplete: parsed.incomplete ?? null,
         });
-    }, [execute, input.instance, input.observation.entryRef]);
+    }, [execute, request]);
 
     useEffect(() => {
+        if (!active || activeSignal.aborted || signal.aborted) return undefined;
         const controller = new AbortController();
         lifetime.current = controller;
         const abort = (): void => {
             controller.abort();
         };
         signal.addEventListener('abort', abort);
-        dispatch({ kind: 'identityChanged' });
-        void readPage(1, null, controller.signal);
+        activeSignal.addEventListener('abort', abort);
+        const current = currentState.current;
+        if (current.kind === 'idle' || current.pending) {
+            void readPage(current.token + 1, current.continuation, controller.signal);
+        }
         return () => {
             signal.removeEventListener('abort', abort);
+            activeSignal.removeEventListener('abort', abort);
             controller.abort();
         };
-    }, [identity, readPage, signal]);
+    }, [active, activeSignal, readPage, signal]);
 
     const select = useCallback((uuid: string) => {
         dispatch({ kind: 'selected', uuid });
@@ -323,11 +331,11 @@ export function usePosthogOccurrenceController(
 
     const loadMore = useCallback(() => {
         const pageSignal = lifetime.current?.signal;
-        if (!state.canLoadMore || state.continuation === null || pageSignal === undefined) {
+        if (!active || !state.canLoadMore || state.continuation === null || pageSignal === undefined || pageSignal.aborted) {
             return;
         }
         void readPage(state.token + 1, state.continuation, pageSignal);
-    }, [readPage, state.canLoadMore, state.continuation, state.token]);
+    }, [active, readPage, state.canLoadMore, state.continuation, state.token]);
 
     const selectedEvent = useMemo(
         () => state.rows.find((candidate) => candidate.uuid === state.selectedUuid),

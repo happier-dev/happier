@@ -27,9 +27,9 @@ import { createTriageAdministerSourceInstanceActionHandler } from './administerS
  * nothing writes `source-instances` and the composed list is structurally
  * always empty.
  *
- * The request carries no source, plugin or contribution identity: the host
- * stamps the caller and this handler resolves the caller's own currently
- * admitted V1 source contribution before the writer runs. It reads no provider
+ * The host stamps provenance. A requested source selects an admitted address
+ * for host automated callers; plugins remain scoped to their own contribution.
+ * The handler resolves that admission before the writer runs. It reads no provider
  * of its own; the aggregate list read is the one producer of observations.
  */
 
@@ -97,11 +97,13 @@ function pluginCaller(pluginId: string): PluginInvocationCaller {
 function createContext(input: Readonly<{
     collections: CorpusCollectionsV1;
     caller?: PluginInvocationCaller;
+    surface?: PluginInvocationContext['surface'];
     admitted?: readonly TriageAdmittedSourceV1[];
     onScan?: (operation: unknown) => void;
 }>): PluginInvocationContext {
     return {
         signal: new AbortController().signal,
+        surface: input.surface ?? 'plugin',
         ...(input.caller === undefined ? {} : { caller: input.caller }),
         services: {
             storage: {
@@ -154,6 +156,24 @@ async function readRows(
 }
 
 describe('the source administration Action handler', () => {
+    it('lets a host agent configure an admitted source and remove its existing instance without spoofing provenance', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const handler = createTriageAdministerSourceInstanceActionHandler({
+            mintSourceInstanceId: () => INSTANCE_ID,
+            nowMs: () => 1_000,
+        });
+        const request = { v: 1 as const, kind: 'create' as const, source: SOURCE, draft: draft() };
+        expect(await handler(request, createContext({ collections, surface: 'agent' })))
+            .toEqual({ kind: 'active', sourceInstanceId: INSTANCE_ID });
+        expect(await handler(request, createContext({ collections, surface: 'agent', caller: pluginCaller('happier.other') })))
+            .toEqual({ kind: 'invalidCaller' });
+        expect(await handler({ v: 1, kind: 'remove', sourceInstanceId: INSTANCE_ID }, createContext({ collections, surface: 'agent' })))
+            .toEqual({ kind: 'removed', sourceInstanceId: INSTANCE_ID });
+        expect((await readRows(collections))[0]?.lifecycle).toBe(CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired);
+        expect(await handler({ v: 1, kind: 'create', draft: draft() }, createContext({ collections, surface: 'agent' })))
+            .toEqual({ kind: 'invalidCaller' });
+    });
+
     it('configures a source end to end: one row written by the Action, no provider read, one visible entry', async () => {
         const { collections } = createTestkitCorpusCollections();
         const scanned: unknown[] = [];

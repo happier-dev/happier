@@ -47,9 +47,12 @@ describe('Triage source administration input', () => {
         }).success).toBe(false);
     });
 
-    it('carries no caller-authored identity and no caller-supplied confirmation bit', () => {
+    it('admits a requested source address without accepting caller provenance or confirmation', () => {
+        expect(TriageSourceAdministrationActionInputV1Schema.parse({
+            v: 1, kind: 'create', draft, source: fixture.configuredInstance.instance.source,
+        })).toMatchObject({ source: fixture.configuredInstance.instance.source });
         for (const smuggled of [
-            { source: { pluginId: 'happier.example.source', localId: 'example-forge' } },
+            { callerPluginId: 'happier.example.source' },
             { contributionId: 'example-forge' },
             { confirmed: true },
         ]) {

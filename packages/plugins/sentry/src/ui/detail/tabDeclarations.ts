@@ -9,12 +9,9 @@
  * rather than restating inline, and the facts a test can check without mounting
  * a device.
  *
- * `retainedState` is deliberately narrow. Retention on this source buys list
- * geometry and nothing else: every panel's loaded projection is discarded when
- * its active interval ends, whether or not its subtree stays mounted. That is
- * the §7.2b rule that keeps Tier-B event rows, tag values and activity records
- * out of an inactive panel — retention is a scroll-position concession, never
- * permission to keep sensitive results.
+ * `retainedState` is deliberately narrow. Occurrences keeps its allowlisted
+ * settled pages within the exact detail lifetime. Tag values, activity records
+ * and event-user/reveal derivatives still end with their active panel interval.
  *
  * `readPlane` is the ownership statement. Overview and Release association read
  * two different closed projections of the same issue resource on two different
@@ -94,9 +91,9 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
     title: 'Occurrences',
     titleKey: 'plugins.sentry.ui.tab.occurrences',
     retention: 'retain' as const,
-    retainedState: 'its one vertical list viewport and scroll anchor only; the loaded'
-      + ' event rows, page position and errors are discarded when the panel'
-      + ' becomes inactive',
+    retainedState: 'its one vertical list viewport, scroll anchor, ordering and settled'
+      + ' allowlisted event pages; pending paging work and reveal derivatives are'
+      + ' discarded when the panel becomes inactive',
     readPlane: 'issueEvents' as const,
     scrollOwner: 'list' as const,
     conditional: false,

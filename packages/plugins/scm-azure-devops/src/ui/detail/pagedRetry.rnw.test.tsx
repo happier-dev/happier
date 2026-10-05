@@ -5,6 +5,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { defineUiSurface, Tabs } from '@happier-dev/plugin-ui';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -62,26 +63,36 @@ const mounted: PluginUiTestkit[] = [];
 /** Successive answers for the iteration-changes walk, by request order. */
 let changesAnswers: readonly JsonValue[] = [];
 
-async function mountDetail(): Promise<PluginUiTestkit> {
+async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonValue, rootOptions: Readonly<{
+  visible: () => boolean;
+  readIterations: (signal: AbortSignal) => Promise<JsonValue>;
+}> | null = null): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-161', mountNonce: 'fixture-mount-161' },
       authorPlugin: { id: AZURE_DEVOPS_PLUGIN_ID, version: '0.0.0' },
-      surface: (context) => (
+      surface: defineUiSurface((context) => (
         <TriagePostMutationCompletionProvider onComplete={async () => {}}>
-          {renderSurface(context)}
+          {rootOptions === null ? renderSurface(context) : <Tabs value={rootOptions.visible() ? 'source' : 'session'}
+            onValueChange={() => {}} ariaLabel="Detail planes" tabList="host">
+            <Tabs.Item value="source" title="Source" retention="retain">{renderSurface(context)}</Tabs.Item>
+            <Tabs.Item value="session" title="Session" />
+          </Tabs>}
         </TriagePostMutationCompletionProvider>
-      ),
+      )),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      launchInput: FIXTURE.detailInput as unknown as JsonValue,
+      launchInput: { ...FIXTURE.detailInput, ...(panel === undefined ? {} : { panel }) } as unknown as JsonValue,
       handlers: {
-        executeAction: async ({ action, input }) => {
+        executeAction: async ({ action, input, signal }) => {
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
           if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations) {
+            if (rootOptions !== null) return await rootOptions.readIterations(signal);
             return ITERATIONS_RESULT;
           }
+          if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies && policies !== undefined) return policies;
+          if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits && commits !== undefined) return commits;
           if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges) {
             const index = changeInputs.length;
             changeInputs.push(input);
@@ -115,6 +126,86 @@ afterEach(async () => {
 });
 
 describe('the mounted Azure DevOps Files walk after a refused page', () => {
+  it('keeps the settled shared root iteration while the source is hidden', async () => {
+    let visible = true;
+    let reads = 0;
+    const detail = await mountDetail('activity', undefined, {
+      kind: 'commits', rows: [], omittedRowCount: 0, projectionTruncated: false,
+    }, {
+      visible: () => visible,
+      readIterations: async () => {
+        reads += 1;
+        return reads === 1 ? ITERATIONS_RESULT : await new Promise<JsonValue>(() => {});
+      },
+    });
+    await expect(detail.getByText('Iteration 2')).resolves.toBeDefined();
+    visible = false;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    visible = true;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    // Returning must use the exact settled iteration, not wait for a replacement read.
+    await expect(detail.getByText('Iteration 2')).resolves.toBeDefined();
+    expect(reads).toBe(1);
+  });
+  it('pauses the shared root iteration read while the source is hidden', async () => {
+    let visible = true;
+    const signals: AbortSignal[] = [];
+    const detail = await mountDetail('overview', undefined, undefined, {
+      visible: () => visible,
+      readIterations: async (signal) => {
+        signals.push(signal);
+        return await new Promise<JsonValue>(() => {});
+      },
+    });
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+    visible = false;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    visible = true;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    expect(signals.at(-1)?.aborted).toBe(false);
+    await act(async () => { await detail.retire(); });
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+  it('composes host Activity as a story while keeping commits and the shared iteration', async () => {
+    const detail = await mountDetail('activity', undefined, {
+      kind: 'commits', rows: [{ commitId: 'abc123', comment: 'Source-only commit.', author: 'Mara' }],
+      omittedRowCount: 0, projectionTruncated: false,
+    });
+    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+    await expect(detail.getByText('Source-only commit.')).resolves.toBeDefined();
+    await expect(detail.getByText('Iteration 2')).resolves.toBeDefined();
+    await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
+  });
+  it.each([
+    ['approved', false, 'Passed'],
+    ['rejected', false, '1 failed'],
+    ['running', false, 'Running'],
+    ['approved', true, null],
+    ['future-provider-state', false, null],
+  ] as const)('reports only complete, known policy evidence in the story (%s, partial %s)', async (status, evaluationsPartial, label) => {
+    const detail = await mountDetail('overview', {
+      kind: 'policies', statuses: [],
+      evaluations: [{ evaluationId: 'required-policy', status, isBlocking: true, isBuildValidation: true }],
+      evaluationsPartial, omittedRowCount: 0, projectionTruncated: false,
+    });
+    if (label === null) {
+      await expect(detail.queryByRole('heading', { name: 'Policies' })).resolves.toBeUndefined();
+      await expect(detail.queryByRole('image', { name: 'Passed' })).resolves.toBeUndefined();
+    } else {
+      await expect(detail.getByRole('heading', { name: 'Policies' })).resolves.toBeDefined();
+      await expect(detail.getByRole('image', { name: label })).resolves.toBeDefined();
+    }
+  });
+  it('renders the host Overview story from the current iteration, with no invented policy state', async () => {
+    const detail = await mountDetail('overview');
+    await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();
+    await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
+    await expect(detail.getByText('/src/tail.ts')).resolves.toBeDefined();
+    await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
+    await expect(detail.queryByRole('heading', { name: 'Policies' })).resolves.toBeUndefined();
+  });
   it('asks Azure again for the position it refused', async () => {
     changesAnswers = [
       changesPage('/src/first.ts', { nextSkip: 30, nextTop: 30 }),

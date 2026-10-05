@@ -251,7 +251,7 @@ describe('Sentry plugin manifest', () => {
       SENTRY_ACTION_IDS.listTagValues,
     ]) {
       const action = actions.get(id);
-      expect(action?.surfaces).toEqual(['ui']);
+      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(action?.inputSchema).toBeDefined();
       expect(action?.resultSchema).toBeDefined();
       // Every detail read reaches the provider through the exact selected
@@ -271,7 +271,7 @@ describe('Sentry plugin manifest', () => {
     // Discovery and the authoritative read keep their Protocol-owned `plugin`
     // + `ui` surfaces — the Triage daemon consumes `plugin`, and this source's
     // own mounted surfaces hold present-user `ui` authority — while the four
-    // source-native detail reads stay `ui`-only. All six declare the same
+    // source-native detail reads also admit agents. All reads declare the same
     // mounted-only placement: the explicit empty list withdraws them from
     // global placement discovery without disabling any invocation surface.
     for (const [id, requiredSurfaces] of [
@@ -287,7 +287,7 @@ describe('Sentry plugin manifest', () => {
       SENTRY_ACTION_IDS.readEvent,
       SENTRY_ACTION_IDS.listTagValues,
     ]) {
-      expect(actions.get(id)?.surfaces, id).toEqual(['ui']);
+      expect(actions.get(id)?.surfaces, id).toEqual(['ui', 'agent', 'mcp', 'cli']);
       expect(actions.get(id)?.placementBindings, id).toEqual([]);
     }
     // `scan` remains a programmatic role: no `ui` surface, so the grammar asks

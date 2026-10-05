@@ -15,6 +15,7 @@ import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from './sessionLinksProtocol.js';
+import { triageEntryDragSourceRuntime, triageEntrySessionDropTargetRuntime } from '../ui/list/entryDragDrop.js';
 
 /**
  * The registered writer of `session-links`.
@@ -86,6 +87,56 @@ async function readLinkRows(
 }
 
 describe('the session-link writer Action', () => {
+    it('links a host-qualified Session carried to the real PR target through this same writer', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const admission = triageEntrySessionDropTargetRuntime.resolve({
+            item: { kind: 'session', scope: { serverId: 'home-a', accountId: 'account-a' },
+                address: { serverId: 'home-a', sessionId: 'session-a' } },
+            destination: null, input: 'pointer',
+            targetInput: {
+                entryRef, display: { locator: testkitLocator(), scopeLabel: 'example/repository' },
+                preview: { verb: 'Link Session', target: 'Review the normalizer', consequence: 'Nothing changes at the source.' },
+            },
+        });
+        expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') throw new Error('Expected the mounted entry to accept this Session');
+        expect(admission.effect.actionId).toBe('plugin:happier.triage/sessions/link-entry-v1');
+        // Only persistence is substituted; the drop emits the canonical Action
+        // input, and the actual registered handler and relationship writer run.
+        expect(await registeredLinkHandler()(admission.effect.input, createContext(collections)))
+            .toEqual({ v: 1, status: 'linked' });
+        const rows = await readLinkRows(collections, 'session-a');
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.entryRef).toEqual(entryRef);
+        expect(rows[0]?.displayPathAtLink).toBe('example/repository #17');
+    });
+
+    it('refuses absent destination state or a non-Session without producing an effect', () => {
+        const request = {
+            item: { kind: 'session' as const, scope: { serverId: 'home-a', accountId: 'account-a' },
+                address: { serverId: 'home-a', sessionId: 'session-a' } },
+            destination: null, input: 'pointer' as const, targetInput: null,
+        };
+        expect(triageEntrySessionDropTargetRuntime.resolve(request).status).toBe('refused');
+        expect(triageEntrySessionDropTargetRuntime.resolve({ ...request,
+            item: { kind: 'repository-file', scope: request.item.scope, machineId: 'machine-a', path: '/repo/file.ts' },
+        }).status).toBe('refused');
+    });
+
+    it('describes the current qualified PR and refuses a selected instance belonging to another source', () => {
+        const reference = {
+            entryRef: testkitEntryRef(),
+            sourceInstance: { source: testkitEntryRef().source, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+            lastKnownLocator: testkitLocator(), title: 'Review the normalizer', subtitle: 'Example forge · Pull request',
+        };
+        expect(triageEntryDragSourceRuntime.describe(reference))
+            .toEqual({ title: 'Review the normalizer', subtitle: 'Example forge · Pull request' });
+        expect(triageEntryDragSourceRuntime.describe({ ...reference,
+            sourceInstance: { ...reference.sourceInstance, source: { pluginId: 'happier.other-source', localId: 'items' } },
+        })).toBeNull();
+    });
+
     it('writes one durable link row the Session cockpit can read', async () => {
         const { collections } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         const handler = registeredLinkHandler();

@@ -34,7 +34,7 @@ import { testkitEntryRef, testkitLocator } from '../../corpus/testkit/observatio
 const SETTLED = Object.freeze({
     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.claude', localId: 'claude' } },
-    directory: '/workspaces/example',
+    directory: { kind: 'path' as const, path: '/workspaces/example' },
 });
 
 describe('projecting the settled new-Session draft', () => {
@@ -99,11 +99,11 @@ describe('projecting the settled new-Session draft', () => {
             settlement: {
                 ...SETTLED,
                 title: 'A title the reader never typed',
-                modelSelection: { modelId: 'claude-sonnet' },
-                permissionMode: 'bypassPermissions',
+                modelSelection: { v: 1, ref: { agentTargetKey: 'happier.claude/claude', providerConnectionId: null, modelId: 'claude-sonnet' }, updatedAt: 0 },
+                permissionMode: 'yolo',
                 transcriptStorage: 'direct',
-                terminal: { mode: 'enabled' },
-                agentSessionStartupInstructionsV1: { v: 1 },
+                terminal: { mode: 'integrated' },
+                agentSessionStartupInstructionsV1: { v: 1, id: 'startup', revision: 1, instructions: 'Read the project guidance.' },
             },
         });
         expect(projected.status === 'settled' && projected.destination.kind === 'new'
@@ -111,10 +111,10 @@ describe('projecting the settled new-Session draft', () => {
             : null).toEqual({
             executionTarget: SETTLED.executionTarget,
             agentTarget: SETTLED.agentTarget,
-            modelSelection: { modelId: 'claude-sonnet' },
-            permissionMode: 'bypassPermissions',
+            modelSelection: { v: 1, ref: { agentTargetKey: 'happier.claude/claude', providerConnectionId: null, modelId: 'claude-sonnet' }, updatedAt: 0 },
+            permissionMode: 'yolo',
             transcriptStorage: 'direct',
-            terminal: { mode: 'enabled' },
+            terminal: { mode: 'integrated' },
         });
         expect(projected.status === 'settled' && projected.destination.kind === 'new'
             ? Object.keys(projected.destination.materialization).sort()
@@ -178,7 +178,7 @@ describe('projecting the settled new-Session draft', () => {
             },
             placement: {
                 executionTarget: SETTLED.executionTarget,
-                directory: SETTLED.directory,
+                directory: SETTLED.directory.path,
             },
             candidates: [{
                 projectKey: { id: 'project-example' },

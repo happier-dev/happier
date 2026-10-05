@@ -63,6 +63,24 @@ afterEach(async () => {
 });
 
 describe('the mounted Bitbucket pull-request detail tablist', () => {
+  it('composes host Activity as a story while keeping native activity records', async () => {
+    const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'activity' } as unknown as JsonValue, {
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
+        kind: 'activity', rows: [{ key: 'approval-1', kind: 'approval', rawKind: 'approval', actor: 'Mara', summary: 'Source-only approval.' }],
+        omittedRowCount: 0, projectionTruncated: false,
+      },
+    });
+    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+    await expect(detail.getByText('Source-only approval.')).resolves.toBeDefined();
+    await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
+  });
+  it('renders the host Overview as the ask and changes story, without a source tab strip', async () => {
+    const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'overview' } as unknown as JsonValue);
+    await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();
+    await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('tab')).resolves.toBeUndefined();
+    await expect(detail.queryByRole('heading', { name: 'Builds' })).resolves.toBeUndefined();
+  });
   it('mounts no source-owned Sessions plane even when the launch input carries linked Sessions', async () => {
     // The linked Sessions are present in the launch input, so a source that still owned a Sessions
     // tab would have every reason to render one. This is what makes the case discriminating: an

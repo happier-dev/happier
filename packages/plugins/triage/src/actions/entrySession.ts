@@ -13,7 +13,8 @@ import {
     type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import { produceScmPullRequestReviewScope } from '@happier-dev/plugin-sdk/reviews';
+import { produceScmPullRequestReviewScope, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
+import { ScmComparisonSchema, ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
@@ -453,6 +454,24 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         if (new Set(input.engineIds).size !== input.engineIds.length) {
             return { v: 1, status: 'refused', reason: 'reviewRejected' };
         }
+        if (input.launchSelection !== undefined && !isJsonRecord(input.launchSelection)) {
+            return { v: 1, status: 'refused', reason: 'reviewRejected' };
+        }
+        const launchSelection: Readonly<Record<string, JsonValue>> = input.launchSelection ?? {};
+        // The public review owner alone admits outputs, narrator and credential
+        // selections, including nested keys and normalization. Triage only relays
+        // credential fields, never host-selected overrides of the PR review intent.
+        const admission = ReviewStartInputSchema.safeParse({
+            sessionId: input.sessionId,
+            engineIds: input.engineIds,
+            instructions: input.instructions,
+            ...(input.outputs === undefined ? {} : { outputs: input.outputs }),
+            ...(input.narrator === undefined ? {} : { narrator: input.narrator }),
+            secretReferenceOverlay: launchSelection.secretReferenceOverlay,
+            teamCredentialModel: launchSelection.teamCredentialModel,
+            teamCredentialSessionBindingConsent: launchSelection.teamCredentialSessionBindingConsent,
+        });
+        if (!admission.success) return { v: 1, status: 'refused', reason: 'reviewRejected' };
         const operation = await readCurrentVerifyReviewWorkspaceOperation(
             input.review.entryRef.source,
             context,
@@ -505,6 +524,41 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             return { v: 1, status: 'refused', reason: 'scopeRefused' };
         }
 
+        let comparisonId: string | undefined;
+        if (admission.data.outputs?.includes('walkthrough')) {
+            const source = ScmComparisonSourceSchema.safeParse(input.comparisonSource);
+            if (!source.success || source.data.kind !== 'pullRequest') {
+                return { v: 1, status: 'refused', reason: 'scopeRefused' };
+            }
+            if ('number' in scope.scope.pullRequest
+                && source.data.locator.number !== scope.scope.pullRequest.number) {
+                return { v: 1, status: 'refused', reason: 'scopeRefused' };
+            }
+            if (source.data.locator.baseOid !== scope.scope.observed.baseSha
+                || source.data.locator.headOid !== scope.scope.observed.headSha) {
+                return { v: 1, status: 'refused', reason: 'revisionMismatch' };
+            }
+            const captured = await context.services.actions.execute('scm.diffSummary.capture', {
+                sessionId: input.sessionId,
+                cwd: input.review.repositoryPath,
+                source: source.data,
+            }, context.signal === undefined ? undefined : { signal: context.signal });
+            const capture = typeof captured === 'object' && captured !== null
+                ? captured as Readonly<{ success?: unknown; comparison?: unknown }>
+                : undefined;
+            const comparison = ScmComparisonSchema.safeParse(capture?.comparison);
+            if (capture?.success !== true || !comparison.success) {
+                return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
+            }
+            if (!pluginJsonValuesEqual(comparison.data.source, source.data)
+                || !comparison.data.endpoints.before
+                || comparison.data.pullRequest?.baseOid !== scope.scope.observed.baseSha
+                || comparison.data.endpoints.after !== scope.scope.observed.headSha) {
+                return { v: 1, status: 'refused', reason: 'revisionMismatch' };
+            }
+            comparisonId = comparison.data.id;
+        }
+
         const fanout = await context.services.actions.execute('review.start', {
             sessionId: input.sessionId,
             engineIds: [...input.engineIds],
@@ -512,6 +566,12 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             changeType: 'committed',
             base: { kind: 'commit', baseCommit: input.review.observed.baseSha },
             scmPullRequestReviewScope: scope.scope,
+            ...(admission.data.outputs === undefined ? {} : { outputs: admission.data.outputs }),
+            ...(admission.data.narrator === undefined ? {} : { narrator: admission.data.narrator }),
+            ...(comparisonId === undefined ? {} : { comparisonId }),
+            ...(admission.data.secretReferenceOverlay === undefined ? {} : { secretReferenceOverlay: admission.data.secretReferenceOverlay }),
+            ...(admission.data.teamCredentialModel === undefined ? {} : { teamCredentialModel: admission.data.teamCredentialModel }),
+            ...(admission.data.teamCredentialSessionBindingConsent === undefined ? {} : { teamCredentialSessionBindingConsent: admission.data.teamCredentialSessionBindingConsent }),
         }, context.signal === undefined ? undefined : { signal: context.signal });
         const outcomes = readReviewStartOutcomes(fanout, input.engineIds);
         if (outcomes === null) {

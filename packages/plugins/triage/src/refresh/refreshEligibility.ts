@@ -151,7 +151,7 @@ export function evaluateRefreshEligibility(input: Readonly<{
         ...(input.backoff.retryNotBeforeMs === null
             ? []
             : [{ reason: 'sourceRetryDeadline' as const, deadlineMs: input.backoff.retryNotBeforeMs }]),
-        ...(input.backoff.failureBackoffUntilMs === null
+        ...(input.trigger !== 'view' || input.backoff.failureBackoffUntilMs === null
             ? []
             : [{ reason: 'failureBackoff' as const, deadlineMs: input.backoff.failureBackoffUntilMs }]),
         // Only view demand is paced. Manual Refresh is the user asking, and the

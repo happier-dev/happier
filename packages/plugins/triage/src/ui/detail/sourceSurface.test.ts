@@ -41,12 +41,14 @@ function snapshot(overrides: Readonly<{
     const contributor = {
         pluginId: SOURCE.pluginId,
         contributionId: SOURCE.localId,
-        immutableGenerationId: 'generation-1',
+        occurrenceId: 'generation-1',
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' },
     };
     return {
         target: {
             pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-            immutableGenerationId: 'target-generation-1',
+            occurrenceId: 'target-generation-1',
+            sourceCustody: { kind: 'development', registeredRootId: 'triage-root' },
         },
         points: [{
             pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,

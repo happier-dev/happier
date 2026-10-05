@@ -21,7 +21,7 @@ import {
     configuredSourceInstanceIsOwnedBy,
 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { resolveTriageCallerSource } from './callerSource.js';
+import { resolveTriageCallerSources } from './callerSource.js';
 
 /**
  * The caller-scoped configured-instance read.
@@ -33,11 +33,9 @@ import { resolveTriageCallerSource } from './callerSource.js';
  * therefore could not offer to change or remove it. This is the missing read,
  * and it is deliberately only a read — administration remains the sole writer.
  *
- * Scope is host-derived, never caller-supplied. The caller's own admitted V1
- * source contribution is resolved through the one caller owner, and a row is
- * returned only when `configured.instance.source` is exactly that contribution.
- * A source therefore cannot see another source's account binding, its
- * source-private configuration token, or even that it exists.
+ * The canonical caller owner scopes plugins to their own admitted contribution
+ * and host agent/MCP/CLI callers to their requested source or all admitted sources.
+ * A supplied source address cannot promote a plugin into host authority.
  */
 
 const INVALID_CALLER: TriageReadConfiguredSourceInstancesResultV1 = Object.freeze({
@@ -86,13 +84,14 @@ export type TriageReadConfiguredSourceInstancesDepsV1 = Readonly<{
  * gives the source its stable ids for later lifecycle operations.
  */
 export async function readTriageConfiguredSourceInstances(
-    source: PluginContributionIdentity,
+    source: PluginContributionIdentity | readonly PluginContributionIdentity[],
     deps: TriageReadConfiguredSourceInstancesDepsV1,
 ): Promise<TriageReadConfiguredSourceInstancesResultV1> {
     const options: PluginCancellationOptions | undefined = deps.signal
         ? { signal: deps.signal }
         : undefined;
     const owned: TriageConfiguredSourceInstanceRecordV1[] = [];
+    const sources = 'pluginId' in source ? [source] : source;
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
@@ -103,7 +102,7 @@ export async function readTriageConfiguredSourceInstances(
         }, options);
         for (const stored of page.rows) {
             const row = fromCorpusStoredRow<CorpusSourceInstanceRowV1>(stored).value;
-            if (!configuredSourceInstanceIsOwnedBy(row, source)) continue;
+            if (!sources.some((candidate) => configuredSourceInstanceIsOwnedBy(row, candidate))) continue;
             owned.push(recordFrom(row));
         }
         cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
@@ -116,11 +115,11 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Action
     TriageReadConfiguredSourceInstancesInputV1,
     TriageReadConfiguredSourceInstancesResultV1
 > {
-    return async (_input, context: PluginInvocationContext) => {
+    return async (input, context: PluginInvocationContext) => {
         const cancellation: PluginCancellationOptions | undefined = context.signal
             ? { signal: context.signal }
             : undefined;
-        const resolution = await resolveTriageCallerSource(context, cancellation);
+        const resolution = await resolveTriageCallerSources(context, cancellation, input.source);
         // The two refusals stay distinct: one says "you are not a configured
         // source", the other says "ask again". Collapsing them would tell a
         // Settings page whose admitted view moved mid-read that its own source
@@ -129,7 +128,7 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Action
         if (resolution.kind === 'currentnessConflict') return CURRENTNESS_CONFLICT;
 
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
-        return await readTriageConfiguredSourceInstances(resolution.caller.source, {
+        return await readTriageConfiguredSourceInstances(resolution.callers.map((caller) => caller.source), {
             sourceInstances,
             ...(context.signal ? { signal: context.signal } : {}),
         });

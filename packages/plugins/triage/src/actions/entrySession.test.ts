@@ -1,5 +1,6 @@
 import type { JsonValue, PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { SessionMessageSendResultV1 } from '@happier-dev/protocol';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/triage-protocol/v1';
@@ -41,6 +42,7 @@ import {
     TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
     TriageStartEntrySessionInputV1Schema,
     TriageStartEntrySessionResultV1Schema,
+    TriageStartEntrySessionSettledDraftV1Schema,
     TriageStartPullRequestReviewInputV1Schema,
 } from './entrySessionProtocol.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
@@ -201,6 +203,10 @@ function createFormalReviewContext(input: Readonly<{
     verifyResult: unknown;
     events: string[];
     reviewStartResult?: unknown;
+    captureResult?: unknown;
+    expectedComparisonSource?: unknown;
+    expectedReviewInputs?: Readonly<Record<string, unknown>>;
+    expectedEngineIds?: readonly string[];
 }>): PluginInvocationContext {
     const operation = { role: 'verifyReviewWorkspace' };
     const source = START_INPUT_BASE.entryRef.source;
@@ -266,10 +272,18 @@ function createFormalReviewContext(input: Readonly<{
                 },
                 execute: async (actionId: string, actionInput: unknown) => {
                     input.events.push(actionId);
+                    if (actionId === 'scm.diffSummary.capture') {
+                        expect(actionInput).toEqual({
+                            sessionId: 'session-a',
+                            cwd: formalReviewInput().review.repositoryPath,
+                            source: input.expectedComparisonSource ?? REVIEW_COMPARISON_SOURCE,
+                        });
+                        return input.captureResult;
+                    }
                     expect(actionId).toBe('review.start');
                     expect(actionInput).toEqual({
                         sessionId: 'session-a',
-                        engineIds: ['engine-a', 'engine-b'],
+                        engineIds: input.expectedEngineIds ?? ['engine-a', 'engine-b'],
                         instructions: 'Review the selected pull request.',
                         changeType: 'committed',
                         base: {
@@ -282,6 +296,7 @@ function createFormalReviewContext(input: Readonly<{
                             pullRequest: { number: 17 },
                             observed: TESTKIT_OBSERVED_REVISION,
                         },
+                        ...input.expectedReviewInputs,
                     });
                     return input.reviewStartResult ?? reviewStartFanout({
                         'engine-a': 'started',
@@ -293,23 +308,37 @@ function createFormalReviewContext(input: Readonly<{
     } as unknown as PluginInvocationContext;
 }
 
+const REVIEW_COMPARISON_SOURCE = {
+    kind: 'pullRequest' as const,
+    locator: {
+        providerId: 'example-forge', repository: 'example/repository', number: 17,
+        baseOid: TESTKIT_OBSERVED_REVISION.baseSha,
+        headOid: TESTKIT_OBSERVED_REVISION.headSha,
+    },
+};
+const REVIEW_COMPARISON = {
+    id: 'c'.repeat(64), source: REVIEW_COMPARISON_SOURCE,
+    repository: { rootPath: formalReviewInput().review.repositoryPath },
+    endpoints: { before: 'c'.repeat(40), after: TESTKIT_OBSERVED_REVISION.headSha },
+    pullRequest: { baseOid: TESTKIT_OBSERVED_REVISION.baseSha },
+    inventory: { state: 'complete', files: [], reasons: [] },
+};
+
 describe('the Session-start Action a mounted header can actually press', () => {
     /**
      * The reachability contract. The mounted header reaches the daemon through
      * the authenticated mounted-UI provenance, which the canonical dispatcher
      * admits as `ui` authority — an Action without that surface is refused
-     * outright before its handler is entered. `plugin` stays absent so direct
-     * plugin code cannot start sessions, and `agent` and `mcp` stay absent for
-     * the same reachability reason: starting a Session on a person's machine
-     * and claiming an entry for it is a decision a person makes.
+     * outright before its handler is entered. Host agent, MCP and CLI callers
+     * reach the same registered owner through the shared approval policy.
      */
-    it('is declared on the surface the mounted header dispatches from, and on no automated one', () => {
+    it('is declared for mounted and automated dispatch with host-owned confirmation', () => {
         for (const localId of [
             TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
             TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
         ]) {
             const action = declaredAction(localId);
-            expect(action.surfaces, localId).toEqual(['ui']);
+            expect(action.surfaces, localId).toEqual(['ui', 'agent', 'mcp', 'cli']);
             expect(action.execution, localId).toEqual({ target: 'daemon' });
             // It writes durable Account state and reaches the generic Session
             // creator, so it is never `safe`.
@@ -497,7 +526,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
         const spawn = invoker.callsFor('session.spawn_new')[0]?.input as Record<string, unknown>;
         // The directory is the one the caller settled on, and the creation key is
         // the caller's own — this Action mints neither.
-        expect(spawn.directory).toBe('/workspaces/example');
+        expect(spawn.directory).toEqual({ kind: 'path', path: '/workspaces/example' });
         expect(spawn.creationKey).toBe('creation-key-1');
         // Nothing was authored on the reader's behalf: this Action's wire carries
         // no title at all, and the only admitted `initialMessage` producer is a
@@ -620,9 +649,145 @@ describe('the Session-start Action a mounted header can actually press', () => {
 });
 
 describe('the registered formal Review transition', () => {
-    it('is a person-invoked daemon Action, never an automated review shortcut', () => {
+    it('relays a selected Saved Secret reference without letting host selection replace the PR review intent', async () => {
+        const events: string[] = [];
+        const secretReferenceOverlay = {
+            v: 1, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } },
+        };
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({
+            ...formalReviewInput(),
+            launchSelection: {
+                secretReferenceOverlay, sessionId: 'other-session', engineIds: ['other-engine'],
+                instructions: 'Wrong instructions', changeType: 'all', base: { kind: 'none' },
+                comparisonId: 'unselected-comparison', scmPullRequestReviewScope: { pullRequest: { number: 18 } },
+            },
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            expectedReviewInputs: { secretReferenceOverlay }, events,
+        }))).resolves.toMatchObject({ status: 'started' });
+        expect(events).not.toContain('scm.diffSummary.capture');
+    });
+
+    it('carries the canonical single-engine Team selection and matching Session-binding consent', async () => {
+        const events: string[] = [];
+        const teamCredentialModel = {
+            kind: 'team_credential_provider_model', resourceId: 'resource-1', teamId: 'team-1',
+            expectedResourceRevision: 4, agentTargetKey: 'backend:codex', modelId: 'review-model', deliveryMode: 'brokered',
+        };
+        const teamCredentialSessionBindingConsent = {
+            v: 1, sessionId: 'session-a', teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 4,
+        };
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({
+            ...formalReviewInput(), engineIds: ['codex'],
+            launchSelection: { teamCredentialModel, teamCredentialSessionBindingConsent },
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, events,
+            expectedEngineIds: ['codex'], expectedReviewInputs: { teamCredentialModel, teamCredentialSessionBindingConsent },
+            reviewStartResult: reviewStartFanout({ codex: 'started' }),
+        }))).resolves.toEqual({ v: 1, status: 'started', startedEngineIds: ['codex'], failedEngineIds: [] });
+    });
+
+    it('rejects malformed launch selection, a credential value, or invalid Team consent before capture', async () => {
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        for (const launchSelection of [
+            null, 'not-a-selection', [],
+            { secretReferenceOverlay: { v: 1, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:shared-1', revision: 7, value: 'untrusted-value' } } } },
+            { teamCredentialSessionBindingConsent: { v: 1, sessionId: 'session-a', teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 4 } },
+        ]) {
+            const events: string[] = [];
+            await expect(handler({
+                ...formalReviewInput(), outputs: ['walkthrough'], comparisonSource: REVIEW_COMPARISON_SOURCE, launchSelection,
+            }, createFormalReviewContext({
+                verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, events,
+                captureResult: { success: true, comparison: REVIEW_COMPARISON },
+                expectedReviewInputs: { outputs: ['walkthrough'], comparisonId: REVIEW_COMPARISON.id },
+            }))).resolves.toEqual({ v: 1, status: 'refused', reason: 'reviewRejected' });
+            expect(events).toEqual([]);
+        }
+    });
+
+    it('rejects unknown narrator authority through the canonical review schema before effects', async () => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({
+            ...formalReviewInput(), outputs: ['walkthrough'],
+            narrator: { engineId: 'engine-a', hiddenModel: 'unselected-model' },
+            comparisonSource: REVIEW_COMPARISON_SOURCE,
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, events,
+        }))).resolves.toEqual({ v: 1, status: 'refused', reason: 'reviewRejected' });
+        expect(events).toEqual([]);
+    });
+
+    it('refuses a different PR number before comparison capture', async () => {
+        const events: string[] = [];
+        const comparisonSource = { ...REVIEW_COMPARISON_SOURCE, locator: { ...REVIEW_COMPARISON_SOURCE.locator, number: 18 } };
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({
+            ...formalReviewInput(), outputs: ['walkthrough'],
+            comparisonSource,
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            captureResult: { success: true, comparison: { ...REVIEW_COMPARISON, source: comparisonSource } },
+            expectedComparisonSource: comparisonSource,
+            expectedReviewInputs: { outputs: ['walkthrough'], comparisonId: REVIEW_COMPARISON.id }, events,
+        }))).resolves.toEqual({ v: 1, status: 'refused', reason: 'scopeRefused' });
+        expect(events).not.toContain('scm.diffSummary.capture');
+        expect(events).not.toContain('review.start');
+    });
+
+    it('captures pinned PR evidence before requesting one named narrator through canonical review admission', async () => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        const narrator = { engineId: 'engine-a' };
+        await expect(handler({
+            ...formalReviewInput(), outputs: ['walkthrough'], narrator,
+            comparisonSource: REVIEW_COMPARISON_SOURCE,
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            captureResult: { success: true, comparison: REVIEW_COMPARISON },
+            expectedReviewInputs: { outputs: ['walkthrough'], narrator, comparisonId: REVIEW_COMPARISON.id },
+            events,
+        }))).resolves.toMatchObject({ status: 'started' });
+        expect(events).toEqual([
+            'source.readCurrent', 'source.dispose', 'source.verifyReviewWorkspace',
+            'scm.diffSummary.capture', 'review.start',
+        ]);
+    });
+
+    it('refuses narration when capture returns a different PR endpoint, without starting reviewers', async () => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({
+            ...formalReviewInput(), outputs: ['walkthrough'],
+            comparisonSource: REVIEW_COMPARISON_SOURCE,
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            captureResult: {
+                success: true,
+                comparison: { ...REVIEW_COMPARISON, endpoints: { ...REVIEW_COMPARISON.endpoints, after: 'd'.repeat(40) } },
+            }, events,
+        }))).resolves.toEqual({ v: 1, status: 'refused', reason: 'revisionMismatch' });
+        expect(events).not.toContain('review.start');
+    });
+
+    it('refuses narration when the captured base-tip witness moved even though merge base and head still match', async () => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        await expect(handler({
+            ...formalReviewInput(), outputs: ['walkthrough'], comparisonSource: REVIEW_COMPARISON_SOURCE,
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            captureResult: { success: true, comparison: { ...REVIEW_COMPARISON, pullRequest: { baseOid: 'd'.repeat(40) } } }, events,
+        }))).resolves.toEqual({ v: 1, status: 'refused', reason: 'revisionMismatch' });
+        expect(events).not.toContain('review.start');
+    });
+
+    it('shares the confirmed daemon review owner across mounted and automated callers', () => {
         const action = declaredAction(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
-        expect(action.surfaces).toEqual(['ui']);
+        expect(action.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
         expect(action.execution).toEqual({ target: 'daemon' });
         expect(action.dangerLevel).toBe('writesLocal');
     });
@@ -781,6 +946,34 @@ describe('the explicit unlink Action', () => {
 });
 
 describe('the Session-start wire', () => {
+    it('carries a full canonical profile id in both launch and settled draft inputs', () => {
+        const profileId = 'p'.repeat(256);
+        const spawn = { ...NEW_DESTINATION.spawn, profileId };
+        const parsed = TriageStartEntrySessionInputV1Schema.safeParse({
+            ...START_INPUT_BASE,
+            workspaceMode: 'reference_only',
+            destination: { ...NEW_DESTINATION, spawn },
+        });
+        expect(parsed.success).toBe(true);
+        const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse({
+            ...spawn, directory: '/workspaces/example',
+        });
+        expect(draft.success).toBe(true);
+        if (draft.success) expect(draft.data.profileId).toBe(profileId);
+        expect(TriageStartEntrySessionSettledDraftV1Schema.parse({
+            ...spawn, directory: '/workspaces/example', profileId: ' profile-id ',
+        }).profileId).toBe('profile-id');
+        expect(TriageStartEntrySessionSettledDraftV1Schema.safeParse({
+            ...spawn, directory: '/workspaces/example', profileId: `${profileId}p`,
+        }).success).toBe(false);
+        expect(TriageStartEntrySessionSettledDraftV1Schema.parse({
+            ...spawn, directory: '/workspaces/example', profileId: '🚀'.repeat(128),
+        }).profileId).toBe('🚀'.repeat(128));
+        expect(TriageStartEntrySessionSettledDraftV1Schema.safeParse({
+            ...spawn, directory: '/workspaces/example', profileId: '🚀'.repeat(129),
+        }).success).toBe(false);
+    });
+
     /**
      * Every status the canonical `session.message.send` result can answer with,
      * checked against the exported protocol result type. Keeping the vector
@@ -893,7 +1086,8 @@ describe('the Session-start wire', () => {
 
     it('admits the selected prepare-operation payload only as a transient carrier relay', () => {
         const selection = {
-            target: { pluginId: 'happier.triage', immutableGenerationId: 'triage-generation-1' },
+            target: { pluginId: 'happier.triage',
+                sourceCustody: { kind: 'development', registeredRootId: 'triage-root-1' } },
             point: {
                 pointId: 'sources',
                 protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: 1 },
@@ -901,9 +1095,9 @@ describe('the Session-start wire', () => {
             contributor: {
                 pluginId: START_INPUT_BASE.entryRef.source.pluginId,
                 contributionId: START_INPUT_BASE.entryRef.source.localId,
-                immutableGenerationId: 'source-generation-1',
+                sourceCustody: { kind: 'development', registeredRootId: 'source-root-1' },
             },
-        } as const;
+        } as const satisfies PluginTargetedContributionSelectionV1;
         const selectedInput = {
             v: 1,
             instance: {
@@ -1017,7 +1211,7 @@ describe('the Session-start wire', () => {
             workspace: TESTKIT_SELECTED_WORKSPACE,
         });
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
-            directory: '/workspaces/example-review',
+            directory: { kind: 'path', path: '/workspaces/example-review' },
         });
     });
 

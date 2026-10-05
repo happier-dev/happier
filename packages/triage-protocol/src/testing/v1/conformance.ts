@@ -67,8 +67,9 @@ function collectSurfaceErrors(declared: unknown, errors: string[]): void {
             errors.push(`Triage sources V1 does not define surface role '${role}'.`);
         }
     }
-    for (const role of Object.keys(sourceSurfaces)) {
+    for (const role of Object.keys(sourceSurfaces) as Array<keyof typeof sourceSurfaces>) {
         const binding = bindings[role];
+        if (binding === undefined && !sourceSurfaces[role].required) continue;
         if (binding === null || typeof binding !== 'object') {
             errors.push(`Triage sources V1 requires the '${role}' surface binding.`);
             continue;
@@ -149,7 +150,7 @@ export function checkTriageSourceContributionV1(
         const declaration = operation.declaration;
         const actionId = contribution.operations[role];
         if (actionId === undefined) {
-            if (role !== 'prepareReviewWorkspace' && role !== 'verifyReviewWorkspace') {
+            if (declaration.required) {
                 errors.push(`Triage sources V1 requires the '${role}' source role binding.`);
             }
             continue;
@@ -171,7 +172,8 @@ export function checkTriageSourceContributionV1(
         }
         // Every V1 role is `protocolDefined`, so the exact published input
         // JSON Schema is the only admissible declaration.
-        if (!pluginJsonValuesEqual(action.inputSchema, declaration.input.schema.jsonSchema)) {
+        if (declaration.input.kind !== 'protocolDefined'
+            || !pluginJsonValuesEqual(action.inputSchema, declaration.input.schema.jsonSchema)) {
             errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible input schema.`);
         }
     }

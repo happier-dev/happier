@@ -8,7 +8,7 @@ import type {
 import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
 import type { TriageActionV1 } from '../../settings/actions.js';
 import { projectTriageNewSessionDestinationV1 } from '../header/newSessionDestination.js';
-import { authorizeTriagePreparedReviewWorkspaceV1 } from '../header/useEntrySessionStart.js';
+import { authorizeTriagePreparedReviewWorkspaceV1 } from '../../sessions/entrySessionStartController.js';
 import {
     submitTriageEntrySessionStart,
     type TriageSessionStartHostV1,

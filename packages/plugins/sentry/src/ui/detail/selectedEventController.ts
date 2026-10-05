@@ -23,7 +23,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
-import { useExecutePluginAction } from '@happier-dev/plugin-ui';
+import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -32,6 +32,7 @@ import type {
 import { SentryReadEventResultV1Schema } from '../../detail/detailContracts.js';
 import type { SentryEventProjectionV1 } from '../../privacy/sentryEventProjection.js';
 import { SENTRY_ACTION_IDS, SENTRY_PLUGIN_ID } from '../../sentryContracts.js';
+import { useSentryDetailRequest } from './panelReaders.js';
 
 /**
  * Which occurrence the detail instance is showing.
@@ -165,15 +166,6 @@ function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
   });
 }
 
-function detailIdentity(input: TriageDetailSurfaceInputV1): string {
-  const { entryRef } = input.observation;
-  return [
-    input.instance.instance.sourceInstanceId,
-    entryRef.collisionScope,
-    entryRef.entryId,
-  ].join(' ');
-}
-
 /**
  * Drives the one selected-event read for one mounted detail instance.
  *
@@ -191,31 +183,23 @@ export function useSentrySelectedEvent(
   signal: AbortSignal,
 ): SentrySelectedEventControllerV1 {
   const [state, dispatch] = useReducer(sentrySelectedEventReducer, INITIAL);
-  const identity = detailIdentity(input);
+  const { active, activeSignal } = useTabPanelActivity();
   const action = useMemo(
     () => ({ pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.readEvent }),
     [],
   );
   const { execute } = useExecutePluginAction(action);
-  const localRef = useMemo(() => {
-    const { entryRef } = input.observation;
-    return {
-      kindId: entryRef.kindId,
-      collisionScope: entryRef.collisionScope,
-      entryId: entryRef.entryId,
-    };
-  }, [input.observation]);
-  const { instance } = input;
+  const request = useSentryDetailRequest(input);
+  const { instance, localRef } = request;
 
   // Only a real change resets. Dispatching on the first run would discard the demand a
   // consumer's own effect already made: child effects run before the parent's, so the
   // detail would mount, be asked for an occurrence, and then forget it was asked.
-  const previousIdentity = useRef(identity);
-  useEffect(() => {
-    if (previousIdentity.current === identity) return;
-    previousIdentity.current = identity;
+  const previousIdentity = useRef(request);
+  if (previousIdentity.current !== request) {
+    previousIdentity.current = request;
     dispatch({ kind: 'identityChanged' });
-  }, [identity]);
+  }
 
   const loading = state.read.kind === 'loading'
     || (state.read.kind === 'success' && state.read.refresh?.kind === 'loading');
@@ -226,13 +210,14 @@ export function useSentrySelectedEvent(
   const pending = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!loading) return undefined;
+    if (!active || activeSignal.aborted || signal.aborted || !loading) return undefined;
     const controller = new AbortController();
     pending.current = controller;
     const abort = (): void => {
       controller.abort();
     };
     signal.addEventListener('abort', abort);
+    activeSignal.addEventListener('abort', abort);
 
     void (async () => {
       const execution = await execute({
@@ -264,10 +249,11 @@ export function useSentrySelectedEvent(
 
     return () => {
       signal.removeEventListener('abort', abort);
+      activeSignal.removeEventListener('abort', abort);
       controller.abort();
       pending.current = null;
     };
-  }, [execute, instance, loading, localRef, selected, signal, token]);
+  }, [active, activeSignal, execute, instance, loading, localRef, selected, signal, token]);
 
   const demand = useCallback(() => {
     dispatch({ kind: 'demanded' });

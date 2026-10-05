@@ -1,9 +1,11 @@
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
+import { ReviewEngineCapabilitiesSchema } from '@happier-dev/plugin-sdk/reviews';
 
 /** The public review-engine choice shape presented to a reader. */
 export type TriageReviewEngineOptionV1 = Readonly<{
   value: string;
   label: string;
+  capabilities: Readonly<{ structuredNarration: boolean }>;
 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -29,7 +31,12 @@ export function readAvailableEngineOptions(
     const label = item.label.trim();
     if (optionValue.length === 0 || label.length === 0 || seen.has(optionValue)) return null;
     seen.add(optionValue);
-    if (item.enabled !== false) options.push(Object.freeze({ value: optionValue, label }));
+    const capability = ReviewEngineCapabilitiesSchema.safeParse(item.capabilities);
+    if (item.enabled !== false) options.push(Object.freeze({
+      value: optionValue,
+      label,
+      capabilities: capability.success ? capability.data : { structuredNarration: false },
+    }));
   }
   return Object.freeze(options);
 }

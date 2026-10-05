@@ -8,8 +8,9 @@ const TRIAGE_DETAIL_MOUNT_KEY_DOMAIN_V1 = 'happier:triage:detail-mount-key:v1';
  *
  * The host folds this key into the contributed surface's mount identity
  * (`protocol/src/plugins/ui/targetedContributions.ts:160`) and RESETS the mount
- * lifecycle when it changes, so it must change on entry and on connection and on
- * nothing else: a refresh that re-reads the same selection must not throw away
+ * lifecycle when it changes, so it must change on entry, connection, and the
+ * independent body/actions presentation, never on the body's selected panel:
+ * a refresh that re-reads the same selection must not throw away
  * the tab, scroll and parser state the source body is holding.
  *
  * `entryId` alone is not the entry. GitLab issue #5 and merge request !5 in one
@@ -39,6 +40,7 @@ const TRIAGE_DETAIL_MOUNT_KEY_DOMAIN_V1 = 'happier:triage:detail-mount-key:v1';
 export function deriveTriageDetailMountInstanceKey(
   entryRef: TriageEntryRefV1,
   sourceInstanceId: string,
+  presentation: 'body' | 'actions' = 'body',
 ): string {
   return computeCanonicalDomainSeparatedDigest(TRIAGE_DETAIL_MOUNT_KEY_DOMAIN_V1, [
     entryRef.source.pluginId,
@@ -47,5 +49,6 @@ export function deriveTriageDetailMountInstanceKey(
     entryRef.collisionScope,
     entryRef.entryId,
     sourceInstanceId,
+    presentation,
   ]);
 }
