@@ -158,6 +158,10 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     'settingsAgents.plugins.claude.fields.claudeRemoteDebugCategories.options.1p.title',
     // Technical field labels that are commonly shared across locales.
     'settings.relayAccess.fields.tokenLabel',
+    // "Token" is the word developers use unchanged in Polish, Spanish, French,
+    // Italian, Portuguese, Catalan and German. Translating the Saved Secret kind
+    // would name something none of those ecosystems calls it.
+    'secrets.catalog.kinds.token',
 ]);
 
 const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -227,6 +231,8 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     'commandPalette.commands.sessionsCategory': new Set(['ca']),
     'directSessions.browseAgents': new Set(['fr', 'ca']),
     'externalSessions.browseAgents': new Set(['fr', 'ca']),
+    // "Conversations" is the French noun as well as the English one.
+    'externalSessions.browseConversations': new Set(['fr']),
     'agentInput.suggestionGroups.sessions': new Set(['ca']),
     'localServices.source.recent': new Set(['ca']),
     'simulatorPreview.toolbar.recentButton': new Set(['ca']),
@@ -258,6 +264,7 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     // for command-line arguments, "No" as `common.no`, "Online/Offline", "Team" and "Account" as the
     // ratified product nouns, "Status", "Details", "Name", "Optional", "Person", "Machine".
     'settingsAgents.customAcp.agentSection': new Set(['pl', 'fr', 'ca', 'de']),
+    'settingsPlugins.surfaces.kinds.agent': new Set(['pl', 'fr', 'ca', 'de']),
     'settingsAgents.customAcp.argumentPlaceholder': new Set(['pl', 'fr', 'ca', 'de']),
     'settingsAgents.customAcp.argsTitle': new Set(['fr', 'ca']),
     'settingsAgents.customAcp.descriptionTitle': new Set(['fr']),
