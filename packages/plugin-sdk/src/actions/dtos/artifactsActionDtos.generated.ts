@@ -169,6 +169,17 @@ export type ArtifactsActionResultById = {
                 sizeBytes: number;
                 sha256: string;
             } | null;
+            provenance?: {
+                savedBy: {
+                    kind: 'person';
+                    accountId: string;
+                } | {
+                    kind: 'agent';
+                    accountId: string;
+                    sessionId?: string | undefined;
+                };
+                restoredFromBodyVersion?: number | undefined;
+            } | undefined;
         }[];
         retentionCount: number;
     };

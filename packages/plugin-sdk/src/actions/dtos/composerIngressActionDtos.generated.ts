@@ -124,6 +124,10 @@ export type ComposerIngressActionInputById = {
             blockId: string;
             instanceId: string;
         };
+        attachmentContributor?: {
+            pluginId: string;
+            localId: string;
+        } | undefined;
     };
     readonly "composer.attachments.pick": {
         scope: {

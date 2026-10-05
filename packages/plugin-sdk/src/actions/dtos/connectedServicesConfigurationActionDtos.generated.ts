@@ -26,7 +26,7 @@ export type ConnectedServicesConfigurationActionInputById = {
             displayName?: string | null | undefined;
             policy?: {
                 v?: 1 | undefined;
-                strategy?: 'priority' | 'least_limited' | 'manual' | undefined;
+                strategy?: 'expiry_first' | 'priority' | 'least_limited' | 'manual' | undefined;
                 autoSwitch?: boolean | undefined;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
@@ -67,7 +67,7 @@ export type ConnectedServicesConfigurationActionInputById = {
         displayName?: string | null | undefined;
         policy?: {
             v?: 1 | undefined;
-            strategy?: 'priority' | 'least_limited' | 'manual' | undefined;
+            strategy?: 'expiry_first' | 'priority' | 'least_limited' | 'manual' | undefined;
             autoSwitch?: boolean | undefined;
             autoUseQuotaResetsWhenExhausted?: boolean | undefined;
             autoDisablePlanInvalidAccounts?: boolean | undefined;
@@ -259,7 +259,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             displayName: string | null;
             policy: {
                 v: 1;
-                strategy: 'priority' | 'least_limited' | 'manual';
+                strategy: 'expiry_first' | 'priority' | 'least_limited' | 'manual';
                 autoSwitch: boolean;
                 switchOn: {
                     usageLimit: boolean;
@@ -346,7 +346,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             displayName: string | null;
             policy: {
                 v: 1;
-                strategy: 'priority' | 'least_limited' | 'manual';
+                strategy: 'expiry_first' | 'priority' | 'least_limited' | 'manual';
                 autoSwitch: boolean;
                 switchOn: {
                     usageLimit: boolean;
@@ -436,7 +436,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             displayName: string | null;
             policy: {
                 v: 1;
-                strategy: 'priority' | 'least_limited' | 'manual';
+                strategy: 'expiry_first' | 'priority' | 'least_limited' | 'manual';
                 autoSwitch: boolean;
                 switchOn: {
                     usageLimit: boolean;
@@ -523,7 +523,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             displayName: string | null;
             policy: {
                 v: 1;
-                strategy: 'priority' | 'least_limited' | 'manual';
+                strategy: 'expiry_first' | 'priority' | 'least_limited' | 'manual';
                 autoSwitch: boolean;
                 switchOn: {
                     usageLimit: boolean;
@@ -610,7 +610,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             displayName: string | null;
             policy: {
                 v: 1;
-                strategy: 'priority' | 'least_limited' | 'manual';
+                strategy: 'expiry_first' | 'priority' | 'least_limited' | 'manual';
                 autoSwitch: boolean;
                 switchOn: {
                     usageLimit: boolean;

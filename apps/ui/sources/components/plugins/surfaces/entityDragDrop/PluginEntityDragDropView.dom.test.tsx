@@ -31,6 +31,12 @@ it('offers a named focusable source entry without stealing RNW primary or second
     const key = async (element: HTMLElement, value: string, type = 'keydown') => { await act(async () => {
         element.dispatchEvent(new KeyboardEvent(type, { key: value, bubbles: true, cancelable: true }));
     }); };
+    const activate = async (element: HTMLElement, value: string) => {
+        await act(async () => element.focus());
+        await key(element, value); await key(element, value, 'keyup');
+        // jsdom does not synthesize the browser's native button click after keyboard activation.
+        if (element.tagName === 'BUTTON') await act(async () => element.click());
+    };
     const render = (interactive: boolean) => <>
         <PluginEntityDragSourceView binding={binding} sourceId="pr" reference={{ id: '42' }} testID="source">
             {interactive ? <Pressable accessibilityRole="button" onPress={() => { primary++; }} testID="primary"><Text>Open PR</Text></Pressable> : <Text>PR summary</Text>}
@@ -53,16 +59,16 @@ it('offers a named focusable source entry without stealing RNW primary or second
         await key(entry, 'Escape'); expect(runtime.getSnapshot().phase).toBe('idle');
         await key(entry, ' '); await key(entry, 'Enter'); expect(writes).toBe(1);
         const more = container.querySelector<HTMLElement>('[data-testid="overflow"]')!;
-        more.focus(); await key(more, ' '); await key(more, ' ', 'keyup');
+        await activate(more, ' ');
         expect(overflow).toBe(1); expect(runtime.getSnapshot().phase).not.toBe('carrying');
         const drag = new Event('dragstart', { bubbles: true, cancelable: true });
         await act(async () => more.dispatchEvent(drag));
         expect(drag.defaultPrevented).toBe(true); expect(runtime.getSnapshot().phase).not.toBe('carrying');
         await act(async () => root.render(render(true)));
         const action = container.querySelector<HTMLElement>('[data-testid="primary"]')!;
-        action.focus(); await key(action, 'Enter');
+        await activate(action, 'Enter');
         expect(primary).toBe(1); expect(runtime.getSnapshot().phase).not.toBe('carrying');
-        await key(action, ' '); await key(action, ' ', 'keyup');
+        await activate(action, ' ');
         expect(primary).toBe(2); expect(runtime.getSnapshot().phase).not.toBe('carrying');
         entry.focus(); await key(entry, ' '); await key(entry, 'Enter'); expect(writes).toBe(2);
     } finally { await act(async () => root.unmount()); binding.dispose(); container.remove(); }
