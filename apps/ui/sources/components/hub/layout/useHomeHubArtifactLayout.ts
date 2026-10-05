@@ -51,7 +51,7 @@ export function useHomeHubArtifactLayout() {
             };
             const transport: HomeHubArtifactTransportV1 = {
                 read: async (id, options) => (await getContext()).workflowArtifacts.read(id, options),
-                create: async input => (await getContext()).workflowArtifacts.create(input),
+                create: async input => (await getContext()).homeHubArtifactTransport.create(input),
                 update: async input => (await getContext()).workflowArtifacts.update(input),
             };
             const domain = createHomeHubAccountStore({ accountId: scope.accountId, transport, isCurrent, execute: async intent => {

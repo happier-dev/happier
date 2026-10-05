@@ -24,7 +24,7 @@ describe('mounted Companion widget Action dependency', () => {
         const home = { ...scope, owner: { kind: 'home' as const } };
         const workBoard = { ...scope, owner: { kind: 'workBoard' as const, boardId: 'launch' } };
         const boundary = createWorkBoardArtifactBoundary();
-        const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.transport,
+        const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.forAccount(scope.accountId),
             read: async (id, options) => { const row = await boundary.transport.read(id, options); return row ? { ...row, ownerAccountId: scope.accountId } : null; },
         }, { accountId: scope.accountId });
         const workBoardArtifacts = createWorkBoardArtifactPortV1(boundary.transport);
@@ -89,7 +89,7 @@ describe('mounted Companion widget Action dependency', () => {
         const sibling = { ...instance, id: 'copy-b', bindings: { count: { kind: 'value' as const, value: 8 } } };
         const boundary = createWorkBoardArtifactBoundary();
         let transferring = false;
-        const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.transport,
+        const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.forAccount(scope.accountId),
             read: async (id, options) => { const row = await boundary.transport.read(id, options); return row ? { ...row, ownerAccountId: scope.accountId } : null; },
             update: async request => {
                 if (transferring) expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key]?.items[0])

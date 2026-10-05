@@ -6,10 +6,7 @@ import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoard
 function fixture() {
     // The persisted Artifact transport is the system boundary; real semantic admission runs below it.
     const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
-    const transport: HomeHubArtifactTransportV1 = { ...boundary.transport, read: async (...args) => {
-        const row = await boundary.transport.read(...args);
-        return row ? { ...row, ownerAccountId: 'one' } : null;
-    } };
+    const transport: HomeHubArtifactTransportV1 = boundary.forAccount('one');
     return { boundary, transport, owner: createHomeHubArtifactPortV1(transport, { accountId: 'one' }) };
 }
 

@@ -177,12 +177,13 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         const workflowHeader = { kind: 'workflow-definition.v1', definitionId: artifactId,
             revision: { headerVersion: 1, bodyVersion: 3 }, metadata: { title: '  Shared  ' },
             savedBy: { kind: 'person', accountId: 'account-a' } };
+        const retainedProvenance = { savedBy: { kind: 'agent' as const, accountId: 'account-a', sessionId: 'historic-session' }, restoredFromBodyVersion: 1 };
         expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header: workflowHeader,
             revision: workflowHeader.revision })).toBe(true);
         const rows = [{ id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent(workflowHeader),
             body: encodePlainArtifactStoredContent({ body: 'Private content' }), headerVersion: 1, bodyVersion: 3,
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-            revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Retained private content' }) }] }];
+            revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Retained private content', provenance: retainedProvenance }) }] }];
         const inputs = { ...emptyTransitionInventories, machines: [], todos: [], sessions: [],
             sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials };
         const result = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs,
@@ -207,7 +208,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         expect(item.revisions).toHaveLength(1);
         expect(item.revisions[0]).toMatchObject({ bodyVersion: 1, expectedBody: rows[0]!.revisions[0]!.body });
         await expect(new ArtifactEncryption(ownerKey!).decryptBody(item.revisions[0]!.body))
-            .resolves.toEqual({ body: 'Retained private content' });
+            .resolves.toEqual({ body: 'Retained private content', provenance: retainedProvenance });
         expect(openEncryptedDataKeyEnvelopeV1({ envelope: new Uint8Array(Buffer.from(item.recipientKeyEnvelopes![0]!.encryptedDataKey, 'base64')),
             recipientSecretKeyOrSeed: contentSecret })).toEqual(ownerKey);
         const plain = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs, fromMode: 'e2ee', toMode: 'plain',
@@ -223,7 +224,7 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             expectedDataEncryptionKey: item.dataEncryptionKey,
             recipientKeyEnvelopes: [],
             revisions: [{ bodyVersion: 1, expectedBody: item.revisions[0]!.body,
-                body: encodePlainArtifactStoredContent({ body: 'Retained private content' }) }],
+                body: encodePlainArtifactStoredContent({ body: 'Retained private content', provenance: retainedProvenance }) }],
         });
         const plainStoredHeader = decodePlainArtifactStoredContent(plain.artifacts.items[0]!.header);
         const plainHeader = WorkflowDefinitionArtifactHeaderV1Schema.parse(plainStoredHeader);

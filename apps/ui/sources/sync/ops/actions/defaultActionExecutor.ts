@@ -720,7 +720,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         preparation,
       );
     },
-    ...(accountContext ? { homeHubArtifacts: createHomeHubArtifactPortV1(accountContext.workflowArtifacts, {
+    ...(accountContext ? { homeHubArtifacts: createHomeHubArtifactPortV1(accountContext.homeHubArtifactTransport, {
       accountId: accountContext.accountId,
       shouldContinue: accountContext.accountLifetime.isCurrent,
       readWidgets: async signal => {
@@ -2317,11 +2317,10 @@ export async function withDefaultActionExecuteContext<TResult>(
       context.signal?.throwIfAborted();
       const result = await work(buildDefaultActionExecutor(opts, { ...account, settings }), account);
       const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
-      // A returned effect result records its actual disposition, including an
-      // unknown outcome. Caller cancellation cannot rewrite that disposition;
-      // genuine Account retirement still prevents disclosure to a new scope.
-      if (effectClass === 'write' || effectClass === 'external' || effectClass === 'danger') account.assertAccountCurrent();
-      else account.assertCurrent();
+      // Return an effect's actual disposition to its captured invoker. Retirement
+      // suppresses Account projection publication, but cannot rewrite an acknowledgement.
+      // Reads still require current custody before disclosing Account content.
+      account.assertResultCurrent(effectClass);
       return result;
     } catch (error) {
       if (!context.onCurrentError) throw error;
@@ -2410,7 +2409,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
           kind: 'ready',
           invocation: {
             run: () => {
-              result ??= account.runPrepared(() => prepared.invocation.run());
+              result ??= account.runPrepared(() => prepared.invocation.run(), getActionSpec(actionId).sideEffectClass);
               return result;
             },
           },

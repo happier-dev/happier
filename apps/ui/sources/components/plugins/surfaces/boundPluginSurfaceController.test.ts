@@ -163,7 +163,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         const transport: HomeHubArtifactTransportV1 = {
             read: async () => { onRead?.(); return row; },
             create: async input => { row = { artifactId: input.artifactId, ownerAccountId: scope.accountId, header: input.header,
-                body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }; return { artifactId: input.artifactId }; },
+                body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
             update: async input => { const revision = { headerVersion: 2, bodyVersion: 2 }; row = { artifactId: input.artifactId,
                 ownerAccountId: scope.accountId, header: input.header!, body: input.body!, revision }; return { ok: true, revision }; },
         };

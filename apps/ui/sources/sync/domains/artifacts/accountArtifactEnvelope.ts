@@ -1,5 +1,5 @@
 import {
-    ArtifactBodyV1Schema,
+    ArtifactBodyEnvelopeV1Schema,
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     decodePlainArtifactStoredContent,
     encodePlainArtifactStoredContent,
@@ -41,8 +41,8 @@ function parseArtifactHeader(value: unknown): ArtifactHeader | null {
 
 function parseArtifactBody(value: unknown): ArtifactBody | null {
     if (!isRecord(value)) return null;
-    const body = ArtifactBodyV1Schema.nullable().safeParse(value.body);
-    return body.success ? { body: body.data } : null;
+    const body = ArtifactBodyEnvelopeV1Schema.safeParse(value);
+    return body.success ? body.data : null;
 }
 
 /**

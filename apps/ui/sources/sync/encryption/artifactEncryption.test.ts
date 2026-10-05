@@ -6,6 +6,13 @@ import { frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happie
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('ArtifactEncryption', () => {
+  it('preserves historical save and restore provenance inside the encrypted body custody', async () => {
+    const encryption = new ArtifactEncryption(new Uint8Array(32).fill(7));
+    const envelope = { body: 'Earlier content', provenance: {
+      savedBy: { kind: 'agent' as const, accountId: 'account', sessionId: 'session' }, restoredFromBodyVersion: 1,
+    } };
+    await expect(encryption.decryptBody(await encryption.encryptBody(envelope))).resolves.toEqual(envelope);
+  });
   it('opens arbitrary binary bytes in the canonical V0 AES frame and refuses tampering', async () => {
     const key = new Uint8Array(32).fill(7);
     const encryption = new ArtifactEncryption(key);

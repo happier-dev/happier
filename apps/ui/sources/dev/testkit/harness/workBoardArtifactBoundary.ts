@@ -1,5 +1,6 @@
 import { buildWorkBoardArtifactHeaderV1, type WorkBoardArtifactTransportV1, type WorkBoardArtifactV1,
     WorkBoardsV1Schema, type WorkBoardsV1 } from '@happier-dev/protocol';
+import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 
 /** Persistence only: the real schema, editor, queue, projection and CAS replay run above it. */
 export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
@@ -35,7 +36,12 @@ export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
             rows.delete(id); return { ok: true };
         },
     };
-    return { transport, rows, reads, offline: (value: boolean) => { offline = value; },
+    const forAccount = (accountId: string): HomeHubArtifactTransportV1 => ({
+        read: async (id, options) => { const row = await transport.read(id, options); return row ? { ...row, ownerAccountId: accountId } : null; },
+        create: async input => { await transport.create(input); return { ...rows.get(input.artifactId)!, ownerAccountId: accountId }; },
+        update: transport.update,
+    });
+    return { transport, forAccount, rows, reads, offline: (value: boolean) => { offline = value; },
         acknowledged: () => WorkBoardsV1Schema.parse({ v: 1, boards: [...rows.values()].map(row => {
             if (typeof row.body !== 'string') throw new Error('Expected Work board text');
             return JSON.parse(row.body);

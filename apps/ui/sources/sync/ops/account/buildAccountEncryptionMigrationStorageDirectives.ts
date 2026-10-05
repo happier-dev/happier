@@ -30,7 +30,7 @@ import {
     type AccountEncryptionMigrateAutomationsDirective,
     type AccountEncryptionMigrateAutomationsInventoryResponse,
     type ArtifactAccessRecipientCensusResponseV1,
-    ArtifactBodyV1Schema,
+    ArtifactBodyEnvelopeV1Schema,
     type ArtifactBlobReadResponseV1,
     type ArtifactBlobStoredContentV1,
     ArtifactBlobAccountEncryptionStageV1Schema,
@@ -139,12 +139,11 @@ function requireArtifactBody(
     value: unknown,
     artifactId: string,
 ): ArtifactBody {
-    const body = requireObject(value, `Artifact body (${artifactId})`).body;
-    const parsed = ArtifactBodyV1Schema.nullable().safeParse(body);
+    const parsed = ArtifactBodyEnvelopeV1Schema.safeParse(value);
     if (!parsed.success) {
         throw new Error(`Invalid Artifact body (${artifactId})`);
     }
-    return { body: parsed.data };
+    return parsed.data;
 }
 
 function requireMachineMetadata(

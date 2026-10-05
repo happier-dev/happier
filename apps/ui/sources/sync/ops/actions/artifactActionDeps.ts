@@ -1,4 +1,4 @@
-import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, createArtifactPublicLinkActionsV1, listArtifactHeadersV1, prepareArtifactWorkspaceFileV1, isArtifactHtmlHeaderV1, type ActionExecutorContext, type ArtifactPublicLinkIssuedV1, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, artifactSavedByFromActionContextV1, createArtifactPublicLinkActionsV1, listArtifactHeadersV1, prepareArtifactWorkspaceFileV1, isArtifactHtmlHeaderV1, type ActionExecutorContext, type ArtifactPublicLinkIssuedV1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
@@ -18,6 +18,11 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
     onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
     workspaceDownload?: typeof downloadDaemonWorkspaceFileToDestination;
 }>): NonNullable<ActionExecutorDeps['artifactAction']> {
+    // Internal consumers retain exact acknowledged content; the public Action keeps its existing receipt shape.
+    const createDocument = async (input: Parameters<LazyActionAccountContext['createArtifactDocument']>[0]) => {
+        const { artifactId, revision, previewUrl, previewError } = await account.createArtifactDocument(input);
+        return { artifactId, revision, ...(previewUrl ? { previewUrl } : {}), ...(previewError ? { previewError } : {}) };
+    };
     const readWorkspaceFile = async (context: ActionExecutorContext, path: string, signal?: AbortSignal) => {
         account.assertCurrent();
         if (context.actionCaller?.kind !== 'session' || context.runtimeAccountId !== account.accountId
@@ -77,12 +82,13 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
         try {
             account.assertCurrent();
             signal?.throwIfAborted();
+            const savedBy = artifactSavedByFromActionContextV1({ ...context, runtimeAccountId: account.accountId });
             switch (actionId) {
                 case 'artifact.create': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
-                    if ('uploadPath' in args) return await account.createArtifactDocument({ artifactId: args.artifactId, header: args.header,
-                        body: await readUpload(context, args, signal), signal });
-                    return await account.createArtifactDocument({ ...args, signal });
+                    if ('uploadPath' in args) return await createDocument({ artifactId: args.artifactId, header: args.header,
+                        body: await readUpload(context, args, signal), savedBy, signal });
+                    return await createDocument({ ...args, savedBy, signal });
                 }
                 case 'artifact.get': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
@@ -103,7 +109,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 case 'artifact.update': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     const result = await account.updateArtifactDocument({ ...args,
-                        body: 'uploadPath' in args ? await readUpload(context, args, signal) : args.body, signal });
+                        body: 'uploadPath' in args ? await readUpload(context, args, signal) : args.body, savedBy, signal });
                     return result.ok ? { artifactId: args.artifactId, revision: result.revision,
                         ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}), ...(result.previewError ? { previewError: result.previewError } : {}) } : result;
                 }
@@ -116,7 +122,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     const source = await readWorkspaceFile(context, args.path, signal);
                     const content = prepareArtifactWorkspaceFileV1({ ...source, input: args });
-                    return await account.createArtifactDocument({ header: content.header, body: content.binary ?? content.body, signal });
+                    return await createDocument({ header: content.header, body: content.binary ?? content.body, savedBy, signal });
                 }
                 case 'artifact.public_link.create':
                 case 'artifact.public_link.list':
@@ -128,7 +134,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     return await account.listArtifactRevisions(args.artifactId, signal);
                 }
                 case 'artifact.revisions.restore':
-                    return await account.restoreArtifactRevision(ArtifactActionInputSchemasV1[actionId].parse(input), signal);
+                    return await account.restoreArtifactRevision(ArtifactActionInputSchemasV1[actionId].parse(input), signal, savedBy);
                 case 'artifact.storage.usage':
                     return await account.readArtifactStorageUsage(signal);
                 default:

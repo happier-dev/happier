@@ -40,9 +40,9 @@ vi.mock('./actionAccountContext', async (importOriginal) => {
                     lifetime.disposed += 1;
                     context.dispose();
                 },
-                runPrepared: async <T>(run: () => Promise<T>): Promise<T> => {
+                runPrepared: async <T>(run: () => Promise<T>, effectClass?: Parameters<typeof context.runPrepared>[1]): Promise<T> => {
                     lifetime.runPrepared += 1;
-                    return await context.runPrepared(run);
+                    return await context.runPrepared(run, effectClass);
                 },
             };
         }) as typeof original.captureLazyActionAccountContext,
@@ -849,6 +849,21 @@ describe('withDefaultActionExecuteContext', () => {
             return { ok: true, result: { id: 'action.spec.get' } };
         }, 'action.spec.get')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
         expect(lifetime.disposed).toBe(1);
+    });
+
+    it.each(['effect', 'read'] as const)('keeps prepared %s disposition distinct from retired Account disclosure', async kind => {
+        const serverId = await addHome();
+        const { withDefaultActionExecuteContext } = await loadExecutor();
+        let account: Awaited<ReturnType<typeof import('./actionAccountContext')['captureLazyActionAccountContext']>> | undefined;
+        await withDefaultActionExecuteContext(undefined, { serverId }, async (_executor, captured) => { account = captured; });
+        if (!account) throw new Error('Expected captured Account');
+        const completed = { ok: true, result: { status: 'accepted' } };
+        const pending = account.runPrepared(async () => {
+            await harness.switchAccount(serverId, 'replacement-account');
+            return completed;
+        }, kind === 'effect' ? 'write' : 'read');
+        if (kind === 'effect') await expect(pending).resolves.toBe(completed);
+        else await expect(pending).rejects.toMatchObject({ code: 'action_account_scope_changed' });
     });
 
     it('does not return a cancelled read as a completed effect result', async () => {
