@@ -376,7 +376,9 @@ Shared credentialed widgets bind to each viewer's existing qualified Connected
 Account purpose selection for the declared Resource consumer. Missing
 selection asks that viewer to connect; it never borrows the editor's connection.
 There is no per-instance viewer override. Pinned Connected Account references
-are allowed on personal surfaces only. Changing the existing purpose selection
+are allowed on personal surfaces only and must name one of the viewer's active
+accounts permitted by the declared Resource. A personal pin does not require
+a current purpose selection. Changing the existing purpose selection
 can affect other viewer bindings using that same qualified purpose, rather than
 changing only this copy's connection. Explicit **Post a
 snapshot** instead publishes the exact approved fixed output, timestamp and

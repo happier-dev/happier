@@ -888,6 +888,9 @@ export type ActionExecutorDeps = Readonly<{
   widgetSurfaceActions?: Partial<Readonly<Record<WidgetSurfaceRefV1['owner']['kind'], WidgetActionSurfacePortV1>>>;
   widgetInputs?: WidgetActionInputResolverV1;
   widgetCatalog?: Readonly<{ list(surface: WidgetSurfaceRefV1, context: ActionExecutorContext, signal?: AbortSignal, boundSession?: Readonly<{ serverId: string; sessionId: string }>): Promise<readonly WidgetCatalogEntryV1[] | ActionExecuteFailure> }>;
+  /** Host-captured viewer Account inventory for an already-admitted widget field. */
+  widgetConnectedAccountOptions?: (args: Readonly<{ consumer: Extract<import('../../inputs/inputOptionsConsumer.js').InputOptionsConsumerV1, { kind: 'widget' }>;
+    fieldPath: string; context: ActionExecutorContext }>) => Promise<readonly import('../../inputs/inputFields.js').InputOption[] | ActionExecuteFailure>;
   widgetRefresh?: (args: Readonly<{ ref: WidgetInstanceRefV1; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<ActionExecuteResult>;
   widgetDefinitionArtifacts?: WidgetDefinitionActionDepsV1['widgetDefinitionArtifacts'];
   readSessionWidgetDefinitionSource?: WidgetDefinitionActionDepsV1['readSessionWidgetDefinitionSource'];

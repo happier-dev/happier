@@ -81,6 +81,14 @@ an existing picker in `ui.renderers`. Fields refer to the type through its
 qualified `{ pluginId, localId }` identity. The type owns its choices, so do not
 also declare field-level static options or a competing options source.
 
+`connectedAccountOptions: true` is a separate marker for a `select` field, not
+an `inputType`. Do not combine it with static options, `optionsSourceId` or
+`inputType`. Widget discovery uses `action.options.resolve` with the admitted
+widget consumer and returns the viewer's active qualified accounts for the
+declared Resource purpose's permitted services. These choices contain references,
+not credentials. Personal pins do not require a current purpose selection;
+viewer bindings use that existing selection, and shared Boards reject pins.
+
 `definePlugin` projects these descriptors. Register executable Resource and
 renderer leaves through their ordinary activation owners; `inputTypes` adds no
 new callback registration right. The host admits the consuming field, grants,

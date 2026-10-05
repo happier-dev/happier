@@ -1,6 +1,6 @@
 import { createActionExecutor, getActionSpec, sameStrictJsonValue, sameQualifiedConnectedAccountRef, isQualifiedConnectedAccountProfileActiveV4, VoiceTrackedSessionAddressV1Schema, type ActionExecutorDeps, type AccountProfile, type ConnectedAccountUiProjectionEntryV1, type PluginContributionIdentityV1, type PluginProjectedResourceV2, type QualifiedConnectedAccountPurposeBindingsV1, type JsonValue, type PublicActionResultById } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, createWidgetActionInputResolverV1, resolveConfiguredWidgetTargetInputV1, resolveWidgetViewerPurposeValuesV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetCandidateIdentityV1, type WidgetActionInputResolverV1, type WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
+import { readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, createWidgetActionInputResolverV1, resolveConfiguredWidgetTargetInputV1, resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetCandidateIdentityV1, type WidgetActionInputResolverV1, type WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { readInputPath } from '@happier-dev/protocol/inputs';
 
 type Request = Parameters<WidgetActionInputResolverV1['resolve']>[0];
@@ -18,7 +18,7 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
         resources: readonly PluginProjectedResourceV2[]; connectedAccountDescriptors: readonly ConnectedAccountUiProjectionEntryV1[] }>>;
     readViewerPurposeContext?(signal?: AbortSignal): Promise<Readonly<{ profile: AccountProfile; purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 }> | null>;
     validateSession(session: Readonly<{ serverId: string; sessionId: string }>, signal?: AbortSignal): Promise<boolean>;
-}>): Pick<ActionExecutorDeps, 'widgetInputs'> {
+}>): Pick<ActionExecutorDeps, 'widgetInputs' | 'widgetConnectedAccountOptions'> {
     const descriptors = new WeakMap<Request, Descriptor>();
     const readViewerPurpose = async (request: Request, descriptor = descriptors.get(request)) => {
         if (!descriptor || !input.accountId || request.ref.surface.serverId !== input.serverId || request.ref.surface.accountId !== input.accountId) return null;
@@ -36,7 +36,28 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
         return owner.kind === 'sessionBoard' || owner.kind === 'companion'
             ? { session: [{ serverId: request.ref.surface.serverId, sessionId: owner.sessionId }] } : {};
     };
-    return { widgetInputs: createWidgetActionInputResolverV1({
+    return { widgetConnectedAccountOptions: async ({ consumer, fieldPath, context }) => {
+        const unavailable = { ok: false as const, errorCode: 'widget_connected_account_options_unavailable', error: 'widget_connected_account_options_unavailable' };
+        if (!input.accountId || consumer.surface.serverId !== input.serverId || consumer.surface.accountId !== input.accountId) return unavailable;
+        if (consumer.surface.owner.kind === 'sessionBoard') return { ok: false, errorCode: 'widgets_viewer_selection_unavailable', error: 'widgets_viewer_selection_unavailable' };
+        const reference = consumer.definition;
+        const authored = reference.kind === 'inline' ? reference.definition
+            : reference.kind === 'artifact' ? await input.getDeps().widgetDefinitionArtifacts?.get(reference.artifactId, context.signal) : null;
+        if ((reference.kind === 'inline' || reference.kind === 'artifact') && !authored) return unavailable;
+        const definition = authored?.body.kind === 'installed' ? authored.body : reference;
+        const candidate = (await input.readCandidates(context.signal, consumer.selectedSession)).find(candidate => candidate.availability === 'available'
+            && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition));
+        const resources = authored?.body.kind === 'declarative' ? await input.readResources?.(context.signal, consumer.selectedSession) : null;
+        const descriptor: Descriptor | undefined = authored?.body.kind === 'declarative'
+            ? { ...authored, resources: readWidgetDefinitionResourcesV1(authored), resourceDeclarations: resources?.resources ?? [] }
+            : candidate && (authored ? { ...candidate, inputs: authored.inputs, inputSchema: authored.inputSchema,
+                connectedAccountPurposeBindings: authored.connectedAccountPurposeBindings } : candidate);
+        const current = await input.readViewerPurposeContext?.(context.signal);
+        context.signal?.throwIfAborted();
+        if (!descriptor || current?.profile.id !== input.accountId) return unavailable;
+        return resolveWidgetConnectedAccountOptionsV1({ descriptor, resources: descriptor.resourceDeclarations ?? [],
+            profile: current.profile, path: fieldPath, now: Date.now() }) ?? unavailable;
+    }, widgetInputs: createWidgetActionInputResolverV1({
         readDescriptor: async request => {
             if (!input.accountId || request.ref.surface.serverId !== input.serverId || request.ref.surface.accountId !== input.accountId) return null;
             if (request.instance.definition.kind === 'builtin') {
