@@ -55,6 +55,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
   sessionTag?: string;
   startupSideEffectsOrder?: InitializeBackendRunSessionOptions['startupSideEffectsOrder'];
+  retainedTerminalRecovery?: InitializeBackendRunSessionOptions['retainedTerminalRecovery'];
   missingMachineIdMessage?: string;
   onBackgroundStartFailure?: (error: unknown, context: Readonly<{ timing: StartupTiming }>) => void | Promise<void>;
   onSessionAttached?: (params: Readonly<{
@@ -102,6 +103,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
     uiLogPrefix: params.uiLogPrefix,
     startupMetadataOverrides: metadataPlan.startupMetadataOverrides,
     startupSideEffectsOrder: params.startupSideEffectsOrder,
+    retainedTerminalRecovery: params.retainedTerminalRecovery,
     onBackgroundStartFailure: async (error) => {
       await params.onBackgroundStartFailure?.(error, { timing });
     },
