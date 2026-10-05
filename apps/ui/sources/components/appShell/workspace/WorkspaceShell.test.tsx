@@ -75,6 +75,22 @@ function stateOf(screen: Awaited<ReturnType<typeof renderScreen>>): WorkspaceSta
     return screen.root.findByType('WorkspaceStateProbe').props.state;
 }
 
+async function measureContentSlots(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    await act(async () => {
+        for (const groupId of Object.keys(stateOf(screen).groups)) {
+            screen.findByTestId(`split-canvas-content-slot-${groupId}`)?.props.onLayout({
+                nativeEvent: { layout: { x: 0, y: 32, width: 760, height: 820 } },
+            });
+        }
+    });
+}
+
+async function renderWorkspace(initial: WorkspaceState) {
+    const screen = await renderScreen(<Harness initial={initial} />);
+    await measureContentSlots(screen);
+    return screen;
+}
+
 /** Opens a tab's menu (press and hold) and chooses one of its items; the menu commits once closed. */
 async function chooseFromTabMenu(screen: Awaited<ReturnType<typeof renderScreen>>, tabId: string, itemTestId: string) {
     const tab = screen.findAllByTestId(`workspace-tab-${tabId}`).find((node) => typeof node.props.onLongPress === 'function');
@@ -82,6 +98,7 @@ async function chooseFromTabMenu(screen: Awaited<ReturnType<typeof renderScreen>
     await act(async () => { tab.props.onLongPress({}); });
     await screen.pressByTestIdAsync(itemTestId);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    await measureContentSlots(screen);
 }
 
 function measureCanvas(screen: Awaited<ReturnType<typeof renderScreen>>, width: number, height: number) {
@@ -92,7 +109,7 @@ function measureCanvas(screen: Awaited<ReturnType<typeof renderScreen>>, width: 
 
 describe('WorkspaceShell', () => {
     it('provides discoverable toolbar actions through the shared button interaction owner', async () => {
-        const screen = await renderScreen(<Harness initial={initialState()} />);
+        const screen = await renderWorkspace(initialState());
         const button = screen.findByTestId('workspace-new-tab-group_1');
         expect(button?.props.accessibilityLabel).toBe('workspaceBar.newTab');
         const background = () => {
@@ -134,7 +151,7 @@ describe('WorkspaceShell', () => {
     });
 
     it('retains visited tabs without mounting unopened tabs and releases closed bodies', async () => {
-        const screen = await renderScreen(<Harness initial={initialState()} />);
+        const screen = await renderWorkspace(initialState());
         expect(screen.root.findAllByType(DestinationInstanceHost).map((node) => node.props.tabId)).toEqual(['b']);
         await act(async () => { screen.findByTestId('workspace-tab-a')?.props.onPress(); });
         expect(stateOf(screen).groups['group:1'].activeTabId).toBe('a');
@@ -156,7 +173,7 @@ describe('WorkspaceShell', () => {
     it('preserves the mounted body, draft and viewport when a tab moves across groups', async () => {
         const initial = reduceWorkspaceState(createWorkspaceState({ id: 'a', target: { kind: 'newTab', params: {} }, pinned: false, preview: false }),
             { type: 'openTab', groupId: 'group:1', tab: { id: 'b', target: { kind: 'newTab', params: {} }, pinned: false, preview: false } });
-        const screen = await renderScreen(<Harness initial={initial} />);
+        const screen = await renderWorkspace(initial);
         const body = () => screen.root.findAllByType('StatefulRouteBodyProbe').find(node => node.props.tabId === 'b')!;
         const mount = body().props.mount;
         await act(async () => {
@@ -176,7 +193,7 @@ describe('WorkspaceShell', () => {
     });
 
     it('refuses an unmeasured split, then moves the selected tab using the measured group extent', async () => {
-        const screen = await renderScreen(<Harness initial={initialState()} />);
+        const screen = await renderWorkspace(initialState());
         await chooseFromTabMenu(screen, 'b', 'workspace-tab-menu-split-right');
         expect(Object.keys(stateOf(screen).groups)).toHaveLength(1);
         await act(async () => { measureCanvas(screen, 1200, 800); });
@@ -190,7 +207,7 @@ describe('WorkspaceShell', () => {
     });
 
     it('keeps a split below the two existing minimum widths in one pane', async () => {
-        const screen = await renderScreen(<Harness initial={initialState()} />);
+        const screen = await renderWorkspace(initialState());
         await act(async () => { measureCanvas(screen, 500, 800); });
         await chooseFromTabMenu(screen, 'b', 'workspace-tab-menu-split-right');
         expect(Object.keys(stateOf(screen).groups)).toHaveLength(1);
@@ -198,7 +215,7 @@ describe('WorkspaceShell', () => {
     });
 
     it('splits down using the existing minimum height and collapses the new pane when its tab closes', async () => {
-        const screen = await renderScreen(<Harness initial={initialState()} />);
+        const screen = await renderWorkspace(initialState());
         await act(async () => { measureCanvas(screen, 800, 800); });
         await chooseFromTabMenu(screen, 'b', 'workspace-tab-menu-split-down');
         expect(stateOf(screen).root).toMatchObject({ kind: 'split', axis: 'column' });
@@ -214,7 +231,7 @@ describe('WorkspaceShell', () => {
             targetGroupId: 'group:1', newGroupId: 'group:2', axis: 'row', placement: 'after',
             availableSizePx: 2190, minimumFirstSizePx: 420, minimumSecondSizePx: 420 });
         initial = reduceWorkspaceState(initial, { type: 'toggleMaximize', groupId: 'group:1' });
-        const screen = await renderScreen(<Harness initial={initial} />);
+        const screen = await renderWorkspace(initial);
         expect(screen.root.findAllByType(DestinationInstanceHost).map((node) => node.props.tabId)).toEqual(['b']);
 
         // The maximized leaf reports the whole canvas; its normal half is too small to split.
