@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, readlink } from 'node:fs/promises';
 import { join, resolve, relative } from 'node:path';
 
 import { resolveWorkspaceBundlesFromPackageJson } from '@happier-dev/cli-common/workspaces';
@@ -117,6 +117,13 @@ export async function readHappyCliRuntimeInputFreshness(cliDir, {
     fingerprint.update('\0');
     if (fileStat.isFile()) {
       fingerprint.update(await readCachedFileDigest(path, fileStat));
+      fingerprint.update('\0');
+      return;
+    }
+    // Source transfer preserves link contents, not filesystem timestamps.
+    // Ordinary development freshness retains its existing metadata behavior.
+    if (includeShippedFiles && fileStat.isSymbolicLink()) {
+      fingerprint.update(await readlink(path));
       fingerprint.update('\0');
       return;
     }

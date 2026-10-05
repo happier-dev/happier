@@ -118,7 +118,7 @@ export function resolveRuntimeComponentSourcePaths({
 }
 
 async function readSourcePathFingerprint({ component, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs }) {
-  let signature = await readDevReloadWatchChangeSignatureAsync(paths, includeRuntimeSupportInputs ? { ignorePath: null } : undefined);
+  let signature = await readDevReloadWatchChangeSignatureAsync(paths, includeRuntimeSupportInputs ? { ignorePath: null, portableSymlinks: true } : undefined);
   if (signature && identityRepoDir) signature = signature.split(`${repoDir}/`).join(`${identityRepoDir}/`);
   if (!signature) {
     throw new Error(`[build] ${component} runtime artifact identity has no readable source inputs.`);

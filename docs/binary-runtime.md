@@ -160,7 +160,10 @@ dependencies/dist separate from the moving mirror and live outputs. Source ident
 the producer checkout origin so relocation alone does not change an input fingerprint. Component
 and workspace-package identity readers share those origin labels. The shared workspace input-path
 owner includes relative extended tsconfigs even when the referenced config is excluded as a
-test-only root, so capture and package admission consume one complete config closure. Component
+test-only root, so capture and package admission consume one complete config closure. Capture
+also includes manifest-declared shipped inputs, binary resources and empty directories; its
+symlink signatures compare link contents rather than unportable filesystem timestamps. Worker
+bootstrap uses the component owner's existing `qa-runtime` last-green policy. Component
 and support manifests carry the explicit platform/architecture target; component identities also
 separate targets (including web). The worker must match the producer target because native support
 construction remains host-native. Finished payloads return through the shared runtime artifact closure

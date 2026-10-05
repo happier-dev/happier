@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -6,6 +10,94 @@ import {
   startDevReloadCoordinator,
 } from './devReloadCoordinator.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
+import { createHappyCliReloadDescriptors } from './daemon.mjs';
+import { createRuntimeSnapshotPublicationReloadDescriptors } from './runtimeSnapshotPublisher.mjs';
+import { createDevServerReloadDescriptors } from './server.mjs';
+
+test('reload coordinator watches and samples only inputs with an active consumer', async (t) => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'dev-reload-active-inputs-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const serverSource = join(root, 'server.ts');
+  const daemonSource = join(root, 'daemon.ts');
+  await fs.writeFile(serverSource, 'export const server = 1;');
+  await fs.writeFile(daemonSource, 'export const daemon = 1;');
+  let watcherOptions;
+  const coordinator = startDevReloadCoordinator({
+    descriptors: [
+      { id: 'server:app', target: 'server', paths: [serverSource] },
+      { id: 'daemon:cli', target: 'daemon', paths: [daemonSource] },
+    ],
+    executors: [executor('server', [])],
+  }, {
+    watchDebouncedImpl(options) {
+      watcherOptions = options;
+      return { close() {} };
+    },
+  });
+  t.after(() => coordinator.close());
+  assert.deepEqual(watcherOptions.paths, [serverSource]);
+  const before = await watcherOptions.readSignature();
+  await fs.writeFile(daemonSource, 'export const daemon = 2;');
+  assert.equal(await watcherOptions.readSignature(), before);
+  await fs.writeFile(serverSource, 'export const server = 2;');
+  assert.notEqual(await watcherOptions.readSignature(), before);
+});
+
+test('overlapping reload consumers share one filesystem sweep and observe subsequent source edits', async (t) => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'dev-reload-shared-sweep-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const cliDir = join(root, 'apps/cli');
+  const serverDir = join(root, 'apps/server');
+  const packageDir = join(root, 'packages/protocol');
+  await fs.mkdir(join(cliDir, 'src'), { recursive: true });
+  await fs.mkdir(join(serverDir, 'sources'), { recursive: true });
+  await fs.mkdir(join(packageDir, 'src'), { recursive: true });
+  await fs.writeFile(join(cliDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli', bundledDependencies: ['@happier-dev/protocol'],
+    dependencies: { '@happier-dev/protocol': '0.0.0' },
+  }));
+  await fs.writeFile(join(serverDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/server', dependencies: { '@happier-dev/protocol': '0.0.0' },
+  }));
+  await fs.writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol' }));
+  const source = join(packageDir, 'src/runtime.ts');
+  await fs.writeFile(source, 'export const value = 1;');
+  const originalLstat = fs.lstat;
+  let sourceStats = 0;
+  t.mock.method(fs, 'lstat', async (...args) => {
+    if (args[0] === source) sourceStats += 1;
+    return originalLstat(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  let watcherOptions;
+  const reloads = [];
+  const coordinator = startDevReloadCoordinator({
+    descriptors: [
+      ...createHappyCliReloadDescriptors({ cliDir }),
+      ...createDevServerReloadDescriptors({ serverDir }),
+      ...createRuntimeSnapshotPublicationReloadDescriptors({ repoDir: root }),
+    ],
+    executors: [executor('server', reloads), executor('daemon', reloads)],
+    logger: { log() {}, warn() {}, error() {} },
+  }, {
+    watchDebouncedImpl(options) {
+      watcherOptions = options;
+      return { close() {} };
+    },
+  });
+  t.after(() => coordinator.close());
+  await watcherOptions.readSignature();
+  assert.equal(sourceStats, 1, 'one consumed source must require one stat per sample, regardless of consumer count');
+  sourceStats = 0;
+  const before = await watcherOptions.readSignature();
+  assert.equal(sourceStats, 1, 'coalescing is per sample rather than a stale cross-tick cache');
+  await fs.writeFile(source, 'export const value = 2;');
+  const after = await watcherOptions.readSignature();
+  assert.notEqual(after, before);
+  await watcherOptions.onChange({ eventType: 'change', filename: 'runtime.ts', watchPath: join(packageDir, 'src') });
+  assert.deepEqual(reloads, ['server:build:1', 'server:restart:1', 'daemon:build:1', 'daemon:restart:1']);
+});
 
 function descriptor({ id, target, signature = '0' }) {
   let current = signature;

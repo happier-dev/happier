@@ -59,7 +59,7 @@ export function createHappyCliReloadDescriptors({ cliDir, existsSyncImpl = exist
   const sourceDescriptors = resolveHappyCliRuntimeInputGroups({ cliDir, existsSyncImpl }).map((group) => ({
     ...group,
     readSignature: () => readHappyCliWatchChangeSignature(group.paths),
-    readSignatureAsync: () => readHappyCliWatchChangeSignatureAsync(group.paths),
+    readSignatureAsync: (_descriptor, options) => readHappyCliWatchChangeSignatureAsync(group.paths, options),
   }));
   const publicationPaths = [join(cliDir, 'dist', '.build-manifest.json')];
   return [
@@ -70,7 +70,7 @@ export function createHappyCliReloadDescriptors({ cliDir, existsSyncImpl = exist
       invalidatesGeneration: false,
       paths: publicationPaths,
       readSignature: () => readHappyCliWatchChangeSignature(publicationPaths),
-      readSignatureAsync: () => readHappyCliWatchChangeSignatureAsync(publicationPaths),
+      readSignatureAsync: (_descriptor, options) => readHappyCliWatchChangeSignatureAsync(publicationPaths, options),
     },
   ];
 }
@@ -110,8 +110,8 @@ function readHappyCliWatchChangeSignature(paths) {
   return readDevReloadWatchChangeSignature(paths);
 }
 
-function readHappyCliWatchChangeSignatureAsync(paths) {
-  return readDevReloadWatchChangeSignatureAsync(paths);
+function readHappyCliWatchChangeSignatureAsync(paths, options) {
+  return readDevReloadWatchChangeSignatureAsync(paths, options);
 }
 
 function collectRuntimeDaemonPids(runtimeState) {

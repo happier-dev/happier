@@ -322,7 +322,7 @@ export function createDevServerReloadDescriptors({ serverDir, existsSyncImpl = e
       target,
       paths: existingPaths,
       readSignature: () => readDevServerWatchChangeSignature(existingPaths),
-      readSignatureAsync: () => readDevServerWatchChangeSignatureAsync(existingPaths),
+      readSignatureAsync: (_descriptor, options) => readDevServerWatchChangeSignatureAsync(existingPaths, options),
     };
   };
 

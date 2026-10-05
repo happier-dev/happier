@@ -293,7 +293,7 @@ export function createRuntimeSnapshotPublicationReloadDescriptors({
       target: component,
       paths,
       readSignature: () => readDevReloadWatchChangeSignature(paths),
-      readSignatureAsync: () => readDevReloadWatchChangeSignatureAsync(paths),
+      readSignatureAsync: (_descriptor, options) => readDevReloadWatchChangeSignatureAsync(paths, options),
     };
   }).filter((descriptor) => descriptor.paths.length > 0);
 }

@@ -1,5 +1,5 @@
-import { lstatSync, readdirSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstatSync, readdirSync, readlinkSync } from 'node:fs';
+import { lstat, readdir, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -40,7 +40,7 @@ export function isDevRuntimeReloadIgnoredPath(path) {
   );
 }
 
-export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevRuntimeReloadIgnoredPath } = {}) {
+export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevRuntimeReloadIgnoredPath, portableSymlinks = false } = {}) {
   if (typeof ignorePath === 'function' && ignorePath(path)) return false;
   let stats;
   try {
@@ -62,7 +62,7 @@ export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevR
       return true;
     }
     for (const name of names) {
-      appendWatchSignatureEntries(join(path, name), entries, { ignorePath });
+      appendWatchSignatureEntries(join(path, name), entries, { ignorePath, portableSymlinks });
     }
     return true;
   }
@@ -73,7 +73,7 @@ export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevR
   }
 
   if (stats.isSymbolicLink()) {
-    entries.push(`${path}\0symlink\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
+    entries.push(portableSymlinks ? `${path}\0symlink\0${readlinkSync(path)}` : `${path}\0symlink\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
     return true;
   }
 
@@ -81,16 +81,16 @@ export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevR
   return true;
 }
 
-export function readDevReloadWatchChangeSignature(paths, { ignorePath = isDevRuntimeReloadIgnoredPath } = {}) {
+export function readDevReloadWatchChangeSignature(paths, { ignorePath = isDevRuntimeReloadIgnoredPath, portableSymlinks = false } = {}) {
   const entries = [];
   let observed = false;
   for (const path of paths) {
-    observed = appendWatchSignatureEntries(path, entries, { ignorePath }) || observed;
+    observed = appendWatchSignatureEntries(path, entries, { ignorePath, portableSymlinks }) || observed;
   }
   return observed ? entries.join('\n') : null;
 }
 
-export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePath = isDevRuntimeReloadIgnoredPath } = {}) {
+export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePath = isDevRuntimeReloadIgnoredPath, portableSymlinks = false } = {}) {
   if (typeof ignorePath === 'function' && ignorePath(path)) return false;
   let stats;
   try {
@@ -112,7 +112,7 @@ export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePa
       return true;
     }
     for (const name of names) {
-      await appendWatchSignatureEntriesAsync(join(path, name), entries, { ignorePath });
+      await appendWatchSignatureEntriesAsync(join(path, name), entries, { ignorePath, portableSymlinks });
     }
     return true;
   }
@@ -123,7 +123,7 @@ export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePa
   }
 
   if (stats.isSymbolicLink()) {
-    entries.push(`${path}\0symlink\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
+    entries.push(portableSymlinks ? `${path}\0symlink\0${await readlink(path)}` : `${path}\0symlink\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
     return true;
   }
 
@@ -131,11 +131,28 @@ export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePa
   return true;
 }
 
-export async function readDevReloadWatchChangeSignatureAsync(paths, { ignorePath = isDevRuntimeReloadIgnoredPath } = {}) {
+export async function readDevReloadWatchChangeSignatureAsync(paths, {
+  ignorePath = isDevRuntimeReloadIgnoredPath,
+  portableSymlinks = false,
+  pathSamples = new Map(),
+} = {}) {
   const entries = [];
   let observed = false;
   for (const path of paths) {
-    observed = (await appendWatchSignatureEntriesAsync(path, entries, { ignorePath })) || observed;
+    // Reload and runtime-publication descriptors overlap. Share the root walk
+    // within this sample only; the next poll/revalidation still reads live inputs.
+    let sample = pathSamples.get(path);
+    if (!sample) {
+      sample = (async () => {
+        const pathEntries = [];
+        const pathObserved = await appendWatchSignatureEntriesAsync(path, pathEntries, { ignorePath, portableSymlinks });
+        return { entries: pathEntries, observed: pathObserved };
+      })();
+      pathSamples.set(path, sample);
+    }
+    const result = await sample;
+    for (const entry of result.entries) entries.push(entry);
+    observed = result.observed || observed;
   }
   return observed ? entries.join('\n') : null;
 }
