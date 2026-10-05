@@ -67,7 +67,7 @@ describe('Anthropic Provider contribution', () => {
       pluginPackageId: 'claude',
       pluginId: 'happier.agent.claude',
       contributions: [ANTHROPIC_PROVIDER_CONTRIBUTION],
-      todayUtc: '2026-08-12',
+      todayUtc: new Date().toISOString().slice(0, 10),
     })).toHaveLength(1);
   });
 });

@@ -18,9 +18,13 @@ import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 
 describe('actionCatalog action-definition adapter', () => {
-  it.each(['machines.list', 'session.spawn_new'] as const)('projects a discovered %s Action definition as strict external JSON', (actionId) => {
+  it.each([
+    ['machines.list', 'api'],
+    ['session.spawn_new', 'api'],
+    ['session.spawn_new', 'cli'],
+  ] as const)('projects %s on %s as strict external JSON', (actionId, surface) => {
     const actionSpec = projectActionDefinitionForExternalDiscovery(
-      actionSpecToActionDefinitionV1(getActionSpec(actionId), { surface: 'api' }),
+      actionSpecToActionDefinitionV1(getActionSpec(actionId), { surface }),
     );
 
     const prepared = prepareExternalActionResponseEnvelopeV1({

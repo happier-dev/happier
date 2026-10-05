@@ -5,6 +5,47 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 describe('awaitSpawnedSessionId terminal observation', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('retains daemon-proven Agent identity from a terminal nonce failure', async () => {
+    // The daemon nonce transport is the genuine boundary; settlement stays real.
+    await expect(awaitSpawnedSessionId({
+      result: { type: 'success' },
+      spawnNonce: 'agent-setup-nonce',
+      resolveSpawnSessionByNonce: async () => ({
+        status: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+        errorMessage: 'Agent setup required', agentId: 'codex',
+      }),
+    })).resolves.toEqual({
+      type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+      errorMessage: 'Agent setup required', agentId: 'codex',
+    });
+
+    const immediateFailure = {
+      type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+      errorMessage: 'Agent setup required', agentId: 'codex',
+    };
+    await expect(awaitSpawnedSessionId({
+      result: immediateFailure, spawnNonce: 'agent-setup-nonce',
+      resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
+    })).resolves.toEqual(immediateFailure);
+    for (const agentId of [undefined, '']) {
+      await expect(awaitSpawnedSessionId({
+        result: { ...immediateFailure, agentId }, spawnNonce: 'agent-setup-nonce',
+        resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
+      })).resolves.toEqual({
+        type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+        errorMessage: 'Agent setup required',
+      });
+    }
+    await expect(awaitSpawnedSessionId({
+      result: { ...immediateFailure, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED },
+      spawnNonce: 'agent-setup-nonce',
+      resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
+    })).resolves.toEqual({
+      type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorMessage: 'Agent setup required',
+    });
+  });
+
   it('keeps transport loss unresolved until the containing deadline without redispatch', async () => {
     vi.useFakeTimers();
     const resolve = vi.fn(async () => { throw new Error('control transport lost'); });

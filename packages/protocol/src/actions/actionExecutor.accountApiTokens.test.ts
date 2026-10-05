@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionId } from './actionIds.js';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
+import type { AccountApiTokenSummaryV1 } from '../auth/accountApiTokens.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -59,7 +61,11 @@ const token = {
   expiresAt: '2026-11-20T12:00:00.000Z',
   hasEncryptionAccess: false,
   hasUnattendedTeamAccess: false,
-} as const;
+  grant: API_TOKEN_FULL_GRANT_V1,
+  parentTokenId: null,
+  activeChildCount: 0,
+  embedConfig: null,
+} satisfies AccountApiTokenSummaryV1;
 
 describe('createActionExecutor (account.apiTokens)', () => {
   it('dispatches API-token lifecycle work with no caller-selected Account and reveals a newly minted secret exactly in create output', async () => {

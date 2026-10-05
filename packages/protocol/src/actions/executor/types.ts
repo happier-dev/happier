@@ -46,6 +46,7 @@ import type {
   ActionSurfaces,
   PublicActionInputById,
   ExecutionRunPermissionRespondActionInput,
+  PUBLIC_ACTION_INPUT_SCHEMAS,
   SessionTranscriptGetResult,
 } from '../actionSpecs.js';
 import type { HomeDomainActionIdV1 } from '../homeDomainActionFamily.js';
@@ -819,7 +820,7 @@ type ExecutionRunActionOptions = Readonly<{
 }>;
 
 type ExecutionRunWaitActionRequest = Omit<
-  PublicActionInputById['execution.run.wait'],
+  z.output<(typeof PUBLIC_ACTION_INPUT_SCHEMAS)['execution.run.wait']>,
   'sessionId'
 >;
 

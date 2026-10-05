@@ -26,6 +26,7 @@ it('emits availability aliases more compactly than their canonical schema declar
   try {
     const result = spawnSync(process.execPath, [
       join(repositoryRoot, 'scripts/workspaces/runTypeScriptCli.mjs'),
+      join(repositoryRoot, 'packages/protocol/src/auth/tr46.d.ts'),
       join(repositoryRoot, 'packages/protocol/src/plugins/availability/actions.ts'),
       '--declaration', '--emitDeclarationOnly',
       '--declarationMap', 'false', '--sourceMap', 'false', '--incremental', 'false',

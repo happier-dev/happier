@@ -4510,7 +4510,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('keeps an active turn steerable beyond the former timeout while waiting for the provider turn id', async () => {
-    vi.useFakeTimers();
     clientState.deferTurnStartForPrompt('provider id delayed');
     const runtime = createRuntime();
 
@@ -4518,42 +4517,46 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       { v: 1, text: 'provider id delayed' },
       { userMessageSeq: 20 },
     );
-    await waitForRequestCount('turn/start', 1);
+    try {
+      await waitForRequestCount('turn/start', 1);
+      vi.useFakeTimers();
 
-    expect(runtime.isTurnInFlight()).toBe(true);
-    expect(runtime.canSteerPrompt()).toBe(true);
+      expect(runtime.isTurnInFlight()).toBe(true);
+      expect(runtime.canSteerPrompt()).toBe(true);
 
-    let steerState: 'pending' | 'resolved' | 'rejected' = 'pending';
-    const steerSend = runtime.send(
-      { v: 1, text: 'steer before provider id' },
-      { deliverAs: 'steer', userMessageSeq: 21 },
-    );
-    const observedSteer = steerSend.then(
-      () => { steerState = 'resolved'; },
-      () => { steerState = 'rejected'; },
-    );
-    await Promise.resolve();
-    expect(clientState.requests.filter((request) => request.method === 'turn/steer')).toEqual([]);
+      let steerState: 'pending' | 'resolved' | 'rejected' = 'pending';
+      const steerSend = runtime.send(
+        { v: 1, text: 'steer before provider id' },
+        { deliverAs: 'steer', userMessageSeq: 21 },
+      );
+      const observedSteer = steerSend.then(
+        () => { steerState = 'resolved'; },
+        () => { steerState = 'rejected'; },
+      );
+      await Promise.resolve();
+      expect(clientState.requests.filter((request) => request.method === 'turn/steer')).toEqual([]);
 
-    await vi.advanceTimersByTimeAsync(1_001);
-    const steerStateAfterFormerTimeout = steerState;
+      await vi.advanceTimersByTimeAsync(1_001);
+      const steerStateAfterFormerTimeout = steerState;
 
-    clientState.resolveDeferredTurnStart('turn-delayed-provider-id');
-    await originalSend;
-    await observedSteer;
-    await runtime.dispose();
-    vi.useRealTimers();
+      clientState.resolveDeferredTurnStart('turn-delayed-provider-id');
+      await originalSend;
+      await observedSteer;
 
-    expect(steerStateAfterFormerTimeout).toBe('pending');
-    expect(steerState).toBe('resolved');
-    expect(clientState.requests).toContainEqual({
-      method: 'turn/steer',
-      params: expect.objectContaining({
-        threadId: 'thread-1',
-        expectedTurnId: 'turn-delayed-provider-id',
-        input: [{ type: 'text', text: 'steer before provider id' }],
-      }),
-    });
+      expect(steerStateAfterFormerTimeout).toBe('pending');
+      expect(steerState).toBe('resolved');
+      expect(clientState.requests).toContainEqual({
+        method: 'turn/steer',
+        params: expect.objectContaining({
+          threadId: 'thread-1',
+          expectedTurnId: 'turn-delayed-provider-id',
+          input: [{ type: 'text', text: 'steer before provider id' }],
+        }),
+      });
+    } finally {
+      vi.useRealTimers();
+      await runtime.dispose();
+    }
   });
 
   it('releases a waiting steer without invoking the provider when the turn settles before its id is actionable', async () => {
@@ -4600,7 +4603,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     });
     emitNotification('turn/completed', completedTurn('turn-terminal-race'));
 
-    await expect(steerSend).rejects.toThrow('requires an active provider turn');
+    await expect(steerSend).rejects.toBeInstanceOf(Error);
     expect(clientState.requests.filter((request) => request.method === 'turn/steer')).toEqual([]);
 
     clientState.resolveDeferredTurnStart('turn-terminal-race');

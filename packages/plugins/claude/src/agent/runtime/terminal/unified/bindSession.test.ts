@@ -255,21 +255,13 @@ describe('bindClaudeUnifiedTerminalSession', () => {
 
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
-    const transcriptFollow = vi.fn(async () => Object.freeze({
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const transcriptFollow = vi.mocked(ctx.agentRuntime.transcripts.fileFollow.follow);
+    transcriptFollow.mockResolvedValue(Object.freeze({
       id: 'explicit-resume-transcript-follow',
       drainNow: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
     }));
-    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
-      transcripts: {
-        append: vi.fn(async () => undefined),
-        defineSource: vi.fn(async (definition: Readonly<{ id: string }>) => ({
-          id: definition.id,
-          dispose: vi.fn(async () => undefined),
-        })),
-        fileFollow: { follow: transcriptFollow },
-      },
-    });
     const credentials = {
       token: 'host-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },

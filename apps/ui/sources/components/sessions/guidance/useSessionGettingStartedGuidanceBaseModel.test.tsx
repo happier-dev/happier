@@ -1,196 +1,131 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import {
+    resolveServerProfileScopeId,
+    setServerProfileIdentityForUrl,
+    updateHomeViewState,
+    upsertServerProfile,
+} from '@/sync/domains/server/serverProfiles';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { storage } from '@/sync/domains/state/storageStore';
+import { useSessionGettingStartedGuidanceBaseModel } from './useSessionGettingStartedGuidanceBaseModel';
 
-type BuildSessionGettingStartedViewModel = typeof import('./gettingStartedModel').buildSessionGettingStartedViewModel;
+const accountId = 'guidance-account';
+const token = 'header.' + Buffer.from(JSON.stringify({ sub: accountId })).toString('base64') + '.signature';
+let previousState: ReturnType<typeof storage.getState>;
 
-const buildSessionGettingStartedViewModel = vi.fn<BuildSessionGettingStartedViewModel>((input) => ({
-    kind: 'create_session',
-    unavailableServerIds: [],
-    targetLabel: 'Selected servers',
-    serverId: input.activeServerProfile.id,
-    serverName: input.activeServerProfile.name,
-    serverUrl: input.activeServerProfile.serverUrl,
-    showServerSetup: false,
-}));
-
-const guidanceState = vi.hoisted(() => ({
-    summary: {
-        sessionsReady: true,
-        sessionCount: 1,
-    },
-    serverSelectionGroups: [] as Array<{ id: string; name: string }> ,
-    selection: {
-        enabled: true,
-        presentation: 'grouped',
-        activeServerId: 'srv-a',
-        allowedServerIds: ['srv-a'],
-        explicit: false,
-        activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
-    } as any,
-    machineListByServerId: {
-        'srv-a': [{ active: true }],
-    } as Record<string, Array<{ active: boolean }> | null | undefined>,
-    activeMachines: [{ active: true }] as Array<{ active: boolean }>,
-    machineListStatusByServerId: {
-        'srv-a': 'idle',
-    } as Record<string, string | undefined>,
-    serverProfilesGeneration: 1,
-    serverProfiles: [
-        { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-    ] as Array<{
-        id: string;
-        name: string;
-        serverUrl: string;
-        serverIdentityId?: string;
-        legacyServerIds?: string[];
-    }>,
-}));
-
-vi.mock('./gettingStartedModel', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./gettingStartedModel')>();
-    return {
-        ...actual,
-        buildSessionGettingStartedViewModel,
-    };
-});
-
-vi.mock('@/hooks/session/useVisibleSessionListSummaryState', () => ({
-    useVisibleSessionListSummaryState: () => ({
-        selection: guidanceState.selection,
-        summary: guidanceState.summary,
-    }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useAllMachines: () => guidanceState.activeMachines,
-        useMachineListByServerId: () => guidanceState.machineListByServerId,
-        useSetting: (key: string) => {
-            if (key === 'serverSelectionGroups') {
-                return guidanceState.serverSelectionGroups;
-            }
-            return null;
-        },
-    });
-});
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    listServerProfiles: () => guidanceState.serverProfiles,
-    loadHomeViewState: () => null,
-    subscribeHomeViewState: () => () => {},
-}));
-
-vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({
-    useServerProfilesGeneration: () => guidanceState.serverProfilesGeneration,
-}));
+async function activateHome(serverUrl: string, name: string, serverIdentityId?: string) {
+    const created = await upsertAndActivateServer({ serverUrl, name });
+    const profile = serverIdentityId
+        ? await setServerProfileIdentityForUrl(serverUrl, serverIdentityId)
+        : created;
+    if (!profile) throw new Error('The Home identity fixture was not admitted');
+    const serverId = resolveServerProfileScopeId(profile);
+    expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, { token })).toBe(true);
+    const binding = await resolveServerCredentialAccountScope(serverId);
+    if (binding.kind !== 'bound') throw new Error('The Home credential fixture was not bound');
+    expect(binding.scope.accountId).toBe(accountId);
+    await updateHomeViewState(() => ({
+        version: 1,
+        groups: [],
+        activeTargetKind: 'server',
+        activeTargetId: serverId,
+    }));
+    storage.getState().activateProfileScope(binding.scope);
+    storage.getState().applyProfileForScope(binding.scope, { ...profileDefaults, id: accountId });
+    storage.getState().activateSessionLocalStateScope(binding.scope);
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-' + serverId })], true, { sourceServerId: serverId });
+    storage.getState().applySessions([]);
+    return { profile, serverId };
+}
 
 describe('useSessionGettingStartedGuidanceBaseModel', () => {
+    beforeEach(async () => {
+        previousState = storage.getState();
+        storage.setState({
+            sessions: {},
+            sessionListRowsByServerId: {},
+            ordinarySessionListMembershipByServerId: {},
+            archivedSessionListMembershipByServerId: {},
+            sessionListIndexByServerId: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            isDataReady: true,
+        });
+        await activateHome('https://api.a.example', 'A');
+    });
+
     afterEach(() => {
         standardCleanup();
-        buildSessionGettingStartedViewModel.mockClear();
-        guidanceState.serverSelectionGroups = [];
-        guidanceState.summary = {
-            sessionsReady: true,
-            sessionCount: 1,
-        };
-        guidanceState.selection = {
-            enabled: true,
-            presentation: 'grouped',
-            activeServerId: 'srv-a',
-            allowedServerIds: ['srv-a'],
-            explicit: false,
-            activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
-        };
-        guidanceState.machineListByServerId = {
-            'srv-a': [{ active: true }],
-        };
-        guidanceState.activeMachines = [{ active: true }];
-        guidanceState.machineListStatusByServerId = {
-            'srv-a': 'idle',
-        };
-        guidanceState.serverProfilesGeneration = 1;
-        guidanceState.serverProfiles = [
-            { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
-        ];
+        storage.getState().clearSessionLocalStateScope();
+        storage.getState().clearProfileScope();
+        storage.setState(previousState);
     });
 
-    it('keeps the model stable when only machine status changes', async () => {
-        const { useSessionGettingStartedGuidanceBaseModel } = await import('./useSessionGettingStartedGuidanceBaseModel');
-        const hook = await renderHook(({ tick }: { tick: number }) => {
-            void tick;
-            return useSessionGettingStartedGuidanceBaseModel();
-        }, { initialProps: { tick: 0 } });
+    it('keeps guidance available when an unavailable Home retains known online machines', async () => {
+        const hook = await renderHook(() => useSessionGettingStartedGuidanceBaseModel());
         await flushHookEffects();
+        const initialModel = hook.getCurrent();
+        expect(initialModel).toMatchObject({
+            kind: 'create_session',
+            targetLabel: 'A',
+            serverUrl: 'https://api.a.example',
+            unavailableServerIds: [],
+        });
 
-        guidanceState.machineListStatusByServerId = {
-            'srv-a': 'loading',
-        };
+        await act(async () => {
+            storage.getState().markMachineListUnavailable(initialModel.serverId);
+        });
 
-        await hook.rerender({ tick: 1 });
-
-        expect(buildSessionGettingStartedViewModel).toHaveBeenCalledTimes(1);
-        expect(hook.getCurrent()).toBe(buildSessionGettingStartedViewModel.mock.results[0]?.value);
+        expect(hook.getCurrent()).toEqual(initialModel);
     });
 
-    it('rebuilds the model when server profiles change', async () => {
-        const { useSessionGettingStartedGuidanceBaseModel } = await import('./useSessionGettingStartedGuidanceBaseModel');
-        const hook = await renderHook(({ tick }: { tick: number }) => {
-            void tick;
-            return useSessionGettingStartedGuidanceBaseModel();
-        }, { initialProps: { tick: 0 } });
+    it('refreshes guidance when a newly saved Home becomes the selected Home', async () => {
+        const hook = await renderHook(() => useSessionGettingStartedGuidanceBaseModel());
+        await flushHookEffects();
+        expect(hook.getCurrent()).toMatchObject({ targetLabel: 'A', serverUrl: 'https://api.a.example' });
+
+        let selectedHome: Awaited<ReturnType<typeof activateHome>> | undefined;
+        await act(async () => {
+            selectedHome = await activateHome('https://api.renamed.example', 'Renamed');
+        });
         await flushHookEffects();
 
-        guidanceState.serverProfiles = [
-            { id: 'srv-a', name: 'Renamed', serverUrl: 'https://api.renamed.example' },
-        ];
-        guidanceState.serverProfilesGeneration = 2;
-
-        await hook.rerender({ tick: 1 });
-
-        expect(buildSessionGettingStartedViewModel).toHaveBeenCalledTimes(2);
-        expect(hook.getCurrent()).toEqual(expect.objectContaining({
+        expect(hook.getCurrent()).toEqual({
+            kind: 'create_session',
+            unavailableServerIds: [],
+            targetLabel: 'Renamed',
+            serverId: selectedHome?.profile.id,
             serverName: 'Renamed',
             serverUrl: 'https://api.renamed.example',
-        }));
+            showServerSetup: true,
+        });
     });
 
-    it('resolves active server profile by server identity id', async () => {
-        guidanceState.selection = {
-            enabled: false,
-            presentation: 'grouped',
-            activeServerId: 'srv_local_relay',
-            allowedServerIds: ['srv_local_relay'],
-            explicit: false,
-            activeTarget: { kind: 'server', id: 'srv_local_relay', serverId: 'srv_local_relay' },
-        };
-        guidanceState.serverProfiles = [
-            { id: 'localhost-18830', name: 'localhost:18830', serverUrl: 'http://localhost:18830' },
-            {
-                id: 'localhost-52753',
-                name: 'localhost:52753',
-                serverUrl: 'http://localhost:52753',
-                serverIdentityId: 'srv_local_relay',
-                legacyServerIds: ['old-local-relay'],
-            },
-        ];
+    it('resolves active server profile and machine inventory by server identity id', async () => {
+        await upsertServerProfile({ serverUrl: 'http://localhost:18830', name: 'localhost:18830' });
+        const selectedHome = await activateHome('http://localhost:52753', 'localhost:52753', 'srv_local_relay');
+        expect(selectedHome.serverId).toBe('srv_local_relay');
 
-        const { useSessionGettingStartedGuidanceBaseModel } = await import('./useSessionGettingStartedGuidanceBaseModel');
         const hook = await renderHook(() => useSessionGettingStartedGuidanceBaseModel());
         await flushHookEffects();
 
-        expect(hook.getCurrent()).toEqual(expect.objectContaining({
-            serverId: 'localhost-52753',
+        expect(hook.getCurrent()).toEqual({
+            kind: 'create_session',
+            unavailableServerIds: [],
+            targetLabel: 'localhost:52753',
+            serverId: selectedHome.profile.id,
             serverName: 'localhost:52753',
             serverUrl: 'http://localhost:52753',
-        }));
-        expect(buildSessionGettingStartedViewModel.mock.calls.at(-1)?.[0].activeServerProfile).toEqual({
-            id: 'localhost-52753',
-            name: 'localhost:52753',
-            serverUrl: 'http://localhost:52753',
-            serverIdentityId: 'srv_local_relay',
-            legacyServerIds: ['old-local-relay'],
+            showServerSetup: true,
         });
     });
 });

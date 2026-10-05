@@ -8,6 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 
 const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
 const serverRunner = fileURLToPath(new URL('../../apps/server/scripts/runTypeScriptCli.mjs', import.meta.url));
@@ -16,6 +17,9 @@ const buildRunner = fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', im
 const cliBuildRunner = fileURLToPath(new URL('../../apps/cli/scripts/build.mjs', import.meta.url));
 const heartbeatRunner = fileURLToPath(new URL('../runWithHeartbeat.mjs', import.meta.url));
 const procModule = new URL('../../apps/stack/scripts/utils/proc/proc.mjs', import.meta.url).href;
+const rootTypecheckModule = new URL('../testing/runTypecheck.ts', import.meta.url).href;
+const measurementLeaf = fileURLToPath(new URL('./measureTypeScriptCompiler.py', import.meta.url));
+const measuredEnv = { CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1' };
 
 async function waitUntil(predicate, message) {
   const deadline = Date.now() + 5_000;
@@ -33,7 +37,7 @@ function alive(pid) {
   }
 }
 
-async function fixture(t, { tree = false, route = false, windows = false, withoutWorkspaceDist = false, exitCode = null } = {}) {
+async function fixture(t, { tree = false, route = false, windows = false, platform = null, withoutWorkspaceDist = false, exitCode = null, compilerBody = '', spawnError = false, pauseMeasurementSetup = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-compiler-cancel-'));
   const pidFile = join(root, 'compiler.pid');
   const fakeCompiler = join(root, 'compiler.cjs');
@@ -44,6 +48,7 @@ async function fixture(t, { tree = false, route = false, windows = false, withou
   await writeFile(join(root, 'dist', 'index.js'), 'last-green');
   await writeFile(fakeCompiler, `
     require('node:fs').writeFileSync(process.env.COMPILER_PID_FILE, String(process.pid));
+    ${compilerBody}
     ${exitCode == null ? '' : `process.exit(${exitCode});`}
     ${tree ? `
       const worker = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(workerPidFile)}, String(process.pid)); setInterval(() => {}, 1000);`)}], { stdio: 'ignore' });
@@ -65,11 +70,25 @@ async function fixture(t, { tree = false, route = false, windows = false, withou
   const invocation = resolveTypeScriptCliInvocation({});
   // The compiler process is the OS boundary. Keep the runner and selection owner real.
   await writeFile(preload, `
-    ${windows ? "Object.defineProperty(process, 'platform', { value: 'win32' });" : ''}
+    ${windows || platform ? `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(windows ? 'win32' : platform)} });` : ''}
     ${withoutWorkspaceDist ? `require('node:module').registerHooks({ resolve(specifier, context, nextResolve) {
       if (specifier === '@happier-dev/cli-common/process') throw new Error('workspace dist has not been compiled yet');
       return nextResolve(specifier, context);
     }});` : ''}
+    ${pauseMeasurementSetup ? `
+      // Hold only the OS filesystem boundary; the wrapper's cancellation path stays real.
+      const fsPromises = require('node:fs/promises');
+      const mkdtemp = fsPromises.mkdtemp;
+      fsPromises.mkdtemp = async (...args) => {
+        const directory = await mkdtemp(...args);
+        await new Promise((resolve) => {
+          process.stdin.resume();
+          process.once('SIGTERM', () => { process.stdin.pause(); resolve(); });
+          require('node:fs').writeFileSync('measurement-setup-ready', 'yes');
+        });
+        return directory;
+      };
+    ` : ''}
     const cp = require('node:child_process');
     for (const name of ['spawn', 'spawnSync']) {
       const original = cp[name];
@@ -82,7 +101,14 @@ async function fixture(t, { tree = false, route = false, windows = false, withou
           args = [${JSON.stringify(fakeCompiler)}];
         }` : ''}
         if (command === process.execPath && args[0] === ${JSON.stringify(invocation.argsPrefix[0])}) {
+          ${spawnError ? `if (args.includes('missing.json')) command = ${JSON.stringify(join(root, 'missing-native'))};` : ''}
           args = [${JSON.stringify(fakeCompiler)}, ...args.slice(1)];
+        }
+        // Python is an OS adapter: substitute only its canonical compiler argv, not its wait4 logic.
+        if (command === 'python3' && args[0] === ${JSON.stringify(measurementLeaf)} && args[3] === ${JSON.stringify(invocation.argsPrefix[0])}) {
+          args = [...args];
+          ${spawnError ? `if (args.includes('missing.json')) args[2] = ${JSON.stringify(join(root, 'missing-native'))};` : ''}
+          args[3] = ${JSON.stringify(fakeCompiler)};
         }
         return original(command, args, options);
       };
@@ -109,20 +135,22 @@ async function fixture(t, { tree = false, route = false, windows = false, withou
     root,
     fakeCompiler,
     start(args, options = {}) {
-      const env = { ...process.env, NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, COMPILER_PID_FILE: pidFile };
+      const env = { ...process.env, ...options.env, NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, COMPILER_PID_FILE: pidFile };
       if (route || windows) {
         delete env.HAPPIER_HSTACK_EXECUTION;
         delete env.HAPPIER_DEV_TARGET_EXECUTION;
       }
       child = spawn(process.execPath, args, {
         ...options,
-        stdio: ['ignore', 'ignore', 'pipe'],
+        stdio: options.stdio ?? ['ignore', 'ignore', 'pipe'],
         cwd: root,
         env,
       });
       let stderr = '';
+      const stdout = [];
+      child.stdout?.on('data', (chunk) => { stdout.push(chunk); });
       child.stderr.on('data', (chunk) => { stderr += chunk; });
-      return { child, stderr: () => stderr };
+      return { child, stderr: () => stderr, stdout: () => Buffer.concat(stdout) };
     },
   };
 }
@@ -196,6 +224,276 @@ test('compiler cancellation reaches its native worker process group', { skip: pr
   await waitUntil(() => !alive(pid) && !alive(workerPid), 'compiler or native worker survived cancellation');
   assert.deepEqual(await exited, [null, 'SIGTERM']);
 });
+
+for (const target of ['compiler leaf', 'outer heartbeat']) {
+  test(`root Yarn suite distinguishes SIGTERM of ${target} from an aggregate failure`, { skip: process.platform === 'win32' }, async (t) => {
+    const setup = await fixture(t, { tree: target === 'outer heartbeat' });
+    const sentinelFile = join(setup.root, 'sentinel');
+    const suiteStartedFile = join(setup.root, 'suite-started.json');
+    const suiteScript = join(setup.root, 'suite.mjs');
+    await writeFile(suiteScript, `
+      import { writeFile } from 'node:fs/promises';
+      import { runRootTypecheck } from ${JSON.stringify(rootTypecheckModule)};
+      await writeFile(${JSON.stringify(suiteStartedFile)}, JSON.stringify({ yarn: process.env.npm_config_user_agent }));
+      try {
+        await runRootTypecheck({ commands: [
+          { id: 'compiler-leaf', args: ['-s', 'compiler'] },
+          { id: 'subsequent-sentinel', args: ['-s', 'sentinel'] },
+        ] });
+      } catch (error) {
+        process.stderr.write(error.message + '\\n');
+        process.exitCode = 1;
+      }
+    `);
+    const nodeScript = (path) => `${JSON.stringify(process.execPath)} ${JSON.stringify(path)}`;
+    const sentinelScript = `require('node:fs').writeFileSync(${JSON.stringify(sentinelFile)}, 'attempted');`;
+    await writeFile(join(setup.root, 'package.json'), JSON.stringify({
+      name: 'cancellation-fixture',
+      type: 'module',
+      packageManager: 'yarn@1.22.22',
+      scripts: {
+        'root-suite': `${JSON.stringify(process.execPath)} --experimental-strip-types ${JSON.stringify(suiteScript)}`,
+        compiler: nodeScript(runner),
+        sentinel: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(sentinelScript)}`,
+      },
+    }));
+    const yarn = resolveYarnCommandInvocation(['-s', 'root-suite']);
+    const { child, stderr } = setup.start([heartbeatRunner, '--', yarn.command, ...yarn.args]);
+    // The marker belongs only to the substituted compiler, before any signal is sent.
+    await waitUntil(() => readFile(setup.pidFile).then(() => true, () => false), () => `fake compiler did not start: ${stderr()}`);
+    assert.match(JSON.parse(await readFile(suiteStartedFile, 'utf8')).yarn, /^yarn\/1\.22\.22\b/);
+    const compilerPid = Number(await readFile(setup.pidFile, 'utf8'));
+    const exited = once(child, 'exit');
+    if (target === 'compiler leaf') {
+      process.kill(compilerPid, 'SIGTERM');
+      assert.deepEqual(await exited, [1, null], stderr());
+      await waitUntil(() => !alive(compilerPid), 'compiler leaf survived SIGTERM');
+      assert.equal(await readFile(sentinelFile, 'utf8'), 'attempted');
+      assert.match(stderr(), /^Root typecheck suite failures:\n- compiler-leaf: exited with status 143$/m);
+    } else {
+      await waitUntil(() => readFile(setup.workerPidFile).then(() => true, () => false), 'native worker did not start');
+      const workerPid = Number(await readFile(setup.workerPidFile, 'utf8'));
+      child.kill('SIGTERM');
+      await waitUntil(() => !alive(compilerPid) && !alive(workerPid), 'compiler or native worker survived outer cancellation');
+      assert.deepEqual(await exited, [1, null], stderr());
+      assert.equal(await readFile(sentinelFile, 'utf8').catch((error) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      }), null);
+      assert.doesNotMatch(stderr(), /Root typecheck suite failures:/);
+    }
+    t.diagnostic(stderr());
+  });
+}
+
+function measurements(stderr) {
+  return stderr.split('\n').filter((line) => line.startsWith('[typescript] {')).map((line) => JSON.parse(line.slice('[typescript] '.length)));
+}
+
+const recordingCompiler = `
+  const fs = require('node:fs');
+  const args = process.argv.slice(2);
+  const index = args.findIndex((arg) => arg === '-p' || arg === '--project');
+  const project = index >= 0 ? args[index + 1] : args.find((arg) => arg.startsWith('--project='))?.slice('--project='.length);
+  const config = JSON.parse(fs.readFileSync(project, 'utf8'));
+  const allocation = Buffer.alloc((config.fixtureMemoryMiB ?? 1) * 1024 * 1024, 1);
+  fs.appendFileSync('executions.jsonl', JSON.stringify({ project, args, pid: process.pid, noEmit: config.compilerOptions.noEmit, rss: process.memoryUsage().rss }) + '\\n');
+  process.exit(config.fixtureStatus ?? 0);
+`;
+
+test('compiler projects run serially with their own emission modes and retain all diagnostic failures', async (t) => {
+  const setup = await fixture(t, { compilerBody: recordingCompiler });
+  for (const [name, noEmit, fixtureStatus] of [['source', false, 7], ['test', true, 2], ['last', true, 0]]) {
+    await writeFile(join(setup.root, `${name}.json`), JSON.stringify({ compilerOptions: { noEmit }, fixtureStatus }));
+  }
+  const { child, stderr } = setup.start([runner, '-p', 'source.json', '--pretty', 'false', '--project', 'test.json', '--project=last.json']);
+  assert.deepEqual(await once(child, 'exit'), [2, null], stderr());
+  const executions = (await readFile(join(setup.root, 'executions.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(executions.map(({ project, noEmit }) => ({ project, noEmit })), [
+    { project: 'source.json', noEmit: false }, { project: 'test.json', noEmit: true }, { project: 'last.json', noEmit: true },
+  ]);
+  assert.equal(new Set(executions.map(({ pid }) => pid)).size, 3, 'each program gets a fresh compiler process');
+  for (const execution of executions) {
+    assert.deepEqual(execution.args, ['--pretty', 'false', '--project', execution.project]);
+  }
+});
+
+test('compiler single-project argv keeps original spelling and ordering', async (t) => {
+  const setup = await fixture(t, { compilerBody: recordingCompiler });
+  await writeFile(join(setup.root, 'one.json'), JSON.stringify({ compilerOptions: { noEmit: true } }));
+  const args = ['--project=one.json', '--pretty', 'false'];
+  const { child, stderr } = setup.start([runner, ...args]);
+  assert.deepEqual(await once(child, 'exit'), [0, null], stderr());
+  assert.deepEqual(JSON.parse((await readFile(join(setup.root, 'executions.jsonl'), 'utf8')).trim()).args, args);
+});
+
+for (const env of [{}, measuredEnv]) {
+  test(`compiler projects stop after graceful outer cancellation (${env.CI ? 'measured' : 'unmeasured'})`, async (t) => {
+    const setup = await fixture(t, { compilerBody: `
+      const fs = require('node:fs');
+      if (process.argv.includes('never.json')) { fs.writeFileSync('unexpected-project', 'started'); process.exit(0); }
+      process.on('SIGTERM', () => process.exit(0));
+      fs.writeFileSync('ready', 'yes');
+    ` });
+    const { child, stderr } = setup.start([runner, '-p', 'first.json', '-p', 'never.json'], { env });
+    await waitUntil(() => readFile(join(setup.root, 'ready')).then(() => true, () => false), () => `fake compiler did not start: ${stderr()}`);
+    const exited = once(child, 'exit');
+    child.kill('SIGTERM');
+    assert.deepEqual(await exited, [0, null], stderr());
+    assert.equal(await readFile(join(setup.root, 'unexpected-project'), 'utf8').catch((error) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }), null);
+  });
+}
+
+test('compiler measurement cancellation during filesystem setup never starts a compiler', { skip: process.platform !== 'linux' }, async (t) => {
+  const setup = await fixture(t, { pauseMeasurementSetup: true, exitCode: 0 });
+  const { child, stderr } = setup.start([runner, '-p', 'first.json', '-p', 'never.json'], { env: measuredEnv, stdio: ['pipe', 'ignore', 'pipe'] });
+  await waitUntil(() => readFile(join(setup.root, 'measurement-setup-ready')).then(() => true, () => false), () => `measurement setup did not start: ${stderr()}`);
+  const exited = once(child, 'exit');
+  child.kill('SIGTERM');
+  assert.deepEqual(await exited, [0, null], stderr());
+  assert.equal(await readFile(setup.pidFile, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }), null);
+  assert.deepEqual(measurements(stderr()), []);
+});
+
+test('compiler measurement reports distinct per-project peaks after a diagnostic failure', { skip: process.platform !== 'linux' }, async (t) => {
+  const setup = await fixture(t, { compilerBody: recordingCompiler });
+  await writeFile(join(setup.root, 'small.json'), JSON.stringify({ compilerOptions: { noEmit: false }, fixtureMemoryMiB: 1, fixtureStatus: 7 }));
+  await writeFile(join(setup.root, 'large.json'), JSON.stringify({ compilerOptions: { noEmit: true }, fixtureMemoryMiB: 64 }));
+  const { child, stderr } = setup.start([runner, '--project', 'small.json', '--project', 'large.json'], { env: measuredEnv });
+  assert.deepEqual(await once(child, 'exit'), [7, null], stderr());
+  const reports = measurements(stderr());
+  assert.deepEqual(reports.map(({ project, metric, status, signal }) => ({ project, metric, status, signal })), [
+    { project: 'small.json', metric: 'wait4-child-max-rss', status: 7, signal: null },
+    { project: 'large.json', metric: 'wait4-child-max-rss', status: 0, signal: null },
+  ]);
+  assert.ok(reports[0].maxRssKiB > 0);
+  assert.ok(reports[1].maxRssKiB > reports[0].maxRssKiB, 'separate child peaks must reflect materially different resident allocations');
+  t.diagnostic(JSON.stringify(reports));
+});
+
+for (const signal of ['SIGTERM', 'SIGKILL']) {
+  test(`compiler measurement preserves native ${signal} and stops subsequent projects`, { skip: process.platform !== 'linux' }, async (t) => {
+    const setup = await fixture(t, { compilerBody: `require('node:fs').appendFileSync('executions.jsonl', JSON.stringify(process.argv.slice(2)) + '\\n');` });
+    const { child, stderr } = setup.start([runner, '-p', 'first.json', '-p', 'never.json'], { env: measuredEnv });
+    await waitUntil(() => readFile(join(setup.root, 'executions.jsonl')).then(() => true, () => false), () => `fake compiler did not start: ${stderr()}`);
+    const pid = Number(await readFile(setup.pidFile, 'utf8'));
+    const exited = once(child, 'exit');
+    process.kill(pid, signal);
+    assert.deepEqual(await exited, [null, signal], stderr());
+    assert.equal((await readFile(join(setup.root, 'executions.jsonl'), 'utf8')).trim().split('\n').length, 1);
+    assert.deepEqual(measurements(stderr()).map(({ status, signal: nativeSignal }) => ({ status, signal: nativeSignal })), [{ status: null, signal }]);
+  });
+}
+
+test('compiler measurement preserves numeric 143 without turning it into SIGTERM', { skip: process.platform !== 'linux' }, async (t) => {
+  const setup = await fixture(t, { exitCode: 143 });
+  const { child, stderr } = setup.start([runner], { env: measuredEnv });
+  assert.deepEqual(await once(child, 'exit'), [143, null], stderr());
+  assert.deepEqual(measurements(stderr()).map(({ status, signal }) => ({ status, signal })), [{ status: 143, signal: null }]);
+});
+
+for (const delayed of [false, true]) {
+  test(`compiler measurement retains custody through ${delayed ? 'delayed' : 'graceful'} TERM completion`, { skip: process.platform !== 'linux' }, async (t) => {
+    const setup = await fixture(t, { compilerBody: `
+      const fs = require('node:fs');
+      process.on('SIGTERM', () => { fs.writeFileSync('term-received', 'yes'); ${delayed ? '' : "fs.writeFileSync('completed', 'yes'); process.exit(0);"} });
+      ${delayed ? "process.on('SIGUSR1', () => { fs.writeFileSync('completed', 'yes'); process.exit(0); });" : ''}
+      fs.writeFileSync('ready', 'yes');
+    ` });
+    const { child, stderr } = setup.start([runner], { env: measuredEnv });
+    await waitUntil(() => readFile(join(setup.root, 'ready')).then(() => true, () => false), () => `fake compiler did not start: ${stderr()}`);
+    const pid = Number(await readFile(setup.pidFile, 'utf8'));
+    const exited = once(child, 'exit');
+    child.kill('SIGTERM');
+    if (delayed) {
+      await waitUntil(() => readFile(join(setup.root, 'term-received')).then(() => true, () => false), 'TERM did not reach native leaf');
+      assert.ok(alive(child.pid) && alive(pid), 'custody must remain until native completion');
+      assert.equal(measurements(stderr()).length, 0, 'no premature terminal measurement');
+      process.kill(pid, 'SIGUSR1');
+    }
+    assert.deepEqual(await exited, [0, null], stderr());
+    assert.equal(await readFile(join(setup.root, 'completed'), 'utf8'), 'yes');
+    assert.deepEqual(measurements(stderr()).map(({ status, signal }) => ({ status, signal })), [{ status: 0, signal: null }]);
+  });
+}
+
+test('compiler measurement preserves inherited binary streams, cwd and environment', { skip: process.platform !== 'linux' }, async (t) => {
+  const setup = await fixture(t, { compilerBody: `
+    process.stderr.write('leaf-environment=' + process.env.FIXTURE_VALUE + ';cwd=' + process.cwd() + '\\n');
+    process.stdin.pipe(process.stdout);
+    process.stdin.on('end', () => process.exit(0));
+  ` });
+  const { child, stderr, stdout } = setup.start([runner], { env: { ...measuredEnv, FIXTURE_VALUE: 'inherited' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(child, 'exit');
+  const input = Buffer.from([0, 255, 10, 65]);
+  child.stdin.end(input);
+  assert.deepEqual(await exited, [0, null], stderr());
+  assert.deepEqual(stdout(), input);
+  assert.ok(stderr().includes(`leaf-environment=inherited;cwd=${setup.root}\n`));
+  assert.equal(measurements(stderr()).length, 1);
+});
+
+test('compiler measurement stops at native spawn error without starting another project', { skip: process.platform !== 'linux' }, async (t) => {
+  const setup = await fixture(t, { spawnError: true, exitCode: 0 });
+  const { child, stderr } = setup.start([runner, '-p', 'missing.json', '-p', 'never.json'], { env: measuredEnv });
+  assert.deepEqual(await once(child, 'exit'), [1, null], stderr());
+  assert.match(stderr(), /ENOENT/);
+  assert.equal(await readFile(setup.pidFile, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }), null);
+});
+
+test('compiler measurement parent loss reaps a TERM-ignoring native descendant tree', { skip: process.platform !== 'linux' }, async (t) => {
+  const setup = await fixture(t, { compilerBody: `
+    const fs = require('node:fs');
+    require('node:child_process').spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); require('node:fs').writeFileSync('worker.pid', String(process.pid)); setInterval(() => {}, 1000);"], { stdio: 'ignore' });
+    process.on('SIGTERM', () => fs.writeFileSync('term-received', 'yes'));
+  ` });
+  const { child, stderr } = setup.start([runner], { env: measuredEnv });
+  await waitUntil(() => readFile(setup.workerPidFile).then(() => true, () => false), () => `fake worker did not start: ${stderr()}`);
+  const pid = Number(await readFile(setup.pidFile, 'utf8'));
+  const workerPid = Number(await readFile(setup.workerPidFile, 'utf8'));
+  const nativeStatus = await readFile(`/proc/${pid}/status`, 'utf8');
+  const adapterPid = Number(nativeStatus.match(/^PPid:\s+(\d+)$/m)?.[1]);
+  const adapterStatus = await readFile(`/proc/${adapterPid}/status`, 'utf8');
+  const custodyPid = Number(adapterStatus.match(/^PPid:\s+(\d+)$/m)?.[1]);
+  const pids = [pid, workerPid, adapterPid, custodyPid];
+  const exited = once(child, 'exit');
+  child.kill('SIGTERM');
+  await waitUntil(() => readFile(join(setup.root, 'term-received')).then(() => true, () => false), 'TERM did not reach ignoring native leaf');
+  assert.ok(pids.every(alive), 'ignoring leaf must remain under live adapter and custody');
+  child.kill('SIGKILL');
+  assert.deepEqual(await exited, [null, 'SIGKILL'], stderr());
+  await waitUntil(async () => (await Promise.all(pids.map(async (ownedPid) => {
+    const status = await readFile(`/proc/${ownedPid}/status`, 'utf8').catch((error) => {
+      if (error.code === 'ENOENT' || error.code === 'ESRCH') return '';
+      throw error;
+    });
+    return !status || /^State:\s+Z\b/m.test(status);
+  }))).every(Boolean), 'native tree, adapter or custodian survived parent loss');
+});
+
+for (const { name, platform, env } of [
+  { name: 'Windows', platform: 'win32', env: measuredEnv },
+  { name: 'macOS', platform: 'darwin', env: measuredEnv },
+  { name: 'local Linux', platform: null, env: { ...measuredEnv, CI: 'false' } },
+  { name: 'unrequested CI', platform: null, env: { CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '0' } },
+]) {
+  test(`compiler measurement leaves ${name} compilation unmeasured`, async (t) => {
+    const setup = await fixture(t, { platform, exitCode: 0 });
+    const { child, stderr } = setup.start([runner], { env });
+    assert.deepEqual(await once(child, 'exit'), [0, null], stderr());
+    assert.ok(Number(await readFile(setup.pidFile, 'utf8')) > 0);
+    assert.deepEqual(measurements(stderr()), []);
+  });
+}
 
 test('supervisor group SIGKILL stops the compiler runner and its native worker', { skip: process.platform === 'win32' }, async (t) => {
   const setup = await fixture(t, { tree: true });

@@ -11,6 +11,7 @@ import {
   ConversationAuthenticatedObservationShellV1JsonSchema,
   ConversationBindingTargetV1JsonSchema,
   ConversationNormalizedIngressV1JsonSchema,
+  ConversationScopedPullRequestTriggerV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import { AutomationResultDeliverySourceV1JsonSchema } from '@happier-dev/plugin-sdk/automations';
 
@@ -577,6 +578,7 @@ describe('Channels collection declarations', () => {
           'kind',
           'automationId',
           'occurrenceKey',
+          'scopedTrigger',
           'resultDelivery',
         ],
         required: ['kind', 'automationId', 'occurrenceKey', 'resultDelivery'],
@@ -601,6 +603,8 @@ describe('Channels collection declarations', () => {
         additionalProperties: false,
       },
     ]);
+    const automationTarget = frozenTarget?.oneOf?.find((branch) => branch.properties?.kind?.const === 'automation');
+    expect(automationTarget?.properties?.scopedTrigger).toEqual(ConversationScopedPullRequestTriggerV1Schema.jsonSchema);
   });
 
   it('makes connection and binding row identity equal their persisted relation', () => {

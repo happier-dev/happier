@@ -24,7 +24,8 @@ import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions'
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveCwd } from '@/scm/runtime';
-import { SessionActionRpcOriginV1Schema, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
+import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
+import { resolveSessionRoleRpcOrigin } from './sessionRoleRpcOrigin';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows';
 
 import {
@@ -33,7 +34,6 @@ import {
   isTerminalAutomationRunStateV3,
   isExecutionRunTerminalStatus,
   AgentStartSessionCallerV1Schema,
-  parseAgentPermissionIntentV1Alias,
   createArtifactAccessActionsV1,
   createLaunchProfilePublisherV1,
   createWorkBoardArtifactPortV1,
@@ -101,6 +101,7 @@ import {
   SessionAuthoringTerminalV1Schema,
   normalizeSessionCreationOrganizationPlacementV1,
   normalizeSpawnSessionErrorDetail,
+  normalizeSpawnSessionNonceResolution,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
   isSessionCreationCorrespondenceConflictSpawnErrorDetail,
   isSessionCreationOrganizationInvalidSpawnErrorDetail,
@@ -2025,29 +2026,13 @@ export function createCliActionDeps(params: Readonly<{
     context: ActionExecutorContext,
   ): Promise<unknown> => {
     if (context.authority === 'present_user') return await callSessionRpcForTransport(transport, method, input, context.signal);
-    const source = context.sessionInputSource;
-    if (context.actionCaller?.kind !== 'session' || !source || typeof source !== 'object' || !('sourceSessionId' in source)
-      || source.sourceSessionId !== context.actionCaller.sessionId) {
-      throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
-    }
-    const permissionMode = context.callerPermissionMode ? parseAgentPermissionIntentV1Alias(context.callerPermissionMode) : null;
-    if (context.callerPermissionMode && !permissionMode) {
-      throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
-    }
-    const origin = SessionActionRpcOriginV1Schema.safeParse({
-      v: 1, caller: context.actionCaller,
-      callerPermissionMode: permissionMode,
-      causalPermissionAuthority: context.causalPermissionAuthority ?? null,
-      sourceTurnId: source && 'sourceTurnId' in source ? source.sourceTurnId : undefined,
-      requestId: context.actionRequestId,
-      ...(context.workspaceWrites ? { workspaceWrites: context.workspaceWrites } : {}),
-    });
-    if (!origin.success || !params.sessionActionRpcTransport) {
+    const origin = resolveSessionRoleRpcOrigin(context);
+    if (!params.sessionActionRpcTransport) {
       throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
     }
     context.signal?.throwIfAborted();
     return await params.sessionActionRpcTransport({ sessionId: transport.sessionId, method, input,
-      content: resolveSessionRpcContent(transport), origin: origin.data,
+      content: resolveSessionRpcContent(transport), origin,
       ...(context.signal ? { signal: context.signal } : {}),
     });
   };
@@ -4629,6 +4614,16 @@ export function createCliActionDeps(params: Readonly<{
               providerError: detail.providerError,
             };
           }
+        }
+        const normalizedFailure = normalizeSpawnSessionNonceResolution({
+          status: 'error', errorCode: code, errorMessage: readRecord(error).message,
+          agentId: details.agentId ?? readRecord(details.spawnResponse).agentId,
+        });
+        if (normalizedFailure.status === 'error' && normalizedFailure.agentId
+          && (normalizedFailure.errorCode === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
+            || normalizedFailure.errorCode === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT)) {
+          return { type: 'error', code: normalizedFailure.errorCode,
+            agentId: normalizedFailure.agentId, retryable: false };
         }
         return { type: 'error', code: 'spawn_failed', retryable: true };
       }

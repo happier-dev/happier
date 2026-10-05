@@ -96,12 +96,12 @@ describe('createCodexAppServerTurnFailure', () => {
         });
     });
 
-    it('marks context-window failures from structured Codex app-server payloads', () => {
+    it('marks context-window failures only from structured Codex app-server payloads', () => {
         const failure = createCodexAppServerTurnFailure({
             value: {
                 turn: {
                     error: {
-                        message: 'Codex ran out of room in the context window.',
+                        message: 'Input rejected.',
                         codex_error_info: 'context_window_exceeded',
                     },
                 },
@@ -109,6 +109,21 @@ describe('createCodexAppServerTurnFailure', () => {
         });
 
         expect(isCodexAppServerContextWindowExhaustedError(failure)).toBe(true);
+        const unclassifiedFailure = createCodexAppServerTurnFailure({
+            value: {
+                turn: {
+                    error: {
+                        message: 'Codex ran out of room in the context window.',
+                        codex_error_info: 'other',
+                    },
+                },
+            },
+        });
+        expect(isCodexAppServerContextWindowExhaustedError(unclassifiedFailure, { structuredOnly: true })).toBe(false);
+        expect(isCodexAppServerContextWindowExhaustedError(
+            new Error('Codex ran out of room in the context window.'),
+            { structuredOnly: true },
+        )).toBe(false);
     });
 
     it('requires native structured context evidence when requested while preserving message compatibility', () => {

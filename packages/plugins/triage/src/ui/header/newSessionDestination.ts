@@ -229,6 +229,7 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
         ...selected.data, directory: selected.data.directory.path,
     });
     if (!draft.success) return { status: 'refused', reason: 'draftUnusable' };
+    const directory = draft.data.directory.path;
 
     if (kind === 'reviewWorkspace' && input.reviewWorkspace === undefined) {
         return { status: 'refused', reason: 'preparedWorkspaceUnsupported' };
@@ -240,10 +241,13 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
             request: {
                 ...input.reviewWorkspace!,
                 workflowSubject: 'pullRequest' as const,
-                workspace: selectedWorkspaceScope(draft.data, input.placementCandidates ?? []),
+                workspace: selectedWorkspaceScope({
+                    executionTarget: draft.data.executionTarget,
+                    directory,
+                }, input.placementCandidates ?? []),
             },
         }
-        : { kind, directory: draft.data.directory };
+        : { kind, directory };
 
     const { directory: _directory, ...settledSpawn } = draft.data;
     const spawn = {

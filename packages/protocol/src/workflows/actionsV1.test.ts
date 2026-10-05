@@ -270,6 +270,10 @@ describe('workflow Action contracts', () => {
     const result = { run, callerAccess: { canEdit: true }, definition, authoredDefinition: definition, acceptedContext, checkpoint: null };
     expect(WorkflowActionOutputSchemasV1['workflow.run.get'].safeParse({ ...result, definition: createDeepWorkflowDefinition() }).success).toBe(true);
     expect(WorkflowActionOutputSchemasV1['workflow.run.get'].safeParse(result).success).toBe(true);
+    const { frozenChildren: _frozenChildren, ...incompleteContext } = acceptedContext;
+    expect(WorkflowActionOutputSchemasV1['workflow.run.get'].safeParse({
+      ...result, acceptedContext: incompleteContext,
+    }).success).toBe(false);
     expect(WorkflowActionOutputSchemasV1['workflow.run.get'].safeParse({
       ...result,
       result: 'done',

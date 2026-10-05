@@ -1,318 +1,231 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { PermissionStatus } from 'expo-modules-core';
+import { AccountEncryptionModeResponseSchema, AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import * as homes from '@/sync/domains/server/serverProfiles';
+import { storage } from '@/sync/domains/state/storageStore';
 import { clearLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 
-const mocks = vi.hoisted(() => ({
-    registerPushToken: vi.fn(),
-    deletePushToken: vi.fn(),
-    listServerProfiles: vi.fn(),
-    getActiveServerSnapshot: vi.fn(),
-    getCredentialsForServerUrl: vi.fn(),
+const deviceStorage = vi.hoisted((): {
+    values: Map<string, string>;
+    beforeRead: null | (() => Promise<void>);
+} => ({
+    values: new Map<string, string>(),
+    beforeRead: null,
 }));
-
+vi.mock('expo-secure-store', () => ({
+    getItemAsync: async (key: string) => {
+        await deviceStorage.beforeRead?.();
+        return deviceStorage.values.get(key) ?? null;
+    },
+    setItemAsync: async (key: string, value: string) => { deviceStorage.values.set(key, value); },
+    deleteItemAsync: async (key: string) => { deviceStorage.values.delete(key); },
+}));
 vi.mock('expo-notifications', () => ({
     getPermissionsAsync: vi.fn(),
     requestPermissionsAsync: vi.fn(),
     getExpoPushTokenAsync: vi.fn(),
 }));
-
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'ios',
-                                            },
-                                        }
-    );
+    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
 });
-
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { extra: { eas: { projectId: 'test-project' } } } },
 }));
-
-vi.mock('@/sync/api/session/apiPush', () => ({
-    registerPushToken: mocks.registerPushToken,
-    deletePushToken: mocks.deletePushToken,
-}));
-
-// Transport remains a genuine system boundary in this suite. Registration cases
-// provide exact-Home consent explicitly below; an unreadable live response with no
-// scoped cached projection must remain fail-closed.
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: vi.fn(async () => Response.json({ success: true })),
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    listServerProfiles: mocks.listServerProfiles,
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '') === String(right ?? ''),
-    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) =>
-        profile.serverIdentityId ?? profile.id,
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: mocks.getActiveServerSnapshot,
-}));
-
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    subscribeHomeCredentialMutations: () => () => undefined,
-    TokenStorage: {
-        getCredentialsForServerUrl: mocks.getCredentialsForServerUrl,
-    },
-    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
-}));
-
+const Notifications = await import('expo-notifications');
 const { registerPushTokenIfAvailable } = await import('./syncAccount');
 
-const secretPushToken = 'ExponentPushToken[secret-token]';
+type PushRequest = { origin: string; method: string; token: string; authorization: string | null; body?: unknown };
+const requests: PushRequest[] = [];
+const createdHomeScopes: Array<{ serverUrl: string; serverId: string }> = [];
+const registrationFailures = new Set<string>();
+const cleanupFailures = new Set<string>();
+const settingsUnavailable = new Set<string>();
+const settingsByOrigin = new Map<string, unknown>();
+const homeAUrl = 'https://home-a.example.test';
+const homeBUrl = 'https://home-b.example.test';
+const pushToken = 'ExponentPushToken[secret-token]';
+let originalSecureStoreFallback: string | undefined;
 
-function collectLogs(): { messages: string[]; log: { log: (message: string) => void } } {
+function credentialsFor(accountId: string): AuthCredentials {
+    return { token: [btoa(JSON.stringify({ alg: 'none' })), btoa(JSON.stringify({ sub: accountId })), 'signature'].join('.') };
+}
+async function addHome(serverUrl: string, accountId: string, withCredentials = true) {
+    const home = await homes.upsertServerProfile({ serverUrl, name: accountId });
+    const serverId = homes.resolveServerProfileScopeId(home);
+    createdHomeScopes.push({ serverUrl, serverId });
+    const credentials = credentialsFor(accountId);
+    if (withCredentials) {
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, credentials)).toBe(true);
+    }
+    return { home, credentials };
+}
+function collectLogs() {
     const messages: string[] = [];
-    return {
-        messages,
-        log: {
-            log: (message: string) => {
-                messages.push(message);
-            },
-        },
-    };
+    return { messages, log: { log: (message: string) => { messages.push(message); } } };
 }
-
-function profileCredentials(serverUrl: string): AuthCredentials {
-    return {
-        token: `token-${serverUrl}`,
-        secret: `secret-${serverUrl}`,
-    };
+function permission(status: PermissionStatus) {
+    return { status, expires: 'never', granted: status === PermissionStatus.GRANTED, canAskAgain: status !== PermissionStatus.DENIED } satisfies Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>;
 }
-
-async function allowExactHomePush(): Promise<Record<string, never>> {
-    return {};
-}
-
-async function arrangeNotifications(): Promise<void> {
-    const notifications = await import('expo-notifications');
-    vi.mocked(notifications.getPermissionsAsync).mockResolvedValue({ status: 'granted' } as never);
-    vi.mocked(notifications.requestPermissionsAsync).mockResolvedValue({ status: 'granted' } as never);
-    vi.mocked(notifications.getExpoPushTokenAsync).mockResolvedValue({ data: secretPushToken } as never);
-}
-
-beforeEach(() => {
-    mocks.registerPushToken.mockReset();
-    mocks.deletePushToken.mockReset();
-    mocks.listServerProfiles.mockReset();
-    mocks.getActiveServerSnapshot.mockReset();
-    mocks.getCredentialsForServerUrl.mockReset();
-    mocks.registerPushToken.mockResolvedValue({ ok: true });
-    mocks.deletePushToken.mockResolvedValue(undefined);
-    mocks.listServerProfiles.mockReturnValue([]);
-    mocks.getActiveServerSnapshot.mockReturnValue({
-        serverId: 'active',
-        serverUrl: 'https://active.example.test',
-        kind: 'custom',
-        generation: 1,
-    });
-    mocks.getCredentialsForServerUrl.mockImplementation(async (serverUrl: string) => profileCredentials(serverUrl));
-});
-
-afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.clearAllMocks();
+const network: RuntimeFetch = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+    if (url.pathname === '/v1/push-tokens' && method === 'POST') {
+        const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+        requests.push({ origin: url.origin, method, token: '', authorization: new Headers(init?.headers).get('Authorization'), body });
+        return registrationFailures.has(url.origin) ? new Response(null, { status: 503 }) : new Response(null, { status: 204 });
+    }
+    if (url.pathname.startsWith('/v1/push-tokens/') && method === 'DELETE') {
+        requests.push({ origin: url.origin, method, token: decodeURIComponent(url.pathname.slice('/v1/push-tokens/'.length)), authorization: new Headers(init?.headers).get('Authorization') });
+        return cleanupFailures.has(url.origin) ? new Response(null, { status: 503 }) : Response.json({ success: true });
+    }
+    if (url.pathname === '/v1/account/encryption') return Response.json(AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 0 }));
+    if (url.pathname === '/v2/account/settings') {
+        return settingsUnavailable.has(url.origin) ? new Response(null, { status: 503 }) : Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settingsByOrigin.get(url.origin) ?? {} }, version: 1 }));
+    }
+    if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({ success: true });
+    // Unsupported optional features stay fail-closed through the real feature owner.
+    return new Response(null, { status: 404 });
+};
+async function resetDeviceState() {
+    deviceStorage.beforeRead = null;
+    // A case may remove a profile without removing its retained device credential.
+    // Keep that exact scope until the public storage owner confirms its removal.
+    while (createdHomeScopes.length > 0) {
+        const scope = createdHomeScopes[0]!;
+        expect(await TokenStorage.removeCredentialsForServerUrl(scope.serverUrl, { serverId: scope.serverId })).toBe(true);
+        createdHomeScopes.shift();
+    }
+    await TokenStorage.removeCredentials();
+    for (const home of homes.listServerProfiles()) {
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: homes.resolveServerProfileScopeId(home) });
+        await homes.removeServerProfile(home.id);
+    }
+    homes.resetServerProfilesRuntimeForTests();
+    deviceStorage.values.clear();
+    storage.getState().clearSettingsScope();
     clearLastRegisteredExpoPushToken();
+    resetServerReachabilitySupervisors();
+    resetServerFeaturesClientForTests();
+    invalidateAccountEncryptionModeCache();
+}
+beforeEach(async () => {
+    originalSecureStoreFallback = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK;
+    process.env.EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK = '0';
+    setRuntimeFetch(network);
+    await resetDeviceState();
+    requests.length = 0;
+    registrationFailures.clear();
+    cleanupFailures.clear();
+    settingsUnavailable.clear();
+    settingsByOrigin.clear();
+    vi.mocked(Notifications.getPermissionsAsync).mockReset().mockResolvedValue(permission(PermissionStatus.GRANTED));
+    vi.mocked(Notifications.requestPermissionsAsync).mockReset().mockResolvedValue(permission(PermissionStatus.GRANTED));
+    vi.mocked(Notifications.getExpoPushTokenAsync).mockReset().mockResolvedValue({ type: 'expo', data: pushToken });
+});
+afterEach(async () => {
+    vi.useRealTimers();
+    await resetDeviceState();
+    resetRuntimeFetch();
+    if (originalSecureStoreFallback === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK;
+    else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK = originalSecureStoreFallback;
+    vi.clearAllMocks();
 });
 
 describe('registerPushTokenIfAvailable logging', () => {
     it('does not log the raw push token', async () => {
-        await arrangeNotifications();
-        mocks.listServerProfiles.mockReturnValue([{ id: 'active', serverUrl: 'https://active.example.test' }]);
+        await addHome(homeAUrl, 'account-a');
         const { messages, log } = collectLogs();
-
-        await registerPushTokenIfAvailable({
-            credentials: { token: 'active-token', secret: 'active-secret' },
-            log,
-            getHomeAccountSettings: allowExactHomePush,
-        });
-
-        expect(messages.join('\n')).not.toContain(secretPushToken);
-        expect(mocks.registerPushToken).toHaveBeenCalledTimes(1);
+        await registerPushTokenIfAvailable({ log });
+        expect(requests.filter((request) => request.method === 'POST')).toEqual([
+            expect.objectContaining({ origin: homeAUrl, body: { token: pushToken, clientServerUrl: homeAUrl } }),
+        ]);
+        expect(messages.join('\n')).not.toContain(pushToken);
     });
 
     it('continues registration for remaining profiles when the first profile fails', async () => {
-        await arrangeNotifications();
-        mocks.listServerProfiles.mockReturnValue([
-            { id: 's1', serverUrl: 'https://s1.example.test' },
-            { id: 's2', serverUrl: 'https://s2.example.test' },
-        ]);
-        mocks.getActiveServerSnapshot.mockReturnValue({
-            serverId: 's2',
-            serverUrl: 'https://s2.example.test',
-            kind: 'custom',
-            generation: 1,
-        });
-        mocks.registerPushToken
-            .mockRejectedValueOnce(new Error('first server down'))
-            .mockResolvedValueOnce({ ok: true });
+        const a = await addHome(homeAUrl, 'account-a');
+        const b = await addHome(homeBUrl, 'account-b');
+        await homes.setActiveServerId(b.home.id, { scope: 'device' });
+        registrationFailures.add(homeAUrl);
         const { messages, log } = collectLogs();
-
-        await registerPushTokenIfAvailable({
-            credentials: { token: 'fallback-token', secret: 'fallback-secret' },
-            log,
-            getHomeAccountSettings: allowExactHomePush,
-        });
-
-        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledWith(
-            'https://s1.example.test',
-            { serverId: 's1' },
-        );
-        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledWith(
-            'https://s2.example.test',
-            { serverId: 's2' },
-        );
-        expect(mocks.registerPushToken).toHaveBeenCalledTimes(2);
-        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
-            apiEndpoint: 'https://s1.example.test',
-            clientServerUrl: 'https://s1.example.test',
-        });
-        expect(mocks.registerPushToken.mock.calls[1]?.[2]).toMatchObject({
-            apiEndpoint: 'https://s2.example.test',
-            clientServerUrl: 'https://s2.example.test',
-        });
+        await registerPushTokenIfAvailable({ log });
+        expect(requests.filter((request) => request.method === 'POST')).toEqual(expect.arrayContaining([
+            expect.objectContaining({ origin: homeAUrl, authorization: `Bearer ${a.credentials.token}`, body: { token: pushToken, clientServerUrl: homeAUrl } }),
+            expect.objectContaining({ origin: homeBUrl, authorization: `Bearer ${b.credentials.token}`, body: { token: pushToken, clientServerUrl: homeBUrl } }),
+        ]));
+        expect(requests.filter((request) => request.method === 'POST')).toHaveLength(2);
         expect(messages.join('\n')).toContain('Push token registered successfully');
-        expect(messages.join('\n')).not.toContain(secretPushToken);
+        expect(messages.join('\n')).not.toContain(pushToken);
     });
 
     it('does not retry an enumerated active Home when its registration fails', async () => {
-        await arrangeNotifications();
-        mocks.listServerProfiles.mockReturnValue([
-            { id: 's1', serverUrl: 'https://s1.example.test' },
-            { id: 's2', serverUrl: 'https://s2.example.test' },
-        ]);
-        mocks.getActiveServerSnapshot.mockReturnValue({
-            serverId: 's2',
-            serverUrl: 'https://s2.example.test',
-            kind: 'custom',
-            generation: 1,
-        });
-        mocks.registerPushToken
-            .mockResolvedValueOnce({ ok: true })
-            .mockRejectedValueOnce(new Error('active profile failed'));
+        await addHome(homeAUrl, 'account-a');
+        const b = await addHome(homeBUrl, 'account-b');
+        await homes.setActiveServerId(b.home.id, { scope: 'device' });
+        registrationFailures.add(homeBUrl);
         const { messages, log } = collectLogs();
-
-        await registerPushTokenIfAvailable({
-            credentials: { token: 'active-server-token', secret: 'active-server-secret' },
-            log,
-            getHomeAccountSettings: allowExactHomePush,
-        });
-
-        expect(mocks.registerPushToken).toHaveBeenCalledTimes(2);
-        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
-            apiEndpoint: 'https://s1.example.test',
-            clientServerUrl: 'https://s1.example.test',
-        });
-        expect(mocks.registerPushToken.mock.calls[1]?.[2]).toMatchObject({
-            apiEndpoint: 'https://s2.example.test',
-            clientServerUrl: 'https://s2.example.test',
-        });
+        await registerPushTokenIfAvailable({ log });
+        expect(requests.filter((request) => request.method === 'POST').map((request) => request.origin).sort()).toEqual([homeAUrl, homeBUrl]);
         expect(messages.join('\n')).toContain('Push token registered successfully');
-        expect(messages.join('\n')).not.toContain(secretPushToken);
+        expect(messages.join('\n')).not.toContain(pushToken);
     });
 
     it('does not act on an active server missing from the canonical profile snapshot', async () => {
-        await arrangeNotifications();
-        mocks.listServerProfiles.mockReturnValue([{ id: 'profile', serverUrl: 'https://profile.example.test' }]);
-        mocks.getActiveServerSnapshot.mockReturnValue({
-            serverId: 'active',
-            serverUrl: 'https://active.example.test',
-            kind: 'custom',
-            generation: 1,
-        });
-        mocks.registerPushToken
-            .mockResolvedValueOnce({ ok: true })
-            .mockResolvedValueOnce({ ok: true });
-        mocks.deletePushToken.mockResolvedValue(undefined);
+        const removed = await addHome(homeAUrl, 'removed-account');
+        await homes.setActiveServerId(removed.home.id, { scope: 'device' });
+        const retained = await addHome(homeBUrl, 'retained-account');
+        await homes.removeServerProfile(removed.home.id);
         saveLastRegisteredExpoPushToken('ExponentPushToken[old-token]');
         const { messages, log } = collectLogs();
-
-        await registerPushTokenIfAvailable({
-            credentials: { token: 'active-server-token', secret: 'active-server-secret' },
-            log,
-            getHomeAccountSettings: allowExactHomePush,
-        });
-
-        // Freshness checks may reread this exact Home credential around awaits;
-        // no read may drift to the absent focused Home's credential namespace.
-        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalled();
-        expect(mocks.getCredentialsForServerUrl.mock.calls.every(([serverUrl, options]) => (
-            serverUrl === 'https://profile.example.test'
-            && (options as { serverId?: string } | undefined)?.serverId === 'profile'
-        ))).toBe(true);
-        expect(mocks.registerPushToken).toHaveBeenCalledTimes(1);
-        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
-            apiEndpoint: 'https://profile.example.test',
-            clientServerUrl: 'https://profile.example.test',
-        });
-        expect(mocks.deletePushToken.mock.calls.some(([credential]) => (
-            (credential as AuthCredentials).token === 'active-server-token'
-        ))).toBe(false);
+        await registerPushTokenIfAvailable({ credentials: removed.credentials, log });
+        expect(requests).toHaveLength(2);
+        expect(requests.every((request) => request.origin === homeBUrl && request.authorization === `Bearer ${retained.credentials.token}`)).toBe(true);
+        expect(requests.find((request) => request.method === 'DELETE')?.token).toBe('ExponentPushToken[old-token]');
         expect(messages.join('\n')).toContain('Push token registered successfully');
-        expect(messages.join('\n')).not.toContain(secretPushToken);
+        expect(messages.join('\n')).not.toContain(pushToken);
     });
 
     it('does not substitute captured caller credentials after focus changes during credential lookup', async () => {
-        await arrangeNotifications();
-        mocks.listServerProfiles.mockReturnValue([{ id: 'home-a', serverUrl: 'https://home-a.example.test' }]);
-        let activeServerId = 'home-a';
-        mocks.getActiveServerSnapshot.mockImplementation(() => ({
-            serverId: activeServerId,
-            serverUrl: `https://${activeServerId}.example.test`,
-            kind: 'custom',
-            generation: 1,
-        }));
+        const a = await addHome(homeAUrl, 'account-a', false);
+        const b = await addHome(homeBUrl, 'account-b', false);
+        await homes.setActiveServerId(a.home.id, { scope: 'device' });
         let finishCredentialRead!: () => void;
-        mocks.getCredentialsForServerUrl.mockImplementation(async () => {
-            await new Promise<void>((resolve) => { finishCredentialRead = resolve; });
-            return null;
-        });
-
-        const run = registerPushTokenIfAvailable({
-            credentials: { token: 'home-a-caller-token', secret: 'home-a-caller-secret' },
-            log: { log: vi.fn() },
-        });
-        await vi.waitFor(() => expect(finishCredentialRead).toBeTypeOf('function'));
-        activeServerId = 'home-b';
+        let readStarted!: () => void;
+        const started = new Promise<void>((resolve) => { readStarted = resolve; });
+        const pending = new Promise<void>((resolve) => { finishCredentialRead = resolve; });
+        deviceStorage.beforeRead = async () => {
+            deviceStorage.beforeRead = null;
+            readStarted();
+            await pending;
+        };
+        const run = registerPushTokenIfAvailable({ credentials: a.credentials, log: { log: () => {} } });
+        await started;
+        // Focus mutation is queued by the real shared mutation authority.
+        const focusChange = homes.setActiveServerId(b.home.id, { scope: 'device' });
         finishCredentialRead();
+        await focusChange;
         await run;
-
-        expect(mocks.registerPushToken).not.toHaveBeenCalled();
-        expect(mocks.deletePushToken).not.toHaveBeenCalled();
+        expect(homes.getActiveServerId()).toBe(b.home.id);
+        expect(requests).toEqual([]);
     });
 
     it('logs an overall failure when all profile attempts fail', async () => {
-        await arrangeNotifications();
-        mocks.listServerProfiles.mockReturnValue([
-            { id: 's1', serverUrl: 'https://s1.example.test' },
-            { id: 's2', serverUrl: 'https://s2.example.test' },
-        ]);
-        mocks.getActiveServerSnapshot.mockReturnValue({
-            serverId: 's2',
-            serverUrl: 'https://s2.example.test',
-            kind: 'custom',
-            generation: 1,
-        });
-        mocks.registerPushToken
-            .mockRejectedValueOnce(new Error('s1 down'))
-            .mockRejectedValueOnce(new Error('s2 down'));
+        await addHome(homeAUrl, 'account-a');
+        await addHome(homeBUrl, 'account-b');
+        registrationFailures.add(homeAUrl);
+        registrationFailures.add(homeBUrl);
         const { messages, log } = collectLogs();
-
-        await registerPushTokenIfAvailable({
-            credentials: { token: 'fallback-token', secret: 'fallback-secret' },
-            log,
-            getHomeAccountSettings: allowExactHomePush,
-        });
-
-        expect(mocks.registerPushToken).toHaveBeenCalledTimes(2);
-        expect(messages.join('\n')).toContain('Failed to register push token for https://s1.example.test');
-        expect(messages.join('\n')).toContain('Failed to register push token for https://s2.example.test');
+        await registerPushTokenIfAvailable({ log });
+        expect(requests.filter((request) => request.method === 'POST')).toHaveLength(2);
+        expect(messages.join('\n')).toContain(`Failed to register push token for ${homeAUrl}`);
+        expect(messages.join('\n')).toContain(`Failed to register push token for ${homeBUrl}`);
         expect(messages.join('\n')).toContain('Failed to register push token:');
-        expect(messages.join('\n')).not.toContain(secretPushToken);
+        expect(messages.join('\n')).not.toContain(pushToken);
     });
 });

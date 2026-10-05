@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
+    type AutomationEventActionHttpCallerV1,
     type AutomationEventDeclarationReleaseV1,
+    type PluginSourceCustodyV1,
 } from "@happier-dev/protocol";
 import { createFakeRouteApp, createReplyStub, getRouteEntry, getRouteHandler } from "../../testkit/routeHarness";
 import { createAuthenticatedTestApp } from "../../testkit/sqliteFastify";
@@ -15,6 +17,11 @@ import { registerAutomationEventRoutes } from "./registerAutomationEventRoutes";
 const PATH = "/v1/automations/events/source-status/report";
 const ADMIT_PATH = "/v1/automations/events/admit";
 const STORED_DEFINITION_READ_PATH = "/v1/automations/events/stored-definitions/read";
+const SOURCE_CUSTODY = {
+    kind: "managed",
+    immutableGenerationId: "github-immutable-generation-a",
+    installSource: "archive",
+} satisfies PluginSourceCustodyV1;
 const BODY = {
     v: 1,
     caller: {
@@ -25,8 +32,9 @@ const BODY = {
             materializationId: "materialization-1",
             pluginId: "com.acme.github",
         },
-        immutableGenerationId: "github-immutable-generation-a",
-    },
+        occurrenceId: "github-occurrence-a",
+        sourceCustody: SOURCE_CUSTODY,
+    } satisfies AutomationEventActionHttpCallerV1,
     input: {
         kind: "catalogReconciliation" as const,
         scope: { kind: "checkpointedPull" as const },
@@ -65,13 +73,14 @@ const STORED_DEFINITION_READ_BODY = {
     v: 1,
     caller: {
         pluginId: "com.acme.github",
-        immutableGenerationId: "github-immutable-generation-a",
+        occurrenceId: "github-occurrence-a",
+        sourceCustody: SOURCE_CUSTODY,
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
             pluginId: "com.acme.github",
         },
-    },
+    } satisfies AutomationEventActionHttpCallerV1,
     input: {
         transport: { kind: "checkpointedPull" as const },
         pageSize: 1,
@@ -88,13 +97,14 @@ const ADMIT_BODY = {
     caller: {
         pluginId: "com.acme.github",
         contributionLocalId: "repository-event",
-        immutableGenerationId: "github-immutable-generation-a",
+        occurrenceId: "github-occurrence-a",
+        sourceCustody: SOURCE_CUSTODY,
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
             pluginId: "com.acme.github",
         },
-    },
+    } satisfies AutomationEventActionHttpCallerV1,
     input: {
         eventRef: { pluginId: "com.acme.github", localId: "repository-event" },
         occurrenceId: "delivery-1",
@@ -327,7 +337,7 @@ describe("Automation Event HTTP routes", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
-                immutableGenerationId: "github-immutable-generation-a",
+                sourceCustody: SOURCE_CUSTODY,
             },
             request: ADMIT_BODY,
         });
@@ -403,7 +413,7 @@ describe("Automation Event HTTP routes", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
-                immutableGenerationId: "github-immutable-generation-a",
+                sourceCustody: SOURCE_CUSTODY,
             },
             input: STORED_DEFINITION_READ_BODY.input,
         });
@@ -496,7 +506,7 @@ describe("Automation Event HTTP routes", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
-                immutableGenerationId: "github-immutable-generation-a",
+                sourceCustody: SOURCE_CUSTODY,
             },
             input: BODY.input,
         });
@@ -538,7 +548,7 @@ describe("Automation Event HTTP routes", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
-                immutableGenerationId: "github-immutable-generation-a",
+                sourceCustody: SOURCE_CUSTODY,
             },
             input: BODY.input,
         });

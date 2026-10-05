@@ -8,7 +8,7 @@ import {
     createActionExecutor,
     formatQualifiedPluginActionId,
 } from '@happier-dev/protocol';
-import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
 import {
     PluginError,
     type ActionOperationDeclarationV1,
@@ -267,9 +267,12 @@ function historyGapResetActionManifest() {
         required: ['service', 'accountId'],
         additionalProperties: false,
     } as const;
-    const sourceConfigSchema = { type: 'object' as const,
+    const sourceConfigSchema = {
+        type: 'object',
         properties: { credentialRef: sourceCredentialRefSchema },
-        required: ['credentialRef'], additionalProperties: false };
+        required: ['credentialRef'],
+        additionalProperties: false,
+    } as const;
     const value = readCanonicalPluginManifest(createPluginManifestV2Fixture({
         id: 'acme.alpha',
         version: '1.2.3',
@@ -312,12 +315,20 @@ function historyGapResetActionManifest() {
                 surfaces: ['plugin'],
                 execution: { target: 'daemon' },
                 dangerLevel: 'writesLocal',
+                confirmation: {
+                    title: { key: 'automation.historyGapReset.title', fallback: 'Start a new baseline' },
+                    body: { key: 'automation.historyGapReset.body', fallback: 'Events in the history gap are not replayed.' },
+                },
                 hostAccess: ['source-account'],
                 inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
                 resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
             }, {
-                id: 'setup-source', title: 'Setup source', scopes: ['global'], surfaces: ['plugin'],
-                execution: { target: 'daemon' }, dangerLevel: 'safe',
+                id: 'setup-source',
+                title: 'Set up source',
+                scopes: ['global'],
+                surfaces: ['plugin'],
+                execution: { target: 'daemon' },
+                dangerLevel: 'safe',
                 inputSchema: { type: 'object', additionalProperties: false },
                 resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
             }],
@@ -333,7 +344,10 @@ function historyGapResetActionManifest() {
                         sourceContractVersion: 1,
                         supportedObservationTransports: ['checkpointedPull'],
                         sourceConfigSchema,
-                        setupActionRef: { pluginId: 'acme.alpha', localId: 'setup-source' },
+                        setupActionRef: {
+                            pluginId: 'acme.alpha',
+                            localId: 'setup-source',
+                        },
                         historyGapResetActionRef: {
                             pluginId: 'acme.alpha',
                             localId: 'reset-history',

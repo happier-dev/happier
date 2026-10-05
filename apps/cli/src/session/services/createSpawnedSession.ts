@@ -1323,6 +1323,7 @@ export async function createSpawnedSession(
     (error as { code?: string }).code = settledSpawn.errorCode;
     (error as { details?: unknown }).details = {
       spawnResponse: spawnResponse ?? null,
+      ...(settledSpawn.agentId ? { agentId: settledSpawn.agentId } : {}),
       ...(settledSpawn.errorDetail ? { errorDetail: settledSpawn.errorDetail } : {}),
       ...(acceptedWithoutSessionId ? { spawnNonce } : {}),
     };

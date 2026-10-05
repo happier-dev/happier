@@ -351,7 +351,7 @@ describe('ActionExecutor prepared invocation', () => {
     const input = {
       creationKey: 'prepare-spawn-1',
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-      directory: '/workspace/project',
+      directory: { kind: 'path' as const, path: '/workspace/project' },
       agentTarget: {
         kind: 'agent' as const,
         identity: { pluginId: 'happier.agent.codex', localId: 'codex' },

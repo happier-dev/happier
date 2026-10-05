@@ -321,9 +321,22 @@ function createCollection(initial: readonly StateRow[]) {
     async query(request: Readonly<{
       index: string;
       prefix?: readonly unknown[];
+      order?: 'asc' | 'desc';
       limit?: number;
     }>) {
       assertChannelsTestCollectionQueryLimit(request.limit);
+      if (request.index === 'by-kind') {
+        if (request.order !== 'asc' || request.prefix?.length !== 1 || request.prefix[0] !== 'binding') {
+          throw new Error('Expected the canonical ascending binding query before checkpointed polling.');
+        }
+        return {
+          rows: [...rows.values()]
+            .filter((row) => row.value['record-kind'] === 'binding')
+            .sort((left, right) => left.rowId.localeCompare(right.rowId))
+            .slice(0, request.limit ?? 50),
+          changeCursor: 1,
+        };
+      }
       if (request.index !== 'by-connection-binding-v2') {
         throw new Error(`Unexpected Collection query index '${request.index}'.`);
       }
@@ -807,10 +820,12 @@ describe('Channels pairing management writer', () => {
       retryable: true,
     });
 
-    await expect(runConversationCheckpointedPollForInvocation({
+    const pollResult = await runConversationCheckpointedPollForInvocation({
       connectionId: 'connection-1',
       waitMs: 0,
-    }, context)).resolves.toMatchObject({
+    }, context);
+    expect(collection.rows.get('connection-1')?.value.payload.pollFailure).toBeNull();
+    expect(pollResult).toMatchObject({
       kind: 'committed',
       connectionId: 'connection-1',
       authorityEpoch: 1,

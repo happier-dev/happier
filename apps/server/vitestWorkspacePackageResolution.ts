@@ -12,6 +12,14 @@ export const serverWorkspacePackageSourcesPlugin = createWorkspacePackageSources
         packageSourceRoot: resolve(repoRoot, 'packages', 'transfers', 'src'),
     },
     {
+        packageName: 'privacy-kit',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'privacy-kit', 'src'),
+    },
+    {
+        packageName: '@happier-dev/iroh-native',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'iroh-native', 'src'),
+    },
+    {
         packageName: '@happier-dev/peer-mediation',
         packageSourceRoot: resolve(repoRoot, 'packages', 'peer-mediation', 'src'),
     },
@@ -22,6 +30,10 @@ export const serverWorkspacePackageSourcesPlugin = createWorkspacePackageSources
     {
         packageName: '@happier-dev/cli-common',
         packageSourceRoot: resolve(repoRoot, 'packages', 'cli-common', 'src'),
+    },
+    {
+        packageName: '@happier-dev/release-runtime',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'release-runtime', 'src'),
     },
     {
         packageName: '@happier-dev/protocol',

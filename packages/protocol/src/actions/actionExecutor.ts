@@ -1662,11 +1662,11 @@ function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
   return result;
 }
 
-function readFanoutStartError(result: unknown): {
+function readFanoutStartError(result: unknown): Readonly<{
   errorCode?: string;
   error: string;
   details: ReturnType<typeof withExecutionRunStartFailureDetails>;
-} {
+}> {
   const record = readRecord(result);
   const errorCode =
     typeof record.errorCode === 'string'
@@ -1680,10 +1680,16 @@ function readFanoutStartError(result: unknown): {
       : typeof record.message === 'string'
           ? String(record.message)
           : 'execution_run_failed';
+  const details = readFailureEnvelopeDetails(record);
   return {
     error,
     ...(errorCode ? { errorCode } : {}),
-    details: withExecutionRunStartFailureDetails(record.details, readExecutionRunStartRunCreation(record.details)),
+    details: withExecutionRunStartFailureDetails(
+      details,
+      hasExecutionRunStartIdentityEvidence(result)
+        ? 'outcomeUnknown'
+        : readExecutionRunStartRunCreation(details),
+    ),
   };
 }
 
@@ -1695,7 +1701,11 @@ async function fanoutStarts(params: Readonly<{
     params.keys.map(async (key): Promise<FanoutResultItem> => {
       try {
         const rawResult = await params.startOne(key);
-        const result = normalizeSuccessfulFanoutStartResult(rawResult);
+        const normalizedResult = normalizeSuccessfulFanoutStartResult(rawResult);
+        const claimsFailure = readRecord(rawResult).ok === false || readRecord(normalizedResult).ok === false;
+        const result = claimsFailure
+          ? readCompleteExecutionRunStartIdentity(rawResult) ?? normalizedResult
+          : normalizedResult;
         const resultRecord = readRecord(result);
         if (resultRecord.ok === false) {
           return {
@@ -1721,7 +1731,20 @@ async function fanoutStarts(params: Readonly<{
         }
         return { key, ok: true, result };
       } catch (error) {
-        return { key, ok: false, ...readFanoutStartError(error) };
+        const failure = normalizeActionExecutorThrownError(error);
+        const details = readFailureEnvelopeDetails(readRecord(error));
+        return {
+          key,
+          ok: false,
+          errorCode: failure.errorCode,
+          error: failure.error,
+          details: withExecutionRunStartFailureDetails(
+            details,
+            hasExecutionRunStartIdentityEvidence(error)
+              ? 'outcomeUnknown'
+              : readExecutionRunStartRunCreation(details),
+          ),
+        };
       }
     }),
   );

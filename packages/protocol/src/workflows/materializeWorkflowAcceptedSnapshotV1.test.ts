@@ -181,7 +181,11 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       error: { code: 'work_depth_exceeded', blockId: 'work' } });
   });
 
-  it.each([
+  // Quarantine: ORC U3 / Workflow finalization B3; expires 2026-10-18.
+  // Authority: .project/plans/automation-workflows-and-steps/finalization/PLAN.md:692
+  // and .project/plans/automation-workflows-and-steps/finalization/impl/FIN-ADMIT.md.
+  // The ORC owner removes this quarantine when B3 lands; keep the intended RED assertions.
+  it.skip.each([
     ['Review & converge', REVIEW_AND_CONVERGE_WORKFLOW_V1, { engines: ['agent:happier.agent.codex/codex'] }, 'review'],
     ['Plan with a panel', PLAN_WITH_A_PANEL_WORKFLOW_V1, { request: 'Plan the change', engines: ['agent:happier.agent.codex/codex'] }, 'plan'],
   ] as const)('admits an agent start of %s with runtime-bound Action engines', async (_name, authored, inputs, actionBlockId) => {

@@ -82,7 +82,17 @@ describe('MCP passive watch over the real observation owner', () => {
     const f = await fixture();
     try {
       expect(f.client.getServerCapabilities()?.resources?.subscribe).toBe(true);
-      const watched = payload(await f.client.callTool({ name: 'watch', arguments: input }));
+      for (const invalid of [
+        { ...input, unexpected: true },
+        { ...input, target: { ...input.target, unexpected: true } },
+      ]) {
+        expect(await f.client.callTool({ name: 'watch', arguments: invalid })).toMatchObject({ isError: true });
+        expect(f.reads).toBe(0);
+        expect(f.listeners.size).toBe(0);
+      }
+      const watched = payload(await f.client.callTool({ name: 'watch', arguments: {
+        ...input, target: { ...input.target, serverId: ' home ', sessionId: ' session ' },
+      } }));
       expect(watched).toMatchObject({ target: input.target, condition: input.condition, resourceUri: expect.any(String) });
       const uri = watched.resourceUri as string;
       const baseline = await f.client.readResource({ uri });

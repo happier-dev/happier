@@ -450,7 +450,10 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   let malformedCount = 0;
   let bytesReadTotal = 0;
   let end = initialEnd;
-  let carry = Buffer.alloc(0);
+  // Pending line fragments are retained newest first. Scan each read chunk
+  // once and assemble the line only after finding its boundary.
+  let carryChunks: Buffer[] = [];
+  let carryLength = 0;
   let tailOffsetBytes: number | null = null;
 
   while (end > 0 && collectedNewestFirst.length < maxItems) {
@@ -458,11 +461,11 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
     const canContinueOversizeFirstLine =
       remainingBytes <= 0 &&
       collectedNewestFirst.length === 0 &&
-      carry.length > 0 &&
-      carry.length < maxOversizeLineBytes;
+      carryLength > 0 &&
+      carryLength < maxOversizeLineBytes;
     if (remainingBytes <= 0 && !canContinueOversizeFirstLine) break;
 
-    const oversizeRemainingBytes = maxOversizeLineBytes - carry.length;
+    const oversizeRemainingBytes = maxOversizeLineBytes - carryLength;
     const readBudget = canContinueOversizeFirstLine ? oversizeRemainingBytes : remainingBytes;
     const readSize = Math.min(chunkBytes, end, readBudget);
     if (readSize <= 0) break;
@@ -471,26 +474,20 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
     const chunk = await fileSystem.read(params.filePath, start, readSize);
     bytesReadTotal += chunk.length;
 
-    const combined = carry.length > 0 ? Buffer.concat([chunk, carry]) : chunk;
-    const combinedStartOffset = start;
-    const carryStartOffset = end;
-
-    let segmentEndIndex = combined.length;
-    for (let index = combined.length - 1; index >= 0 && collectedNewestFirst.length < maxItems; index -= 1) {
-      if (combined[index] !== 0x0a) continue;
+    let segmentEndIndex = chunk.length;
+    for (let index = chunk.length - 1; index >= 0 && collectedNewestFirst.length < maxItems; index -= 1) {
+      if (chunk[index] !== 0x0a) continue;
       const segmentStartIndex = index + 1;
-      const segmentEndIndexExclusive = segmentEndIndex;
-      const segment = combined.slice(segmentStartIndex, segmentEndIndexExclusive);
+      const prefix = chunk.subarray(segmentStartIndex, segmentEndIndex);
+      const segment = carryLength > 0
+        ? Buffer.concat([prefix, ...carryChunks.reverse()], prefix.length + carryLength)
+        : prefix;
+      // Carry belongs to the requested end boundary even if this read is short.
+      const startOffsetAbs = segmentStartIndex < chunk.length ? start + segmentStartIndex : end;
+      const endOffsetAbs = segmentEndIndex < chunk.length ? start + segmentEndIndex : end + carryLength;
+      carryChunks = [];
+      carryLength = 0;
       segmentEndIndex = index;
-
-      const startOffsetAbs =
-        segmentStartIndex < chunk.length
-          ? combinedStartOffset + segmentStartIndex
-          : carryStartOffset + (segmentStartIndex - chunk.length);
-      const endOffsetAbs =
-        segmentEndIndexExclusive < chunk.length
-          ? combinedStartOffset + segmentEndIndexExclusive
-          : carryStartOffset + (segmentEndIndexExclusive - chunk.length);
       const decoded = decodeSourceLine(segment);
       const parsed = decoded.ok ? parseJsonLine(decoded.value) : null;
       if (tailOffsetBytes === null) {
@@ -509,17 +506,22 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
       collectedNewestFirst.push({ value: parsed, startOffsetBytes: startOffsetAbs, endOffsetBytes: endOffsetAbs });
     }
 
-    carry = combined.slice(0, segmentEndIndex);
+    if (segmentEndIndex > 0) {
+      carryChunks.push(chunk.subarray(0, segmentEndIndex));
+      carryLength += segmentEndIndex;
+    }
     end = start;
 
-    if (end === 0 && carry.length > 0 && collectedNewestFirst.length < maxItems) {
+    if (end === 0 && carryLength > 0 && collectedNewestFirst.length < maxItems) {
+      const carry = carryChunks.length === 1
+        ? carryChunks[0]!
+        : Buffer.concat(carryChunks.reverse(), carryLength);
       const decoded = decodeSourceLine(carry);
       if (!decoded.ok) {
         malformedCount += 1;
         if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
           malformedPositions.push(decoded.malformedOffsetBytes);
         }
-        carry = Buffer.alloc(0);
       } else {
         const parsed = parseJsonLine(decoded.value);
         if (tailOffsetBytes === null) {
@@ -527,7 +529,6 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
         }
         if (parsed !== null) {
           collectedNewestFirst.push({ value: parsed, startOffsetBytes: 0, endOffsetBytes: carry.length });
-          carry = Buffer.alloc(0);
         }
       }
     }

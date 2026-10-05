@@ -5,6 +5,7 @@ import type { PublicActionResultById } from '../actions/actionSpecs.js';
 import { parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
+import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { resolveReviewNarratorPolicy, ReviewEngineCapabilitiesSchema } from '../reviews/reviewEngines.js';
 import { resolveActionBackendTargetSelection, resolveExecutionBackendTargetSelectionForValue, type ActionBackendTargetSelection } from '../actions/resolveActionBackendTargetSelection.js';
 import { readRecord, readRecordListProperty, readNonEmptyString, isRecord, hasOwn } from './inputRecords.js';
@@ -158,9 +159,11 @@ function readDynamicOptionDirectory(
   input: Record<string, unknown>,
   actionId: ActionId | null,
 ): string | undefined {
-  const directory = readNonEmptyString(input.directory);
-  if (directory || actionId === 'session.spawn_new') return directory;
-  return readNonEmptyString(input.path);
+  if (actionId === 'session.spawn_new') {
+    const intent = SessionDirectoryIntentV1Schema.safeParse(input.directory);
+    return intent.success && intent.data.kind === 'path' ? intent.data.path : undefined;
+  }
+  return readNonEmptyString(input.directory) ?? readNonEmptyString(input.path);
 }
 
 export async function resolveInputOptions(params: Readonly<{
@@ -399,7 +402,14 @@ export async function resolveInputOptions(params: Readonly<{
     });
     const failure = params.readFailure(result);
     if (failure) return failure;
-    return { ok: true, result: normalizeResolvedOptions(result) };
+    const pathOptions = normalizeResolvedOptions(result).flatMap((option) => {
+      const intent = SessionDirectoryIntentV1Schema.safeParse({ kind: 'path', path: option.value });
+      return intent.success ? [{ ...option, value: JSON.stringify(intent.data) }] : [];
+    });
+    return { ok: true, result: [
+      { value: JSON.stringify(SessionDirectoryIntentV1Schema.parse({ kind: 'managed' })), label: 'No folder' },
+      ...pathOptions,
+    ] };
   }
 
   if (optionsSourceId === 'sessions.spawn.machines.available') {

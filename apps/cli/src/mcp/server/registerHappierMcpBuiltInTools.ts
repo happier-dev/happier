@@ -27,8 +27,8 @@ import {
 
 const MCP_TOOL_PROGRESS_KEEPALIVE_INTERVAL_MS = 15_000;
 
-type ToolRegistrar = Readonly<{
-    registerTool: (name: string, meta: unknown, handler: (args: unknown, extra?: unknown) => Promise<unknown>) => void;
+export type ToolRegistrar<TExtra = unknown> = Readonly<{
+    registerTool: (name: string, meta: unknown, handler: (args: unknown, extra?: TExtra) => Promise<unknown>) => void;
 }>;
 
 type DispatchDeps = Parameters<typeof dispatchBuiltInHappierTool>[0]['deps'];

@@ -35,6 +35,7 @@ import type {
   PluginUiNewSessionSeedV1,
   PluginUiSessionPlacementCandidateV1,
 } from './hostApiRequests.js';
+import type { SessionServerStartSpawnDraftV1 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 
 const surface = {
   pluginId: 'acme.preview',
@@ -436,7 +437,7 @@ describe('plugin UI open and Action components', () => {
                 kind: 'agent',
                 identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
             },
-        } as const;
+        } as const satisfies SessionServerStartSpawnDraftV1;
         expect(PluginUiSelectActionInputResultV1Schema.parse({
             kind: 'serverStartDraft',
             draft: serverStartDraft,

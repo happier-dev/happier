@@ -437,7 +437,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         headRefOid: sha, commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: { contexts: {
           nodes: [{ __typename: 'CheckRun', id: 'check-1', name: 'build', status: conclusion === null ? 'IN_PROGRESS' : 'COMPLETED',
             conclusion, isRequired: true, detailsUrl: null, startedAt: null, completedAt: null,
-            checkSuite: { createdAt: '1970-01-01T00:00:01.000Z' } }],
+            checkSuite: { createdAt: '2026-08-10T12:00:00Z' } }],
           pageInfo: { hasNextPage: false, endCursor: null },
         } } } }] },
       } } } })),

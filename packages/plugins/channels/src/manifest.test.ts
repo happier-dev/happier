@@ -235,6 +235,16 @@ describe('Channels core manifest', () => {
     }
 
     expect(parsed.manifest.id).toBe(CHANNELS_PLUGIN_ID);
+    expect(parsed.manifest.contributes.actions?.find(
+      (action) => action.id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+    )).toMatchObject({
+      dangerLevel: 'writesLocal',
+      confirmation: {
+        title: expect.any(String),
+        body: expect.any(String),
+        confirmLabel: expect.any(String),
+      },
+    });
   });
 
   it('declares and observes the one Channels-owned provider contribution point', () => {
@@ -571,9 +581,9 @@ describe('Channels core manifest', () => {
         dangerLevel: 'writesLocal',
         execution: { target: 'daemon' },
         confirmation: {
-          title: 'Change Session pull request binding?',
-          body: 'This changes the Session’s saved pull request link or its scoped triggers.',
-          confirmLabel: 'Save binding',
+          title: 'Manage session pull request binding?',
+          body: 'This can attach a pull request to the selected session or change its scoped conversation trigger bindings.',
+          confirmLabel: 'Continue',
         },
         hostAccess: ['account-storage'],
       },

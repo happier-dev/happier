@@ -1,5 +1,5 @@
 import { ArtifactCallerAccessV1Schema } from '../../artifacts/artifactAccessV1.js';
-import { RolesV1Schema } from '../../account/settings/rolesV1.js';
+import { RolesV1Schema, type RolesV1 } from '../../account/settings/rolesV1.js';
 import { readLegacyRolesV1, saveRolesV1WithLegacyMigration } from '../../account/settings/rolesV1Migration.js';
 import type { ActionExecutorDeps } from '../../actions/actionExecutor.js';
 import type { WorkflowDefinitionArtifactOperations } from '../../actions/executor/workflowDefinitions.js';
@@ -77,7 +77,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
   artifactStore?: RoleArtifactStoreV1;
   readRoleSources?: RoleSourceReaderV1;
   generateId: () => string;
-  mutateAccountSettings?: (mutate: (raw: Readonly<Record<string, unknown>>) => Promise<Record<string, unknown>>, signal?: AbortSignal) => Promise<void>;
+  mutateAccountSettings?: (mutate: (raw: Readonly<Record<string, unknown>>) => Promise<Record<string, unknown> & { rolesV1: RolesV1 }>, signal?: AbortSignal) => Promise<void>;
 }>): NonNullable<ActionExecutorDeps['roleActionExecute']> {
   const listEntries = params.readRoleSources ?? createRoleSourceReaderV1(params);
   const retainLegacy = async (raw: Readonly<Record<string, unknown>>, rolesV1: ReturnType<typeof RolesV1Schema.parse>, signal?: AbortSignal) => {

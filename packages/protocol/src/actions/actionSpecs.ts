@@ -364,9 +364,9 @@ import {
 import {
   ExecutionRunTurnStreamCancelResponseSchema,
   ExecutionRunTurnStreamReadResponseSchema,
-  ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../execution/runs/streaming.js';
+import { ExecutionRunTurnStreamReadRequestSchema } from '../execution/runs/runPrimitives.js';
 import {
   ActionDiscoveryDefinitionSummaryV1Schema,
   ActionDiscoveryDefinitionV1Schema,
@@ -834,7 +834,7 @@ export const ActionSpecSchema = z.object({
   bindings: z.object({
     // Tool name the voice client is allowed to expose (surface.voice).
     voiceClientToolName: z.string().min(1).optional(),
-    // Tool name for MCP surface (surface.mcp).
+    // Optional direct MCP tool name; generic action_execute invokes by Action id.
     mcpToolName: z.string().min(1).optional(),
     // Optional generated SDK method-name override. Most public Actions derive
     // their path from the canonical Action id; overrides only resolve a real
@@ -983,13 +983,6 @@ export const ActionSpecSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: 'surface.rpc requires bindings.rpcMethod',
       path: ['bindings', 'rpcMethod'],
-    });
-  }
-  if (value.surfaces.mcp && !value.bindings?.mcpToolName) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'surface.mcp requires bindings.mcpToolName',
-      path: ['bindings', 'mcpToolName'],
     });
   }
   if (value.surfaces.mcp && !value.outputSchema) {
@@ -5611,7 +5604,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     safety: 'safe',
     requiredAuthority: 'account_automation',
     executionPlacement: 'account',
-    placements: ['voice_panel'],
+    placements: [],
     bindings: {
       voiceClientToolName: 'notifyMe',
       mcpToolName: 'notifications_notify_me',

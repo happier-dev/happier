@@ -215,8 +215,8 @@ on:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  # Push runs retain exact-SHA evidence; superseded PR runs release runner capacity.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Preserve superseded PR cancellation and release automatic v0.3 push capacity.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (!inputs.select_jobs_explicitly && github.event_name == 'push' && github.ref_name == 'v0.3') }}
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).
@@ -232,6 +232,7 @@ jobs:
       contents: read
     outputs:
       packages: ${{ steps.select.outputs.packages }}
+      unit_matrix: ${{ steps.select.outputs.unit_matrix }}
       server_db_contract: ${{ steps.select.outputs.server_db_contract }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -241,6 +242,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
+          cache: yarn
       - name: Select changed workspaces and their consumers
         id: select
         env:
@@ -253,29 +255,59 @@ jobs:
           fi
           packages="$(git diff --no-renames --name-only -z "$base" HEAD | node scripts/ci/selectAffectedGatePackages.mjs)"
           echo "Affected gate packages: $packages"
-
-  gate-typecheck:
-    name: Gate — compiler typecheck
-    needs: [gate-packages]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-          cache: yarn
       - name: Enable Corepack
         run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - uses: ./.github/actions/install-yarn-dependencies
+      - name: Setup pinned Rust for compiler workspace preparation
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.94.1
+      - name: Prepare the canonical Iroh native runtime before compiler workspace publication
+        run: yarn workspace @happier-dev/iroh-native build:native
       - name: Check compiler diagnostics without governance or test phases
-        run: yarn -s typecheck:compiler
+        id: gate-compiler
+        env:
+          # Each native project reports its own OS-measured peak resident memory.
+          HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: "1"
+        run: |
+          echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
+          compiler_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
+          compiler_cgroup_directory="/sys/fs/cgroup$compiler_cgroup_path"
+          echo "GATE_COMPILER_CGROUP=$compiler_cgroup_directory" >> "$GITHUB_ENV"
+          echo "Compiler host memory before execution:"
+          free -h
+          echo "Compiler host cgroup identity:"
+          cat /proc/self/cgroup
+          echo "Compiler host cgroup memory events before execution:"
+          if [ -r "$compiler_cgroup_directory/memory.events" ]; then
+            cat "$compiler_cgroup_directory/memory.events"
+          else
+            echo "Current cgroup memory.events unavailable; kernel evidence remains necessary."
+          fi
+          yarn -s typecheck:compiler
+      - name: Report host evidence after compiler termination
+        if: ${{ failure() && steps.gate-compiler.outcome == 'failure' }}
+        run: |
+          echo "Compiler host memory after failure:"
+          free -h
+          echo "Compiler host cgroup identity:"
+          cat /proc/self/cgroup
+          for observation in memory.events memory.max memory.peak memory.current; do
+            compiler_observation_path="$GATE_COMPILER_CGROUP/$observation"
+            echo "$compiler_observation_path:"
+            if [ -r "$compiler_observation_path" ]; then
+              cat "$compiler_observation_path"
+            else
+              echo "Unavailable at current cgroup; no conclusion from the missing observation."
+            fi
+          done
+          echo "Kernel journal since compiler execution began:"
+          if ! sudo -n journalctl --dmesg --since "$GATE_COMPILER_STARTED_AT" --no-pager; then
+            echo "Kernel journal unavailable; compiler termination sender remains unknown."
+          fi
 
   gate-unit:
-    name: Gate — ${{ matrix.package }} unit
+    name: Gate — ${{ matrix.package }} unit (${{ matrix.part }}/${{ matrix.parts }})
     needs: [gate-packages]
     if: ${{ needs.gate-packages.outputs.packages != '[]' }}
     runs-on: ubuntu-latest
@@ -283,8 +315,10 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        package: ${{ fromJSON(needs.gate-packages.outputs.packages) }}
+      matrix: ${{ fromJSON(needs.gate-packages.outputs.unit_matrix) }}
+    env:
+      HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
+      HAPPIER_UI_VITEST_PARTS: ${{ matrix.parts }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -296,19 +330,51 @@ jobs:
       - name: Enable Corepack
         run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - uses: ./.github/actions/install-yarn-dependencies
+      - name: Setup pinned Rust for the CLI native runtime
+        if: ${{ matrix.package == 'cli' }}
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.94.1
+      - name: Prepare the canonical Iroh native runtime before CLI publication
+        if: ${{ matrix.package == 'cli' }}
+        run: yarn workspace @happier-dev/iroh-native build:native
+      - name: Prepare the canonical CLI unit runtime closure
+        if: ${{ matrix.package == 'cli' }}
+        run: yarn workspace @happier-dev/cli build:shared
+      - name: Load the prepared Iroh native runtime
+        if: ${{ matrix.package == 'cli' }}
+        run: yarn workspace @happier-dev/iroh-native verify:native --package-root "$GITHUB_WORKSPACE/apps/cli/node_modules/@happier-dev/iroh-native"
       - name: Run affected package unit suite
         env:
-          GATE_PACKAGE: ${{ matrix.package }}
+          GATE_PACKAGES: ${{ join(matrix.packages, ' ') }}
         run: |
           set -euo pipefail
-          case "$GATE_PACKAGE" in
-            cli) yarn workspace @happier-dev/cli test:unit ;;
-            ui) yarn workspace @happier-dev/app test:unit ;;
-            server) yarn --cwd apps/server test:unit ;;
-            protocol) yarn workspace @happier-dev/protocol test ;;
-            plugins) yarn test:plugin-workspaces ;;
-            *) echo "::error::Unknown gate package: $GATE_PACKAGE"; exit 1 ;;
-          esac
+          gate_status=0
+          for gate_package in $GATE_PACKAGES; do
+            case "$gate_package" in
+              cli) yarn workspace @happier-dev/cli test:unit || gate_status=1 ;;
+              ui) yarn workspace @happier-dev/app test:unit || gate_status=1 ;;
+              server) yarn --cwd apps/server test:unit || gate_status=1 ;;
+              protocol) yarn workspace @happier-dev/protocol test || gate_status=1 ;;
+              plugins)
+                if ./apps/stack/bin/hstack-exec -- node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/plugins-channels @happier-dev/plugins-elevenlabs; then
+                  yarn test:plugin-workspaces || gate_status=1
+                else
+                  gate_status=1
+                fi
+                ;;
+              *) echo "::error::Unknown gate package: $gate_package"; gate_status=1 ;;
+            esac
+          done
+          exit "$gate_status"
+      - name: Upload CLI unit bundled-plugin preparation diagnostics
+        if: ${{ always() && matrix.package == 'cli' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-cli-unit-bundled-plugin-publication-failures
+          path: apps/cli/.project/tmp/bundled-plugin-publication/failures.json
+          if-no-files-found: ignore
+          include-hidden-files: true
 
   gate-build-artifacts:
     name: Gate — build artifacts and staged import smoke
@@ -332,8 +398,17 @@ jobs:
       - name: Enable Corepack
         run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - uses: ./.github/actions/install-yarn-dependencies
+      - name: Setup pinned Rust and the browser target
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.94.1
+          targets: wasm32-unknown-unknown
+      - name: Prepare the canonical Iroh native runtime before CLI publication
+        run: yarn workspace @happier-dev/iroh-native build:native
       - name: Build the CLI distribution
         run: yarn workspace @happier-dev/cli build
+      - name: Load the prepared Iroh native runtime
+        run: yarn workspace @happier-dev/iroh-native verify:native --package-root "$GITHUB_WORKSPACE/apps/cli/node_modules/@happier-dev/iroh-native"
       - name: Probe the staged CLI runtime through its canonical owner
         run: |
           node --input-type=module <<'NODE'
@@ -345,15 +420,18 @@ jobs:
         run: yarn --cwd apps/server build:runtime
       - name: Build and smoke the HStack binary
         run: ./apps/stack/bin/hstack-exec -- node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
-      - name: Setup pinned Rust and the browser target
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
-        with:
-          toolchain: 1.94.1
-          targets: wasm32-unknown-unknown
       - name: Install the pinned browser boundary generator
         run: ./apps/stack/bin/hstack-exec -- cargo install wasm-bindgen-cli --version 0.2.127 --locked
       - name: Build the web artifact
         run: ./apps/stack/bin/hstack-exec -- node scripts/pipeline/release/build-ui-web-bundle.mjs --channel preview --version 0.0.0-ci.${{ github.run_id }}
+      - name: Upload artifact-build bundled-plugin preparation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-artifact-build-bundled-plugin-publication-failures
+          path: apps/cli/.project/tmp/bundled-plugin-publication/failures.json
+          if-no-files-found: ignore
+          include-hidden-files: true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gate-build-artifacts
@@ -367,7 +445,7 @@ jobs:
   gate:
     name: Gate
     if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
-    needs: [gate-packages, gate-typecheck, gate-unit, gate-build-artifacts, server-db-contract]
+    needs: [gate-packages, gate-unit, gate-build-artifacts, server-db-contract]
     runs-on: ubuntu-latest
     permissions:
       contents: read

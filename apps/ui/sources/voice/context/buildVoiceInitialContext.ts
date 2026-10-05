@@ -5,10 +5,12 @@ import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
 import { resolveVoiceContextSessionFromState } from './resolveVoiceContextSession';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { resolveVoiceSessionRef } from '@/voice/tools/actionImpl/sessionReference';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveEffectiveVoiceTargetState } from '@/voice/context/resolveEffectiveVoiceTargetState';
+import { readSessionIncludedInVoiceFromState } from '@/voice/runtime/voiceUpdatePolicy';
 
 export type VoiceInitialContextResolution =
   | Readonly<{
@@ -99,7 +101,11 @@ export function resolveVoiceInitialContext(
     settings: state.settings,
     sessionId: contextSessionId,
     sessionAddress: contextSessionAddress,
-    isCurrentAttemptTarget: true,
+    includeInVoice: readSessionIncludedInVoiceFromState(state, contextSessionAddress),
+    isCurrentAttemptTarget: areSessionAddressesEqual(
+      resolveEffectiveVoiceTargetState(contextSessionAddress ?? contextSessionId, options).primaryActionSessionAddress,
+      contextSessionAddress,
+    ),
   });
   const heading = contextSessionId === requestedSessionId
     ? 'THIS IS AN ACTIVE SESSION:'

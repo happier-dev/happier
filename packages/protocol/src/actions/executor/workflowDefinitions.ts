@@ -15,6 +15,7 @@ import type { WorkflowDefinitionV1, WorkflowIngressContextV1 } from '../../workf
 import type { WorkflowActionExecuteArgs } from './types.js';
 import type { z } from 'zod';
 import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
+import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/artifactSharingV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';

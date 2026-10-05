@@ -944,7 +944,7 @@ describe('createCliActionDeps hook dispatch', () => {
       modelSelection: expect.objectContaining({
         ref: expect.objectContaining({ agentTargetKey, modelId: 'claude-sonnet-5' }),
       }),
-    }), undefined);
+    }), {});
   });
 
   it('routes a filtered Session list through the canonical list service with both scope and cancellation', async () => {
@@ -1650,7 +1650,7 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-exact',
       method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
-      request: { directory: '/repo/exact' },
+      request: { directory: { kind: 'path', path: '/repo/exact' }, sessionCreationTag },
     }));
   });
 
@@ -1955,7 +1955,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
     });
     expect(prepare).toHaveBeenCalledWith(
-      { directory: '/repo/new-directory' },
+      { directory: { kind: 'path', path: '/repo/new-directory' } },
       undefined,
     );
     expect(callMachineRpc).not.toHaveBeenCalled();
@@ -2695,7 +2695,8 @@ describe('createCliActionDeps hook dispatch', () => {
       machineId: 'machine-exact',
       method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
       request: {
-        directory: '~/repo',
+        directory: { kind: 'path', path: '~/repo' },
+        sessionCreationTag,
         checkoutCreationDraft: {
           kind: 'git_worktree',
           displayName: 'feature-session',

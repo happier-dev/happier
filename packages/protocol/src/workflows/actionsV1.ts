@@ -23,6 +23,7 @@ import {
   WorkflowRunExecutionTargetV1Schema,
   WorkflowRoleOverridesV1Schema,
   WorkflowMaterializedLeafV1Schema,
+  WorkflowFrozenChildrenV1Schema,
   WorkflowRunStartedByV1Schema,
   WorkflowReplayAgentOverrideV1Schema,
 } from './workflowDefinitionV1.js';
@@ -226,7 +227,7 @@ export const WorkflowRunAcceptedContextV1Schema = z.union([
     executionTarget: WorkflowRunExecutionTargetV1Schema,
     roleOverrides: WorkflowRoleOverridesV1Schema.optional(),
     materializedLeaves: z.array(WorkflowMaterializedLeafV1Schema),
-    frozenChildren: z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema),
+    frozenChildren: WorkflowFrozenChildrenV1Schema,
     workspaceTarget: WorkflowAcceptedWorkspaceTargetV1Schema,
   }).strict(),
   z.object({
@@ -245,7 +246,7 @@ export const WorkflowRunAcceptedContextV1Schema = z.union([
     executionTarget: WorkflowRunExecutionTargetV1Schema,
     roleOverrides: WorkflowRoleOverridesV1Schema.optional(),
     materializedLeaves: z.array(WorkflowMaterializedLeafV1Schema),
-    frozenChildren: z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema),
+    frozenChildren: WorkflowFrozenChildrenV1Schema,
     workspaceTarget: WorkflowAcceptedWorkspaceTargetV1Schema,
     origin: z.object({
       kind: z.literal('direct'),

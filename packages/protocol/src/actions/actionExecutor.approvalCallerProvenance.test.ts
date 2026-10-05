@@ -14,6 +14,7 @@ import { WorkflowRunSummaryV1Schema } from '../workflows/workflowProgressV1.js';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '../workflows/workflowStoredContentV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import type { ExternalActionTargetV1 } from './externalActionApi.js';
+import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { SessionAgentSpawnPolicyV1Schema } from '../account/settings/accountSettings.js';
 import type { AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 import {
@@ -371,6 +372,17 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const currentMachineKey = scenario === 'different machine key'
       ? tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9))
       : machineKey;
+    const admittedTarget: ExternalActionTargetV1 = scenario === 'resolved Session target'
+      ? { kind: 'session', sessionId: 'session-1' }
+      : { kind: 'machine', machineId: 'machine-1' };
+    const grant = ApiTokenGrantV1Schema.parse({
+      v: 1,
+      actions: { families: [], ids: ['teams.members.remove', ...(scenario === 'explicit approval' ? ['approval.request.create'] : [])] },
+      targets: admittedTarget.kind === 'session'
+        ? { sessions: [admittedTarget.sessionId], machines: [] }
+        : { sessions: [], machines: [admittedTarget.machineId] },
+      approve: false, origins: [], models: null, permissionModes: null, create: null,
+    });
     const authorization = {
       v: 1 as const,
       token: 'home-signed-exact-invocation',
@@ -383,9 +395,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         actionId: scenario === 'explicit approval' ? 'approval.request.create' : 'teams.members.remove',
         requestId: 'pat-request-1',
         requestEnvelopeDigest: 'a'.repeat(43),
-        target: scenario === 'resolved Session target'
-          ? { kind: 'session' as const, sessionId: 'session-1' }
-          : { kind: 'machine' as const, machineId: 'machine-1' },
+        target: admittedTarget,
+        grant,
       },
     };
     let storedRequest: ApprovalRequest | null = null;
@@ -437,15 +448,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 
-    const admittedTarget: ExternalActionTargetV1 = scenario === 'resolved Session target'
-      ? { kind: 'session', sessionId: 'session-1' }
-      : authorization.binding.target;
-    const admittedAuthorization = scenario === 'resolved Session target'
-      ? {
-          ...authorization,
-          binding: { ...authorization.binding, target: admittedTarget },
-        }
-      : authorization;
+    const admittedAuthorization = authorization;
     const admittedContext = {
       surface: 'api' as const,
       authority: 'account_automation' as const,
@@ -459,6 +462,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         accountId: authorization.binding.accountId,
         principalId: authorization.binding.principalId,
         credentialId: authorization.binding.credentialId,
+        grant,
       },
       externalActionTarget: admittedTarget,
       externalActionExecutionAuthorization: admittedAuthorization,
@@ -552,6 +556,12 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
   it('persists nested contributed PAT approvals as API authority with exact plugin provenance', async () => {
     const machineKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(12));
     const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const grant = ApiTokenGrantV1Schema.parse({
+      v: 1,
+      actions: { families: [], ids: ['acme.external/actions/archive-member', 'teams.members.remove'] },
+      targets: { sessions: [], machines: [target.machineId] },
+      approve: false, origins: [], models: null, permissionModes: null, create: null,
+    });
     const authorization = {
       v: 1 as const,
       token: 'home-signed-contributed-invocation',
@@ -565,6 +575,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         requestId: 'outer-request-1',
         requestEnvelopeDigest: 'a'.repeat(43),
         target,
+        grant,
       },
     };
     let storedRequest: ApprovalRequest | null = null;
@@ -594,6 +605,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         accountId: authorization.binding.accountId,
         principalId: authorization.binding.principalId,
         credentialId: authorization.binding.credentialId,
+        grant,
       },
       externalActionTarget: target,
       externalActionExecutionAuthorization: authorization,
@@ -670,6 +682,16 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       sessionAgentSpawnPolicyV1: policy, permissionMode: 'read-only',
     }));
+    const deferredSpawnArgs = sessionSpawnNew.mock.calls[0]?.[0];
+    if (!deferredSpawnArgs?.context) throw new Error('Expected the captured spawn context');
+    const { actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement, ...capturedContext } = deferredSpawnArgs.context;
+    // Durable replay restores routing defaults that the direct invocation omits.
+    expect({ actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement }).toEqual({
+      actionCaller: { kind: 'host' },
+      defaultSessionMachineId: sessionSpawnInput.executionTarget.machineId,
+      executionRunTargetMachineId: sessionSpawnInput.executionTarget.machineId,
+      placement: null,
+    });
     await expect(executor.execute('session.spawn_new', { ...sessionSpawnInput, permissionMode: 'read-only' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1',
       runtimeAccountId: 'account-1', defaultSessionId: 'parent-1',
@@ -684,6 +706,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       workDepth: args.workDepth, originSessionId: args.originSessionId,
     }))).toEqual([0, 1].map(() => ({ actionCaller: caller, permissionMode: 'read-only',
       sessionAgentSpawnPolicyV1: policy, workDepth: 1, originSessionId: caller.sessionId })));
+    expect(sessionSpawnNew.mock.calls[1]?.[0]).toEqual({ ...deferredSpawnArgs, context: capturedContext });
   });
 
   it('retains an Agent permission ceiling through durable Run approval replay', async () => {
@@ -1153,6 +1176,12 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     observedServerIdentityId,
     checksCurrentness,
   ) => {
+    const grant = ApiTokenGrantV1Schema.parse({
+      v: 1,
+      actions: { families: [], ids: ['session.title.set'] },
+      targets: { sessions: ['session-1'], machines: [] },
+      approve: false, origins: [], models: null, permissionModes: null, create: null,
+    });
     let storedRequest: ApprovalRequest = ApprovalRequestV2Schema.parse({
       v: 2,
       status: 'open',
@@ -1184,6 +1213,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
             actionId: 'session.title.set', requestId: 'request-1',
             requestEnvelopeDigest: 'a'.repeat(43),
             target: { kind: 'session', sessionId: 'session-1' },
+            grant,
           },
         },
       },

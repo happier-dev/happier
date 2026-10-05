@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { sealAccountScopedBlobCiphertext } from "@happier-dev/protocol";
+import {
+    sealAccountScopedBlobCiphertext,
+    type AutomationConversationActionHttpCallerV1,
+    type PluginSourceCustodyV1,
+} from "@happier-dev/protocol";
 
 import {
     AutomationConversationTargetVerificationCallerError,
@@ -17,17 +21,23 @@ import { registerAutomationConversationRoutes } from "./registerAutomationConver
 const PATH = "/v1/automations/conversation/target/verify";
 const LIST_PATH = "/v1/automations/conversation/targets/list";
 const ADMIT_PATH = "/v1/automations/conversation/admit";
+const SOURCE_CUSTODY = {
+    kind: "development",
+    registeredRootId: "channels-root",
+} satisfies PluginSourceCustodyV1;
 const BODY = {
     v: 1,
     caller: {
         pluginId: "happier.channels",
         contributionLocalId: "binding/create-v1",
+        occurrenceId: "channels-occurrence-1",
+        sourceCustody: SOURCE_CUSTODY,
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
             pluginId: "happier.channels",
         },
-    },
+    } satisfies AutomationConversationActionHttpCallerV1,
     input: {
         automationId: "automation-1",
     },
@@ -38,12 +48,14 @@ const LIST_BODY = {
     caller: {
         pluginId: "happier.channels",
         contributionLocalId: "binding/create-v1",
+        occurrenceId: "channels-occurrence-1",
+        sourceCustody: SOURCE_CUSTODY,
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
             pluginId: "happier.channels",
         },
-    },
+    } satisfies AutomationConversationActionHttpCallerV1,
     input: {
         limit: 2,
         cursor: "automation-0",
@@ -55,12 +67,14 @@ const ADMIT_BODY = {
     caller: {
         pluginId: "happier.channels",
         contributionLocalId: "provider/observation-ingest-v1",
+        occurrenceId: "channels-occurrence-1",
+        sourceCustody: SOURCE_CUSTODY,
         materialization: {
             machineId: "machine-1",
             materializationId: "materialization-1",
             pluginId: "happier.channels",
         },
-    },
+    } satisfies AutomationConversationActionHttpCallerV1,
     input: {
         automationId: "automation-1",
         bindingId: "binding-1",
@@ -171,6 +185,7 @@ describe("Automation conversation target-verification route", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                sourceCustody: SOURCE_CUSTODY,
             },
             input: LIST_BODY.input,
         });
@@ -217,17 +232,20 @@ describe("Automation conversation target-verification route", () => {
         const thirdPartyCaller = {
             pluginId: "acme.slack-bridge",
             contributionLocalId: "slack/binding-v1",
+            occurrenceId: "slack-occurrence-1",
+            sourceCustody: { kind: "development", registeredRootId: "slack-root" },
             materialization: {
                 machineId: "machine-1",
                 materializationId: "materialization-slack-1",
                 pluginId: "acme.slack-bridge",
             },
-        } as const;
+        } as const satisfies AutomationConversationActionHttpCallerV1;
         const stampedCaller = {
             pluginId: "acme.slack-bridge",
             machineId: "machine-1",
             machineInstallationId: "installation-1",
             materializationId: "materialization-slack-1",
+            sourceCustody: thirdPartyCaller.sourceCustody,
         } as const;
         const listTargets = vi.fn(async () => ({
             items: [{
@@ -348,6 +366,7 @@ describe("Automation conversation target-verification route", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                sourceCustody: SOURCE_CUSTODY,
             },
             input: ADMIT_BODY.input,
         });
@@ -410,6 +429,7 @@ describe("Automation conversation target-verification route", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                sourceCustody: SOURCE_CUSTODY,
             },
             hostEvidence: ENCRYPTED_ADMIT_BODY.hostEvidence,
         });
@@ -438,11 +458,12 @@ describe("Automation conversation target-verification route", () => {
         const externalCaller = {
             ...ADMIT_BODY.caller,
             pluginId: "com.acme.other",
+            sourceCustody: { kind: "development", registeredRootId: "other-root" },
             materialization: {
                 ...ADMIT_BODY.caller.materialization,
                 pluginId: "com.acme.other",
             },
-        } as const;
+        } as const satisfies AutomationConversationActionHttpCallerV1;
 
         await getRouteHandler(app, "POST", ADMIT_PATH)({
             userId: "account-1",
@@ -460,6 +481,7 @@ describe("Automation conversation target-verification route", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                sourceCustody: externalCaller.sourceCustody,
             },
             input: ADMIT_BODY.input,
         });
@@ -511,6 +533,7 @@ describe("Automation conversation target-verification route", () => {
                 machineId: "machine-1",
                 machineInstallationId: "installation-1",
                 materializationId: "materialization-1",
+                sourceCustody: SOURCE_CUSTODY,
             },
             input: BODY.input,
         });

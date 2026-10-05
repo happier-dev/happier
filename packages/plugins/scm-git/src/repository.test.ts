@@ -201,15 +201,31 @@ describe('Git repository detection', () => {
         const repoRoot = await initRepoWithCommit('git-plugin-detect-ownership-');
         const realCommand = createRealGitScmBackendRuntimeServices().runCommand;
         try {
+            const refusedProbe = await realCommand({
+                command: 'git',
+                installableKey: 'git',
+                cwd: repoRoot,
+                args: ['-c', 'safe.directory=', 'rev-parse', '--is-inside-work-tree'],
+                env: { LC_ALL: 'C', LANGUAGE: 'C', GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' },
+            });
+            expect(refusedProbe).toMatchObject({ success: false, exitCode: 128 });
+            expect(refusedProbe.stderr).toContain('dubious ownership');
             const detection = runWithGitScmCommandRunner(
                 (input) => realCommand({
                     ...input,
+                    // Git's protected safe.directory allowlist still applies to its forced-owner test flag.
+                    args: ['-c', 'safe.directory=', ...input.args],
                     env: { ...input.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' },
                 }),
                 () => detectGitRepo({ cwd: repoRoot }),
             );
             await expect(detection).rejects.toMatchObject({
                 errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+            });
+            expect(await runWithRealGitScmRuntime(() => detectGitRepo({ cwd: repoRoot }))).toMatchObject({
+                isRepo: true,
+                mode: '.git',
+                rootPath: await realpath(repoRoot),
             });
         } finally {
             await rm(repoRoot, { recursive: true, force: true });

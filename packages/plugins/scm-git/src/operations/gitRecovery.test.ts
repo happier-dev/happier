@@ -87,7 +87,7 @@ describe('Git recoverable mutations', () => {
             writeFileSync(join(repo.cwd, 'file.txt'), 'upstream\n');
             git(repo.cwd, 'commit', '-qam', 'upstream');
             const result = await runWithRealGitScmRuntime(() => gitStashPop({ context: repo.context, request: { stashRef: 'stash@{0}' } }));
-            expect(result).toMatchObject({ success: false, outcome: { kind: 'conflicted', recoveryStash: { stashOid }, repositoryState: { hasConflicts: true, operation: { kind: 'stash_apply', unresolvedCount: 1, canContinue: false, canAbort: false, canSkip: false } } } });
+            expect(result).toMatchObject({ success: false, outcome: { kind: 'conflicted', recoveryStash: { stashOid }, repositoryState: { hasConflicts: true, operation: null }, nextActions: [{ kind: 'resolve_conflicts' }] } });
             expect(git(repo.cwd, 'rev-parse', 'refs/stash')).toBe(stashOid);
         } finally { repo.cleanup(); }
     });
@@ -102,7 +102,7 @@ describe('Git recoverable mutations', () => {
             git(repo.cwd, 'commit', '-qam', 'later');
             try { git(repo.cwd, 'revert', '--no-edit', reverted); } catch { /* expected real conflict */ }
             const state = await runWithRealGitScmRuntime(() => readGitBranchOperationState(repo.context));
-            expect(state).toMatchObject({ kind: 'revert', canContinue: false, canAbort: true, unresolvedCount: 1, replayCommit: reverted, entries: [{ path: 'file.txt', kind: 'both_modified', stages: [{ stage: 1 }, { stage: 2 }, { stage: 3 }] }] });
+            expect(state).toMatchObject({ kind: 'revert', canContinue: false, canAbort: true, unresolvedCount: 1, replayCommit: reverted, conflicts: [{ path: 'file.txt', kind: 'both_modified', indexStages: { base: expect.any(String), ours: expect.any(String), theirs: expect.any(String) } }] });
             const blocked = await runWithRealGitScmRuntime(() => gitBranchOperationContinue({ context: repo.context, request: { operation: 'revert' } }));
             expect(blocked).toMatchObject({ success: false, outcome: { kind: 'conflicted' } });
             writeFileSync(join(repo.cwd, 'file.txt'), 'resolved\n');
@@ -139,7 +139,7 @@ describe('Git recoverable mutations', () => {
             writeFileSync(join(repo.cwd, 'file.txt'), 'main\n');
             git(repo.cwd, 'commit', '-qam', 'main');
             try { git(repo.cwd, operation, operation === 'cherry-pick' ? otherOid : 'other'); } catch { /* expected */ }
-            expect(await runWithRealGitScmRuntime(() => readGitBranchOperationState(repo.context))).toMatchObject({ kind: operation, unresolvedCount: 1, canContinue: false, canAbort: true, canSkip: operation !== 'merge' });
+            expect(await runWithRealGitScmRuntime(() => readGitBranchOperationState(repo.context))).toMatchObject({ kind: operation === 'cherry-pick' ? 'cherry_pick' : operation, unresolvedCount: 1, canContinue: false, canAbort: true, canSkip: operation !== 'merge' });
         } finally { repo.cleanup(); }
     });
 

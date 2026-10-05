@@ -1,8 +1,40 @@
 import { describe, expect, it } from 'vitest';
 
-import { createStorageModuleMock, createStorageModuleStub, createUseSettingMock } from './storage';
+import { createLiveStorageStoreMock, createStorageModuleMock, createStorageModuleStub, createUseSettingMock } from './storage';
+import { createSessionFixture } from '../fixtures/sessionFixtures';
+import { createToolCallMessageFixture } from '../fixtures/transcriptFixtures';
+import { clearSessionMessageDerivedCachesForServerScopeReset, readSessionMessagesSnapshot } from '@/sync/store/hooks';
+import { clearSessionTranscriptDerivedCachesForSession } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 
 describe('storage fixture setting readers', () => {
+    it('reads the injected Session owner and keeps the canonical ordered transcript snapshot', () => {
+        const session = createSessionFixture();
+        let sessions = { [session.id]: session };
+        const store = createLiveStorageStoreMock(() => ({ sessions }));
+        const module = createStorageModuleStub({ storage: store });
+        expect(store((state) => [state.profile.connectedServicesV2, state.profile.connectedAccountsV4])).toEqual([[], []]);
+        expect(store((state) => state.profile)).toBe(module.useProfile());
+        const explicitProfile = { ...store.getState().profile, id: 'account-2' };
+        const overriddenStore = createLiveStorageStoreMock(() => ({ profile: explicitProfile }));
+        expect(overriddenStore((state) => state.profile)).toBe(explicitProfile);
+        expect(module.useSessionMachineId(session.id)).toBe('machine-1');
+        expect(module.useSessionMachineId('absent')).toBeNull();
+        sessions = { [session.id]: { ...session, metadata: { ...session.metadata!, machineId: 'machine-2' } } };
+        expect(module.useSessionMachineId(session.id)).toBe('machine-2');
+
+        const first = createToolCallMessageFixture({ id: 'first', createdAt: 1 });
+        const second = createToolCallMessageFixture({ id: 'second', createdAt: 2 });
+        const snapshot = module.readSessionMessagesSnapshot(session.id, ['second', 'first'], { first, second }, 1, true);
+        expect(snapshot).toEqual([second, first]);
+        expect(module.readSessionMessagesSnapshot(session.id, [], {}, 2, false)).toBe(snapshot);
+        expect(readSessionMessagesSnapshot(session.id, [], {}, 2, false)).toBe(snapshot);
+        clearSessionTranscriptDerivedCachesForSession(session.id);
+        expect(module.readSessionMessagesSnapshot(session.id, [], {}, 2, false)).toEqual([]);
+        module.readSessionMessagesSnapshot(session.id, ['first'], { first }, 3, true);
+        clearSessionMessageDerivedCachesForServerScopeReset();
+        expect(module.readSessionMessagesSnapshot(session.id, [], {}, 4, false)).toEqual([]);
+    });
+
     it('reads the injected setting through both read-only and mutable hooks as the fixture changes', () => {
         const values: { scmGitPaneLayout: 'tabs' | 'unified' } = { scmGitPaneLayout: 'tabs' };
         const module = createStorageModuleStub({ useSetting: createUseSettingMock({ values }) });

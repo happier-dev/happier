@@ -28,6 +28,7 @@ import {
   ConversationProviderConnectionStopInputV1Schema,
   ConversationProvidersContributionProtocolV1,
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+  SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -677,7 +678,12 @@ describe('Channels core activation', () => {
           (action) => action.id === id,
         );
         if (!manifestAction) throw new Error(`Missing manifest Action '${id}'.`);
-        expect(manifestAction.surfaces).toEqual(['cli', 'ui']);
+        expect(manifestAction.surfaces).toEqual(
+          id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate
+            || id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled
+            ? ['cli', 'ui', 'agent', 'mcp']
+            : ['cli', 'ui'],
+        );
         const serializedInputSchema = JSON.parse(JSON.stringify(declaration.inputSchema));
         const serializedResultSchema = JSON.parse(JSON.stringify(declaration.resultSchema));
         expect(serializedInputSchema).not.toBe(declaration.inputSchema);
@@ -718,12 +724,16 @@ describe('Channels core activation', () => {
 
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
-      // The eight Resources and two supervisors are the ones this package owns;
-      // asserting the counts keeps the derived list from passing vacuously if a
-      // whole family disappeared from the manifest. Five are Session-scoped:
-      // transcript activity plus the four producers behind the Session
-      // destination, Session info, and its two Composer chips.
-      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(27);
+      // Require the consumed Action families independently of the manifest,
+      // then check exact registration correspondence below. Adding an Action
+      // must not require freezing a new incidental inventory count.
+      expect(expected.filter((entry) => entry.family === 'actions')).toEqual(expect.arrayContaining([
+        ...Object.values(CONVERSATION_MANAGEMENT_ACTION_IDS_V1),
+        ...Object.values(CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1),
+        SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+      ].map((localId) => ({ family: 'actions', localId }))));
+      // Five of the eight Resources are Session-scoped; the two supervisors
+      // own checkpointed ingress and retained outward delivery.
       expect(expected.filter((entry) => entry.family === 'resources')).toHaveLength(8);
       expect(expected.filter((entry) => entry.family === 'backgroundServices')).toHaveLength(2);
       expect(activation.registrations()).toEqual(expected);

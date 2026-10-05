@@ -2091,7 +2091,7 @@ describe('Action Spec Registry', () => {
     expect(serialized.approval).toEqual({ result: 'required' });
   });
 
-  it('serializes tool exposure metadata in action catalog entries', () => {
+  it('serializes generic-only tool exposure without inventing a direct MCP binding', () => {
     const parsed = ActionSpecSchema.parse({
       id: 'review.start',
       title: 'Start review',
@@ -2108,7 +2108,6 @@ describe('Action Spec Registry', () => {
         api: false,
         plugin: false,
       },
-      bindings: { mcpToolName: 'review_start' },
       outputSchema: z.unknown(),
       inputSchema: z.object({}).strict(),
       toolExposure: {
@@ -2119,6 +2118,16 @@ describe('Action Spec Registry', () => {
     expect(serializeActionSpec(parsed).toolExposure).toEqual({
       agent: 'discoverable_only',
     });
+    expect(parsed.bindings?.mcpToolName).toBeUndefined();
+    const genericSpec = getActionSpec('projects.list');
+    expect(ActionSpecSchema.safeParse(genericSpec).success).toBe(true);
+    expect(protocol.isActionDirectToolExposedOn(genericSpec, 'mcp')).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...parsed, bindings: { mcpToolName: '' },
+    }).success).toBe(false);
+    expect(ActionSpecSchema.safeParse({
+      ...parsed, outputSchema: undefined,
+    }).success).toBe(false);
   });
 
   it('does not reuse MCP tool bindings across action specs', () => {
@@ -3770,7 +3779,7 @@ describe('Action Spec Registry', () => {
   const canonicalSessionSpawnInput = {
     creationKey: 'manual:attempt-7',
     executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-    directory: '/tmp/project',
+    directory: { kind: 'path', path: '/tmp/project' },
     organizationPlacement: { folderId: null, tagIds: [] },
     agentTarget: {
       kind: 'agent',
@@ -3790,7 +3799,7 @@ describe('Action Spec Registry', () => {
     expect(projection).toEqual({
       input: {
         creationKey: 'manual:attempt-7',
-        directory: '/tmp/project',
+        directory: { kind: 'path', path: '/tmp/project' },
         organizationPlacement: { folderId: null, tagIds: [] },
         agentTarget: {
           kind: 'agent',
@@ -3862,6 +3871,8 @@ describe('Action Spec Registry', () => {
       optionsSourceId: 'agents.config_options.available',
     });
     expect(fieldsByPath.get('directory')).toMatchObject({
+      widget: 'json',
+      required: true,
       optionsSourceId: 'sessions.spawn.paths.recent',
     });
     expect(fieldsByPath.get('executionTarget.machineId')).toMatchObject({
@@ -3882,7 +3893,10 @@ describe('Action Spec Registry', () => {
     expect(fieldsByPath.has('backendTargetKey')).toBe(false);
     expect(fieldsByPath.has('modelId')).toBe(false);
     expect(fieldsByPath.has('path')).toBe(false);
+    expect(fieldsByPath.has('directory.path')).toBe(false);
     expect(fieldsByPath.has('machineId')).toBe(false);
+    expect(ActionInputHintsSchema.safeParse(spec.inputHints).success).toBe(true);
+    expect(ActionInputHintsSchema.safeParse(spec.surfaceBindings?.api?.inputHints).success).toBe(true);
   });
 
   it.each([

@@ -4,6 +4,7 @@ import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/proto
 import { ErrorCode, McpError, SubscribeRequestSchema, UnsubscribeRequestSchema, type CallToolResult, type ServerRequest, type ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 import { getActionSpec, WaitActionInputV1Schema, type WaitActionInputV1 } from '@happier-dev/protocol';
 import type { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import type { ToolRegistrar } from '@/mcp/server/registerHappierMcpBuiltInTools';
 
 export type McpWatchOptions = Readonly<{
   server: McpServer;
@@ -91,7 +92,9 @@ export function registerMcpWatchSubscriptions(options: McpWatchOptions): void {
   }
 
   const spec = getActionSpec('wait');
-  server.registerTool('watch', {
+  // The SDK accepts whole Zod 4 schemas at runtime, but its 4.4 declaration identity differs from Protocol's 4.3.
+  const tools = server as unknown as ToolRegistrar<RequestHandlerExtra<ServerRequest, ServerNotification>>;
+  tools.registerTool('watch', {
     title: 'Watch work',
     description: `${spec.description} Returns a readable resource URI for passive observation. Resource updates are change hints; the MCP host decides whether to wake an agent.`,
     // MCP detects Zod 4 through _zod; its nested Zod copy has different internal types.
@@ -100,7 +103,7 @@ export function registerMcpWatchSubscriptions(options: McpWatchOptions): void {
   }, async (args: unknown, extra: RequestHandlerExtra<ServerRequest, ServerNotification>): Promise<CallToolResult> => {
     try {
       const input = WaitActionInputV1Schema.parse(args);
-      const snapshot = await read(input, extra.signal);
+      const snapshot = await read(input, extra?.signal);
       return { content: [{ type: 'text', text: JSON.stringify({ ...snapshot, resourceUri: resourceUri(input) }) }] };
     } catch (error) {
       if (!(error instanceof McpError)) throw error;

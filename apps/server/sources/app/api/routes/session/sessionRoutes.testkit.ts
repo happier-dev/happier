@@ -115,6 +115,8 @@ export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
 
 const sessionDbMocks = createDbMocks({
+    homeSettings: ["findUnique"],
+    homeGovernancePolicy: ["findUnique"],
     account: ["findMany", "findUnique"],
     session: ["findMany", "findFirst", "findUnique", "update", "updateMany"],
     sessionPin: ["count", "findMany"],
@@ -135,6 +137,9 @@ const sessionDbMocks = createDbMocks({
 } as const);
 
 const txDbMocks = createDbMocks({
+    automationRun: ["groupBy"],
+    sessionReportsTo: ["findMany"],
+    homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
     teamMembership: ["findMany"],
@@ -556,7 +561,15 @@ export function resetSessionRouteMocks(): void {
     listQueuedExecutionRunPendingTargetsForSessions.mockResolvedValue([]);
     dbQueryRaw.mockReset();
     dbQueryRaw.mockResolvedValue([]);
+    // List/detail projections read these persisted relations even when a
+    // fixture has neither pending review runs nor Reports-to edges.
+    txDb.automationRun.groupBy.mockResolvedValue([]);
+    txDb.sessionReportsTo.findMany.mockResolvedValue([]);
     txDb.teamMembership.findMany.mockResolvedValue([]);
+    // No persisted Home overrides: exercise the real deployment-inheriting overlay.
+    sessionDbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
+    sessionDbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
+    txDb.homeSettings.findUnique.mockResolvedValue(null);
     txDb.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     txDb.identityProviderInstance.findMany.mockResolvedValue([]);
     randomKeyNaked.mockReturnValue("upd-id");
@@ -589,6 +602,10 @@ export function resetSessionRouteMocks(): void {
         return ids.map((id: string) => ({
             id,
             ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW,
+            firstName: null,
+            lastName: null,
+            username: null,
+            avatar: null,
         }));
     });
     emitEphemeral.mockReset();

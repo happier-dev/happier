@@ -19,7 +19,7 @@ describe('AGENT_DEFINITION', () => {
     });
 
     it('authors Claude model facts in the plugin definition', () => {
-        expect(AGENT_DEFINITION.modelConfig.staticModels?.[0]).toMatchObject({
+        expect(AGENT_DEFINITION.modelConfig.staticModels?.find(({ id }) => id === 'claude-opus-5')).toMatchObject({
             id: 'claude-opus-5',
             name: 'Opus 5',
             contextWindowTokens: 1_000_000,

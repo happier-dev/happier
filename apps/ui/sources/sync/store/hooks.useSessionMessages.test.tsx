@@ -206,36 +206,44 @@ describe('useSessionMessages', () => {
         }
     });
 
-    it('includes the session seq when a loaded transcript has a terminal turn status', async () => {
+    it('uses published ready activity rather than raw terminal session seq for a loaded transcript', async () => {
         const previousState = storage.getState();
+        const sessionId = 's-terminal-visible';
         try {
-            storage.setState((state) => ({
-                ...state,
-                sessionMessages: {
-                    ...state.sessionMessages,
-                    's-terminal-visible': {
-                        messageIdsOldestFirst: [],
-                        messagesById: {},
-                        messagesMap: {},
-                        reducerState: {} as any,
-                        latestThinkingMessageId: null,
-                        latestThinkingMessageActivityAtMs: null,
-                        messagesVersion: 1,
-                        isLoaded: true,
-                    },
-                },
-            }));
-
-            const hook = await renderHook(() => useSessionVisibleReadSeq('s-terminal-visible', {
-                sessionSeq: 12,
+            storage.getState().applySessions([createSessionFixture({
+                id: sessionId,
+                seq: 12,
                 latestTurnStatus: 'completed',
+            })]);
+            storage.getState().applyMessagesLoaded(sessionId);
+
+            const hook = await renderHook(() => useSessionVisibleReadSeq(sessionId, {
+                sessionSeq: storage.getState().sessions[sessionId].seq,
+                latestTurnStatus: storage.getState().sessions[sessionId].latestTurnStatus,
             }), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
-            expect(hook.getCurrent()).toBe(12);
+            try {
+                expect(hook.getCurrent()).toBe(0);
 
-            await hook.unmount();
+                await act(async () => {
+                    storage.getState().applyMessages(sessionId, [{
+                        id: 'ready-1',
+                        seq: 11,
+                        localId: null,
+                        createdAt: 1_000,
+                        isSidechain: false,
+                        role: 'event',
+                        content: { type: 'ready' },
+                    }]);
+                });
+
+                expect(storage.getState().sessions[sessionId].seq).toBe(12);
+                expect(hook.getCurrent()).toBe(11);
+            } finally {
+                await hook.unmount();
+            }
         } finally {
             storage.setState(previousState);
         }

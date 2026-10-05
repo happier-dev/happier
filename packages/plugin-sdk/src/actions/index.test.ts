@@ -36,6 +36,7 @@ import type {
   SessionTranscriptGetExternalShareableResultV1 as CanonicalSessionTranscriptGetExternalShareableResultV1,
 } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult as CanonicalActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { WorkflowDefinitionV1 as CanonicalWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import {
     PluginMachineExecutionOriginV1Schema as canonicalPluginMachineExecutionOriginV1Schema,
 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -264,14 +265,42 @@ describe('ActionsService source contract', () => {
         // without changing the public map. Protocol validator brands are
         // deliberately erased from SDK results, so arbitrary public strings
         // do not flow back into canonical parser-output types.
-        // Birth triggers contain the same preprocessed inline Workflow target.
-        type InlineWorkflowInputActionId = 'workflow.trigger.add' | 'workflow.trigger.update' | 'session.trigger.add' | 'session.trigger.update' | 'session.spawn_new';
+        // The producer refines only the recursive validator's erased inline
+        // definition. Preserve each containing request and every other Action.
+        type TriggerActionId = 'workflow.trigger.add' | 'workflow.trigger.update'
+            | 'session.trigger.add' | 'session.trigger.update';
+        type RefineInlineDefinition<T> = T extends { kind: 'inline'; definition: unknown }
+            ? Omit<T, 'definition'> & { definition: CanonicalWorkflowDefinitionV1 } : T;
+        type RefineTarget<T> = {
+            [K in keyof T]: K extends 'target' ? RefineInlineDefinition<T[K]> : T[K];
+        };
+        type CanonicalAuthorInputs = {
+            [Id in keyof CanonicalPluginActionInputById]: Id extends TriggerActionId ? {
+                [K in keyof CanonicalPluginActionInputById[Id]]: K extends 'patch'
+                    ? RefineTarget<CanonicalPluginActionInputById[Id][K]>
+                    : K extends 'target' ? RefineInlineDefinition<CanonicalPluginActionInputById[Id][K]>
+                        : CanonicalPluginActionInputById[Id][K];
+            } : CanonicalPluginActionInputById[Id];
+        };
+        type InlineDefinition<T> = Extract<NonNullable<T>, { kind: 'inline' }> extends { definition: infer D } ? D : never;
+        type PublicTriggerDefinitions = {
+            'workflow.trigger.add': InlineDefinition<PluginActionInputById['workflow.trigger.add']['target']>;
+            'workflow.trigger.update': InlineDefinition<PluginActionInputById['workflow.trigger.update']['patch']['target']>;
+            'session.trigger.add': InlineDefinition<PluginActionInputById['session.trigger.add']['target']>;
+            'session.trigger.update': InlineDefinition<PluginActionInputById['session.trigger.update']['patch']['target']>;
+        };
+        type CanonicalTriggerDefinitions = { [Id in TriggerActionId]: CanonicalWorkflowDefinitionV1 };
+        const canonicalInputsFitPublic = (
+            value: Omit<CanonicalAuthorInputs, 'session.spawn_new'>,
+        ): Omit<PluginActionInputById, 'session.spawn_new'> => value;
+        const canonicalDefinitionsFitPublic = (
+            value: CanonicalTriggerDefinitions,
+        ): PublicTriggerDefinitions => value;
+        // Birth triggers also carry the recursive inline Workflow validator.
+        type InlineWorkflowInputActionId = TriggerActionId | 'session.spawn_new';
         type ParsedCanonicalInlineInputs = {
             [Id in InlineWorkflowInputActionId]: ReturnType<(typeof canonicalPluginActionInputSchemas)[Id]['parse']>;
         };
-        const canonicalInputsFitPublic = (
-            value: Omit<CanonicalPluginActionInputById, InlineWorkflowInputActionId>,
-        ): Omit<PluginActionInputById, InlineWorkflowInputActionId> => value;
         const canonicalParsedInlineInputsFitPublic = (
             value: ParsedCanonicalInlineInputs,
         ): Pick<PluginActionInputById, InlineWorkflowInputActionId> => value;
@@ -279,6 +308,7 @@ describe('ActionsService source contract', () => {
             value: CanonicalPluginActionResultById,
         ): PluginActionResultById => value;
         void canonicalInputsFitPublic;
+        void canonicalDefinitionsFitPublic;
         void canonicalParsedInlineInputsFitPublic;
         void canonicalResultsFitPublic;
         expectTypeOf<PluginInvocableActionId>()

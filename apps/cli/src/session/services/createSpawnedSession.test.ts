@@ -1222,6 +1222,22 @@ describe('createSpawnedSession settlement', () => {
     });
   });
 
+  it('retains daemon-proven Agent identity when an accepted spawn fails during nonce settlement', async () => {
+    callMachineRpc.mockImplementation(async ({ method }) => method === RPC_METHODS.SPAWN_HAPPY_SESSION
+      ? { success: true, sessionIdStatus: 'pending', spawnNonce: 'agent-setup-nonce' }
+      : { status: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+          errorMessage: 'Agent setup required', agentId: 'codex' });
+
+    await expect(createSpawnedSession({
+      credentials, directory: '/repo', machineId: 'machine-exact',
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      spawnNonce: 'agent-setup-nonce',
+    })).rejects.toMatchObject({
+      code: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+      details: { agentId: 'codex', spawnNonce: 'agent-setup-nonce' },
+    });
+  });
+
   it('keeps a known direct Session successful when server visibility is still unavailable', async () => {
     vi.stubEnv('HAPPIER_SESSION_SPAWN_FETCH_TIMEOUT_MS', '25');
     vi.stubEnv('HAPPIER_SESSION_SPAWN_FETCH_POLL_INTERVAL_MS', '1');

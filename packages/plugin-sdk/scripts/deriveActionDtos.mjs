@@ -428,10 +428,10 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
               if (!selected) throw Error('Unexpanded composable property');
               const types = ts.isUnionTypeNode(selected) ? selected.types : [selected];
               const defined = types.filter(n => n.kind !== ts.SyntaxKind.UndefinedKeyword);
-              // ProtocolObjectProjection removes the const shape's readonly
-              // modifier for both admitted input and output properties.
-              const modifiers = member.modifiers?.filter(modifier => modifier.kind !== ts.SyntaxKind.ReadonlyKeyword);
-              return ts.factory.createPropertySignature(modifiers, member.name,
+              // ProtocolObjectProjection removes shape readonly; other authored
+              // readonly members outside this projection retain their modifiers.
+              return ts.factory.createPropertySignature(
+                member.modifiers?.filter(modifier => modifier.kind !== ts.SyntaxKind.ReadonlyKeyword), member.name,
                 defined.length !== types.length ? ts.factory.createToken(ts.SyntaxKind.QuestionToken) : member.questionToken,
                 ts.visitNode(defined.length === 1 ? defined[0] : ts.factory.createUnionTypeNode(defined), visit));
             }));

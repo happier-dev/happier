@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/sessions';
 
 import { TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1 } from '../../sessions/entrySessionWorkspace.js';
 import {
@@ -42,7 +43,8 @@ describe('projecting the settled new-Session draft', () => {
         expect(projectTriageNewSessionDestinationV1({
             workspaceMode: 'reference_only',
             creationKey: 'creation-key-1',
-            settlement: SETTLED,
+            // Use the same canonical settlement validator as the host producer.
+            settlement: SessionServerStartSpawnDraftV1Schema.parse(SETTLED),
         })).toEqual({
             status: 'settled',
             destination: {
@@ -215,6 +217,21 @@ describe('projecting the settled new-Session draft', () => {
             creationKey: 'creation-key-6',
             settlement: withoutDirectory,
         })).toEqual({ status: 'refused', reason: 'draftUnusable' });
+    });
+
+    it('refuses directories that cannot supply the exact chosen working path', () => {
+        for (const directory of [
+            { kind: 'managed' },
+            { kind: 'path', path: '' },
+            { kind: 'path', path: '/workspaces/example', managed: true },
+            '/workspaces/example',
+        ]) {
+            expect(projectTriageNewSessionDestinationV1({
+                workspaceMode: 'reference_only',
+                creationKey: 'creation-key-directory',
+                settlement: { ...SETTLED, directory },
+            })).toEqual({ status: 'refused', reason: 'draftUnusable' });
+        }
     });
 
     it('refuses a settlement the host did not settle at all', () => {

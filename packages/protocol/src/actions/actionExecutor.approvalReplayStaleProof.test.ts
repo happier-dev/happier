@@ -6,7 +6,7 @@ import type { ActionExecutorDeps } from './executor/types.js';
 const sessionSpawnInput = {
   creationKey: 'manual:stale-directory-proof-1',
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-  directory: '/workspace/project',
+  directory: { kind: 'path', path: '/workspace/project' },
   organizationPlacement: { folderId: null, tagIds: [] },
   agentTarget: {
     kind: 'agent',
@@ -19,7 +19,7 @@ describe('session.spawn_new approval replay directory proof', () => {
     const approvedProof = {
       v: 1 as const,
       executionTarget: sessionSpawnInput.executionTarget,
-      directory: sessionSpawnInput.directory,
+      directory: sessionSpawnInput.directory.path,
     };
     const changedProof = {
       v: 1 as const,

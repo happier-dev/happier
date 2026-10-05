@@ -2,12 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor as createRawActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from './actionSpecs.js';
 import { ActionIdSchema } from './actionIds.js';
 import type { MachinesAgentsListInput } from '../capabilities/machineAgentInventory.js';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
+import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
+import { ExecutionRunLaunchOriginSchema } from '../execution/runs/startRequest.js';
+import { AgentStartSessionCallerV1Schema, type AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 import {
   ExecutionRunTransportErrorCodeSchema,
   type ExecutionRunTransportErrorCode,
@@ -120,12 +123,22 @@ describe('machine Agent inventory execution', () => {
 const canonicalSessionSpawnInput = {
   creationKey: 'inventory:session-create-1',
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-  directory: '/repo/project',
+  directory: { kind: 'path', path: '/repo/project' },
   agentTarget: {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
   },
 } as const;
+
+const presentUserActionLaunchOrigin = ExecutionRunLaunchOriginSchema.parse({ kind: 'external', source: 'action' });
+const inventoryAgentStartContext = {
+  caller: AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: 'session_1', starterDepth: 1, turnDepth: 2 }),
+  baseline: {
+    machineId: 'machine-1', directory: '/repo/project',
+    configuration: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+  },
+  ledSubtreeSessionIds: [], roles: {}, workDepthLimit: 4, callerPermissionCeiling: 'default',
+} satisfies AgentStartContextV1;
 
 describe('createActionExecutor (inventory/discovery)', () => {
   it('resolves declared plugin input options only through the granted consuming field', async () => {
@@ -239,12 +252,15 @@ describe('createActionExecutor (inventory/discovery)', () => {
     };
     const executor = createActionExecutor(deps);
     const id = ActionIdSchema.parse('execution.run.cancel_turn');
-    const result = await executor.execute(id, { sessionId: 'session-1', ...request }, { surface: 'agent' });
+    const caller = { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session-1' } as const;
+    const result = await executor.execute(id, { sessionId: 'session-1', ...request }, caller);
     expect(result).toEqual({ ok: true, result: output });
     expect(requests).toEqual([{ sessionId: 'session-1', input: request }]);
     expect(getActionSpec(id).bindings?.rpcMethod).toBe('execution.run.cancelTurn.v1');
     await expect(executor.execute(id, { sessionId: 'session-1', runId: 'run-1', turnId: 'turn-1' }))
       .resolves.toMatchObject({ ok: false });
+    await expect(executor.execute(id, { sessionId: 'another-session', ...request }, caller))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(requests).toHaveLength(1);
   });
 
@@ -300,18 +316,21 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it('selects the nearest non-escalating delegate permission when permissionMode is omitted', async () => {
     const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({ runId: 'run-1', callId: 'call-1', sidechainId: 'side-1' }));
     const executor = createActionExecutor(deps);
 
     const res = await executor.execute('subagents.delegate.start', {
       backendTargetKeys: ['agent:claude'],
       instructions: 'Delegate this task.',
-    }, { surface: 'agent', defaultSessionId: 'session_1' });
+    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', agentStartContext: inventoryAgentStartContext });
 
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true, result: {
+      results: [{ key: 'agent:claude', ok: true, result: { runId: 'run-1' } }],
+    } });
     expect(deps.executionRunStart).toHaveBeenCalledWith(
       'session_1',
-      expect.objectContaining({ permissionMode: 'default' }),
-      undefined,
+      expect.objectContaining({ permissionMode: 'default', launchOrigin: { kind: 'session', sessionId: 'session_1' } }),
+      expect.objectContaining({ workDepth: 3 }),
     );
   });
 
@@ -325,7 +344,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
       permissionMode: 'workspace_write',
     }, {
       surface: 'agent',
+      authority: 'account_automation',
       defaultSessionId: 'session_1',
+      agentStartContext: inventoryAgentStartContext,
       callerPermissionMode: 'workspace_write',
       causalPermissionAuthority: {
         kind: 'admittedSessionInputV1',
@@ -335,8 +356,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(res).toMatchObject({
       ok: false,
-      errorCode: 'permission_escalation_denied',
-      details: { requestedMode: 'workspace_write', callerMode: 'default' },
+      errorCode: 'permission_exceeds_ceiling',
+      details: { code: 'permission_exceeds_ceiling' },
     });
     expect(deps.executionRunStart).not.toHaveBeenCalled();
   });
@@ -366,18 +387,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const res = await executor.execute('execution.run.start', {
       sessionId: 'session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Run this task.',
       permissionMode: 'workspace_write',
       retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-    }, { surface: 'agent', defaultSessionId: 'session_1' });
+    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', agentStartContext: inventoryAgentStartContext });
 
     expect(res).toEqual(expect.objectContaining({
       ok: false,
-      errorCode: 'permission_escalation_denied',
-      error: 'permission_escalation_denied',
+      errorCode: 'permission_exceeds_ceiling',
+      error: 'permission_exceeds_ceiling',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
     }));
     expect(deps.executionRunStart).not.toHaveBeenCalled();
   });
@@ -399,11 +421,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
         intent: 'delegate',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         permissionMode: 'workspace_write',
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'agent:claude',
         }),
       }),
-      undefined,
+      {},
     );
   });
 
@@ -439,22 +462,25 @@ describe('createActionExecutor (inventory/discovery)', () => {
       'session_1',
       expect.objectContaining({
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        launchOrigin: presentUserActionLaunchOrigin,
         connectedServices: expect.objectContaining({
           bindingsByServiceId: expect.objectContaining({
             'happier.agent.codex/openai-codex': expect.objectContaining({ profileId: 'profile_1' }),
           }),
         }),
       }),
-      undefined,
+      {},
     );
     const claudeCall = (deps.executionRunStart as ReturnType<typeof vi.fn>).mock.calls
       .find((call) => (call[1] as { backendTarget?: { agentId?: string } }).backendTarget?.agentId === 'claude');
     expect(claudeCall?.[1]).toMatchObject({
+      launchOrigin: presentUserActionLaunchOrigin,
       connectedServices: {
         ...blanketSelection,
         v: 2,
       },
     });
+    expect(claudeCall?.[2]).toEqual({});
   });
 
   it('treats successful execution-run service envelopes as successful fanout results', async () => {
@@ -465,6 +491,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         runId: 'run_1',
         callId: 'call_1',
         sidechainId: 'side_1',
+        requestedConfiguration: { modelId: '  model_1  ', reasoningEffort: 'high' },
       },
     }));
     const executor = createActionExecutor(deps);
@@ -488,6 +515,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
               runId: 'run_1',
               callId: 'call_1',
               sidechainId: 'side_1',
+              requestedConfiguration: { modelId: '  model_1  ', reasoningEffort: 'high' },
             },
           },
         ],
@@ -518,11 +546,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
       expect.objectContaining({
         intent: 'plan',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'backend:codex',
         }),
       }),
-      undefined,
+      {},
     );
     expect(deps.executionRunStart).toHaveBeenNthCalledWith(
       2,
@@ -530,21 +559,25 @@ describe('createActionExecutor (inventory/discovery)', () => {
       expect.objectContaining({
         intent: 'plan',
         backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'backend:review-bot:configured:review-bot',
         }),
       }),
-      undefined,
+      {},
     );
   });
 
-  it.each(['returned', 'thrown', 'unknown'] as const)('preserves native launch creation evidence for %s fanout failures', async (failureKind) => {
+  it.each(['returned', 'thrown', 'unknown', 'malformed', 'contradictory'] as const)('preserves native launch creation evidence for %s fanout failures', async (failureKind) => {
     const deps = createDeps();
     deps.reviewEnginesList = vi.fn(async () => ({
       items: [{ value: 'coderabbit', label: 'CodeRabbit' }],
     }));
     const message = 'Unable to resolve a default base branch for CodeRabbit review.';
-    const details = { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } as const;
+    const details = {
+      executionRunStart: { v: failureKind === 'malformed' ? 2 : 1, runCreation: 'noRunCreated' },
+      privateBridgeField: 'must-not-escape',
+    };
     deps.executionRunStart = vi.fn(async () => {
       if (failureKind === 'thrown') {
         throw Object.assign(new Error(message), { code: 'execution_run_not_allowed', details });
@@ -553,7 +586,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
         ok: false,
         code: 'execution_run_not_allowed',
         message,
-        ...(failureKind === 'returned' ? { details } : {}),
+        ...(failureKind === 'unknown' ? {} : { details }),
+        ...(failureKind === 'contradictory' ? { runId: 'partially-created-run' } : {}),
       };
     });
     const executor = createActionExecutor(deps);
@@ -577,7 +611,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
             ok: false,
             errorCode: 'execution_run_not_allowed',
             error: 'Unable to resolve a default base branch for CodeRabbit review.',
-            details: { executionRunStart: { v: 1, runCreation: failureKind === 'unknown' ? 'outcomeUnknown' : 'noRunCreated' } },
+            details: { executionRunStart: { v: 1, runCreation: failureKind === 'returned' || failureKind === 'thrown' ? 'noRunCreated' : 'outcomeUnknown' } },
           },
         ],
       },
@@ -585,8 +619,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     if (!res.ok) throw new Error('Review Action did not dispatch');
     expect(getActionSpec('review.start').completion?.launched(res.result)).toEqual({
       runs: [],
-      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed',
-        runCreation: failureKind === 'unknown' ? 'outcomeUnknown' : 'noRunCreated' }],
+      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed' }],
     });
   });
 
@@ -753,11 +786,13 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it('routes paths.list_recent to deps.pathsListRecent', async () => {
     const deps = createDeps();
-    const executor = createActionExecutor(deps);
+    const items = [{ path: '/repo', label: 'Repo' }, { label: 'Private workspace' }];
+    const pathsListRecent = vi.fn(async () => ({ items }));
+    const executor = createActionExecutor({ ...deps, pathsListRecent });
 
     const res = await executor.execute('paths.list_recent', { machineId: 'm1', limit: 3 });
-    expect(res.ok).toBe(true);
-    expect(deps.pathsListRecent).toHaveBeenCalledWith({ machineId: 'm1', limit: 3 });
+    expect(res).toEqual({ ok: true, result: { items } });
+    expect(pathsListRecent).toHaveBeenCalledWith({ machineId: 'm1', limit: 3 });
   });
 
   it('routes projects.list to deps.projectsList', async () => {
@@ -869,6 +904,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         retentionPolicy: 'ephemeral',
         runClass: 'long_lived',
         ioMode: 'streaming',
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'agent:codex',
         }),
@@ -976,7 +1012,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
   ] as const;
 
   it.each(hostStampedServerInventoryCases)(
-    'drops caller-supplied server identity and binds host-stamped identity for %s',
+    'rejects caller-supplied server identity before inventory dispatch for %s',
     async (actionId, dependencyName, actionInput) => {
       const deps = createDeps();
       const executor = createActionExecutor(deps);
@@ -985,11 +1021,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
         actionId,
         { ...actionInput, serverId: 'caller-controlled' },
         { serverId: 'host-stamped' },
-      )).resolves.toMatchObject({ ok: true });
-      expect(deps[dependencyName]).toHaveBeenCalledWith({
-        ...actionInput,
-        serverId: 'host-stamped',
-      });
+      )).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(deps[dependencyName]).not.toHaveBeenCalled();
     },
   );
 
@@ -1449,6 +1482,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_1',
+      context: { surface: 'ui', authority: 'present_user' },
       answers: [{
         question: 'Where should this run?',
         values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
@@ -1470,6 +1504,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_legacy',
+      context: { surface: 'ui', authority: 'present_user' },
       answers: [{ question: 'What next?', values: ['Proceed'] }],
     });
   });
@@ -1489,11 +1524,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_1',
+      context: { surface: 'ui', authority: 'present_user' },
       decision: 'request_changes',
       reason: 'Revise the plan before exiting plan mode.',
       answers: [],
-      updatedPermissions: undefined,
     });
+    expect(vi.mocked(deps.sessionUserActionAnswer!).mock.calls[0]?.[0]).not.toHaveProperty('updatedPermissions');
   });
 
   it('searches enabled action specs through action.spec.search', async () => {
@@ -1503,12 +1539,17 @@ describe('createActionExecutor (inventory/discovery)', () => {
       isActionEnabled: (actionId) => actionId !== 'review.start',
     });
 
-    const res = await executor.execute('action.spec.search', { query: '', limit: 50 }, { surface: 'voice' });
-    expect(res.ok).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'subagents.plan.start')).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'review.start')).toBe(false);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'session.mode.set')).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'workspaces.list_recent')).toBe(false);
+    for (const [actionId, expected] of [
+      ['subagents.plan.start', true],
+      ['review.start', false],
+      ['session.mode.set', true],
+      ['execution.run.cancel_turn', false],
+    ] as const) {
+      const res = await executor.execute('action.spec.search', { query: actionId, limit: 50 }, { surface: 'voice' });
+      expect(res).toMatchObject({ ok: true });
+      if (!res.ok) throw new Error('Action search did not complete');
+      expect(res.result.actionSpecs.some((spec) => spec.id === actionId)).toBe(expected);
+    }
   });
 
   it('discovers current contributed Action definitions through the shared catalog operations', async () => {
@@ -1791,7 +1832,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     const sessionSpawnOptionContext = {
       executionTarget: { serverId: 'local', machineId: 'm1' },
-      directory: '/repo',
+      directory: { kind: 'path', path: '/repo' },
       agentTarget: {
         kind: 'agent',
         identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
@@ -1813,7 +1854,10 @@ describe('createActionExecutor (inventory/discovery)', () => {
       ['agents.models.available', 'modelSelection', [{ value: 'claude-opus-4-8', label: 'Claude Opus' }]],
       ['agents.session_modes.available', 'agentModeId', [{ value: 'plan', label: 'Plan' }]],
       ['agents.config_options.available', 'configuration', [{ value: 'reasoning_effort', label: 'Thinking' }]],
-      ['sessions.spawn.paths.recent', 'directory', [{ value: '/repo', label: 'Repo' }]],
+      ['sessions.spawn.paths.recent', 'directory', [
+        { value: '{"kind":"managed"}', label: 'No folder' },
+        { value: '{"kind":"path","path":"/repo"}', label: 'Repo' },
+      ]],
       ['sessions.spawn.machines.available', 'executionTarget.machineId', [{ value: 'm1', label: 'Laptop' }]],
       ['sessions.spawn.servers.available', 'executionTarget.serverId', [{ value: 'local', label: 'Local' }]],
       ['sessions.spawn.profiles.available', 'profileId', [{ value: 'profile-default', label: 'Default profile' }]],
@@ -1876,6 +1920,75 @@ describe('createActionExecutor (inventory/discovery)', () => {
       selection: sessionSpawnOptionContext.mcpSelection,
       limit: 10,
     });
+  });
+
+  it('returns Session spawn directory JSON options without selecting redacted or invalid paths', async () => {
+    const executor = createActionExecutor({
+      ...createDeps(),
+      pathsListRecent: async () => ({ items: [
+        { path: ' /repo ', label: 'Repo' },
+        { label: 'Private workspace' },
+        { path: ' ', label: 'Invalid path' },
+      ] }),
+    });
+    const result = await executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new',
+      fieldPath: 'directory',
+      draftInput: { executionTarget: { serverId: 'local', machineId: 'm1' } },
+    });
+
+    expect(result).toEqual({ ok: true, result: {
+      actionId: 'session.spawn_new',
+      fieldPath: 'directory',
+      optionsSourceId: 'sessions.spawn.paths.recent',
+      options: [
+        { value: '{"kind":"managed"}', label: 'No folder' },
+        { value: '{"kind":"path","path":"/repo"}', label: 'Repo' },
+      ],
+    } });
+    if (!result.ok) throw new Error('Expected directory options');
+    const output = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(result.result);
+    for (const option of output.options) {
+      if (typeof option.value !== 'string') throw new Error('Expected JSON completion text');
+      expect(SessionDirectoryIntentV1Schema.safeParse(JSON.parse(option.value)).success).toBe(true);
+    }
+  });
+
+  it.each([
+    [{ kind: 'path', path: ' /repo ' }, '/repo'],
+    [{ kind: 'managed' }, undefined],
+    ['/retired-flat-directory', undefined],
+  ] as const)('reads Session spawn directory %j for dependent options', async (directory, expectedPath) => {
+    const spawnMcpServersPreview = vi.fn(async () => ({ items: [] }));
+    const executor = createActionExecutor({
+      ...createDeps(),
+      resolveSessionSpawnAgentInventorySelection: () => ({ agentId: 'claude', backendTargetKey: 'backend:claude' }),
+      spawnMcpServersPreview,
+    });
+    await expect(executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new',
+      fieldPath: 'mcpSelection',
+      draftInput: {
+        executionTarget: { serverId: 'local', machineId: 'm1' },
+        directory,
+        path: '/retired-path',
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      },
+    })).resolves.toMatchObject({ ok: true });
+    expect(spawnMcpServersPreview).toHaveBeenCalledWith({
+      agentId: 'claude', backendTargetKey: 'backend:claude', machineId: 'm1',
+      ...(expectedPath === undefined ? {} : { directory: expectedPath }),
+    });
+  });
+
+  it('retains the declared flat directory context for direct MCP preview options', async () => {
+    const spawnMcpServersPreview = vi.fn(async () => ({ items: [] }));
+    const executor = createActionExecutor({ ...createDeps(), spawnMcpServersPreview });
+    await expect(executor.execute('action.options.resolve', {
+      optionsSourceId: 'sessions.spawn.mcp_servers.preview',
+      draftInput: { agentId: 'claude', directory: '/repo' },
+    })).resolves.toMatchObject({ ok: true });
+    expect(spawnMcpServersPreview).toHaveBeenCalledWith({ agentId: 'claude', directory: '/repo' });
   });
 
   it('resolves dependent ergonomic-run options from the canonical draftInput target', async () => {

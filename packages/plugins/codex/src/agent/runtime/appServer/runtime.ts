@@ -1926,7 +1926,7 @@ export function createCodexAppServerRuntime(
     });
     // Structured context rejection settles this input, while the native thread
     // remains available for a distinct host-admitted turn.
-    if (!isCodexAppServerContextWindowExhaustedError(error, { structuredOnly: true })) {
+    if (!isCodexAppServerContextWindowExhaustedError(terminalPendingTurnFailure, { structuredOnly: true })) {
       publishRuntimeEvent({
         kind: 'backend-error',
         error: {

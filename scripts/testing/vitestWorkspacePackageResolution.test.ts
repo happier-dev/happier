@@ -4,14 +4,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
-import uiArtifactCacheConfig from '../../apps/ui/vitest.artifact-cache.config.ts';
-import pluginSdkFacadeCurrentConfig from '../../packages/plugin-sdk/vitest.facade-current.config.ts';
-import pluginSdkSourceConfig from '../../packages/plugin-sdk/vitest.source.config.ts';
-import piRealOwnersConfig from '../../packages/plugins/pi/vitest.realOwners.config.ts';
-import piSpawnedRealOwnersConfig from '../../packages/plugins/pi/vitest.spawnedRealOwners.config.ts';
-import qaFixturesConfig from '../../packages/tests/vitest.qa-fixtures.config.ts';
-import voiceModelpacksDirectSourceConfig from '../../packages/voice-modelpacks/vitest.direct-source.config.ts';
-
 import {
     createWorkspacePackageSourcesPlugin,
     readBundledPluginWorkspacePackageSpecs,
@@ -78,6 +70,38 @@ test('workspace export resolution selects the default source entry by default', 
         resolve(fixture.sourceRoot, 'ui', 'voice', 'index.ts'),
     );
 });
+
+for (const indexedRoot of [false, true]) {
+    test(`workspace export resolution maps ${indexedRoot ? 'indexed' : 'conditional'} dual-mode root entries to authored source`, () => {
+        const packageRoot = mkdtempSync(join(tmpdir(), 'happier-vitest-dual-mode-resolution-'));
+        const sourceRoot = resolve(packageRoot, 'src');
+        mkdirSync(sourceRoot);
+        writeFileSync(resolve(sourceRoot, 'index.ts'), 'export const value = true;\n', 'utf8');
+        writeFileSync(resolve(sourceRoot, 'private.ts'), 'export const privateValue = true;\n', 'utf8');
+        const rootExport = {
+            require: { types: './dist/index.d.cts', default: './dist/index.cjs' },
+            import: { types: './dist/index.d.mts', default: './dist/index.mjs' },
+        };
+        writeFileSync(resolve(packageRoot, 'package.json'), JSON.stringify({
+            name: 'dual-mode-fixture',
+            exports: indexedRoot ? { '.': rootExport } : rootExport,
+        }), 'utf8');
+
+        const sourcePlugins = [[], ['require']].map((exportConditions) =>
+            createWorkspacePackageSourcesPlugin(
+                [{ packageName: 'dual-mode-fixture', packageSourceRoot: sourceRoot }],
+                'dual-mode-fixture-sources',
+                { exportConditions },
+            ));
+        assert.deepEqual(
+            sourcePlugins.map((sourcePlugin) => sourcePlugin.resolveId('dual-mode-fixture')),
+            [resolve(sourceRoot, 'index.ts'), resolve(sourceRoot, 'index.ts')],
+        );
+        for (const sourcePlugin of sourcePlugins) {
+            assert.equal(sourcePlugin.resolveId('dual-mode-fixture/private'), null);
+        }
+    });
+}
 
 test('workspace export resolution prefers the authored public leaf for declared index entrypoints', () => {
     const fixture = writeFixturePackage();
@@ -201,7 +225,24 @@ function firstPartyAliases(config: { resolve?: { alias?: unknown } }): readonly 
     return [];
 }
 
-test('ordinary workspace-source Vitest configs use the canonical resolver instead of package aliases', () => {
+test('ordinary workspace-source Vitest configs use the canonical resolver instead of package aliases', async () => {
+    const [
+        { default: uiArtifactCacheConfig },
+        { default: pluginSdkFacadeCurrentConfig },
+        { default: pluginSdkSourceConfig },
+        { default: piRealOwnersConfig },
+        { default: piSpawnedRealOwnersConfig },
+        { default: qaFixturesConfig },
+        { default: voiceModelpacksDirectSourceConfig },
+    ] = await Promise.all([
+        import('../../apps/ui/vitest.artifact-cache.config.ts'),
+        import('../../packages/plugin-sdk/vitest.facade-current.config.ts'),
+        import('../../packages/plugin-sdk/vitest.source.config.ts'),
+        import('../../packages/plugins/pi/vitest.realOwners.config.ts'),
+        import('../../packages/plugins/pi/vitest.spawnedRealOwners.config.ts'),
+        import('../../packages/tests/vitest.qa-fixtures.config.ts'),
+        import('../../packages/voice-modelpacks/vitest.direct-source.config.ts'),
+    ]);
     for (const { config, pluginName, importId, expectedSourcePath, additionalImports = [] } of [
         {
             config: uiArtifactCacheConfig,

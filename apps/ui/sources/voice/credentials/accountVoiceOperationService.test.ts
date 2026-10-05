@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import {
-  AccountProfileSchema,
   createRecipientContractDigestV1,
   normalizeRecipientContractV1,
   resolveRequiredRecipientContractApprovalDigestV1,
@@ -10,13 +14,6 @@ import {
   captureActiveServerAccountScopeLifetime,
   retireActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { storage } from '@/sync/domains/state/storage';
-import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
-import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
-import { settingsParse } from '@/sync/domains/settings/settings';
-import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import {
   applySavedSecretCatalogPage,
@@ -75,13 +72,7 @@ type TestConnectedAccountPurposeBindings = Readonly<{
   }>[];
 }>;
 
-const mocks = vi.hoisted(() => ({
-  activeServerId: 'server-1',
-  activeProfileScope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }) as Readonly<{
-    serverId: string;
-    accountId: string;
-  }> | null,
-  state: {
+let credentialFixture = {
     settingsScope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }) as Readonly<{
       serverId: string;
       accountId: string;
@@ -134,34 +125,29 @@ const mocks = vi.hoisted(() => ({
         credentialRevision: string;
       }>,
     },
-  },
-}));
+};
 
-// Fixture assignments update the real store so credential readers, scope
-// lifetime and settings normalization share the same canonical state.
-Object.defineProperty(mocks, 'state', {
-  get: () => storage.getState(),
-  set: (next: typeof mocks.state) => {
-    storage.setState((current) => ({
-      ...current,
-      settingsScope: next.settingsScope,
-      settings: settingsParse(next.settings),
-      profile: AccountProfileSchema.parse({ ...current.profile, ...next.profile }),
-      profileScope: mocks.activeProfileScope,
-    }));
+// Domain fixtures write the real store; Account admission and retirement remain
+// owned by the real connection/Sync harness, not a selected-Home mock.
+const accountFixture = {
+  get state() { return credentialFixture; },
+  set state(value: typeof credentialFixture) {
+    credentialFixture = value;
+    storage.setState({
+      settingsScope: value.settingsScope,
+      settings: settingsParse(value.settings),
+    });
   },
-});
+};
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let accountScope = { serverId: 'server-1', accountId: 'account-1' };
 
 // The Home's authorized Saved Secret catalog read is the network boundary; the
 // catalog engine, snapshot store and resolver below it stay real.
 const catalogBoundary = vi.hoisted(() => ({ readSavedSecretCatalog: vi.fn() }));
 vi.mock('@/sync/api/account/apiSavedSecretCatalog', () => ({
   readSavedSecretCatalog: catalogBoundary.readSavedSecretCatalog,
-}));
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-  // Adapt its dynamic CommonJS TypeScript loader to Vitest's ESM loader while
-  // returning the real Sync owner, including its actual encryption state.
-  getSyncSingleton: () => sync,
 }));
 
 function createSettings(
@@ -460,45 +446,55 @@ function requestClientAuth(service: ReturnType<typeof createAccountVoiceOperatio
   });
 }
 
-function retireAndReenterSameAccount(): void {
-  mocks.activeProfileScope = null;
-  storage.setState({ profileScope: null });
-  retireActiveServerAccountScopeLifetime();
-  mocks.activeProfileScope = Object.freeze({ serverId: mocks.activeServerId, accountId: 'account-1' });
-  storage.setState({ profileScope: mocks.activeProfileScope });
-  captureActiveServerAccountScopeLifetime();
+async function retireAndReenterSameAccount(): Promise<void> {
+  if (!connection) throw new Error('Expected a mounted test Account');
+  const settings = storage.getState().settings;
+  await disconnectActiveServerConnection();
+  await restoreConnectionToActiveServer(connection.credentials);
+  expect(storage.getState().profileScope).toEqual(accountScope);
+  expect(storage.getState().settingsScope).toEqual(accountScope);
+  storage.setState({ settings });
+  expect(captureActiveServerAccountScopeLifetime()).not.toBeNull();
 }
 
 describe('account Voice operation service', () => {
   beforeEach(async () => {
     resetSavedSecretCatalogSnapshotsForTests();
     retireActiveServerAccountScopeLifetime();
-    const profile = await upsertServerProfile({ serverUrl: 'https://voice-credentials.example.test' });
-    await setActiveServerId(profile.id);
-    mocks.activeServerId = profile.id;
-    // Apply the real connection owner without credentials or a network session.
-    // Account lifetime capture must observe an applied Home, not only selection.
-    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null);
-    try {
-      await switchConnectionToActiveServer();
-    } finally {
-      credentials.mockRestore();
-    }
-    mocks.activeProfileScope = Object.freeze({ serverId: profile.id, accountId: 'account-1' });
-    mocks.state = {
-      settingsScope: Object.freeze({ serverId: profile.id, accountId: 'account-1' }),
+    // Bridge Metro's lazy require to the same real Sync used by the connection
+    // harness; catalog materialization must not receive a fake singleton.
+    await loadSyncSingletonForTests();
+    connection = await restoreServerAccountForTest({
+      serverUrl: 'https://voice-home.example.test',
+      accountId: 'account-1',
+      request: async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        return Response.json({}, { status: 404 });
+      },
+    });
+    accountScope = { serverId: connection.home.id, accountId: 'account-1' };
+    expect(storage.getState().profileScope).toEqual(accountScope);
+    expect(captureActiveServerAccountScopeLifetime()).not.toBeNull();
+    accountFixture.state = {
+      settingsScope: accountScope,
       settings: createSettings('secret-1', 1),
       profile: {
         connectedServicesV2: [],
         connectedServiceCredentialRevisionsV1: [],
       },
     };
-    registerStorageStateReader(() => storage.getState());
+  });
+
+  afterEach(async () => {
+    await connection?.dispose();
+    connection = null;
   });
 
   it('uses a shared-only catalog ref and fails closed once that scoped material is stale', async () => {
     const ref = 'happier:shared-secret:v1:resource-voice';
-    const scope = { serverId: mocks.activeServerId, accountId: 'account-1' } as const;
+    const scope = accountScope;
     applySavedSecretCatalogPage({
       scope,
       entries: [{
@@ -539,8 +535,8 @@ describe('account Voice operation service', () => {
       savedSecret: resolveSavedSecretReference(scope, [], ref),
     });
     if (!approval) throw new Error('expected shared approval');
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...createSettings(ref, 7, approval),
         secrets: [],
@@ -565,7 +561,7 @@ describe('account Voice operation service', () => {
 
   it('re-reads the Home before a new request spends a shared secret whose revocation hint was missed', async () => {
     const ref = 'happier:shared-secret:v1:resource-voice-revoked';
-    const scope = { serverId: mocks.activeServerId, accountId: 'account-1' } as const;
+    const scope = accountScope;
     applySavedSecretCatalogPage({
       scope,
       entries: [{
@@ -598,8 +594,8 @@ describe('account Voice operation service', () => {
       savedSecret: resolveSavedSecretReference(scope, [], ref),
     });
     if (!approval) throw new Error('expected shared approval');
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: { ...createSettings(ref, 3, approval), secrets: [] },
     };
     // The owner removed the grant; the AccountChange that would have said so
@@ -627,8 +623,8 @@ describe('account Voice operation service', () => {
   });
 
   it('does not re-materialize a changed machine-scoped secret during one live raw invocation', async () => {
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: createMachineOverrideSettings(1),
     };
     const lease = createAccountVoiceCredentialAuthorityLease({
@@ -661,8 +657,8 @@ describe('account Voice operation service', () => {
       kind: 'httpHeaders',
       headers: { authorization: 'Bearer machine-secret' },
     });
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       // The source keeps the same SavedSecret id; only the exact selected
       // machine record is replaced while the callback remains live.
       settings: createMachineOverrideSettings(2),
@@ -783,8 +779,8 @@ describe('account Voice operation service', () => {
       // The source changes after the pre-materialization fence. The
       // post-materialization fence must still prevent the provider request.
       const replacement = createSettings('secret-1', 2);
-      mocks.state = {
-        ...mocks.state,
+      accountFixture.state = {
+        ...accountFixture.state,
         settings: {
           ...replacement,
           voiceSettingsV1: {
@@ -833,8 +829,8 @@ describe('account Voice operation service', () => {
   });
 
   it('does not fall back to a dormant SavedSecret when a Connected Account source is selected', async () => {
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...createSettings('secret-1', 1),
         voiceSettingsV1: {
@@ -878,8 +874,8 @@ describe('account Voice operation service', () => {
   });
 
   it('accepts required Connected Account headers without requiring an optional header', async () => {
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...createSettings('secret-1', 1),
         voiceSettingsV1: {
@@ -955,8 +951,8 @@ describe('account Voice operation service', () => {
   });
 
   it('selects by slot purpose while authorizing a different recipient operation purpose', async () => {
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...createSettings('secret-1', 1),
         voiceSettingsV1: {
@@ -1033,8 +1029,8 @@ describe('account Voice operation service', () => {
   });
 
   it('preserves missing-credential classification when no SavedSecret exists to approve', async () => {
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...createSettings('secret-1', 1, null),
         secrets: [],
@@ -1064,8 +1060,8 @@ describe('account Voice operation service', () => {
     // right now", not "there is no credential": it must not reach the surface
     // as a credential-remediation code (which renders "Review credentials" for
     // a credential that may be perfectly valid).
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...createSettings('secret-1', 1),
         voiceSettingsV1: {
@@ -1293,8 +1289,8 @@ describe('account Voice operation service', () => {
   });
 
   it('retains the selected secret but blocks use until recipient access is reviewed', async () => {
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: createSettings('secret-1', 1, null),
     };
     const materializeSecret = vi.fn(async () => 'account-secret');
@@ -1314,7 +1310,7 @@ describe('account Voice operation service', () => {
     });
     expect(materializeSecret).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
-    expect(mocks.state.settings.voiceSettingsV1.credentialBindings[0]?.credentialBindings.account.api_key)
+    expect(accountFixture.state.settings.voiceSettingsV1.credentialBindings[0]?.credentialBindings.account.api_key)
       .toBe('secret-1');
   });
 
@@ -1322,8 +1318,8 @@ describe('account Voice operation service', () => {
     // The stored approval was collected for the operations Happier shipped
     // before the update; a contract Happier itself authored must not revoke
     // itself, so the credential still reaches the declared origin.
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: createSettings('secret-1', 1, 'sha256:' + 'f'.repeat(64)),
     };
     const materializeSecret = vi.fn(async () => 'account-secret');
@@ -1442,7 +1438,7 @@ describe('account Voice operation service', () => {
 
   it('does not decrypt after the selected credential source switches between authorization and materialization', async () => {
     const fetch = vi.fn();
-    const materializeSecret = vi.fn(async () => 'account-secret');
+    const decryptSecretValue = vi.spyOn(sync, 'decryptSecretValue');
     let currentnessChecks = 0;
     const service = createAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
@@ -1455,8 +1451,8 @@ describe('account Voice operation service', () => {
         // must prevent secret disclosure altogether.
         if (currentnessChecks === 3) {
           const replacement = createSettings('secret-1', 1);
-          mocks.state = {
-            ...mocks.state,
+          accountFixture.state = {
+            ...accountFixture.state,
             settings: {
               ...replacement,
               voiceSettingsV1: {
@@ -1471,13 +1467,16 @@ describe('account Voice operation service', () => {
         }
         return true;
       },
-      materializeSecret,
       fetch,
     });
 
-    await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
-    expect(materializeSecret).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
+    try {
+      await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
+      expect(decryptSecretValue).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      decryptSecretValue.mockRestore();
+    }
   });
 
   it('withdraws authority when the account credential binding rotates while reading the response', async () => {
@@ -1488,7 +1487,7 @@ describe('account Voice operation service', () => {
             value: 'short-lived-client-auth',
             expires_at: Math.floor(Date.now() / 1_000) + 60,
           })));
-          mocks.state = { ...mocks.state, settings: createSettings('secret-2', 2) };
+          accountFixture.state = { ...accountFixture.state, settings: createSettings('secret-2', 2) };
           controller.close();
         },
       });
@@ -1508,9 +1507,9 @@ describe('account Voice operation service', () => {
 
   it('keeps a selected SavedSecret operation current when an unrelated Account Settings entry changes', async () => {
     const fetch = vi.fn(async () => {
-      const settings = structuredClone(mocks.state.settings);
-      mocks.state = {
-        ...mocks.state,
+      const settings = structuredClone(accountFixture.state.settings);
+      accountFixture.state = {
+        ...accountFixture.state,
         settings: {
           ...settings,
           secrets: [
@@ -1545,8 +1544,8 @@ describe('account Voice operation service', () => {
 
   it('keeps a selected Connected Account operation current when an unrelated Account Settings entry changes', async () => {
     const selectedSettings = createSettings('secret-1', 1);
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...selectedSettings,
         voiceSettingsV1: {
@@ -1572,9 +1571,9 @@ describe('account Voice operation service', () => {
       },
     };
     const fetch = vi.fn(async () => {
-      const settings = structuredClone(mocks.state.settings);
-      mocks.state = {
-        ...mocks.state,
+      const settings = structuredClone(accountFixture.state.settings);
+      accountFixture.state = {
+        ...accountFixture.state,
         settings: {
           ...settings,
           secrets: [
@@ -1613,7 +1612,7 @@ describe('account Voice operation service', () => {
 
   it('invalidates an in-flight SavedSecret operation after logout and same-Account reentry', async () => {
     const fetch = vi.fn(async () => {
-      retireAndReenterSameAccount();
+      await retireAndReenterSameAccount();
       return new Response(JSON.stringify({
         value: 'short-lived-client-auth',
         expires_at: Math.floor(Date.now() / 1_000) + 60,
@@ -1625,7 +1624,6 @@ describe('account Voice operation service', () => {
       signal: new AbortController().signal,
       isCurrent: () => true,
       fetch,
-      materializeSecret: async () => 'account-secret',
     });
 
     await expect(requestClientAuth(service)).rejects.toMatchObject({
@@ -1636,8 +1634,8 @@ describe('account Voice operation service', () => {
 
   it('invalidates an in-flight Connected Account operation after logout and same-Account reentry', async () => {
     const selectedSettings = createSettings('secret-1', 1);
-    mocks.state = {
-      ...mocks.state,
+    accountFixture.state = {
+      ...accountFixture.state,
       settings: {
         ...selectedSettings,
         voiceSettingsV1: {
@@ -1663,7 +1661,7 @@ describe('account Voice operation service', () => {
       },
     };
     const fetch = vi.fn(async () => {
-      retireAndReenterSameAccount();
+      await retireAndReenterSameAccount();
       return new Response(JSON.stringify({
         value: 'short-lived-client-auth',
         expires_at: Math.floor(Date.now() / 1_000) + 60,
@@ -1679,7 +1677,6 @@ describe('account Voice operation service', () => {
       signal: new AbortController().signal,
       isCurrent: () => true,
       fetch,
-      materializeSecret: async () => 'must-not-materialize',
       executeConnectedAccountOperation,
     });
 
@@ -1692,7 +1689,7 @@ describe('account Voice operation service', () => {
 
   it('preserves authority when settings sync rehydrates the same account credential during the response', async () => {
     const fetch = vi.fn(async () => {
-      const settings = structuredClone(mocks.state.settings);
+      const settings = structuredClone(accountFixture.state.settings);
       settings.voiceSettingsV1.providers['happier.voice.openai/realtime-openai'] = {
         config: {
           session: { modalities: ['audio', 'text'], voice: 'marin' },
@@ -1700,11 +1697,11 @@ describe('account Voice operation service', () => {
         },
         schemaVersion: 1,
       };
-      mocks.state = {
-        ...mocks.state,
-        settingsScope: mocks.state.settingsScope === null
+      accountFixture.state = {
+        ...accountFixture.state,
+        settingsScope: accountFixture.state.settingsScope === null
           ? null
-          : { ...mocks.state.settingsScope },
+          : { ...accountFixture.state.settingsScope },
         settings,
       };
       return new Response(JSON.stringify({
@@ -1725,8 +1722,9 @@ describe('account Voice operation service', () => {
   });
 
   it('preserves a stable unscoped bootstrap credential authority', async () => {
-    mocks.state = {
-      ...mocks.state,
+    storage.setState({ profileScope: null });
+    accountFixture.state = {
+      ...accountFixture.state,
       settingsScope: null,
     };
     const service = createAccountVoiceOperationService({
@@ -1738,7 +1736,6 @@ describe('account Voice operation service', () => {
         value: 'short-lived-client-auth',
         expires_at: Math.floor(Date.now() / 1_000) + 60,
       }), { status: 200, headers: { 'content-type': 'application/json' } }),
-      materializeSecret: async () => 'account-secret',
     });
 
     await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });

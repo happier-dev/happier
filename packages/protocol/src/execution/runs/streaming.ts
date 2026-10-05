@@ -4,6 +4,11 @@ import { VoiceAssistantActionSchema } from '../../voice/actions.js';
 import { VoiceAgentOutputEventV1Schema } from '../../voice/outputEvents.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 
+export {
+  ExecutionRunTurnStreamReadRequestSchema,
+  type ExecutionRunTurnStreamReadRequest,
+} from './runPrimitives.js';
+
 // Streaming turn IO (V1: used for intent='voice_agent').
 export const ExecutionRunTurnStreamStartRequestSchema = z.object({
   runId: z.string().min(1),
@@ -56,16 +61,6 @@ export const ExecutionRunUserTranscriptCommitResponseSchema = z.object({
   ok: z.literal(true),
 }).passthrough();
 export type ExecutionRunUserTranscriptCommitResponse = z.infer<typeof ExecutionRunUserTranscriptCommitResponseSchema>;
-
-export const ExecutionRunTurnStreamReadRequestSchema = z.object({
-  runId: z.string().min(1),
-  streamId: z.string().min(1),
-  cursor: z.number().int().min(0),
-  maxEvents: z.number().int().min(1).max(256).optional(),
-  /** Hold an empty read until this cursor has events or the stream becomes terminal. */
-  waitForEvents: z.boolean().optional(),
-}).passthrough();
-export type ExecutionRunTurnStreamReadRequest = z.infer<typeof ExecutionRunTurnStreamReadRequestSchema>;
 
 export const ExecutionRunTurnStreamEventDeltaSchema = z.object({
   t: z.literal('delta'),

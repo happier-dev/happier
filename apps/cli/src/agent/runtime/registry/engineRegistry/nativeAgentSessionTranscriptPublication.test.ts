@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { createClaudeNativeAgentSdkContext } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeServices';
 
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { PluginTerminalHostError } from '@/plugins/runtime/context/terminalHost';
-import { createNativeAgentSessionHostServices } from './nativeAgentSession';
+import { composeNativeAgentSessionRuntimeContext, createNativeAgentSessionHostServices } from './nativeAgentSession';
 
 describe('native Agent durable transcript publication', () => {
     it('projects a typed Session event through the canonical durable runtime transcript owner', async () => {
@@ -63,11 +65,15 @@ describe('native Agent durable transcript publication', () => {
         );
     });
 
-    it('reserves an exact provider-fact identity through the canonical durable writer', async () => {
-        const enqueueAgentMessageCommitted = vi.fn(async () => ({
-            persisted: true,
-            delivered: false,
-        }));
+    it('custodies exact Claude prompt echoes through the native adapter and rejects a retired occurrence', async () => {
+        const committed: Array<Parameters<ApiSessionClient['enqueueAgentMessageCommitted']>> = [];
+        // Durable transport acknowledgement is the system boundary; the adapter and host writer stay real.
+        const enqueueAgentMessageCommitted = async (...record: Parameters<ApiSessionClient['enqueueAgentMessageCommitted']>) => {
+            committed.push(record);
+            return { persisted: true, delivered: false };
+        };
+        const signal = new AbortController().signal;
+        let current = true;
         const services = createNativeAgentSessionHostServices({
             owners: {
                 features: { isEnabled: () => false },
@@ -80,8 +86,8 @@ describe('native Agent durable transcript publication', () => {
             agentId: 'claude',
             sessionId: 'session-source-fact',
             directory: '/tmp/session-source-fact',
-            signal: new AbortController().signal,
-            isCurrent: () => true,
+            signal,
+            isCurrent: () => current,
             session: {
                 sessionId: 'session-source-fact',
                 updateMetadata: vi.fn(),
@@ -95,17 +101,29 @@ describe('native Agent durable transcript publication', () => {
             readToolExecutionCapability: () => null,
         } as never);
 
-        const markSourceFactConsumed = services.transcripts.markSourceFactConsumed;
-        expect(markSourceFactConsumed).toBeTypeOf('function');
-        if (!markSourceFactConsumed) {
-            throw new Error('Expected source-fact consumption support');
-        }
-        await expect(markSourceFactConsumed({
+        const context = composeNativeAgentSessionRuntimeContext({
+            identity: { pluginId: 'claude', pluginVersion: '1.0.0', agentId: 'claude' },
+            contributionId: 'runtime',
+            invokedAtMs: 0,
+            sessionId: 'session-source-fact',
+            signal,
+            sessionServices: services,
+            // Unused invocation capabilities are inert fixture fields, not mocked transcript logic.
+            services: {
+                logger: { debug() {}, info() {}, warn() {}, error() {} },
+                exec: {},
+            } as never,
+            ui: {} as never,
+            protocols: {} as never,
+            workState: {} as never,
+        });
+        const transcripts = createClaudeNativeAgentSdkContext(context).agentRuntime.transcripts;
+        const result = await transcripts.markSourceFactConsumed?.({
             localId: 'claude-jsonl:main:user:user-1',
             reason: 'host_prompt_echo',
-        })).resolves.toEqual({ status: 'custodied' });
+        });
 
-        expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+        const expectedRecord = [
             'claude',
             {
                 type: 'output',
@@ -122,7 +140,16 @@ describe('native Agent durable transcript publication', () => {
                 },
                 provenance: { kind: 'non_dependent', source: 'external' },
             },
-        );
+        ];
+        expect(committed).toEqual([expectedRecord]);
+        expect(result).toEqual({ status: 'custodied' });
+
+        current = false;
+        await expect(transcripts.markSourceFactConsumed?.({
+            localId: 'claude-jsonl:main:user:user-2',
+            reason: 'host_prompt_echo',
+        })).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+        expect(committed).toEqual([expectedRecord]);
     });
 
     it('does not bypass the exact durable session identity for a source fact', async () => {

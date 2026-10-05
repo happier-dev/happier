@@ -46,12 +46,15 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
   requestPluginActionExecution?: PluginActionExecutionRequestOwner;
   /** Exact caller bound by the host, never inferred from a requested target or surface. */
   getInitiatingActionCaller?: () => ActionCaller | null;
+  /** Host-stamped descriptive starter; never an authorization principal. */
+  startedBy?: WorkflowRunStartedByV1;
 }>): PluginActionExecutor {
   return createPluginActionExecutor({
     base: params.base,
     requestPluginActionExecution: params.requestPluginActionExecution
       ?? requestDaemonPluginActionExecution,
     ...(params.getInitiatingActionCaller ? { getInitiatingActionCaller: params.getInitiatingActionCaller } : {}),
+    ...(params.startedBy ? { startedBy: params.startedBy } : {}),
   });
 }
 
@@ -71,6 +74,8 @@ export function createPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution: PluginActionExecutionRequestOwner;
   getInitiatingActionCaller?: () => ActionCaller | null;
+  /** Host-stamped descriptive fallback; an exact context caller takes precedence. */
+  startedBy?: WorkflowRunStartedByV1;
 }>): PluginActionExecutor {
   const requestContributed = async (
     actionId: string, input: unknown, context?: OccurrenceBoundActionExecutorContext,
@@ -82,10 +87,13 @@ export function createPluginActionExecutor(params: Readonly<{
       matched: true as const,
       result: { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' },
     };
+    const startedBy = admittingCaller
+      ? resolveWorkflowRunStartedByForActionCallerV1(admittingCaller)
+      : params.startedBy;
     const request = {
       actionId, input, surface,
       ...(context?.requiredContributedActionDangerLevel ? { requiredDangerLevel: context.requiredContributedActionDangerLevel } : {}),
-      ...(admittingCaller ? { startedBy: resolveWorkflowRunStartedByForActionCallerV1(admittingCaller) } : {}),
+      ...(startedBy ? { startedBy } : {}),
       ...(typeof context?.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
       ...(typeof context?.expectedContributorOccurrenceId === 'string'
         && context.expectedContributorOccurrenceId.trim().length > 0

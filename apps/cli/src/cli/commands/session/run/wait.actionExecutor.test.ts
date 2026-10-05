@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { findCompiledActionCliCommand } from '@/cli/actions/compiledCommands';
+import { EXECUTION_RUN_WAIT_PRESENTATION } from './executionRunPresentation';
 
 const execute = vi.fn();
 const resolveSessionTarget = vi.fn(async () => ({ ok: true as const, sessionId: 'sess-canonical' }));
@@ -50,6 +52,94 @@ const observationTimeoutExecuteResult = {
     deadlineAtMs: 1_000,
   },
 } as const;
+
+describe('execution run wait result presentation', () => {
+  const runningRun = { ...succeededRunState, status: 'running' } as const;
+  const observedCases = [
+    {
+      name: 'permission attention',
+      condition: 'needs_attention',
+      payload: {
+        ok: true, status: 'running', disposition: 'needs_attention',
+        result: { run: { ...runningRun, attention: { kind: 'permission_required', requestIds: ['permission-1'] } } },
+      },
+      facts: ['permission_required', 'permission-1'],
+    },
+    {
+      name: 'running snapshot',
+      condition: 'change',
+      payload: { ok: true, status: 'running', disposition: 'snapshot', result: { run: runningRun } },
+      facts: ['running'],
+    },
+    {
+      name: 'terminal snapshot',
+      condition: 'change',
+      payload: { ok: true, status: 'succeeded', disposition: 'snapshot', result: { run: succeededRunState } },
+      facts: ['succeeded'],
+    },
+  ] as const;
+
+  async function present(payload: unknown, json: boolean, condition: 'needs_attention' | 'change') {
+    const command = findCompiledActionCliCommand(['session', 'run', 'wait']);
+    if (!command || !EXECUTION_RUN_WAIT_PRESENTATION.presentSuccess) throw new Error('The friendly wait presenter must exist');
+    const input = { sessionId: 'sess-canonical', runId: 'run-1', condition };
+    command.callerSchema.parse(input);
+    command.spec.inputSchema.parse(input);
+    await EXECUTION_RUN_WAIT_PRESENTATION.presentSuccess(payload, {
+      command, json, input, callerInput: input,
+    });
+  }
+
+  it.each(observedCases)('preserves $name facts without claiming timeout or completion', async ({ payload, facts, condition }) => {
+    const jsonOutput = captureConsoleJsonOutput();
+    try {
+      await present(payload, true, condition);
+      expect(jsonOutput.json()).toEqual({
+        v: 1, ok: true, kind: 'session_run_wait',
+        data: { sessionId: 'sess-canonical', runId: 'run-1', status: payload.status,
+          disposition: payload.disposition, result: payload.result },
+      });
+    } finally { jsonOutput.restore(); }
+
+    const humanOutput = captureConsoleJsonOutput();
+    try {
+      await present(payload, false, condition);
+      const text = humanOutput.logs.join('\n');
+      expect(text).toContain('run-1');
+      for (const fact of facts) expect(text).toContain(fact);
+      expect(text).not.toContain('undefined');
+      expect(text).not.toContain('observation ended');
+      expect(text).not.toContain('run finished');
+    } finally { humanOutput.restore(); }
+  });
+
+  it('preserves an unmet-condition timeout with a terminal observed state without claiming completion', async () => {
+    const payload = { ...observationTimeoutExecuteResult.result, status: 'succeeded', result: { run: succeededRunState } } as const;
+    const jsonOutput = captureConsoleJsonOutput();
+    try {
+      await present(payload, true, 'needs_attention');
+      expect(jsonOutput.json()).toEqual({
+        v: 1, ok: true, kind: 'session_run_wait',
+        data: {
+          sessionId: 'sess-canonical', runId: 'run-1', status: 'succeeded', disposition: 'observation_timeout',
+          timeoutMs: 1_000, observedAtMs: 1_050, deadlineAtMs: 1_000, result: payload.result,
+        },
+      });
+    } finally { jsonOutput.restore(); }
+
+    const humanOutput = captureConsoleJsonOutput();
+    try {
+      await present(payload, false, 'needs_attention');
+      const text = humanOutput.logs.join('\n');
+      expect(text).toContain('observation ended');
+      expect(text).toContain('1000ms');
+      expect(text).toContain('run-1');
+      expect(text).toContain('succeeded');
+      expect(text).not.toContain('still running');
+      expect(text).not.toContain('run finished');
+    } finally { humanOutput.restore(); }
+  });
+});
 
 describe('happier session run wait (action executor)', () => {
   beforeEach(() => {

@@ -318,19 +318,20 @@ describe('browser automation protocol contracts', () => {
     expect(serialized).not.toContain('token=');
   });
 
-  it('preserves locator values for action results while still dropping unsafe detail keys', async () => {
+  it('preserves readable page text and locator values for action results while dropping unsafe details', async () => {
     const mod = await loadAutomationModule();
 
     expect(mod?.redactBrowserAutomationActionResultDetails).toBeTypeOf('function');
     if (typeof mod?.redactBrowserAutomationActionResultDetails !== 'function') return;
 
     const redact = mod.redactBrowserAutomationActionResultDetails as (value: unknown) => unknown;
+    const visibleText = 'Visible page content';
     const redacted = redact({
       interactiveElements: [
         { role: 'button', name: 'Submit', selector: '#submit' },
       ],
       target: { locator: 'role=button[name="Submit"]' },
-      text: 'hunter2',
+      text: visibleText,
       password: 'secret',
       url: 'https://example.test/login?token=secret#fragment',
       nested: {
@@ -339,14 +340,14 @@ describe('browser automation protocol contracts', () => {
     });
     const serialized = JSON.stringify(redacted);
     const redactedRecord = redacted as {
+      text?: string;
       interactiveElements?: Array<{ selector?: string }>;
       target?: { locator?: string };
     };
 
     expect(redactedRecord.interactiveElements?.[0]?.selector).toBe('#submit');
     expect(redactedRecord.target?.locator).toBe('role=button[name="Submit"]');
-    expect(serialized).toContain('textLength');
-    expect(serialized).not.toContain('hunter2');
+    expect(redactedRecord.text).toBe(visibleText);
     expect(serialized).not.toContain('secret');
     expect(serialized).not.toContain('authorization');
     expect(serialized).not.toContain('token=');

@@ -559,6 +559,7 @@ export function createHappierMcpServer(
     ? createPluginActionExecutor({
         base: harness.executor,
         getInitiatingActionCaller,
+        ...(boundCallerSessionId ? { startedBy: 'agent' as const } : {}),
         requestPluginActionExecution: async (request, options) => {
           const initiatingActionCaller = getInitiatingActionCaller();
           if (!initiatingActionCaller) return { matched: true, result: {
@@ -576,6 +577,7 @@ export function createHappierMcpServer(
               surface: request.surface,
               // The client is bound by the Session host; request targets and surfaces do not establish provenance.
               initiatingActionCaller,
+              ...(request.startedBy ? { startedBy: request.startedBy } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
             },
@@ -584,6 +586,7 @@ export function createHappierMcpServer(
       })
     : createDaemonPluginActionExecutor({ base: harness.executor,
         getInitiatingActionCaller,
+        ...(boundCallerSessionId ? { startedBy: 'agent' } : {}),
       });
   const executor = createSessionAccountActionExecutor({ base: localExecutor, client });
 

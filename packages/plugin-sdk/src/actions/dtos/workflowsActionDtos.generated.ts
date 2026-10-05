@@ -3694,7 +3694,7 @@ export type WorkflowsActionResultById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -3704,12 +3704,12 @@ export type WorkflowsActionResultById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {
@@ -4317,7 +4317,7 @@ export type WorkflowsActionResultById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -4327,12 +4327,12 @@ export type WorkflowsActionResultById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {

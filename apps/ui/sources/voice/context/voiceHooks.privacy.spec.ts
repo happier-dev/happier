@@ -451,6 +451,29 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     );
   });
 
+  it('does not mark activity-only sessions as shown, so later target selection can emit full context', () => {
+    // Neither a current target nor Include in Voice grants s1 the active-session policy.
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
+    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
+
+    voiceHooks.onReady({ serverId: 'server-a', sessionId: 's1' });
+    // activity-only sessions should not emit a full session context block.
+    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+      'session_context',
+    );
+
+    // Selecting this exact target grants the active policy, independently of the readback cache.
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: 'server-a', sessionId: 's1' });
+    voiceHooks.onReady({ serverId: 'server-a', sessionId: 's1' });
+    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+      'session_context',
+    );
+  });
+
   it('dedupes full session context within an attempt and clears it at both lifecycle boundaries', () => {
     useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: 'server-a', sessionId: 's1' }]);
 

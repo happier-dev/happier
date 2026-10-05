@@ -5,6 +5,9 @@ import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
 import type { ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { decodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@/encryption/base64';
+import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
+
 
 const fileReference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62',
   mime: 'application/zip', sizeBytes: 3, sha256: 'a'.repeat(64) };
@@ -70,6 +73,35 @@ describe('updateArtifactWithHeaderViaApi', () => {
     expect(updated[0]?.bodyVersion).toBe(1);
   });
 
+  it.each(['plain', 'e2ee'] as const)('preserves reference-only updates to a retained blob in %s', async (mode) => {
+    const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
+    const dataKey = mode === 'e2ee' ? ArtifactEncryption.generateDataEncryptionKey() : null;
+    const artifactDataKeys: ArtifactDataKeyCache = new Map();
+    const artifactId = 'document';
+    if (dataKey && encryption) artifactDataKeys.set(artifactId, { envelope: encodeBase64(await encryption.encryptEncryptionKey(dataKey)), dataKey });
+    const reference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62',
+      mime: 'application/zip', sizeBytes: 3, sha256: hashArtifactBinaryContent(new Uint8Array([1, 2, 3])) };
+    const current: DecryptedArtifact = { id: artifactId, header: { title: 'File' }, rawHeader: { title: 'File' },
+      title: 'File', body: reference, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      storageMode: mode, isDecrypted: true };
+    const updated: DecryptedArtifact[] = [];
+    const request = async (path: string, init?: RequestInit) => {
+      expect(path).toBe(`/v1/artifacts/${artifactId}/content/binary`);
+      const wire = JSON.parse(String(init?.body)) as ArtifactUpdateRequest;
+      expect(wire.blob).toEqual({ blobId: reference.blobId });
+      expect(wire.expectedBodyVersion).toBe(1);
+      const opened = mode === 'plain' ? decodePlainArtifactStoredContent(wire.body!)
+        : await new ArtifactEncryption(dataKey!).decryptBody(wire.body!);
+      expect(opened).toEqual({ body: reference });
+      return Response.json({ success: true, headerVersion: 2, bodyVersion: 2 });
+    };
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    await updateArtifactWithHeaderViaApi({ credentials: { token: 't' }, artifactId, header: { title: 'Renamed' }, body: reference,
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, encryption, artifactDataKeys,
+      getArtifact: () => current, request, updateArtifact: artifact => updated.push(artifact) });
+    expect(updated).toHaveLength(1);
+    expect(updated[0]).toMatchObject({ body: reference, bodyVersion: 2, title: 'Renamed' });
+  });
   it('refuses to rewrite a retained encrypted artifact while its content is locked', async () => {
     const updateArtifact = vi.fn();
     const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');

@@ -4186,19 +4186,20 @@ describe('Channels mounted binding creation', () => {
 });
 
 describe('Channels mounted binding editor', () => {
-  it('keeps an Automation association response unavailable to the exact binding editor', async () => {
-    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
-      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
-        return { kind: 'automationAssociation', automationId: 'automation-1', association: 'absent' };
+  it('keeps automation-association results out of the binding editor', async () => {
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
+        throw new Error(`Unexpected mounted Action: ${String(action)}`);
       }
-      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+      expect(input).toEqual({ bindingId: 'binding-1' });
+      return { kind: 'automationAssociation', automationId: 'automation-1', association: 'bound' };
     });
     const fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'fixture-instance-association', mountNonce: 'fixture-mount-association' },
+      identity: { instanceId: 'fixture-binding-editor-association', mountNonce: 'fixture-binding-editor-association' },
       authorPlugin: { id: 'happier.channels', version: '0.0.0' },
       surface: renderSurface,
       surfaceContext: createChannelsPageSurfaceContext(),
-      subPath: 'binding-1',
+      subPath: 'binding-1/edit',
       adapter: createChannelsSemanticAdapter(),
       handlers: {
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
@@ -4206,12 +4207,13 @@ describe('Channels mounted binding editor', () => {
         readResource: bindingResourceReader(),
       },
     });
+
     try {
-      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
-      await vi.waitFor(async () => {
-        await expect(fixture.getByText('Binding detail is unavailable. Reload to read the current private binding policy before editing it.')).resolves.toBeDefined();
-      });
+      await expect(fixture.findByRole('status', {
+        name: 'Binding detail is unavailable. Reload to read the current private binding policy before editing it.',
+      })).resolves.toBeDefined();
       await expect(fixture.queryByRole('button', { name: 'Review changes' })).resolves.toBeUndefined();
+      await expect(fixture.queryByRole('button', { name: 'Save binding' })).resolves.toBeUndefined();
     } finally {
       await fixture.dispose();
     }

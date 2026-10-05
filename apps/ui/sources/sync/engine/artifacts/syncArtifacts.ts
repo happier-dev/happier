@@ -758,6 +758,10 @@ export async function createArtifactWithHeaderViaApi(params: {
         throw new HappyError('A new Artifact file requires its bytes', false, { code: 'artifact_invalid_body' });
     }
     const body = prepareArtifactBody(params.body);
+    // A new Artifact has no retained blob to reference; creation must supply its bytes.
+    if (params.body !== null && typeof params.body === 'object' && !('bytes' in params.body)) {
+        throw new HappyError('Creating a binary Artifact requires file bytes', false, { code: 'artifact_invalid_body' });
+    }
     requireArtifactBodyKind(header, body);
     await requireArtifactHtmlWriteContent(params);
     const rawHeader = withArtifactExcerptV1(header, body);

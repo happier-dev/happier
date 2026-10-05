@@ -2898,7 +2898,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           resetUserDraftStarvation();
           lastReadinessKind = 'writable_steer';
           steerCapabilityPublisher.publish({ available: true, reason: null });
-          arbiter.observeReadiness(createClaudeUnifiedWritableReadiness(handle, state.activeTurnId));
+          arbiter.observeReadiness(createClaudeUnifiedWritableReadiness(handle, isCanonicalTurnActive() ? state.activeTurnId : null));
           return;
         }
         if (turnRunning && steerVeto) {
@@ -3015,7 +3015,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     resetUserDraftStarvation();
     clearProviderUnavailableDeliveryBlockerIfNeeded();
     lastReadinessKind = 'writable';
-    arbiter.observeReadiness(createClaudeUnifiedWritableReadiness(handle, state.activeTurnId));
+    arbiter.observeReadiness(createClaudeUnifiedWritableReadiness(handle, isCanonicalTurnActive() ? state.activeTurnId : null));
   }
 
   function stopReadinessWake(): void {
@@ -3692,7 +3692,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       lastReadinessKind = state.turnInFlight || state.terminalOriginTurnInFlight ? 'writable_steer' : 'writable';
       lastSteerVetoReason = null;
       steerCapabilityPublisher.publish({ available: true, reason: null });
-      arbiter.notifyTerminalComposerCleared(createClaudeUnifiedWritableReadiness(handle, state.activeTurnId));
+      arbiter.notifyTerminalComposerCleared(createClaudeUnifiedWritableReadiness(handle, isCanonicalTurnActive() ? state.activeTurnId : null));
       await arbiter.drain();
       ensureReadinessWake();
       return result;

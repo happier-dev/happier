@@ -65,8 +65,19 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const packages = await selectAffectedGatePackages({ changedPaths });
   if (process.env.GITHUB_OUTPUT) {
     const serverDbContract = changedPaths.some((path) => path.startsWith('apps/server/prisma/'));
+    // Four UI ranges retain all canonical sub-shards. Group the other suites
+    // while CLI keeps its native preparation, within the temporary 10-job cap.
+    // P3 still owns duration validation against GitHub's execution window.
+    const groupedPackages = packages.filter((packageName) => packageName !== 'cli' && packageName !== 'ui');
+    const unitMatrix = { include: [
+      ...(packages.includes('cli') ? [{ package: 'cli', packages: ['cli'], part: 1, parts: 1 }] : []),
+      ...(groupedPackages.length ? [{ package: 'group', packages: groupedPackages, part: 1, parts: 1 }] : []),
+      ...(packages.includes('ui') ? Array.from({ length: 4 }, (_, index) => ({
+        package: 'ui', packages: ['ui'], part: index + 1, parts: 4,
+      })) : []),
+    ] };
     await appendFile(process.env.GITHUB_OUTPUT,
-      `packages=${JSON.stringify(packages)}\nserver_db_contract=${serverDbContract}\n`);
+      `packages=${JSON.stringify(packages)}\nunit_matrix=${JSON.stringify(unitMatrix)}\nserver_db_contract=${serverDbContract}\n`);
   }
   process.stdout.write(`${JSON.stringify(packages)}\n`);
 }

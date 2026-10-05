@@ -4,7 +4,13 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
-import type { RenderSurface, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
+import type {
+    PluginUiSessionServerStartDraftV1,
+    PluginUiTargetedContributionContributorV1,
+    PluginUiTargetedContributionOperationV1,
+    RenderSurface,
+    SessionStateV1,
+} from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -71,20 +77,21 @@ const SOURCE_PROTOCOL = Object.freeze({
     id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
 });
+const SOURCE_CONTRIBUTOR = Object.freeze({
+    pluginId: SOURCE.pluginId,
+    contributionId: SOURCE.localId,
+    occurrenceId: 'example-forge-occurrence',
+    sourceCustody: { kind: 'managed', immutableGenerationId: 'example-forge-generation', installSource: 'npm' },
+} as const) satisfies PluginUiTargetedContributionContributorV1;
 const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
     point: {
         pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
         protocol: SOURCE_PROTOCOL,
     },
-    contributor: {
-        pluginId: SOURCE.pluginId,
-        contributionId: SOURCE.localId,
-        occurrenceId: 'example-forge-generation',
-        sourceCustody: { kind: 'development' as const, registeredRootId: 'example-source-root' },
-    },
+    contributor: SOURCE_CONTRIBUTOR,
     role: 'prepareReviewWorkspace',
     action: { pluginId: SOURCE.pluginId, localId: 'prepare-review-workspace' },
-});
+}) satisfies PluginUiTargetedContributionOperationV1;
 
 /**
  * The host-projected source snapshot for this list mount. Bulk planning only
@@ -94,20 +101,15 @@ const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
 const SOURCE_TARGETED_CONTRIBUTIONS = {
     target: {
         pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-        occurrenceId: 'triage-list-target-generation',
-        sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-root' },
+        occurrenceId: 'triage-list-target-occurrence',
+        sourceCustody: { kind: 'managed', immutableGenerationId: 'triage-list-target-generation', installSource: 'npm' },
     },
     points: [{
         pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
         protocols: [{
             protocol: SOURCE_PROTOCOL,
             contributions: [{
-                contributor: {
-                    pluginId: SOURCE.pluginId,
-                    contributionId: SOURCE.localId,
-                    occurrenceId: 'example-forge-generation',
-                    sourceCustody: { kind: 'development' as const, registeredRootId: 'example-source-root' },
-                },
+                contributor: SOURCE_CONTRIBUTOR,
                 protocol: SOURCE_PROTOCOL,
                 descriptor: {
                     v: 1,
@@ -269,12 +271,7 @@ function createHarness(options: Readonly<{
     };
 
     const admitted = [{
-        contributor: {
-            pluginId: SOURCE.pluginId,
-            contributionId: SOURCE.localId,
-            occurrenceId: 'generation-1',
-            sourceCustody: { kind: 'development', registeredRootId: 'example-source-root' },
-        },
+        contributor: SOURCE_CONTRIBUTOR,
         protocol: {
             id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
             version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -533,7 +530,7 @@ async function mountShell(
                                 identity: { pluginId: 'happier.test.agent', localId: 'agent' },
                             },
                             directory: { kind: 'path', path: '/workspaces/example' },
-                        },
+                        } satisfies PluginUiSessionServerStartDraftV1,
                     } as never;
                 },
                 readComposer: async ({ ref }) => {

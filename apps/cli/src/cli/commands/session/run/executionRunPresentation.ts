@@ -134,20 +134,26 @@ export const EXECUTION_RUN_WAIT_PRESENTATION: ActionCliPresentation = {
         });
         return true;
       }
-      console.log(chalk.yellow('!'), `observation ended after ${result.timeoutMs}ms: run ${result.runId} is ${result.status === 'running' ? 'still running' : result.status}`);
+      const observedStatus = result.status === 'running' ? 'is still running' : `was observed as ${result.status}`;
+      console.log(chalk.yellow('!'), `observation ended after ${result.timeoutMs}ms: run ${result.runId} ${observedStatus}`);
       return true;
     }
-    if ('disposition' in result && (result.disposition === 'needs_attention' || result.disposition === 'snapshot')) {
+    if ('disposition' in result) {
+      const runId = result.result.run.runId;
       if (context.json) {
-        await printJsonEnvelope({ ok: true, kind: 'session_run_wait', data: {
-          sessionId, runId: result.result.run.runId, status: result.status,
-          disposition: result.disposition, result: result.result,
-        } });
+        await printJsonEnvelope({
+          ok: true,
+          kind: 'session_run_wait',
+          data: { sessionId, runId, status: result.status, disposition: result.disposition, result: result.result },
+        });
         return true;
       }
-      console.log(chalk.yellow('!'), result.disposition === 'needs_attention'
-        ? `run ${result.result.run.runId} needs attention`
-        : `run ${result.result.run.runId}: ${result.status}`);
+      if (result.disposition === 'needs_attention') {
+        console.log(chalk.yellow('!'), `run ${runId} needs attention`);
+      } else {
+        console.log(chalk.green('✓'), `run ${runId} snapshot: ${result.status}`);
+      }
+      await writeJsonStdout(result.result, { pretty: true });
       return true;
     }
     if (context.json) {

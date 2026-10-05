@@ -579,9 +579,9 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
         dangerLevel: 'writesLocal',
         confirmation: {
-          title: 'Change Session pull request binding?',
-          body: 'This changes the Session’s saved pull request link or its scoped triggers.',
-          confirmLabel: 'Save binding',
+          title: 'Manage session pull request binding?',
+          body: 'This can attach a pull request to the selected session or change its scoped conversation trigger bindings.',
+          confirmLabel: 'Continue',
         },
         hostAccess: ['account-storage'],
         run: manageSessionPullRequestBindingForInvocation,
