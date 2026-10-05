@@ -135,6 +135,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
             metadata?: React.ComponentProps<typeof AgentInput>['metadata'];
             agentType?: string;
             agentLabel?: string;
+            engineLabel?: string;
             permissionMode?: React.ComponentProps<typeof AgentInput>['permissionMode'];
             modelMode?: string | null;
             machineName?: string | null;
@@ -467,6 +468,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 metadata={context?.metadata}
                 agentType={context?.agentType}
                 agentLabel={context?.agentLabel}
+                engineLabel={context?.engineLabel}
                 permissionMode={context?.permissionMode}
                 modelMode={context?.modelMode ?? undefined}
                 machineName={context?.machineName}

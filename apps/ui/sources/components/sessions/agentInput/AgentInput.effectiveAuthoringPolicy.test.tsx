@@ -20,6 +20,11 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installAgentInputCommonModuleMocks({
+    storageStore: async () => {
+        const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const store = createStorageStoreMock({ artifacts: {}, settingsScope: null });
+        return { storage: store, getStorage: () => store };
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -81,17 +86,6 @@ vi.mock('expo-image', () => ({
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/store/hooks')>();
     return { ...actual, useLocalSetting: () => 1, useSessionServerId: () => null };
-});
-
-vi.mock('@/sync/domains/state/storageStore', () => {
-    const state = { sessionMessages: {}, localSettings: { uiContentWidthMode: 'default' } };
-    const store = Object.assign(
-        (selector?: (value: typeof state) => unknown) => (
-            typeof selector === 'function' ? selector(state) : state
-        ),
-        { getState: () => state },
-    );
-    return { storage: store, getStorage: () => store };
 });
 
 type JsonNode =

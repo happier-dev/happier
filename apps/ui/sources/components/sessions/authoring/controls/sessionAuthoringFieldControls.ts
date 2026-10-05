@@ -5,6 +5,7 @@ import type {
     PluginProjectedAgentConnectedAccountPurposeV2,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
+import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { AgentExecutionTargetV1Schema, PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol';
 import type {
@@ -155,6 +156,7 @@ export type SessionAuthoringFieldControlModel =
     }>;
 
 export type SessionAuthoringAgentTargetOption = Readonly<{
+    pickerEntry?: ResolvedBackendCatalogEntry;
     id: string;
     label: string;
     subtitle?: string;

@@ -5,22 +5,27 @@ import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEng
 import { describeRolePurpose } from '@/sync/domains/roles/roleCatalog';
 
 import type { RoleRailItem } from './rolesRailTypes';
+import { resolveRoleSelectionV1, type WorkflowRoleV1 } from '@happier-dev/protocol';
 
 /** The reader's enabled roles as rail rows, read when the rail opens. */
-export function useRoleRailItems(): ReadonlyArray<RoleRailItem> {
+export function useRoleRailItems(workflowRoles?: readonly WorkflowRoleV1[]): ReadonlyArray<RoleRailItem> {
     const catalog = useRoleCatalog();
     const presentEngine = useRoleEnginePresentation();
-    return React.useMemo(() => catalog.entries
-        .filter((entry) => entry.role.enabled)
-        .map((entry) => {
-            const engine = presentEngine(entry.role.engine);
+    return React.useMemo(() => [...new Set([...catalog.entries.map(entry => entry.roleId), ...(workflowRoles ?? []).map(role => role.roleId)])]
+        .flatMap((roleId) => {
+            const entry = catalog.entries.find(candidate => candidate.roleId === roleId);
+            const resolved = resolveRoleSelectionV1({ roleId, settingsRoles: entry ? { [roleId]: entry.role } : {},
+                settingsOverrides: entry?.override ? { [roleId]: entry.override } : {}, workflowRoles });
+            if (!resolved.ok || !resolved.selection.enabled) return [];
+            const role = resolved.selection;
+            const engine = presentEngine(role.engine);
             return {
-                roleId: entry.roleId,
-                name: entry.role.name,
-                purpose: describeRolePurpose(entry.role),
+                roleId,
+                name: role.name,
+                purpose: describeRolePurpose(role),
                 ...(engine.label ? { engineLabel: engine.label } : {}),
                 ...(engine.icon ? { engineIcon: engine.icon } : {}),
-                ...(entry.role.engine ? { agentTargetKey: entry.role.engine.agentTargetKey } : {}),
+                ...(role.engine ? { agentTargetKey: role.engine.agentTargetKey } : {}),
             };
-        }), [catalog.entries, presentEngine]);
+        }), [catalog.entries, presentEngine, workflowRoles]);
 }

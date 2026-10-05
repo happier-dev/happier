@@ -140,6 +140,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
                 }];
             }) ?? [];
             options.push({
+                pickerEntry: entry,
                 id: entry.backendTargetKey,
                 label: entry.title,
                 ...(entry.subtitle === null ? {} : { subtitle: entry.subtitle }),

@@ -23,10 +23,6 @@ import {
 } from '@/components/onboarding/tour/stage/useSpotlightTarget';
 import { useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance';
 import {
-    createBackdropNativeStyle,
-    createBackdropWebStyle,
-} from '@/components/ui/overlays/createBackdropLayerStyle';
-import {
     KeyPressEvent,
     type MultiTextInputSubmitBehavior,
 } from '@/components/ui/forms/MultiTextInput';
@@ -169,7 +165,6 @@ import { buildGlassCastShadowStyle } from '@/shadowElevation';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
 import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
-import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { isGlassComposerSurface } from './composerSurfaceStyle';
 import { resolveComposerSelectionRestore } from './composerSelectionRestore';
 import {
@@ -199,7 +194,7 @@ import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/
 import type { WebFileDragEvent } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
 import { useEntityDragDropRuntime, useEntityDropDomBinding, readWindowBounds, measureWindowBounds,
     type TreeDropMeasurableRef, type WindowBounds } from '@/components/ui/treeDragDrop';
-import { EntityReleaseOutcomePill } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { ExternalFileDropOutcomePill } from '@/components/ui/treeDragDrop/ui/ExternalFileDropOutcomePill';
 import { ComposerEntityDropTarget } from '@/components/sessions/composer/ComposerEntityDropTarget';
 import type { ComposerReferenceSearchHost } from '@/components/autocomplete/composerSuggestionKinds';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
@@ -505,6 +500,8 @@ interface AgentInputProps {
     onFileViewerPress?: () => void;
     agentType?: string;
     agentLabel?: string | null;
+    /** A controlled authoring engine/Role label; live Sessions retain their own projection. */
+    engineLabel?: string;
     /** Current machine-qualified catalog identity for the running/preflight Agent. */
     agentCatalogIdentity?: Readonly<{
         entry: ResolvedAgentCatalogEntry;
@@ -1166,20 +1163,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonIcon: {
         color: theme.colors.composer.chipTint,
     },
-    fileDropOverlay: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 50,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: theme.colors.overlay.scrim,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: Platform.select({ default: 16, android: 20 }),
-    },
     sessionInputText: {
         fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
     },
@@ -1195,24 +1178,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const readOnly = props.onChangeText === undefined;
     const voiceFeatureEnabled = useFeatureEnabled('voice');
     const voiceEnabled = !readOnly && voiceFeatureEnabled && props.voiceAffordance !== 'none';
-    const { blurEnabled: floatingBlurEnabled } = useGlassBlurSetting('floating');
-    const fileDropOverlayBackdropStyle = React.useMemo<ViewStyle>(() => {
-        const backgroundColor = theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim;
-        if (Platform.OS === 'web') {
-            return createBackdropWebStyle({
-                backgroundColor,
-                blurPx: 2,
-                enableBlur: floatingBlurEnabled,
-                fallbackBackgroundColorWhenBlurDisabled: theme.colors.overlay.scrimStrong ?? theme.colors.overlay.scrim,
-            }) as unknown as ViewStyle;
-        }
-        return createBackdropNativeStyle({ backgroundColor });
-    }, [
-        theme.colors.overlay.scrim,
-        theme.colors.overlay.scrimStrong,
-        theme.colors.overlay.scrimWizard,
-        floatingBlurEnabled,
-    ]);
     const isGlassComposer = isGlassComposerSurface({ setting: useSetting('composerSurfaceStyle') });
     const surfaceGroup = props.surfaceGroup ?? 'content';
     const composerSurfaceColor = isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
@@ -2649,6 +2614,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         armedContinuationTarget: props.armedContinuationTarget,
     });
     const engineChipLabel = React.useMemo(() => {
+        if (props.engineLabel !== undefined) return props.engineLabel;
         // Selection IS the selection. An armed target with a model chosen names
         // that model; an armed target still on the Agent's own defaults names the
         // Agent, because no model has been chosen to name.
@@ -2656,7 +2622,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
         }
         return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
-    }, [armedComposerTarget, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
+    }, [props.engineLabel, armedComposerTarget, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
     /**
      * The mark on the engine chip: the armed Agent while one is armed, otherwise
      * the Agent running this Session.
@@ -3441,16 +3407,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     ]}
                 >
                     {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
-                        <View
-                            testID="agent-input-drop-overlay"
-                            pointerEvents="none"
-                            style={[
-                                styles.fileDropOverlay,
-                                fileDropOverlayBackdropStyle,
-                            ]}
-                        >
-                            <EntityReleaseOutcomePill outcome={{ glyph: 'attach', tone: 'allowed', title: t('entityDragDrop.files.attach') }} />
-                        </View>
+                        <ExternalFileDropOutcomePill testID="agent-input-drop-overlay"
+                            outcome={{ glyph: 'attach', tone: 'allowed', title: t('entityDragDrop.files.attach') }} />
                     ) : null}
                     {Platform.OS === 'web' ? (
                         <>
