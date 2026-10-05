@@ -1,16 +1,10 @@
 import type {
   ConnectedServiceId,
-  ConnectedServiceLimitCategoryV1,
-  ConnectedServiceQuotaMeterV1,
   ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
-import { compareConnectedServiceQuotaObservationRecency, readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import { compareConnectedServiceQuotaObservationRecency } from '@happier-dev/protocol';
 
-import {
-  normalizeQuotaMeter,
-  selectEffectiveQuotaMeter,
-  type NormalizedQuotaMeter,
-} from '../../quotas/normalization';
+import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from './projection';
 import type { ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';
 
 type SnapshotKeyInput = Readonly<{
@@ -64,58 +58,6 @@ function shouldRecordSnapshot(
     nowMs,
   });
   return recency === 'incoming_newer' || recency === 'same';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readLimitCategory(value: unknown): ConnectedServiceLimitCategoryV1 {
-  return readConnectedServiceLimitCategoryV1(value) ?? 'usage_limit';
-}
-
-function isReliableMeter(meter: ConnectedServiceQuotaMeterV1): boolean | undefined {
-  if (meter.status === 'unavailable') return false;
-  if (meter.confidence === 'stale' || meter.confidence === 'unknown' || meter.confidence === 'estimated') return false;
-  if (meter.status === 'estimated') return false;
-  return undefined;
-}
-
-function normalizeSnapshotMeter(meter: ConnectedServiceQuotaMeterV1): NormalizedQuotaMeter {
-  const details = isRecord(meter.details) ? meter.details : {};
-  const meterRecord = meter as unknown as Record<string, unknown>;
-  return normalizeQuotaMeter({
-    meterId: meter.meterId,
-    label: meter.label,
-    limitCategory: readLimitCategory(meterRecord.limitCategory ?? details.limitCategory),
-    remainingPct: meter.remainingPct,
-    utilizationPct: meter.utilizationPct,
-    used: meter.used,
-    limit: meter.limit,
-    resetAtMs: meter.resetAtMs ?? meter.resetsAt,
-    providerLimitId: readString(meter.providerLimitId) ?? readString(details.providerLimitId),
-    reliable: isReliableMeter(meter),
-    applicable: meter.status !== 'unavailable',
-  });
-}
-
-function readProviderResetsAtMs(snapshot: ConnectedServiceQuotaSnapshotV1): number | null {
-  const resetValues = snapshot.meters
-    .map((meter) => meter.resetAtMs ?? meter.resetsAt)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0);
-  return resetValues.length > 0 ? Math.min(...resetValues) : null;
-}
-
-function isExhausted(snapshot: ConnectedServiceQuotaSnapshotV1): boolean {
-  const effective = selectEffectiveQuotaMeter(snapshot.meters.map(normalizeSnapshotMeter));
-  if (effective?.remainingPct !== null && effective?.remainingPct !== undefined) {
-    return effective.remainingPct <= 0;
-  }
-  return false;
 }
 
 type BurnObservation = Readonly<{
@@ -305,23 +247,9 @@ export class ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore {
 }
 
 function buildMemberState(snapshot: ConnectedServiceQuotaSnapshotV1): ConnectedServiceAuthGroupMemberRuntimeState {
-  const normalizedMeters = snapshot.meters.map(normalizeSnapshotMeter);
-  const effectiveMeter = selectEffectiveQuotaMeter(normalizedMeters);
-  return {
-    providerResetsAtMs: effectiveMeter?.resetAtMs ?? readProviderResetsAtMs(snapshot),
-    quotaSnapshot: {
-      capturedAtMs: snapshot.fetchedAt,
-      effectiveMeterId: effectiveMeter?.meterId ?? null,
-      effectiveRemainingPercent: effectiveMeter?.remainingPct ?? null,
-      meters: normalizedMeters.map((meter) => ({
-        meterId: meter.meterId,
-        limitCategory: meter.limitCategory,
-        remainingPct: meter.remainingPct,
-        resetAtMs: meter.resetAtMs,
-        providerLimitId: meter.providerLimitId,
-      })),
-      exhausted: isExhausted(snapshot),
-      planUnavailable: snapshot.meters.length > 0 && snapshot.meters.every((meter) => meter.status === 'unavailable'),
-    },
-  };
+  return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
+    capturedAtMs: snapshot.fetchedAt,
+    meters: snapshot.meters,
+    subscription: snapshot.subscription,
+  });
 }
