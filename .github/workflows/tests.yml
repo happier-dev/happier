@@ -266,7 +266,12 @@ jobs:
         run: yarn workspace @happier-dev/iroh-native build:native
       - name: Check compiler diagnostics without governance or test phases
         id: gate-compiler
+        env:
+          # The native compiler exhausted this 16 GiB runner; collect more often
+          # without changing compiler scope or imposing a soft heap ceiling.
+          GOGC: "50"
         run: |
+          export GODEBUG="${GODEBUG:+$GODEBUG,}gctrace=1"
           echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
           compiler_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
           compiler_cgroup_directory="/sys/fs/cgroup$compiler_cgroup_path"
