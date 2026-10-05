@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import Ajv2020 from 'ajv/dist/2020.js';
 
 import {
   PluginDeclarativeNodeV2Schema,
@@ -15,6 +16,7 @@ import {
   PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
 } from './declarativeDocument.js';
 import { MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 } from './hostedHtmlSourceV1.js';
+import { QualifiedConnectedAccountRefSchema } from '../../../connect/qualifiedConnectedAccountPersistence.js';
 
 /**
  * The declarative vocabulary is a bounded host-rendered document language
@@ -23,16 +25,52 @@ import { MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 } from './hostedHtmlSourceV
  * from drifting into a general data-binding surface.
  */
 describe('declarative node vocabulary v2', () => {
-  it('admits widget placements only for their target while keeping executable declarations closed', () => {
+  it('declares qualified Resource dependencies only on widget Views', () => {
+    const resources = [{ pluginId: 'com.acme.fixture', localId: 'live-status' }];
+    const widget = { id: 'status', container: 'widget', renderer: 'native', target: { kind: 'app' }, resources };
+    expect(PluginUiViewV2Schema.parse(widget)).toMatchObject({ resources });
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, resources: ['live-status'] }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, container: 'appPage' }).success).toBe(false);
+  });
+
+  it('emits App widget input value-admission requirements in its public authoring schema', () => {
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(PluginUiViewV2Schema.toJSONSchema({ io: 'input', target: 'draft-2020-12', unrepresentable: 'any' }));
+    const widget = { id: 'app-inputs', container: 'widget', renderer: 'native', target: { kind: 'app' } };
+    const inputs = { fields: [{ path: 'name', title: 'Name', widget: 'text' }] };
+    expect(validate(widget)).toBe(true);
+    expect(validate({ ...widget, inputs })).toBe(false);
+    expect(validate({ ...widget, inputs, inputSchema: { type: 'object', properties: { name: { type: 'string' } }, additionalProperties: false } })).toBe(true);
+  });
+  it('admits widget viewer purposes only for exact declared Connected Account inputs', () => {
+    const inputs = { fields: [{ path: 'account', title: 'Account', widget: 'select', connectedAccountOptions: true }] };
+    const inputSchema = { type: 'object', properties: { account: QualifiedConnectedAccountRefSchema.jsonSchema }, additionalProperties: false };
+    const widget = { id: 'viewer', container: 'widget', renderer: 'native', target: { kind: 'app' }, inputs, inputSchema,
+      resources: [{ pluginId: 'com.acme.fixture', localId: 'metrics' }],
+      connectedAccountPurposeBindings: [{ path: 'account', purpose: 'metrics', consumer: { pluginId: 'com.acme.fixture', localId: 'metrics' } }] };
+    expect(PluginUiViewV2Schema.safeParse(widget).success).toBe(true);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, inputSchema: { type: 'object', properties: { account: { type: 'string' } } } }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, connectedAccountPurposeBindings: [{ ...widget.connectedAccountPurposeBindings[0], path: 'unknown' }] }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, connectedAccountPurposeBindings: [{ path: 'account', purpose: 'metrics' }] }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, resources: [] }).success).toBe(false);
+  });
+  it('admits universal widget inputs and refuses removed physical placement declarations', () => {
     const widget = { id: 'glance', container: 'widget', renderer: 'native', target: { kind: 'session' } };
-    expect(PluginUiViewV2Schema.parse({ ...widget, placements: ['board', 'companion'] }))
-      .toMatchObject({ placements: ['board', 'companion'] });
+    const inputs = { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] };
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, inputs }).success).toBe(false);
+    const inputSchema = { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false };
+    expect(PluginUiViewV2Schema.parse({ ...widget, inputs, inputSchema, sessionInputPath: 'session' })).toMatchObject({ inputs, inputSchema });
+    expect(PluginUiViewV2Schema.parse({ ...widget, target: { kind: 'app' }, inputs, inputSchema })).toMatchObject({ inputs });
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, inputs, inputSchema, sessionInputPath: 'undeclared' }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, placements: ['board', 'companion'] }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({ ...widget, placements: ['home'] }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({ ...widget, placements: ['companion'], authority: 'forged' }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({ ...widget, container: 'detailsTab', placements: ['companion'] }).success).toBe(false);
-    expect(PluginUiViewV2Schema.safeParse({ ...widget, target: { kind: 'app' }, placements: ['home'] }).success).toBe(true);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, target: { kind: 'app' }, placements: ['home'] }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, container: 'detailsTab', inputs }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...widget, inputs: { ...inputs, authority: 'forged' } }).success).toBe(false);
     expect(PluginUiViewV2Schema.safeParse({ ...widget, target: { kind: 'app' }, placements: ['board'] }).success).toBe(false);
-    expect(PluginUiViewV2Schema.parse(widget)).not.toHaveProperty('placements');
+    expect(PluginUiViewV2Schema.parse({ ...widget, inputs, inputSchema, sessionInputPath: 'session' })).not.toHaveProperty('placements');
   });
 
   it('admits inline HTML through the canonical UTF-8 source boundary without granting authority fields', () => {

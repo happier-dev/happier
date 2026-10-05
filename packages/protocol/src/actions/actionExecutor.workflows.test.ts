@@ -18,17 +18,19 @@ describe('createActionExecutor (Workflow family)', () => {
       artifactStore: {
         list: async ({ cursor }) => {
           const index = cursor ? 1 : 0;
-          return { items: [{ artifactId: ids[index]!, headerVersion: 1, updatedAt: 1,
+          return { items: [{ artifactId: ids[index]!, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
             header: { kind: 'workflow-definition.v1', definitionId: ids[index],
               revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: index ? 'Shared recipe' : 'Own recipe' } },
+            body: JSON.stringify({ kind: 'workflow-definition.v1', definition: getBuiltinWorkflowCatalogV1()[0]!.definition }),
             access: index ? 'view' : 'owner', ownerAccountId: index ? 'other-account' : 'account' }],
             ...(index ? {} : { nextCursor: ids[0] }) };
         },
-        read: async () => { throw new Error('discovery_needs_no_body'); },
+        read: async () => { throw new Error('discovery_uses_listed_bodies'); },
         create: async () => { throw new Error('discovery_is_read_only'); },
         update: async () => { throw new Error('discovery_is_read_only'); },
         delete: async () => { throw new Error('discovery_is_read_only'); },
       },
+      readWorkflowTriggerSummaries: async () => new Map(),
       encodeListCursor: (row) => row.artifactId,
       assertDefinitionWriteAllowed: () => { throw new Error('discovery_is_read_only'); },
     });
@@ -92,7 +94,9 @@ describe('createActionExecutor (Workflow family)', () => {
   });
 
   it('executes a discoverable Workflow operation through the generic MCP action transport without surface rejection', async () => {
-    const workflowAction = vi.fn(async () => ({ runs: [] }));
+    // The external host port returns the complete current page contract;
+    // Action admission and result validation below remain real.
+    const workflowAction = vi.fn(async () => ({ runs: [], metadataByRunId: {} }));
     const executor = createActionExecutor({
       workflowAction,
       isActionApprovalRequired: () => false,

@@ -15,13 +15,13 @@ describe('native machine Agent sign-in execution', () => {
   it('launches or reuses the daemon terminal before returning success without a renderer', async () => {
     const operations = boundary();
     expect(await startMachineAgentSignIn({ machineId: 'machine', agentId: 'fixture/agent' }, operations))
-      .toEqual({ terminalKey: 'provider-login:machine:fixture/agent' });
+      .toEqual({ terminalKey: 'provider-login:machine:fixture/agent', terminalId: 'terminal' });
     expect(operations.ensureTerminal).toHaveBeenCalledWith({
       terminalKey: 'provider-login:machine:fixture/agent', launch: { kind: 'agent_login', agentId: 'fixture/agent' },
     });
     operations.ensureTerminal.mockResolvedValueOnce({ ok: true, terminalId: 'terminal', reused: true });
     expect(await startMachineAgentSignIn({ machineId: 'machine', agentId: 'fixture/agent' }, operations))
-      .toEqual({ terminalKey: 'provider-login:machine:fixture/agent' });
+      .toEqual({ terminalKey: 'provider-login:machine:fixture/agent', terminalId: 'terminal' });
     expect(operations.closeTerminal).not.toHaveBeenCalled();
   });
 

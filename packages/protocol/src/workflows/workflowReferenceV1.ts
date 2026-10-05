@@ -127,6 +127,19 @@ export type WorkflowValueReference =
   | Readonly<{ kind: 'item'; field: 'value' | 'index' | 'position' | 'count'; path?: (string | number)[] }>
   | Readonly<{ kind: 'iteration'; field: 'index' | 'position' | 'count' | 'stopReason' }>;
 
+/** Shared path selection for frozen admission facts and invocation-time inputs. */
+export function readWorkflowValuePathV1(value: JsonValue, path: readonly (string | number)[]): JsonValue | undefined {
+  let selected: JsonValue | undefined = value;
+  for (const segment of path) {
+    selected = Array.isArray(selected)
+      ? typeof segment === 'number' ? selected[segment] : segment === 'last' ? selected.at(-1) : undefined
+      : selected !== null && typeof selected === 'object' && typeof segment === 'string'
+        ? (selected as Readonly<Record<string, JsonValue>>)[segment] : undefined;
+    if (selected === undefined) return undefined;
+  }
+  return selected;
+}
+
 export const WorkflowValueReferenceSchema: z.ZodType<WorkflowValueReference> = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('literal'), value: StrictJsonValueSchema }).strict(),
   z.object({ kind: z.literal('input'), name: WorkflowInputNameSchema }).strict(),
@@ -136,7 +149,7 @@ export const WorkflowValueReferenceSchema: z.ZodType<WorkflowValueReference> = z
   z.object({ kind: z.literal('session_context'), recentTurns: z.number().int().nonnegative().safe() }).strict(),
   z.object({ kind: z.literal('session_context_field'), field: z.enum(['usage.tokensUsed', 'goal.tokenBudget']) }).strict(),
   z.object({ kind: z.literal('item'), field: z.enum(['value', 'index', 'position', 'count']),
-    path: WorkflowResultPathSchema.optional() }).strict().superRefine((reference, ctx) => {
+    path: WorkflowResultPathSchema.unwrap().optional() }).strict().superRefine((reference, ctx) => {
       if (reference.path !== undefined && reference.field !== 'value') {
         ctx.addIssue({ code: 'custom', path: ['path'], message: 'Only the item value has a field path' });
       }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonCommandSchema, type ConnectedAccountAttemptResponse } from '../connect/connectedAccountDaemonRpcV1.js';
 import { DaemonTerminalLaunchIntentSchema } from './terminal.js';
+import { DaemonTerminalCloseResponseSchema } from './terminal.js';
 
 export const AGENT_SIGN_IN_PREPARE_RPC_METHOD = 'daemon.agents.signIn.prepare';
 export const AGENT_SIGN_IN_STATUS_RPC_METHOD = 'daemon.agents.signIn.status';
@@ -25,8 +26,13 @@ export const AgentSignInPrepareResponseSchema = z.union([
 ]);
 export const MachinesAgentsSignInStartInputSchema = AgentSignInPrepareRequestSchema.omit({ launchId: true }).extend({ machineId: z.string().trim().min(1) }).strict();
 export const MachinesAgentsSignInStatusInputSchema = AgentSignInStatusRequestSchema.extend({ machineId: z.string().trim().min(1) }).strict();
+export const MachinesAgentsSignInCancelInputSchema = MachinesAgentsSignInStatusInputSchema.extend({ terminalId: z.string().min(1) }).strict();
+export const MachinesAgentsSignInCancelOutputSchema = z.union([
+  DaemonTerminalCloseResponseSchema,
+  z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).strict(),
+]);
 export const MachinesAgentsSignInStartOutputSchema = z.union([
-  z.object({ terminalKey: z.string().min(1) }).strict(),
+  z.object({ terminalKey: z.string().min(1), terminalId: z.string().min(1) }).strict(),
   ConnectedAccountAttemptResponseSchema,
   z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).strict(),
 ]);
@@ -35,6 +41,8 @@ export type AgentSignInPrepareResponse = z.output<typeof AgentSignInPrepareRespo
 export type AgentSignInStatusResponse = z.output<typeof AgentSignInStatusResponseSchema>;
 export type MachinesAgentsSignInStartInput = z.output<typeof MachinesAgentsSignInStartInputSchema>;
 export type MachinesAgentsSignInStatusInput = z.output<typeof MachinesAgentsSignInStatusInputSchema>;
+export type MachinesAgentsSignInCancelInput = z.output<typeof MachinesAgentsSignInCancelInputSchema>;
+export type MachinesAgentsSignInCancelOutput = z.output<typeof MachinesAgentsSignInCancelOutputSchema>;
 // Retain the Connected Account owner's readonly response contract at this adapter seam.
 export type MachinesAgentsSignInStartOutput =
   | Exclude<z.output<typeof MachinesAgentsSignInStartOutputSchema>, { status: string }>

@@ -2,6 +2,7 @@ import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import { WorkBoardActionInputSchemasV1 } from './actionsV1.js';
 import type { WorkBoardActionIdV1 } from './actionIdsV1.js';
 import { WorkBoardMutationErrorV1, type WorkBoardArtifactPortV1 } from './workBoardArtifactV1.js';
+import { WorkBoardWidgetMutationErrorV1 } from './workBoardV1.js';
 
 export async function executeWorkBoardActionV1(
     port: Pick<WorkBoardArtifactPortV1, 'read' | 'apply'>,
@@ -29,7 +30,7 @@ export async function executeWorkBoardActionV1(
         signal?.throwIfAborted();
         return { ok: true, result: { boardId, board: committed.boards.find((candidate) => candidate.id === boardId) ?? null } };
     } catch (error) {
-        if (error instanceof WorkBoardMutationErrorV1) return { ok: false, errorCode: error.code, error: error.message };
+        if (error instanceof WorkBoardMutationErrorV1 || error instanceof WorkBoardWidgetMutationErrorV1) return { ok: false, errorCode: error.code, error: error.message };
         throw error;
     }
 }

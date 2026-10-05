@@ -11,6 +11,18 @@ const resource = { artifactId: 'workflow', access: 'owner' as const,
 const response = { artifactId: 'workflow', ownerAccountId: 'owner', access: 'owner' as const, grants: [], changed: true };
 
 describe('Artifact grant host owner', () => {
+  it('returns a committed self-revocation after checking pre-mutation admin authority', async () => {
+    const revoked = { ...response, access: null };
+    let opened: ArtifactSharingResourceV1 | null = { ...resource, access: 'admin' };
+    const owner = createArtifactAccessActionsV1({ read: async () => opened,
+      transport: { list: async () => response, set: async () => response,
+        remove: async () => { opened = null; return revoked; } } });
+    const invocation = { actionId: 'artifact.access.grants.remove' as const,
+      input: { artifactId: input.artifactId, principal: input.principal } };
+    await expect(owner(invocation)).resolves.toEqual(revoked);
+    await expect(owner(invocation)).rejects.toMatchObject({ code: 'artifact_not_found' });
+  });
+
   it('validates the opened kind and owner/admin authority before a storage mutation, while allowing grantees to list', async () => {
     const write = vi.fn(async () => response);
     const { changed: _changed, ...listed } = response;

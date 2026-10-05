@@ -1,4 +1,9 @@
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import fastify from 'fastify';
+import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { LocalServicePreviewResourceV1, MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol';
 import { createFakeRouteApp, createReplyStub, getRouteEntry, getRouteHandler } from '@/app/api/testkit/routeHarness';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +13,8 @@ import type { OpenLocalServicePreviewTunnel } from '@/app/local/services/preview
 import { createLocalServiceRouteRuntimes, registerLocalServiceRoutes } from '../registerRoutes';
 import type { SessionAccessProjectionRow } from '@/app/session/access/sessionAccess';
 import { LocalServicePreviewNativeDirectAccessV1Schema, LocalServicePreviewServerAccessV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
+import type { Fastify } from '@/app/api/types';
+import { enableServeUi } from '@/app/api/utils/enableServeUi';
 
 // Only database, HTTP router/socket and network tunnel boundaries are replaced.
 const machineFindFirst = vi.hoisted(() => vi.fn(async (_query: unknown): Promise<{
@@ -95,6 +102,52 @@ describe('local service preview routes', () => {
     beforeEach(() => {
         machineFindFirst.mockReset().mockResolvedValue({ id: 'machine_1' });
         sessionFindUnique.mockReset().mockResolvedValue(null);
+    });
+
+    it.each(['GET', 'HEAD'] as const)('keeps preview-host %s root requests in preview policy instead of the root UI', async (method) => {
+        const uiDir = await mkdtemp(join(tmpdir(), 'happier-preview-root-'));
+        const app = fastify({ logger: false });
+        try {
+            await writeFile(join(uiDir, 'index.html'), '<!doctype html><title>Happier root fixture</title>', 'utf8');
+            app.setValidatorCompiler(validatorCompiler);
+            app.setSerializerCompiler(serializerCompiler);
+            app.decorate('authenticate', async () => {});
+            enableServeUi(app, { dir: uiDir, prefix: '/', mountRoot: true, required: true });
+            const runtime = createLocalServicePreviewRuntime({
+                tokenSecret: 'test-secret', publicBaseUrl: 'https://app.happier.test',
+                hostOriginBaseDomain: 'preview.happier.test', nowMs: () => 1_000,
+            });
+            registerLocalServicePreviewRoutes(app.withTypeProvider<ZodTypeProvider>() as unknown as Fastify, {
+                resolvePreview: runtime.resolvePreview, resolvePreviewByHost: runtime.resolvePreviewByHost,
+                hostOriginBaseDomain: 'preview.happier.test', validateAccess: runtime.validateAccess,
+                exchangeAccessToken: runtime.exchangeAccessToken,
+            });
+            const injectPreview = (url: string, host = HOST) => app.inject({ method, url, headers: { host } });
+            const assertRefusal = async (url: string, status: number, error: string, reasonCode: string, host = HOST) => {
+                const response = await injectPreview(url, host);
+                expect(response.statusCode).toBe(status);
+                expect(response.headers['content-type']).toContain('application/json');
+                expect(response.json()).toEqual({ error, reasonCode });
+                expect(response.body).not.toContain('Happier root fixture');
+            };
+
+            await assertRefusal('/', 404, 'preview_not_found', 'preview_not_found');
+            const registered = runtime.registerPreview({ resource: preview, accountId: 'user_1' });
+            if (!registered.ok) throw new Error(registered.reasonCode);
+            await assertRefusal('/', 401, 'preview_access_denied', 'preview_token_missing');
+            await assertRefusal('/?previewToken=invalid', 401, 'preview_access_denied', 'token_mismatch');
+            await assertRefusal('/qa-preview-probe', 401, 'preview_access_denied', 'preview_token_missing');
+            await assertRefusal('/', 404, 'preview_not_found', 'preview_not_found', 'unknown.preview.happier.test');
+
+            const ui = await app.inject({ method, url: '/', headers: { host: 'app.happier.test' } });
+            expect(ui.statusCode).toBe(200);
+            expect(ui.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+            if (method === 'GET') expect(ui.body).toContain('Happier root fixture');
+            else expect(ui.body).toBe('');
+        } finally {
+            await app.close();
+            await rm(uiDir, { recursive: true, force: true });
+        }
     });
 
     it('refreshes expired server admission for a shared viewer without native endpoint availability', async () => {

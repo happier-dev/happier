@@ -160,7 +160,7 @@ export type PluginActionInvocationHandlerInput = Readonly<{
  * currentness checks cannot be misclassified as a handler failure.
  */
 type PluginActionInvocationPreDispatchResult = Readonly<{
-  status: 'unavailable';
+  status: 'unavailable' | 'invalid';
   code: string;
   message: string;
 }>;
@@ -232,18 +232,18 @@ function unavailableBeforeHandler(code: string, message: string): PluginActionIn
   });
 }
 
-function readPreDispatchUnavailableResult(
+function readPreDispatchResult(
   value: unknown,
 ): PluginActionInvocationPreDispatchResult | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Readonly<Record<string, unknown>>;
   if (
-    record.status !== 'unavailable'
+    (record.status !== 'unavailable' && record.status !== 'invalid')
     || typeof record.code !== 'string'
     || typeof record.message !== 'string'
   ) return null;
   return Object.freeze({
-    status: 'unavailable',
+    status: record.status,
     code: record.code,
     message: record.message,
   });
@@ -522,8 +522,9 @@ export type PluginActionPresentUserGatePolicy = Readonly<{
    * Host-stamped Action-settings policy. This is deliberately distinct from
    * plugin-declared confirmation: a plugin cannot manufacture user consent by
    * supplying it as Action input or manifest presentation.
+   * False is an effective waiver; absence retains the manifest default.
    */
-  approvalRequiredByActionSettings?: true;
+  approvalRequiredByActionSettings?: boolean;
   availability?: PluginActionPolicyInput['availability'];
   authorization: PluginActionPresentUserAuthorizationFacts;
   /** Exact realm-owned facts not otherwise represented in the policy evaluator. */
@@ -600,7 +601,9 @@ export function pluginActionRequiresPresentUserIntent(
   // A host-stamped Ask-first setting is explicit user policy and must not be
   // bypassed merely because the caller is a Plugin. If no current-intent
   // requester is available, the gate fails closed rather than executing.
-  if (policy.approvalRequiredByActionSettings === true) return true;
+  if (typeof policy.approvalRequiredByActionSettings === 'boolean') {
+    return policy.approvalRequiredByActionSettings;
+  }
 
   // Plugin/background execution otherwise has no present user to ask. Every
   // other execution realm must bind a non-safe Action to one live decision.
@@ -660,9 +663,9 @@ export function fingerprintPluginActionCurrentIntent(params: Readonly<{
       ...(params.policy.confirmation === undefined
         ? {}
         : { confirmation: params.policy.confirmation }),
-      ...(params.policy.approvalRequiredByActionSettings === true
-        ? { approvalRequiredByActionSettings: true }
-        : {}),
+      ...(params.policy.approvalRequiredByActionSettings === undefined
+        ? {}
+        : { approvalRequiredByActionSettings: params.policy.approvalRequiredByActionSettings }),
       ...(params.policy.availability === undefined
         ? {}
         : { availability: params.policy.availability }),
@@ -913,8 +916,8 @@ export function createPluginActionInvocation(params: Readonly<{
           if (!params.isCurrent() || params.occurrenceSignal.aborted) {
             return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action occurrenceId retired before dispatch');
           }
-          const result = readPreDispatchUnavailableResult(settlement.value);
-          if (result) return unavailableBeforeHandler(result.code, result.message);
+          const result = readPreDispatchResult(settlement.value);
+          if (result) return result.status === 'invalid' ? result : unavailableBeforeHandler(result.code, result.message);
           if (settlement.value !== null) {
             return unavailableBeforeHandler(
               'plugin_action_pre_dispatch_unavailable',

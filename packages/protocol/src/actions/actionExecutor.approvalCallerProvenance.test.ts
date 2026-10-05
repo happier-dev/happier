@@ -632,6 +632,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
   it('replays Agent Session creation with its original strict spawn policy, not the approver policy', async () => {
     let storedRequest: ApprovalRequest | null = null;
     const policy = SessionAgentSpawnPolicyV1Schema.parse({ permissionCeiling: 'read-only' });
+    const caller = { kind: 'session', sessionId: 'parent-1', starterDepth: 0, turnDepth: 0 } as const;
     const sessionSpawnNew = vi.fn(async (_input: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0]) => ({
       type: 'success', disposition: 'created', sessionId: 'child-1',
       executionTarget: sessionSpawnInput.executionTarget,
@@ -645,7 +646,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       isApprovalExecutionOriginCurrent: async () => true,
       isActionApprovalRequired: (actionId: string) => actionId === 'session.spawn_new',
       resolveAgentStartContext: async () => ({
-        caller: { kind: 'session', sessionId: 'parent-1', starterDepth: 0, turnDepth: 0 },
+        caller,
         baseline: { machineId: 'machine-1', directory: sessionSpawnInput.directory.path, configuration: { agentTarget: sessionSpawnInput.agentTarget, permissionMode: 'safe-yolo' } },
         ledSubtreeSessionIds: [], workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'safe-yolo',
       }),
@@ -654,6 +655,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     await expect(executor.execute('session.spawn_new', { ...sessionSpawnInput, permissionMode: 'read-only' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1',
       runtimeAccountId: 'account-1',
+      actionCaller: caller,
       defaultSessionId: 'parent-1', actionRequestId: 'spawn-request-1',
       callerPermissionMode: 'safe-yolo', sessionAgentSpawnPolicyV1: policy,
       causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'safe-yolo' },
@@ -668,15 +670,20 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       sessionAgentSpawnPolicyV1: policy, permissionMode: 'read-only',
     }));
-    const deferredSpawnArgs = sessionSpawnNew.mock.calls[0]?.[0];
     await expect(executor.execute('session.spawn_new', { ...sessionSpawnInput, permissionMode: 'read-only' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1',
       runtimeAccountId: 'account-1', defaultSessionId: 'parent-1',
+      actionCaller: caller,
       actionRequestId: 'spawn-request-1', bypassApprovals: true,
       callerPermissionMode: 'safe-yolo', sessionAgentSpawnPolicyV1: policy,
       causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'safe-yolo' },
     })).resolves.toMatchObject({ ok: true });
-    expect(sessionSpawnNew.mock.calls[1]?.[0]).toEqual(deferredSpawnArgs);
+    expect(sessionSpawnNew.mock.calls.map(([args]) => ({
+      actionCaller: args.actionCaller, permissionMode: args.permissionMode,
+      sessionAgentSpawnPolicyV1: args.sessionAgentSpawnPolicyV1,
+      workDepth: args.workDepth, originSessionId: args.originSessionId,
+    }))).toEqual([0, 1].map(() => ({ actionCaller: caller, permissionMode: 'read-only',
+      sessionAgentSpawnPolicyV1: policy, workDepth: 1, originSessionId: caller.sessionId })));
   });
 
   it('retains an Agent permission ceiling through durable Run approval replay', async () => {

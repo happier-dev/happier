@@ -14,6 +14,8 @@ export type ResolveWorkflowStepSelectionV1Input = Readonly<{
   roleSelection?: Omit<ResolveRoleSelectionV1Input, 'roleId'>;
   runExecutionTarget?: WorkflowLeafExecutionTargetV1;
   producerExecutionTarget?: WorkflowLeafExecutionTargetV1;
+  /** Value-only editor projection: roles and from-step targets stay unresolved until admission. */
+  purpose?: 'authoring';
 }>;
 export type ResolveWorkflowStepSelectionV1Result = Readonly<{
   selection: WorkflowResolvedStepSelectionV1;
@@ -63,7 +65,7 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
     }
 
     let effort: string | undefined;
-    if ('role' in engine) {
+    if ('role' in engine && input.purpose !== 'authoring') {
       const resolved = resolveRoleSelectionV1({ ...input.roleSelection, roleId: engine.role });
       if (!resolved.ok) throw new WorkflowStepSelectionErrorV1(resolved.refusal);
       role = resolved.selection;
@@ -82,7 +84,7 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
       }
       if (role.profileId !== undefined && selection.profileId === undefined) selection.profileId = role.profileId;
       effort = role.engine.effort;
-    } else {
+    } else if ('agentTarget' in engine) {
       selection.agentTarget = engine.agentTarget;
       if (engine.modelSelection !== undefined) selection.modelSelection = engine.modelSelection;
       effort = engine.effort;
@@ -100,9 +102,9 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
   let executionTarget: WorkflowLeafExecutionTargetV1 | undefined;
   // Value displays have no admission context. Admission supplies the target to
   // resolve from-step classes; the value-only call never guesses a producer's class.
-  if (runTarget !== undefined || stepTarget !== undefined || role !== undefined
+  if (input.purpose !== 'authoring' && (runTarget !== undefined || stepTarget !== undefined || role !== undefined
     || input.producerExecutionTarget !== undefined
-    || selection.conversation?.kind === 'origin_session' || selection.conversation?.kind === 'existing_session') {
+    || selection.conversation?.kind === 'origin_session' || selection.conversation?.kind === 'existing_session')) {
     const conversation = selection.conversation;
     let boundTarget: WorkflowLeafExecutionTargetV1 | undefined;
     if (conversation?.kind === 'origin_session' || conversation?.kind === 'existing_session') {

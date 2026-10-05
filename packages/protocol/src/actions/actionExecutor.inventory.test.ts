@@ -71,6 +71,33 @@ function createActionExecutor(deps: ActionExecutorDeps): ReturnType<typeof creat
 }
 
 describe('machine Agent inventory execution', () => {
+  it('reads bound B options declaration while retaining physical A widget scope', async () => {
+    const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'sessionBoard' as const, sessionId: 'A' } };
+    const definition = { kind: 'installed' as const, surface: { pluginId: 'com.acme.widgets', localId: 'checks' } };
+    const executor = createActionExecutor({ ...createDeps(), widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
+      pathsListRecent: async () => ({ items: [{ path: '/from-A', label: 'A' }] }),
+      notificationChannelsList: async () => ({ items: [{ id: 'from-B', label: 'B' }] }),
+      widgetCatalog: { list: async (_surface, _context, _signal, boundSession?: { serverId: string; sessionId: string }) => [{
+        definition, title: 'Checks', availability: 'available', instanceCount: 0,
+        fields: [{ path: 'choice', title: 'Choice', widget: 'select', optionsSourceId: boundSession?.sessionId === 'B' ? 'notifications.channels.available' : 'paths.list_recent' }],
+      }] },
+    });
+    await expect(executor.execute('action.options.resolve', {
+      consumer: { kind: 'widget', surface, definition, selectedSession: { serverId: 'home', sessionId: 'B' } }, fieldPath: 'choice',
+    })).resolves.toMatchObject({ ok: true, result: { options: [{ value: 'from-B' }] } });
+  });
+  it('resolves a widget consuming descriptor through the shared source front door', async () => {
+    const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } };
+    const definition = { kind: 'builtin' as const, id: 'checks' };
+    const executor = createActionExecutor({ ...createDeps(),
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
+      widgetCatalog: { list: async () => [{ definition, title: 'Checks', availability: 'available', instanceCount: 0,
+        fields: [{ path: 'choice', title: 'Choice', widget: 'select', options: [{ value: 'current', label: 'Current' }] }] }] },
+    });
+    await expect(executor.execute('action.options.resolve', {
+      consumer: { kind: 'widget', surface, definition }, fieldPath: 'choice',
+    })).resolves.toMatchObject({ ok: true, result: { fieldPath: 'choice', options: [{ value: 'current', label: 'Current' }] } });
+  });
   it('preserves exact machine, Home and refresh targeting through every inventory surface', async () => {
     const machinesAgentsList = vi.fn(async (_args: MachinesAgentsListInput) => ({ items: [] }));
     const executor = createActionExecutor({ ...createDeps(), machinesAgentsList });
@@ -101,6 +128,104 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (inventory/discovery)', () => {
+  it('resolves declared plugin input options only through the granted consuming field', async () => {
+    const inputType = { pluginId: 'com.acme.inputs', localId: 'repository' };
+    const definition: ActionDefinitionV1 = {
+      kindVersion: 1, id: 'com.acme.inputs/actions/check', title: 'Check', description: 'Check repository',
+      safety: 'safe', placements: [], slash: null, bindings: null, examples: null,
+      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
+      inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select', inputType }] },
+      inputSchema: { type: 'object', properties: { repository: { type: 'string' } }, additionalProperties: false },
+    };
+    const reads: unknown[] = [];
+    const deps = { ...createDeps(), listContributedActionDefinitions: () => [definition],
+      resolveInputType: async () => ({ identity: inputType, occurrenceId: 'serving-1',
+        definition: { id: 'repository', title: 'Repository', semantic: 'com.acme.repository',
+          valueSchema: { type: 'string', minLength: 1 }, options: { resource: 'repositories' } } }),
+      readInputTypeResource: async (request: unknown) => {
+        reads.push(request);
+        return [{ value: 'repo-one', label: 'One' }];
+      },
+    };
+    const executor = createActionExecutor(deps);
+    await expect(executor.execute('action.options.resolve', {
+      actionId: definition.id, fieldPath: 'repository',
+    }, { surface: 'agent', authority: 'account_automation' })).resolves.toMatchObject({
+      ok: true, result: { options: [{ value: 'repo-one', label: 'One' }] },
+    });
+    expect(reads).toHaveLength(1);
+    const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' as const } };
+    const widgetDefinition = { kind: 'installed' as const, surface: { pluginId: inputType.pluginId, localId: 'repository-widget' } };
+    const workflow = 'plugin:com.acme.inputs/review';
+    const consumerExecutor = createActionExecutor({ ...deps,
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      widgetCatalog: { list: async () => [{ definition: widgetDefinition, title: 'Repository',
+        fields: definition.inputHints!.fields, availability: 'available', instanceCount: 0 }] },
+      workflowAction: async () => ({ definitions: [], pluginWorkflows: [{ workflow, pluginId: inputType.pluginId,
+        version: '1.0.0', title: 'Review', definition: { version: 1, inputs: [{ name: 'repository', valueType: 'string', required: true, inputType }],
+          defaults: {}, blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] } }] }),
+    });
+    for (const consumer of [{ kind: 'workflow', workflow }, { kind: 'widget', surface, definition: widgetDefinition }]) {
+      await expect(consumerExecutor.execute('action.options.resolve', { consumer, fieldPath: 'repository' },
+        { surface: 'agent', authority: 'account_automation' })).resolves.toMatchObject({ ok: true,
+        result: { options: [{ value: 'repo-one', label: 'One' }] } });
+    }
+    await expect(executor.execute('action.options.resolve', {
+      optionsSourceId: 'plugin-input:com.acme.inputs/repository',
+    }, { surface: 'agent', authority: 'account_automation' })).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(reads).toHaveLength(3);
+    const grantedContext = { surface: 'api' as const, authority: 'account_automation' as const,
+      externalActionCredential: { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant: {
+        v: 1 as const, actions: { families: [], ids: [definition.id] }, targets: { sessions: [], machines: [] },
+        approve: false, origins: [], models: null, permissionModes: null, create: null,
+      } } };
+    await expect(executor.execute('action.options.resolve', { actionId: definition.id, fieldPath: 'repository' }, grantedContext))
+      .resolves.toMatchObject({ ok: true, result: { options: [{ value: 'repo-one', label: 'One' }] } });
+    for (const consumer of [{ kind: 'workflow', workflow }, { kind: 'widget', surface, definition: widgetDefinition }]) {
+      await expect(consumerExecutor.execute('action.options.resolve', { consumer, fieldPath: 'repository' }, grantedContext))
+        .resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    }
+    expect(reads).toHaveLength(4);
+  });
+  it('resolves the Workflow-admitted notification source through headless Action discovery', async () => {
+    const executor = createActionExecutor({ ...createDeps(), notificationChannelsList: async () => ({
+      items: [{ id: 'push', label: 'Phone' }],
+    }) });
+    await expect(executor.execute('action.options.resolve', {
+      optionsSourceId: 'notifications.channels.available',
+    }, { surface: 'agent', authority: 'account_automation' })).resolves.toMatchObject({
+      ok: true, result: { options: [{ value: 'push', label: 'Phone' }] },
+    });
+  });
+  it('returns no options source for an admitted picker-only Action field without reading a Resource', async () => {
+    const inputType = { pluginId: 'com.acme.inputs', localId: 'repository' };
+    const definition: ActionDefinitionV1 = {
+      kindVersion: 1, id: 'com.acme.inputs/actions/check', title: 'Check', description: 'Check repository',
+      safety: 'safe', placements: [], slash: null, bindings: null, examples: null,
+      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
+      inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select', inputType }] },
+      inputSchema: { type: 'object', properties: { repository: { type: 'string' } }, additionalProperties: false },
+    };
+    const reads: unknown[] = [];
+    const executor = createActionExecutor({ ...createDeps(), listContributedActionDefinitions: () => [definition],
+      resolveInputType: async () => ({ identity: inputType, occurrenceId: 'serving-1', definition: {
+        id: 'repository', title: 'Repository', semantic: 'repository', valueSchema: { type: 'string' }, picker: 'picker',
+      } }),
+      readInputTypeResource: async request => { reads.push(request); return []; },
+    });
+    await expect(executor.execute('action.options.resolve', { actionId: definition.id, fieldPath: 'repository' }))
+      .resolves.toMatchObject({ ok: true, result: { options: [], optionsSourceId: null } });
+    expect(reads).toEqual([]);
+  });
+  it('does not reinterpret a refused dynamic inventory as an empty successful selection', async () => {
+    const executor = createActionExecutor({
+      ...createDeps(),
+      sessionModesList: async () => ({ ok: false, errorCode: 'session_access_denied', error: 'session_access_denied' }),
+    });
+    await expect(executor.execute('action.options.resolve', {
+      optionsSourceId: 'session.modes.available', draftInput: { sessionId: 'session-1' },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'session_access_denied' });
+  });
   it('cancels only the addressed response through the existing cancel-turn RPC Action', async () => {
     const request = { runId: 'run-1', occurrenceId: 'occurrence-1', turnId: 'turn-1' };
     const output = { ok: true as const, status: 'requested' as const, ...request };
@@ -748,7 +873,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
           backendTargetKey: 'agent:codex',
         }),
       }),
-      undefined,
+      {},
     );
   });
 

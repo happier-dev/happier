@@ -19,6 +19,39 @@ describe('authenticated reports-to resource', () => {
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-reports-route-' }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
+    it('projects current endpoint and pairwise eligibility without writing a relation or grants', async () => {
+        const [owner, actor] = await Promise.all(Array.from({ length: 2 }, () => db.account.create({
+            data: { publicKey: randomUUID(), encryptionMode: 'plain' },
+        })));
+        const create = () => db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: true } });
+        const [child, lead, viewerLead] = await Promise.all([create(), create(), create()]);
+        await db.sessionShare.createMany({ data: [child, lead, viewerLead].map((target) => ({
+            sessionId: target.id, sharedByUserId: owner.id, sharedWithUserId: actor.id,
+            accessLevel: target.id === viewerLead.id ? 'view' as const : 'edit' as const,
+        })) });
+        const app = createAuthenticatedTestApp();
+        sessionRoutes(app);
+        await app.ready();
+        const headers = { 'x-test-user-id': actor.id };
+        const url = `/v1/sessions/${child.id}/reports-to/options`;
+        try {
+            const before = await db.sessionShare.findMany();
+            const response = await app.inject({ method: 'POST', url, headers, payload: { candidateSessionIds: [lead.id, viewerLead.id, child.id] } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ sessionId: child.id, currentLeadSessionId: null, candidates: [
+                { sessionId: lead.id, allowed: true },
+                { sessionId: viewerLead.id, allowed: false, reason: 'input' },
+                { sessionId: child.id, allowed: false, reason: 'cycle' },
+            ] });
+            await db.publicSessionShare.create({ data: { sessionId: lead.id, tokenHash: Buffer.from(randomUUID()), createdByUserId: owner.id } });
+            const denied = await app.inject({ method: 'POST', url, headers, payload: { candidateSessionIds: [lead.id] } });
+            expect(denied.json()).toMatchObject({ candidates: [{ sessionId: lead.id, allowed: false, reason: 'pairwise' }] });
+            expect(await db.sessionReportsTo.count({ where: { sessionId: child.id } })).toBe(0);
+            expect(await db.sessionShare.findMany()).toEqual(before);
+            expect(await db.session.findMany({ where: { id: { in: [child.id, lead.id] } }, select: { active: true } })).toEqual([{ active: true }, { active: true }]);
+        } finally { await app.close(); }
+    });
+
     it('removes an unsafe child relation when its lead becomes publicly shared', async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const create = () => db.session.create({ data: {

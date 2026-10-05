@@ -104,6 +104,7 @@ export const SessionBoardItemPlacementV1Schema = z.object({
   tabId: SessionBoardTabIdSchema.optional(),
   tabTitle: z.string().trim().optional(),
   width: SessionBoardItemWidthSchema.optional(),
+  frameStyle: SessionBoardItemFrameStyleSchema.optional(),
   anchor: SessionBoardItemAnchorV1Schema.optional(),
 }).strict();
 export type SessionBoardItemPlacementV1 = z.infer<typeof SessionBoardItemPlacementV1Schema>;
@@ -293,6 +294,7 @@ export function applySessionBoardItemPlacementV1(
   const existing = tab.items.find((item) => item.itemId === args.itemId);
   if (existing) {
     if (placement.width !== undefined) existing.width = placement.width;
+    if (placement.frameStyle !== undefined) existing.frameStyle = placement.frameStyle;
     if (placement.anchor) {
       const existingIndex = tab.items.findIndex((item) => item.itemId === args.itemId);
       const [moved] = tab.items.splice(existingIndex, 1);
@@ -302,7 +304,8 @@ export function applySessionBoardItemPlacementV1(
     return seal(tabs);
   }
 
-  const entry = { itemId: args.itemId, width: placement.width ?? SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1 };
+  const entry = { itemId: args.itemId, width: placement.width ?? SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
+    ...(placement.frameStyle === undefined ? {} : { frameStyle: placement.frameStyle }) };
   if (insertAt(tab.items, entry, placement.anchor) !== 'inserted') return ITEM_NOT_FOUND;
   return seal(tabs);
 }
@@ -319,7 +322,7 @@ export function sessionBoardItemPlacementOperandsRetainedV1(
 ): boolean {
   const destination = resolveSessionBoardItemPlacementDestinationV1(layout, args);
   if (!destination) return false;
-  return sessionBoardPlacedWidthRetainsPlacementV1(destination.width, args.placement);
+  return sessionBoardPlacedDestinationRetainsPlacementV1(destination, args.placement);
 }
 
 /**
@@ -331,13 +334,22 @@ export function sessionBoardItemPlacementOperandsRetainedV1(
 export function resolveSessionBoardItemPlacementDestinationV1(
   layout: SessionBoardLayoutV1,
   args: Readonly<{ itemId: string; placement: SessionBoardItemPlacementV1 }>,
-): Readonly<{ tabId: string; width: SessionBoardItemWidth }> | null {
+): Readonly<{ tabId: string; width: SessionBoardItemWidth; frameStyle?: SessionBoardItemFrameStyle }> | null {
   const { placement } = args;
   const tab = placement.tabId === undefined
     ? layout.tabs[0]
     : layout.tabs.find((candidate) => candidate.id === placement.tabId);
   const placed = tab?.items.find((entry) => entry.itemId === args.itemId);
-  return tab && placed ? { tabId: tab.id, width: placed.width } : null;
+  return tab && placed ? { tabId: tab.id, width: placed.width, ...(placed.frameStyle === undefined ? {} : { frameStyle: placed.frameStyle }) } : null;
+}
+
+/** Explicit portable frame operands, like explicit widths, must survive the committed placement. */
+export function sessionBoardPlacedDestinationRetainsPlacementV1(
+  destination: Readonly<{ width?: SessionBoardItemWidth; frameStyle?: SessionBoardItemFrameStyle }>,
+  placement: Readonly<{ width?: SessionBoardItemWidth; frameStyle?: SessionBoardItemFrameStyle }>,
+): boolean {
+  return sessionBoardPlacedWidthRetainsPlacementV1(destination.width, placement)
+    && (placement.frameStyle === undefined || destination.frameStyle === placement.frameStyle);
 }
 
 /**

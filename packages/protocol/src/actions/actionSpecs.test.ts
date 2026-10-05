@@ -169,10 +169,13 @@ const WORKFLOW_READ_ACTION_ID_SET = new Set([
   'workflow.definition.list',
   'workflow.definition.get',
   'workflow.run.list',
+  'workflow.run.summaries',
   'workflow.run.get',
   'workflow.run.wait',
   'workflow.run.invocations.list',
   'workflow.run.invocations.get',
+  'workflow.trigger.list',
+  'session.trigger.list',
 ] as const);
 
 const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
@@ -180,6 +183,10 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'artifact.public_link.create',
   'artifact.public_link.list',
   'artifact.public_link.revoke',
+  'artifact.access.grants.list',
+  'artifact.access.grants.set',
+  'artifact.access.grants.remove',
+  'notifications.notify_me',
   'launch_profiles.publish',
   'prompt_doc.get',
   'agents.acp.backends.upsert',
@@ -193,6 +200,8 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.invoke',
   'account.plugins.data.erase',
   'account.sessions.signOutEverywhere',
+  'account.encryption.automationTemplates.recover',
+  'account.encryption.historicalKey.forget',
   'account.security.get',
   'account.security.terminalPresentUser.set',
   'account.password.enroll',
@@ -224,6 +233,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'projects.list',
   'prompts.invocations.list',
   'prompts.invocation.resolve',
+  'prompts.library.list',
   'machines.list',
   'servers.list',
   'review.engines.list',
@@ -282,6 +292,9 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'transcript.search',
   'ui.current_context.read',
   'ui.current_context.command.invoke',
+  'composer.transaction.apply',
+  'composer.attachments.pick',
+  'repository.upload.pick',
   'sessions.external.candidates.list',
   'sessions.external.operation.status.get',
   'sessions.external.status.get',
@@ -339,6 +352,8 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'ui.voice_global.reset',
   'ui.pet.choose',
   'prompt_doc.update',
+  'prompt_doc.create',
+  'prompt_doc.favorite.set',
   'prompt_bundle.update',
   'prompt_asset.export',
   'prompt_registry.install',
@@ -421,6 +436,7 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'execution.run.stream.cancel',
   'execution.run.stop',
   'execution.run.action',
+  'execution.run.permission.respond',
   'session.open',
   'session.fork',
   'session.continue_with_replay',
@@ -2000,32 +2016,23 @@ describe('Action Spec Registry', () => {
   });
 
   it('classifies action approval result and flow contracts', () => {
-    const groups = {
-      requiredBlocking: [] as string[],
-      requiredDeferred: [] as string[],
-      noneDeferred: [] as string[],
-      optionalDeferred: [] as string[],
-    };
+    expect(sorted(listActionSpecs().map((spec) => spec.id))).toEqual(sorted([
+      ...RESULT_REQUIRED_BLOCKING_ACTION_IDS,
+      ...RESULT_REQUIRED_DEFERRED_ACTION_IDS,
+      ...RESULT_NONE_DEFERRED_ACTION_IDS,
+      ...RESULT_OPTIONAL_DEFERRED_ACTION_IDS,
+    ]));
+  });
 
-    for (const spec of listActionSpecs()) {
-      const approval = (spec as any).approval as { flow?: 'blocking' | 'deferred'; result: 'required' | 'optional' | 'none' };
-      const flow = resolveExpectedApprovalFlow(approval);
-      if (spec.approval.result === 'required' && flow === 'blocking') groups.requiredBlocking.push(spec.id);
-      if (spec.approval.result === 'required' && flow === 'deferred') groups.requiredDeferred.push(spec.id);
-      if (spec.approval.result === 'none' && flow === 'deferred') groups.noneDeferred.push(spec.id);
-      if (spec.approval.result === 'optional' && flow === 'deferred') groups.optionalDeferred.push(spec.id);
-    }
-
-    expect(sorted(groups.requiredBlocking)).toEqual(sorted(RESULT_REQUIRED_BLOCKING_ACTION_IDS));
-    expect(sorted(groups.requiredDeferred)).toEqual(sorted(RESULT_REQUIRED_DEFERRED_ACTION_IDS));
-    expect(sorted(groups.noneDeferred)).toEqual(sorted(RESULT_NONE_DEFERRED_ACTION_IDS));
-    expect(sorted(groups.optionalDeferred)).toEqual(sorted(RESULT_OPTIONAL_DEFERRED_ACTION_IDS));
-    expect(new Set([
-      ...groups.requiredBlocking,
-      ...groups.requiredDeferred,
-      ...groups.noneDeferred,
-      ...groups.optionalDeferred,
-    ]).size).toBe(listActionSpecs().length);
+  it.each([
+    ...RESULT_REQUIRED_BLOCKING_ACTION_IDS.map((actionId) => ({ actionId, result: 'required', flow: 'blocking' })),
+    ...RESULT_REQUIRED_DEFERRED_ACTION_IDS.map((actionId) => ({ actionId, result: 'required', flow: 'deferred' })),
+    ...RESULT_NONE_DEFERRED_ACTION_IDS.map((actionId) => ({ actionId, result: 'none', flow: 'deferred' })),
+    ...RESULT_OPTIONAL_DEFERRED_ACTION_IDS.map((actionId) => ({ actionId, result: 'optional', flow: 'deferred' })),
+  ])('classifies action approval result and flow contracts for $actionId', ({ actionId, result, flow }) => {
+    const approval = getActionSpec(actionId as ActionId).approval;
+    expect(approval.result).toBe(result);
+    expect(resolveExpectedApprovalFlow(approval)).toBe(flow);
   });
 
   it('exports approval metadata schema helpers', async () => {
@@ -2312,12 +2319,12 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('action.spec.search').surfaces.mcp).toBe(true);
   });
 
-  it('retains the released tracked-target MCP and CLI compatibility surfaces', () => {
+  it('retains tracked-target MCP declarations without advertising client placement on CLI', () => {
     const primaryTarget = getActionSpec('session.target.primary.set');
     const trackedTarget = getActionSpec('session.target.tracked.set');
 
     expect(primaryTarget.surfaces).toMatchObject({ mcp: true, cli: false });
-    expect(trackedTarget.surfaces).toMatchObject({ mcp: true, cli: true });
+    expect(trackedTarget.surfaces).toMatchObject({ mcp: true, cli: false });
     expect(trackedTarget.bindings?.mcpToolName).toBe('session_target_tracked_set');
     expect(getActionSpec('session.list').surfaces.mcp).toBe(true);
     expect(getActionSpec('session.activity.get').surfaces.mcp).toBe(true);

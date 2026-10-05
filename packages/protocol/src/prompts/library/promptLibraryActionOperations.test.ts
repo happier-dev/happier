@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createPromptDocInLibrary,
+  setPromptDocFavorite,
+  listPromptLibrary,
+  type PromptLibraryArtifactStore,
   exportPromptLibraryArtifact,
   installPromptRegistryItemInLibrary,
   updatePromptDocInLibrary,
@@ -9,6 +13,68 @@ import {
 } from './promptLibraryActionOperations.js';
 
 describe('prompt library action operations', () => {
+  it('creates canonical documents with verbatim text and normalized metadata', async () => {
+    let saved: Parameters<NonNullable<PromptLibraryArtifactStore['create']>>[0] | undefined;
+    const result = await createPromptDocInLibrary({
+      store: { read: async () => null, update: async () => {}, create: async (input) => { saved = input; return 'new'; } },
+      request: { title: 'Prompt', markdown: '  keep\n\ntext  ', folderId: 'folder', tags: [' Alpha ', 'alpha'], favorite: true },
+      nowMs: () => 42,
+    });
+    expect(result).toEqual({ ok: true, artifactId: 'new' });
+    expect(saved?.header).toMatchObject({ kind: 'prompt_doc.v2', title: 'Prompt', folderId: 'folder', tags: ['Alpha'], favorite: true });
+    expect(JSON.parse(saved!.body)).toEqual({ v: 1, markdown: '  keep\n\ntext  ', createdAtMs: 42, updatedAtMs: 42 });
+  });
+
+  it('favourites preserve every other field and reject concurrent newer markdown', async () => {
+    let stored = { id: 'doc', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt', folderId: 'folder', tags: ['tag'], extension: { keep: true } },
+      body: JSON.stringify({ v: 1, markdown: 'old', createdAtMs: 1, updatedAtMs: 1 }) };
+    let race = false;
+    const store: PromptLibraryArtifactStore = {
+      read: async () => stored,
+      update: async (input) => {
+        if (race) stored = { ...stored, revision: { headerVersion: 2, bodyVersion: 2 }, body: stored.body.replace('old', 'newer') };
+        if (input.expectedRevision.bodyVersion !== stored.revision.bodyVersion) throw Object.assign(new Error('conflict'), { code: 'version_mismatch' });
+        stored = { ...stored, header: { ...stored.header, ...input.header }, body: input.body };
+      },
+    };
+    const original = stored;
+    await setPromptDocFavorite({ store, request: { artifactId: 'doc', favorite: true } });
+    expect(stored.header).toEqual({ ...original.header, favorite: true });
+    expect(stored.body).toBe(original.body);
+    race = true;
+    await expect(setPromptDocFavorite({ store, request: { artifactId: 'doc', favorite: false } })).rejects.toMatchObject({ code: 'version_mismatch' });
+    expect(JSON.parse(stored.body).markdown).toBe('newer');
+    expect(stored.header).toMatchObject({ favorite: true, folderId: 'folder', tags: ['tag'] });
+  });
+
+  it('lists headers only, excludes bundles and reports unreadable coverage', async () => {
+    const read = vi.fn(async () => { throw new Error('inventory must not read bodies'); });
+    const result = await listPromptLibrary({ store: { read, update: async () => {}, list: async () => ({
+      coverage: 'partial', items: [
+        { id: 'doc', header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt', tags: ['topic'] }, updatedAtMs: 7 },
+        { id: 'bundle', header: { v: 1, kind: 'prompt_bundle.v2', title: 'Skill' }, updatedAtMs: 8 },
+      ],
+    }) }, request: { query: 'TOPIC', includeBundles: false } });
+    expect(result).toEqual({ items: [{ artifactId: 'doc', title: 'Prompt', folderId: null, tags: ['topic'], favorite: false, updatedAtMs: 7 }], coverage: 'partial' });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('keeps update as an update, never creating a missing id', async () => {
+    const create = vi.fn(async () => 'new');
+    await expect(updatePromptDocInLibrary({ store: { read: async () => null, update: async () => {}, create },
+      request: { artifactId: 'missing', title: 'Prompt', markdown: 'text' } })).rejects.toThrow('prompt_doc_missing_body');
+    expect(create).not.toHaveBeenCalled();
+  });
+  it('exhausts header pages without imposing a library ceiling', async () => {
+    const store: PromptLibraryArtifactStore = { read: async () => { throw new Error('no body read'); }, update: async () => {},
+      list: async (options) => ({ coverage: 'complete', items: [{ id: options?.cursor ? 'second' : 'first',
+        header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt' }, updatedAtMs: 1 }],
+        ...(!options?.cursor ? { nextCursor: 'page-two' } : {}),
+      }),
+    };
+    expect(await listPromptLibrary({ store, request: {} })).toMatchObject({ coverage: 'complete', items: [{ artifactId: 'first' }, { artifactId: 'second' }] });
+  });
   it.each(['doc', 'bundle'] as const)('refuses a stale %s update and preserves the concurrent write', async (kind) => {
     const body = kind === 'doc'
       ? { v: 1, markdown: 'original', createdAtMs: 1, updatedAtMs: 1 }

@@ -21,7 +21,7 @@ import {
   ExternalSessionRefreshCursorV1Schema,
   ExternalSessionRefreshReadDiagnosticV1Schema,
 } from './secureRefreshV1.js';
-import { createExternalSessionTranscriptSourceItemV1Schema } from './sourceTranscriptItemV1.js';
+import { createExternalSessionTranscriptSourceItemV1Schema, ExternalSessionTranscriptItemIdV1Schema } from './sourceTranscriptItemV1.js';
 
 export {
   ExternalSessionsAgentIdSchema,
@@ -34,6 +34,18 @@ export type {
 
 export const ExternalSessionsSearchModeSchema = z.enum(['fast', 'full']);
 export type ExternalSessionsSearchMode = z.infer<typeof ExternalSessionsSearchModeSchema>;
+export const ExternalSessionsSearchTargetSchema = z.enum(['metadata', 'content']);
+export type ExternalSessionsSearchTarget = z.infer<typeof ExternalSessionsSearchTargetSchema>;
+export const ExternalSessionsContentCoverageSchema = z.enum(['complete', 'partial', 'unsupported']);
+export type ExternalSessionsContentCoverage = z.infer<typeof ExternalSessionsContentCoverageSchema>;
+
+/** A decoded visible-text hit; the ordinal never substitutes for a Happier seq. */
+export const ExternalSessionCandidateMatchV1Schema = z.object({
+  snippet: z.string(),
+  sourceItemId: ExternalSessionTranscriptItemIdV1Schema,
+  messageIndex: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict();
+export type ExternalSessionCandidateMatchV1 = z.infer<typeof ExternalSessionCandidateMatchV1Schema>;
 
 function asRequestRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -138,6 +150,7 @@ const ExternalSessionsCandidatesListCanonicalRequestSchema = z.object({
   limit: z.number().int().min(1).max(500).optional(),
   searchTerm: z.string().min(1).max(2000).optional(),
   searchMode: ExternalSessionsSearchModeSchema.optional(),
+  searchTarget: ExternalSessionsSearchTargetSchema.optional(),
   /**
    * Include the Agent's internal threads (approval reviewers, spawned sub-agents). Absent: only
    * top-level sessions, which is also what a daemon that predates the field lists.
@@ -195,6 +208,7 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
       candidates: z.array(z.lazy(() => ExternalSessionCandidateV1Schema)),
       nextCursor: z.string().min(1).nullish(),
       searchIncomplete: z.boolean().optional(),
+      contentCoverage: ExternalSessionsContentCoverageSchema.optional(),
       /**
        * Positive `linkedSessionId` / `imported` projections are present when
        * known. When this is true, omitted projections are not a negative fact:
@@ -354,6 +368,7 @@ export const ExternalSessionCandidateV1Schema = z
     imported: z.boolean().optional(),
     materializedThrough: z.number().int().min(0).optional(),
     thread: ExternalSessionCandidateThreadV1Schema.optional(),
+    match: ExternalSessionCandidateMatchV1Schema.optional(),
   })
   .passthrough();
 export type ExternalSessionCandidateV1 = z.infer<typeof ExternalSessionCandidateV1Schema>;

@@ -8,6 +8,10 @@ const repoRoot = resolve(here, '..', '..');
 
 export const serverWorkspacePackageSourcesPlugin = createWorkspacePackageSourcesPlugin([
     {
+        packageName: '@happier-dev/transfers',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'transfers', 'src'),
+    },
+    {
         packageName: '@happier-dev/peer-mediation',
         packageSourceRoot: resolve(repoRoot, 'packages', 'peer-mediation', 'src'),
     },

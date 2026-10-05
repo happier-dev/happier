@@ -10,6 +10,7 @@ import {
   assertAccountWorkspaceSettingsTransition,
   DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
   isExpoPushNotificationChannelEnabled,
+  readAccountSettingValueForBackendTarget,
   SessionHandoffDefaultsV1Schema,
 } from './accountSettings.js';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
@@ -34,6 +35,31 @@ function expectActionSurfaceEnabled(
 }
 
 describe('accountSettings', () => {
+  it('defaults committed message actions and the composer Library button on while retaining explicit opt-outs', () => {
+    const keys = ['transcriptMessageCopyActionEnabled', 'transcriptMessageForkActionEnabled',
+      'transcriptMessageRollbackActionEnabled', 'transcriptMessagePinActionEnabled',
+      'transcriptMessageSavePromptActionEnabled', 'transcriptMessagePluginActionsEnabled',
+      'transcriptMessageMakeRepeatableActionEnabled',
+      'composerPromptLibraryButtonEnabled'] as const;
+    const defaults = accountSettingsParse({});
+    const disabled = accountSettingsParse(Object.fromEntries(keys.map((key) => [key, false])));
+    for (const key of keys) {
+      expect(defaults[key]).toBe(true);
+      expect(disabled[key]).toBe(false);
+    }
+  });
+
+  it('honors external Agent target preferences without requiring a host runtime routing id', () => {
+    const identity = { pluginId: 'acme.voice', localId: 'agents/conversation' };
+    const key = 'agent:acme.voice/agents/conversation';
+    const settings = accountSettingsParse({ backendEnabledByTargetKey: { [key]: false } });
+    expect(settings.backendEnabledByTargetKey[key]).toBe(false);
+    expect(readAccountSettingValueForBackendTarget(settings, 'backendEnabledByTargetKey', key)).toBe(false);
+    expect(readAccountSettingValueForBackendTarget(settings, 'backendEnabledByTargetKey', {
+      kind: 'agent', identity,
+    })).toBe(false);
+  });
+
   it('defaults workspace tab sync on and preserves an explicit account opt-out', () => {
     expect(accountSettingsParse({}).workspaceTabsSyncEnabled).toBe(true);
     expect(accountSettingsParse({ workspaceTabsSyncEnabled: false }).workspaceTabsSyncEnabled).toBe(false);
@@ -93,21 +119,6 @@ describe('accountSettings', () => {
   it('defaults execution-run parent completion notifications off and accepts an explicit value', () => {
     expect(accountSettingsParse({}).executionRunsNotifyParentOnCompletionDefault).toBe(false);
     expect(accountSettingsParse({ executionRunsNotifyParentOnCompletionDefault: true }).executionRunsNotifyParentOnCompletionDefault).toBe(true);
-  });
-  it('keeps the home layout per Account: every section in the default order until the person changes it', () => {
-    expect(accountSettingsParse({}).homeHubLayoutV1).toEqual({ order: [], hidden: [] });
-    const layout = { order: ['usage', 'machines', 'a-section-from-a-newer-app'], hidden: ['setup'] };
-    expect(accountSettingsParse({ homeHubLayoutV1: layout }).homeHubLayoutV1).toEqual(layout);
-    expect(accountSettingsParse({ homeHubLayoutV1: { order: 'usage' } }).homeHubLayoutV1).toEqual({ order: [], hidden: [] });
-  });
-  it('accepts the longest qualified Home widget id while rejecting a longer id', () => {
-    const pluginId = `a.${'a'.repeat(MAX_PLUGIN_IDENTIFIER_BYTES - 2)}`;
-    const widgetId = `widget:${pluginId}/${'a'.repeat(MAX_PLUGIN_IDENTIFIER_BYTES)}`;
-    const layout = { order: [widgetId], hidden: [widgetId] };
-    expect(accountSettingsParse({ homeHubLayoutV1: layout }).homeHubLayoutV1).toEqual(layout);
-    expect(ACCOUNT_SETTING_DEFINITIONS.homeHubLayoutV1.parseMutationValue({
-      order: [`${widgetId}a`], hidden: [],
-    }).success).toBe(false);
   });
   it('requires explicit opt-in to disclose remote alert policy', () => {
     expect(accountSettingsParse({}).sessionRemoteAlertsEnabled).toBe(false);
@@ -1013,6 +1024,10 @@ describe('accountSettings', () => {
       'agent:happier.agent.claude/claude': 'system-first',
       'backend:team-review:configured:team-review': 'managed-first',
     });
+    expect(readAccountSettingValueForBackendTarget(parsed, 'backendEnabledByTargetKey', {
+      kind: 'builtInAgent', agentId: 'claude',
+    })).toBe(true);
+    expect(readAccountSettingValueForBackendTarget(parsed, 'backendEnabledByTargetKey', 'acpBackend:team-review')).toBe(false);
   });
 
   it('treats malformed current target-keyed backend maps atomically', () => {

@@ -64,6 +64,10 @@ export const PLUGIN_UI_HOST_METHODS_V1 = Object.freeze([
   'watchSession',
   'watchLiveStream',
   'respondToSessionPermission',
+  'readEntityDragItem',
+  'updateEntityDragDrop',
+  'watchEntityDragDrop',
+  'widgetArea',
 ] as const);
 export const PluginUiHostMethodV1Schema = z.enum(PLUGIN_UI_HOST_METHODS_V1);
 export type PluginUiHostMethodV1 = z.infer<typeof PluginUiHostMethodV1Schema>;
@@ -119,6 +123,7 @@ export type PluginUiHostApiRequestMethodV1 =
 
 /** The subscription-establishing subset remains inside the sole tuple. */
 export const PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1 = Object.freeze([
+  'watchEntityDragDrop',
   'watchContext',
   'watchResource',
   'watchComposer',

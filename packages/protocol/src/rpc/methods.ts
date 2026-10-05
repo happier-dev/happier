@@ -166,6 +166,7 @@ export const RPC_METHODS = {
   // cannot drive the desktop Wry WebView directly (separate OS process), so it asks the connected
   // desktop UI to capture one reference-only frame over the existing daemon<->UI session RPC channel.
   UI_BROWSER_RECORDING_CAPTURE_FRAME: 'ui.browser.recording.captureFrame',
+  UI_CONTRIBUTED_ACTION_EXECUTE: 'ui.actions.contributed.execute',
   UI_BROWSER_AUTOMATION_DISPATCH: 'ui.browser.automation.dispatch',
   DAEMON_SIMULATOR_PREVIEW_SNAPSHOT: 'daemon.devices.simulator.preview.snapshot',
   DAEMON_SIMULATOR_PREVIEW_ACTION: 'daemon.devices.simulator.preview.action',
@@ -368,11 +369,14 @@ export const RPC_METHODS = {
   DAEMON_FILESYSTEM_LIST_ROOTS: 'daemon.filesystem.listRoots',
   DAEMON_FILESYSTEM_LIST_DIRECTORY: 'daemon.filesystem.listDirectory',
   DAEMON_WORKSPACE_FILES_LIST: 'daemon.workspaceFiles.list.v1',
+  DAEMON_WORKSPACE_FILES_SEARCH: 'daemon.workspaceFiles.search.v1',
   STAT_FILE: 'statFile',
   RENAME_PATH: 'renamePath',
   DELETE_PATH: 'deletePath',
   DIFFTASTIC: 'difftastic',
   SESSION_LOG_TAIL: 'session.log.tail',
+  /** Machine diagnostics: explicit Session log path, distinct from the bound Session Action. */
+  DAEMON_SESSION_LOG_TAIL: 'daemon.session.log.tail',
   TRANSCRIPT_PAGE: 'transcript.page',
   TRANSCRIPT_READ_AFTER: 'transcript.readAfter',
   TRANSCRIPT_FOLLOW: 'transcript.follow',
@@ -471,6 +475,7 @@ export const SESSION_RPC_METHODS = {
   SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION: 'session.connectedServiceAuth.applyGeneration',
   SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY: 'session.connectedServiceAuth.readRuntimeIdentity',
   SESSION_PROVIDER_INPUT_ADMISSION: 'session.providerInput.admission',
+  SESSION_PROVIDER_CLI_ATTACH_PREPARE: 'session.providerCliAttach.prepare.v1',
   SESSION_MODEL_TRANSITION: 'session.model.transition',
   SESSION_ROLE_SET: 'session.role.set',
   SESSION_ROLES_CONFIGURATION_SET: 'session.roles.configuration.set',

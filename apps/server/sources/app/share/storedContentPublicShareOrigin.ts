@@ -10,3 +10,8 @@ export function resolveStoredContentPublicShareOrigin(shareId: string, env: Node
     });
     return result.ok ? result.origin : null;
 }
+
+/** Artifacts retain one isolated hostname across private previews and public links. */
+export function resolveStoredContentPublicShareSubjectOrigin(subject: Readonly<{ id: string; artifactId: string | null }>, env: NodeJS.ProcessEnv = process.env): string | null {
+    return resolveStoredContentPublicShareOrigin(subject.artifactId ?? subject.id, env);
+}

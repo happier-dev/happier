@@ -3,12 +3,7 @@ import { z } from 'zod';
 
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 
-import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
-import { SessionMcpSelectionAuthoringV1Schema } from '../../mcp/servers/sessionSelectionV1.js';
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
-import { AcpConfigOptionOverridesV1Schema } from '../metadata/metadataOverridesV1.js';
-import { WindowsRemoteSessionLaunchModeSchema } from '../metadata/windowsRemoteSessionLaunchMode.js';
-import { WindowsTerminalWindowNameSchema } from '../metadata/windowsTerminalWindowName.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import {
   ConnectedServiceBindingsV2IngressSchema,
@@ -17,7 +12,6 @@ import { defineSessionAuthoringFields } from './fieldDefinition.js';
 import { AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
 import {
   SessionAuthoringCheckoutCreationDraftV1Schema,
-  SessionAuthoringTerminalV1Schema,
 } from './creationFieldsV1.js';
 import { SessionExecutionTargetV1Schema } from '../creation/sessionExecutionTargetV1.js';
 import { MachinePoolSelectionOriginV1Schema } from '../../machines/pools/v1.js';
@@ -25,6 +19,8 @@ import { SessionOrganizationPlacementV1Schema } from '../creation/sessionSpawnNe
 import { RunnerArtifactTargetSchema } from '../../ephemeralRunner/runnerArtifact.js';
 import { RunnerActivationCreateRequestV1Schema } from '../../ephemeralRunner/activation.js';
 import { TemporaryComputerWorkspaceV1Schema } from './temporaryComputerWorkspaceV1.js';
+import { SessionInitialTriggerV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { SessionAuthoringSelectionFieldsV1 } from './selectionFieldsV1.js';
 
 type SessionAuthoringJsonPrimitive = null | string | number | boolean;
 export interface SessionAuthoringJsonObject {
@@ -145,6 +141,16 @@ const LIVE_ONLY_CONTEXTS = [
 ] as const;
 
 export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
+  initialTriggers: {
+    schema: z.array(z.lazy(() => SessionInitialTriggerV1Schema)).optional(),
+    description: 'Session-scoped triggers admitted atomically with a newly authored Session.',
+    storageClass: 'template',
+    draftStorage: 'sync',
+    contexts: ['newSession'],
+    defaultSurface: 'chip',
+    defaultEditabilityByContext: { newSession: 'editable' },
+    default: [],
+  },
   targetType: {
     schema: z.enum(['new_session', 'existing_session']),
     description: 'Whether authored intent launches a new session or targets an existing session.',
@@ -284,7 +290,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: '',
   },
   agentTarget: {
-    schema: AgentExecutionTargetV1Schema.nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.agentTarget,
     description: 'Canonical executable Agent contribution selected for the authored session.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -299,7 +305,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   transcriptStorage: {
-    schema: z.enum(['persisted', 'direct']).nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.transcriptStorage,
     description: 'Requested transcript storage mode for the authored session.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -314,7 +320,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   profileId: {
-    schema: z.string().nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.profileId,
     description: 'Selected profile id to apply when the authored session starts.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -357,7 +363,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   permissionMode: {
-    schema: z.string().trim().min(1).nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.permissionMode,
     description: 'Selected permission mode persisted as authored session intent.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -430,7 +436,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     },
   },
   mcpSelection: {
-    schema: SessionMcpSelectionAuthoringV1Schema.nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.mcpSelection,
     description: 'Managed/unmanaged MCP selection authored for the session.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -461,7 +467,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   terminal: {
-    schema: SessionAuthoringTerminalV1Schema.nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.terminal,
     description: 'Terminal/runtime attach preferences authored for the session.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -477,7 +483,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   windowsRemoteSessionLaunchMode: {
-    schema: WindowsRemoteSessionLaunchModeSchema.nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.windowsRemoteSessionLaunchMode,
     description: 'Windows remote-session launch mode for authored sessions on Windows.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -490,7 +496,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   windowsRemoteSessionConsole: {
-    schema: z.enum(['hidden', 'visible']).nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.windowsRemoteSessionConsole,
     description: 'Windows console visibility setting for authored sessions.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -503,7 +509,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   windowsTerminalWindowName: {
-    schema: WindowsTerminalWindowNameSchema.nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.windowsTerminalWindowName,
     description: 'Windows Terminal named window target for authored Windows remote sessions.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -531,7 +537,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   acpSessionModeId: {
-    schema: z.string().trim().min(1).nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.acpSessionModeId,
     description: 'Selected ACP session mode id for providers/runtime kinds that expose session modes.',
     storageClass: 'template',
     draftStorage: 'sync',
@@ -546,7 +552,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     default: null,
   },
   sessionConfigOptionOverrides: {
-    schema: AcpConfigOptionOverridesV1Schema.nullable(),
+    schema: SessionAuthoringSelectionFieldsV1.sessionConfigOptionOverrides,
     description: 'Structured session configuration-option overrides authored for the session runtime.',
     storageClass: 'template',
     draftStorage: 'exclude',

@@ -21,7 +21,7 @@ export type SessionTeamCredentialBindingMutationOperationV1 = z.infer<
  * witness-only operation.
  */
 export const SessionTeamCredentialBindingMetadataPatchV1Schema =
-  SessionMetadataOwnerPatchV1Schema.omit({ publisherPrecondition: true }).extend({
+  SessionMetadataOwnerPatchV1Schema.omit({ publisherPrecondition: true, activitySummaryV1: true }).extend({
     mode: z.literal('owner_team_credential_binding'),
     operation: SessionTeamCredentialBindingMutationOperationV1Schema,
     teamCredentialBindings: SessionTeamCredentialBindingIntentsV1Schema.min(1),

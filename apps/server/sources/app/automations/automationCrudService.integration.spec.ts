@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +29,7 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
+import { registerAccountEncryptionMigrateRoutes } from "@/app/api/routes/account/registerAccountEncryptionMigrateRoutes";
 
 import {
     AutomationDisabledError,
@@ -40,16 +42,30 @@ import {
     getAutomation,
     listAutomationDefinitionsPage,
     listAutomations,
+    migrateAutomationAccountEncryptionInTx,
     reconcileAutomationDefinition,
     runAutomationNow,
     setAutomationEnabled,
     updateAutomation,
     updateAutomationTrigger,
 } from "./automationCrudService";
-import { AutomationValidationError } from "./automationValidation";
+import { AutomationValidationError, parseAutomationUpsertInput } from "./automationValidation";
 import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import { cancelAutomationRun } from "./automationRunService";
+// Read the provenance-pinned output artifact without importing Protocol's TS
+// test source into the server compiler's rootDir.
+const v02FixtureSource = readFileSync(new URL(
+    "../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures.ts", import.meta.url,
+), "utf8");
+function readV02Fixture(name: string): string {
+    const match = v02FixtureSource.match(new RegExp(`^export const ${name} = '(.*)';$`, "m"));
+    if (!match?.[1]) throw new Error(`Missing pinned predecessor vector ${name}`);
+    return match[1];
+}
+const AUTOMATION_TEMPLATE_V02_ENCRYPTED = readV02Fixture("AUTOMATION_TEMPLATE_V02_ENCRYPTED");
+const AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED = readV02Fixture("AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED");
+const AUTOMATION_TEMPLATE_V02_PLAIN = readV02Fixture("AUTOMATION_TEMPLATE_V02_PLAIN");
 
 function currentRecipe(templateVersion: number) {
     return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
@@ -208,6 +224,188 @@ describe("automationCrudService (integration)", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("admits retained predecessor ciphertext only for the Account's E2EE Session", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            id: "session-old", accountId: account.id, tag: randomUUID(),
+            metadata: "opaque-retained-e2ee-metadata", encryptionMode: "e2ee",
+        } });
+        const input = parseAutomationUpsertInput({
+            name: "Retained Session", enabled: false, schedule: { kind: "manual" },
+            targetType: "existing_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
+        }, { accountMode: "plain", allowLegacyEncryptedExistingSessionTemplate: true });
+        const retained = await createAutomation({ accountId: account.id, input });
+        expect(retained).toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 1 });
+        await expect(reconcileAutomationDefinition({ accountId: account.id, automationId: retained.id, input: {
+            expectedTemplateVersion: 1, name: "Retained Session", description: null,
+            enabled: false, assignments: [], triggers: [], removedTriggers: [],
+        } })).resolves.toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 2 });
+        await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
+            input: { targetType: "new_session" } })).rejects.toBeInstanceOf(AutomationValidationError);
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async (app) => {
+            const response = await app.inject({ method: "PATCH", url: `/v3/automations/${retained.id}`,
+                headers: { "x-test-user-id": account.id }, payload: {
+                    expectedTemplateVersion: 2,
+                    templateCiphertext: JSON.stringify({ kind: "happier_automation_template_plain_v1",
+                        payload: { ...JSON.parse(AUTOMATION_TEMPLATE_V02_PLAIN).payload, existingSessionId: session.id } }),
+                } });
+            expect(response.statusCode).toBe(400);
+        });
+        await expect(createAutomation({ accountId: account.id, input: {
+            ...input, templateCiphertext: AUTOMATION_TEMPLATE_V02_ENCRYPTED,
+            legacyTemplateEnvelopeAdmission: undefined,
+        } })).rejects.toBeInstanceOf(AutomationValidationError);
+        const other = await db.account.create({ data: { encryptionMode: "plain" } });
+        await expect(createAutomation({ accountId: other.id, input })).rejects.toBeInstanceOf(AutomationValidationError);
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain" } });
+        await expect(createAutomation({ accountId: account.id, input })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
+            input: { name: "Cannot rename after target mode changed" } })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(getAutomation({ accountId: account.id, automationId: retained.id }))
+            .resolves.toMatchObject({ name: "Retained Session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 2 });
+        await db.session.update({ where: { id: session.id }, data: {
+            metadata: JSON.stringify({ flavor: "pi", piSessionId: "plain-session" }),
+        } });
+        const otherTarget = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: "plain",
+            metadata: JSON.stringify({ flavor: "pi", piSessionId: "other-plain-session" }),
+        } });
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async (app) => {
+            const headers = { "x-test-user-id": account.id };
+            const plainTemplate = (sessionId: string) => JSON.stringify({ kind: "happier_automation_template_plain_v1",
+                payload: { ...JSON.parse(AUTOMATION_TEMPLATE_V02_PLAIN).payload, existingSessionId: sessionId } });
+            const retarget = await app.inject({ method: "PATCH", url: `/v3/automations/${retained.id}`, headers,
+                payload: { expectedTemplateVersion: 2, templateCiphertext: plainTemplate(otherTarget.id) } });
+            expect(retarget.statusCode).toBe(400);
+            const recovery = await app.inject({ method: "PATCH", url: `/v3/automations/${retained.id}`, headers,
+                payload: { expectedTemplateVersion: 2, templateCiphertext: plainTemplate(session.id) } });
+            expect(recovery.statusCode, recovery.body).toBe(200);
+            expect(recovery.json()).toMatchObject({ targetType: "existingSession", templateVersion: 3,
+                templateCiphertext: plainTemplate(session.id) });
+        });
+    });
+
+    it.each(["existing_session", "new_session"] as const)("refuses arbitrary retained ciphertext on a plain Account even on a non-template patch (%s)", async (targetType) => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const retained = await db.automation.create({ data: {
+            accountId: account.id, name: "Unbound predecessor", enabled: false,
+            targetType, templateCiphertext: AUTOMATION_TEMPLATE_V02_ENCRYPTED, templateVersion: 1,
+        } });
+        await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
+            input: { name: "Bypass" } })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(db.automation.findUniqueOrThrow({ where: { id: retained.id } }))
+            .resolves.toMatchObject({ name: "Unbound predecessor", templateVersion: 1 });
+        await expect(deleteAutomation({ accountId: account.id, automationId: retained.id })).resolves.toBe(true);
+    });
+
+    it("recovers a legacy encrypted new-Session template through the existing templateVersion CAS", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const retained = await db.automation.create({ data: {
+            accountId: account.id, name: "Recoverable predecessor", enabled: false,
+            targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_ENCRYPTED, templateVersion: 1,
+        } });
+        const recovered = await updateAutomation({ accountId: account.id, automationId: retained.id,
+            expectedTemplateVersion: 1, input: { executionRecipe: currentRecipe(2) } });
+        expect(recovered).toMatchObject({ templateVersion: 2 });
+        expect(JSON.parse(recovered!.templateCiphertext)).toMatchObject({ template: { t: "plain" } });
+        await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
+            expectedTemplateVersion: 1, input: { executionRecipe: currentRecipe(2) } }))
+            .rejects.toMatchObject({ name: "AutomationTemplateMutationConflictError" });
+        await expect(getAutomation({ accountId: account.id, automationId: retained.id }))
+            .resolves.toMatchObject({ templateVersion: 2, templateCiphertext: recovered!.templateCiphertext });
+    });
+
+    it("recovers an opaque predecessor through authenticated inventory and the canonical v3 PATCH", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const retained = await db.automation.create({ data: {
+            accountId: account.id, name: "HTTP recovery", enabled: false,
+            targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_ENCRYPTED, templateVersion: 1,
+        } });
+        await withAuthenticatedTestApp((app) => {
+            registerAutomationV3Routes(app);
+            registerAccountEncryptionMigrateRoutes(app);
+        }, async (app) => {
+            const headers = { "x-test-user-id": account.id };
+            const inventory = await app.inject({ method: "GET", headers,
+                url: "/v1/account/encryption/migrate/automations/inventory" });
+            expect(inventory.statusCode, inventory.body).toBe(200);
+            expect(inventory.json().templates).toEqual([expect.objectContaining({
+                automationId: retained.id, expectedTemplateVersion: 1,
+                templateCiphertext: AUTOMATION_TEMPLATE_V02_ENCRYPTED,
+            })]);
+            const detail = await app.inject({ method: "GET", headers, url: `/v3/automations/${retained.id}` });
+            expect(detail.statusCode).toBe(409);
+            expect(detail.json()).toEqual({ error: "automation_stored_content_unavailable" });
+            const patch = { expectedTemplateVersion: inventory.json().templates[0].expectedTemplateVersion,
+                templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN };
+            const malformed = await app.inject({ method: "PATCH", headers,
+                url: `/v3/automations/${retained.id}`, payload: { ...patch, templateCiphertext: JSON.stringify({
+                    kind: "happier_automation_template_plain_v1", payload: { arbitrary: "not an Automation template" },
+                }) } });
+            expect(malformed.statusCode).toBe(400);
+            for (const privateOrWrongTarget of [
+                { sessionEncryptionKeyBase64: "" }, { sessionEncryptionVariant: "dataKey" },
+                { sessionEncryptionMode: "e2ee" }, { existingSessionId: "retarget" },
+            ]) {
+                const invalid = await app.inject({ method: "PATCH", headers,
+                    url: `/v3/automations/${retained.id}`, payload: { ...patch, templateCiphertext: JSON.stringify({
+                        kind: "happier_automation_template_plain_v1",
+                        payload: { ...JSON.parse(AUTOMATION_TEMPLATE_V02_PLAIN).payload, ...privateOrWrongTarget },
+                    }) } });
+                expect(invalid.statusCode).toBe(400);
+            }
+            const mixed = await app.inject({ method: "PATCH", headers,
+                url: `/v3/automations/${retained.id}`, payload: { ...patch, executionRecipe: currentRecipe(2) } });
+            expect(mixed.statusCode).toBe(400);
+            const recovered = await app.inject({ method: "PATCH", headers,
+                url: `/v3/automations/${retained.id}`, payload: patch });
+            expect(recovered.statusCode, recovered.body).toBe(200);
+            expect(recovered.json()).toMatchObject({ id: retained.id, templateVersion: 2 });
+            expect(recovered.json().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_PLAIN);
+            const stale = await app.inject({ method: "PATCH", headers,
+                url: `/v3/automations/${retained.id}`, payload: patch });
+            expect(stale.statusCode).toBe(409);
+            expect(stale.json()).toEqual({ error: "automation_template_version_conflict" });
+            const reloaded = await db.automation.findUniqueOrThrow({ where: { id: retained.id } });
+            expect(reloaded.templateVersion).toBe(2);
+            expect(reloaded).toMatchObject({ targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN });
+            const strict = await db.automation.create({ data: {
+                accountId: account.id, name: "Current recipe", enabled: false, targetType: "new_session",
+                templateCiphertext: JSON.stringify(currentRecipe(1)), templateVersion: 1,
+            } });
+            const downgrade = await app.inject({ method: "PATCH", headers,
+                url: `/v3/automations/${strict.id}`, payload: patch });
+            expect(downgrade.statusCode).toBe(400);
+            await expect(db.automation.findUniqueOrThrow({ where: { id: strict.id } }))
+                .resolves.toMatchObject({ templateCiphertext: JSON.stringify(currentRecipe(1)), templateVersion: 1 });
+        });
+    });
+
+    it("keeps the exact retained E2EE-Session template during the Account transition", async () => {
+        const account = await db.account.create({ data: {
+            encryptionMode: "e2ee", ...createSignedAccountContentBinding(),
+        } });
+        await db.session.create({ data: {
+            id: "session-old", accountId: account.id, tag: randomUUID(),
+            metadata: "opaque-retained-e2ee-metadata", encryptionMode: "e2ee",
+        } });
+        const retained = await createAutomation({ accountId: account.id, input: parseAutomationUpsertInput({
+            name: "Retained during transition", enabled: false, schedule: { kind: "manual" },
+            targetType: "existing_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
+        }, { accountMode: "e2ee", allowLegacyEncryptedExistingSessionTemplate: true }) });
+        const directive = { action: "migrate" as const, templates: [{
+            automationId: retained.id, expectedTemplateVersion: retained.templateVersion,
+            templateCiphertext: retained.templateCiphertext, triggerDefinitionEnvelopes: [],
+        }], runs: [] };
+        await expect(inTx(async (tx) => migrateAutomationAccountEncryptionInTx({
+            tx, accountId: account.id, toMode: "plain", directive,
+        }))).resolves.toEqual({ status: "applied" });
+        await expect(db.automation.findUniqueOrThrow({ where: { id: retained.id } }))
+            .resolves.toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 2 });
+        await expect(db.session.findUniqueOrThrow({ where: { id: "session-old" } }))
+            .resolves.toMatchObject({ encryptionMode: "e2ee" });
     });
 
     it("persists workflow trigger references and session scope through create, patch and reconciliation", async () => {

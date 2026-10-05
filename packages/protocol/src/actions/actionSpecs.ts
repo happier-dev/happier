@@ -1,3 +1,5 @@
+import { InputOptionsConsumerV1Schema } from '../inputs/inputOptionsConsumer.js';
+import { VOICE_CONVERSATION_ACTION_IDS, VOICE_CONVERSATION_ACTION_SPECS, VoiceConversationActionInputSchemas, VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from './voiceConversationActionFamily.js';
 import {
   SessionAccessGrantsListRequestV1Schema, SessionAccessGrantsListResponseV1Schema,
   SetSessionAccessGrantResponseV1Schema,
@@ -12,7 +14,7 @@ import {
 } from '../acp/catalog/catalogMutationsV1.js';
 import {
   SessionAccessGrantSetActionInputV1Schema,
-  SessionPublicLinkCreateActionInputV1Schema, SessionPublicLinkSettingsV1Schema,
+  SessionPublicLinkCreateActionInputV1Schema, SessionPublicLinkCreateActionResultV1Schema,
   SessionPublicLinkGetActionResultV1Schema, SessionPublicLinkRemoveActionResultV1Schema,
 } from '../sessions/access/sessionAccessActionsV1.js';
 import {
@@ -20,7 +22,10 @@ import {
   SessionResponsibilityCandidatesRequestSchema, SessionResponsibilityCandidatesResponseSchema,
 } from '../sessions/access/sessionResponsibilityV1.js';
 import { z } from 'zod';
+import { AccountHistoricalEncryptionKeyForgetInputV1Schema, AccountHistoricalEncryptionKeyForgetResultV1Schema,
+  AccountEncryptionAutomationTemplatesRecoverInputV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '../auth/accountSecurity.js';
 import { ScmComparisonSourceSchema } from '../scm/comparison.js';
+import { redactPublicShareCapabilityUrl } from '../crypto/publicShareCapabilityUrl.js';
 import { ExecutionRunWaitConditionSchema } from '../execution/runs/waitForTerminal.js';
 import { WaitActionInputV1Schema, WaitActionResultV1Schema, WAIT_CLI_PROJECTION } from './specs/wait.js';
 import { ComputerAccessV1Schema, ComputerTargetV1Schema } from '../computer/v1.js';
@@ -39,8 +44,14 @@ import {
 import {
   MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema,
   MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema,
+  MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema,
 } from '../daemon/agentSignIn.js';
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../capabilities/machineAgentInventory.js';
+import { DaemonWorkspaceFileSearchRequestSchema, DaemonWorkspaceFileSearchResponseSchema } from '../machines/workspaceFiles.js';
+
+export const WorkspaceFilesSearchActionInputSchema = DaemonWorkspaceFileSearchRequestSchema.extend({
+  machineId: z.string().trim().min(1),
+}).strict();
 import {
   DaemonAgentInstallStartRequestSchema,
   DaemonAgentInstallStartResponseSchema,
@@ -53,10 +64,21 @@ import type { ActionCompletionDeclaration } from './actionCompletion.js';
 import { planStartCompletion, reviewStartCompletion, reviewWalkthroughCompletion } from './specs/executionRunCompletion.js';
 import { SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
 import { WORKSPACE_ACTION_SPECS, WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, type WorkspaceActionId } from './workspaceActionFamily.js';
+import { SESSION_CANVAS_ACTION_SPECS, SESSION_CANVAS_ACTION_INPUT_SCHEMAS, SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS, type SessionCanvasActionId } from './sessionCanvasActionFamily.js';
 import { SESSION_TERMINAL_ACTION_SPECS, SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS, type SessionTerminalActionId } from './sessionTerminalActionFamily.js';
 import { COMMAND_PALETTE_ACTION_SPECS } from './commandPaletteActionSpecs.js';
+import { FIND_ACTION_SPECS } from './findActionSpecs.js';
+import { PROMPT_PICKER_ACTION_SPECS } from './promptPickerActionSpecs.js';
+import { SESSION_PENDING_NEXT_ACTION_SPECS } from './specs/sessionPendingNext.js';
+import { SESSION_ORGANIZATION_MOVE_ACTION_SPECS } from './sessionOrganizationMoveAction.js';
+import { LIST_REORDER_ACTION_SPECS } from './listReorderAction.js';
+import { TODO_SESSION_LINK_ACTION_SPECS } from './todoSessionLinkAction.js';
+import { WORKFLOW_AUTHORING_ACTION_SPECS } from './workflowAuthoringAction.js';
+import { COMPOSER_INGRESS_ACTION_SPECS } from './composerIngressAction.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { APP_SHELL_ACTION_IDS, APP_SHELL_ACTION_SPECS } from './appShellActionFamily.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_CONFIGURATION_ACTION_SPECS, NotificationConfigurationActionInputSchemas, NotificationConfigurationActionOutputSchemas, type NotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
+import { APP_UPDATE_ACTION_IDS, APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
 import { ROLE_ACTION_IDS_V1, type RoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { LaunchProfilePublishInputV1Schema, LaunchProfilePublishOutputV1Schema } from '../launchProfiles/publishLaunchProfile.js';
 import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1, isAccountRoleMutationV1 } from '../prompts/roles/roleActionsV1.js';
@@ -554,6 +576,9 @@ import { HOME_GOVERNANCE_ACTION_SPECS } from './specs/home.js';
 import { SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS } from './specs/sessionOrganization.js';
 import { SCOPE_ACTION_SPECS } from './specs/scope.js';
 import { HOME_HUB_LAYOUT_ACTION_SPECS } from './specs/homeHub.js';
+import { WIDGET_INSTANCE_ACTION_SPECS_V1, WIDGET_DEFINITION_ACTION_SPECS_V1, WIDGET_SNAPSHOT_ACTION_SPECS_V1 } from './specs/widgets.js';
+import type { WidgetInstanceActionIdV1, WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
+import type { WidgetDefinitionActionIdV1, WidgetDefinitionActionInputSchemasV1, WidgetDefinitionActionOutputSchemasV1 } from '../widgets/definitionActionsV1.js';
 import { MACHINE_CONNECTION_ACTION_SPECS } from './specs/machineConnection.js';
 import { TEAM_ACTION_SPECS } from './specs/teams.js';
 import { SHARED_SAVED_SECRET_ACTION_SPECS } from './specs/sharedSavedSecrets.js';
@@ -1769,6 +1794,13 @@ const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
   input: StrictJsonValueSchema.optional(),
 }).passthrough();
 
+export const ExecutionRunPermissionRespondInputSchema = z.union([
+  z.object({ runId: z.string().trim().min(1), requestId: z.string().trim().min(1), approved: z.boolean() }).strict(),
+  z.object({ runId: z.string().trim().min(1), requestId: z.string().trim().min(1), answers: StructuredQuestionAnswersV1Schema }).strict(),
+]);
+
+export type ExecutionRunPermissionRespondActionInput = z.input<typeof ExecutionRunPermissionRespondInputSchema>;
+
 const ExecutionRunWaitInputSchema = ExecutionRunIdInputSchema.extend({
   timeoutSeconds: z.number().int().min(1).optional(),
   condition: ExecutionRunWaitConditionSchema.optional(),
@@ -1787,6 +1819,7 @@ const SessionOpenInputSchema = z.object({
     kind: z.literal('scmReview'),
     comparison: ScmComparisonSourceSchema,
     view: z.enum(['walkthrough', 'files']),
+    explain: z.boolean().optional(),
     comparisonId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
@@ -1851,8 +1884,7 @@ const SessionSpawnNewInputHints = {
     { path: 'creationKey', title: 'Creation key', widget: 'text' },
     { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
     { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
-    { path: 'directory', title: 'Directory intent', widget: 'json', required: true },
-    { path: 'directory.path', title: 'Directory', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
+    { path: 'directory', title: 'Directory intent', widget: 'json', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
     { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
     { path: 'agentTarget', title: 'Agent target', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
     { path: 'modelSelection', title: 'Model selection', widget: 'json', optionsSourceId: 'agents.models.available' },
@@ -2181,6 +2213,7 @@ const ActionSpecGetResultSchema = z.object({
 const ActionOptionsResolveInputSchema = z.object({
   actionId: z.string().min(1).optional(),
   fieldPath: z.string().min(1).optional(),
+  consumer: InputOptionsConsumerV1Schema.optional(),
   optionsSourceId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
@@ -2190,7 +2223,7 @@ const ActionOptionsResolveInputSchema = z.object({
   const actionId = typeof value.actionId === 'string' ? value.actionId.trim() : '';
   const fieldPath = typeof value.fieldPath === 'string' ? value.fieldPath.trim() : '';
   const optionsSourceId = typeof value.optionsSourceId === 'string' ? value.optionsSourceId.trim() : '';
-  if (!optionsSourceId && !(actionId && fieldPath)) {
+  if (!optionsSourceId && !(actionId && fieldPath) && !(value.consumer && fieldPath)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'actionId + fieldPath or optionsSourceId is required',
@@ -2876,6 +2909,14 @@ const RESULT_REQUIRED_DEFERRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
+  ...VOICE_CONVERSATION_ACTION_IDS,
+  ...ACTION_ID_FAMILIES_V1.composer_ingress,
+  ...ACTION_ID_FAMILIES_V1.workflow_authoring,
+  ...ACTION_ID_FAMILIES_V1.list_reorder,
+  ...ACTION_ID_FAMILIES_V1.todo_session_link,
+  ...ACTION_ID_FAMILIES_V1.session_organization_move,
+  ...NOTIFICATION_CONFIGURATION_ACTION_IDS,
+  ...APP_UPDATE_ACTION_IDS,
   'capture.view',
   ...ACTION_ID_FAMILIES_V1.session_terminals,
   ...ACTION_ID_FAMILIES_V1.workspace_layout,
@@ -2885,6 +2926,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.scope,
   ...SETTINGS_DECLARATION_ACTION_IDS_V1,
   ...WORK_BOARD_ACTION_IDS_V1,
+  ...ACTION_ID_FAMILIES_V1.widgets,
   // Native observations and input outcomes must return to the invoking Session after consent.
   ...ACTION_ID_FAMILIES_V1.computer,
   ...ARTIFACT_ACCESS_ACTION_IDS_V1,
@@ -2915,6 +2957,9 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'ui.current_context.command.invoke',
   'ui.command_palette.list',
   'ui.command_palette.invoke',
+  'ui.find',
+  'ui.prompts.picker.open',
+  'session.pending.next',
   'account.plugins.data.erase',
   'account.sessions.signOutEverywhere',
   ...ACTION_ID_FAMILIES_V1.account_security,
@@ -2939,6 +2984,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'paths.list_recent',
   'projects.list',
   'prompt_doc.get',
+  'prompts.library.list',
   'prompts.invocations.list',
   'prompts.invocation.resolve',
   'machines.list',
@@ -2946,6 +2992,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'review.engines.list',
   'agents.backends.list',
   'machines.agents.list',
+  'workspace.files.search',
   'agents.models.list',
   'agents.config_options.list',
   'agents.session_modes.list',
@@ -3162,6 +3209,8 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'wait',
   'machines.agents.signIn.start',
   'machines.agents.signIn.status',
+  'machines.agents.signIn.cancel',
+  'machines.agents.signIn.restart',
   'session.read_state.set',
   'session.follow.sources.list',
   'session.access.grants.list',
@@ -3184,6 +3233,8 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'ui.voice_global.reset',
   'ui.pet.choose',
   'prompt_doc.update',
+  'prompt_doc.create',
+  'prompt_doc.favorite.set',
   'prompt_bundle.update',
   'prompt_asset.export',
   'prompt_registry.install',
@@ -3265,6 +3316,7 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'execution.run.stop',
   'execution.run.cancel_turn',
   'execution.run.action',
+  'execution.run.permission.respond',
   'session.open',
   'session.fork',
   'session.continue_with_replay',
@@ -4882,10 +4934,19 @@ const ARTIFACT_ACCESS_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
 }));
 
+function projectPublicLinkCreationObservation(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const result = value as Record<string, unknown>;
+  return { ...result,
+    ...(typeof result.url === 'string' ? { url: redactPublicShareCapabilityUrl(result.url) } : {}),
+    ...(typeof result.previewUrl === 'string' ? { previewUrl: redactPublicShareCapabilityUrl(result.previewUrl) } : {}),
+  };
+}
+
 const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
   requiredAuthority: 'account_automation';
 }>)[] = ARTIFACT_ACTION_IDS_V1.map((id) => {
-  const read = id === 'artifact.get' || id === 'artifact.list' || id === 'artifact.revisions.list' || id === 'artifact.storage.usage';
+  const read = id === 'artifact.get' || id === 'artifact.list' || id === 'artifact.revisions.list' || id === 'artifact.storage.usage' || id === 'artifact.public_link.audit';
   return {
     id, title: id, description: 'Read, publish and manage ordinary Account Artifacts through their mode-aware store.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read || id === 'artifact.public_link.list' ? 'read' : 'write',
@@ -4893,6 +4954,8 @@ const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
     placements: [], bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true, voice: false },
     inputSchema: ArtifactActionInputSchemasV1[id], outputSchema: ArtifactActionOutputSchemasV1[id],
+    ...(['artifact.public_link.create', 'artifact.create', 'artifact.update', 'artifact.publish_from_file', 'artifact.get', 'artifact.revisions.restore'].includes(id)
+      ? { projectObservationOutput: projectPublicLinkCreationObservation } : {}),
     inputHints: { title: 'Artifact', fields: [] },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.').map((segment) => segment.replaceAll('_', '-')), visibility: 'canonical' }] },
   };
@@ -4928,14 +4991,23 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
 
 const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpecs([
   ...WORKSPACE_ACTION_SPECS,
+  ...SESSION_CANVAS_ACTION_SPECS,
+  ...WORKFLOW_AUTHORING_ACTION_SPECS,
+  ...COMPOSER_INGRESS_ACTION_SPECS,
+  ...SESSION_ORGANIZATION_MOVE_ACTION_SPECS,
+  ...LIST_REORDER_ACTION_SPECS,
+  ...TODO_SESSION_LINK_ACTION_SPECS,
   ...SESSION_TERMINAL_ACTION_SPECS,
   ...APP_SHELL_ACTION_SPECS,
+  ...NOTIFICATION_CONFIGURATION_ACTION_SPECS,
+  ...APP_UPDATE_ACTION_SPECS,
+  ...VOICE_CONVERSATION_ACTION_SPECS,
   ...SCOPE_ACTION_SPECS,
   ...SETTINGS_DECLARATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
-    id, title: id === 'settings.list' ? 'List declared settings' : id === 'settings.get' ? 'Read a declared setting' : 'Change a declared setting',
-    description: 'Discover declared settings and read or change explicitly bound scalar preferences through their canonical owner. Local preferences belong to the answering client.',
+    id, title: id === 'settings.list' ? 'List declared settings' : id === 'settings.get' ? 'Read a declared setting' : id === 'settings.invoke' ? 'Invoke a declared settings operation' : 'Change a declared setting',
+    description: 'Discover declared settings, read or change bound preferences, or request a declared operation through its canonical owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.',
     safety: id === 'settings.set' ? 'danger' : 'safe',
-    sideEffectClass: id === 'settings.set' ? 'write' : 'read',
+    sideEffectClass: id === 'settings.set' || id === 'settings.invoke' ? 'write' : 'read',
     requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true, voice: false },
@@ -4949,6 +5021,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   })),
   ...WORK_BOARD_ACTION_SPECS_V1,
+  ...WIDGET_INSTANCE_ACTION_SPECS_V1,
+  ...WIDGET_DEFINITION_ACTION_SPECS_V1,
+  ...WIDGET_SNAPSHOT_ACTION_SPECS_V1,
   ...HOME_HUB_LAYOUT_ACTION_SPECS,
   ...ARTIFACT_ACCESS_ACTION_SPECS,
   ...ARTIFACT_ACTION_SPECS,
@@ -5166,6 +5241,34 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       description: 'This invalidates signed sessions for the current Account. API tokens remain active.',
       fields: [],
     },
+  },
+  {
+    id: 'account.encryption.automationTemplates.recover',
+    placements: [],
+    bindings: { mcpToolName: 'account_encryption_automation_templates_recover' },
+    title: 'Recover older automation templates',
+    description: 'Recover encrypted predecessor templates on a plain Account using genuine historical material held by the invoking client. Each template uses version CAS; retained encrypted Session templates and historical keys remain unchanged.',
+    safety: 'danger',
+    sideEffectClass: 'write',
+    requiredAuthority: 'present_user',
+    surfaces: { ui: true, voice: false, mcp: true, cli: false, agent: true, rpc: false },
+    inputSchema: AccountEncryptionAutomationTemplatesRecoverInputV1Schema,
+    outputSchema: AccountEncryptionAutomationTemplatesRecoverResultV1Schema,
+    inputHints: { title: 'Recover older automation templates', fields: [] },
+  },
+  {
+    id: 'account.encryption.historicalKey.forget',
+    placements: [],
+    bindings: { mcpToolName: 'account_encryption_historical_key_forget' },
+    title: 'Forget the old encryption key',
+    description: 'Irreversibly discard historical encryption material on the invoking device after disclosing encrypted dependencies and obtaining human confirmation. Server content is not deleted.',
+    safety: 'danger',
+    sideEffectClass: 'danger',
+    requiredAuthority: 'present_user',
+    surfaces: { ui: true, voice: false, mcp: true, cli: false, agent: true, rpc: false },
+    inputSchema: AccountHistoricalEncryptionKeyForgetInputV1Schema,
+    outputSchema: AccountHistoricalEncryptionKeyForgetResultV1Schema,
+    inputHints: { title: 'Forget the old encryption key', fields: [] },
   },
   ...([
     {
@@ -5585,9 +5688,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     surfaces: {
       ui: true,
       voice: true,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: true,
     },
     inputHints: {
@@ -6595,6 +6698,25 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     inputSchema: ExecutionRunActionInputSchema,
   },
   {
+    id: 'execution.run.permission.respond',
+    title: 'Answer detached run request',
+    description: 'Approve or deny a permission request, or answer a structured question, on an exact detached execution run. Only a present user may answer; autonomous callers can discover this operation but cannot execute it.',
+    safety: 'safe',
+    requiredAuthority: 'present_user',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND },
+    sideEffectClass: 'write',
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    inputHints: { title: 'Answer a detached run request', fields: [
+      { path: 'runId', title: 'Run id', widget: 'text', required: true },
+      { path: 'requestId', title: 'Request id', widget: 'text', required: true },
+      { path: 'approved', title: 'Approve permission', widget: 'boolean' },
+      { path: 'answers', title: 'Question answers (JSON)', widget: 'textarea' },
+    ] },
+    inputSchema: ExecutionRunPermissionRespondInputSchema,
+    outputSchema: z.object({ ok: z.literal(true) }).strict(),
+  },
+  {
     id: 'execution.run.wait',
     title: 'Wait for execution run',
     description: `Observe an execution run until terminal by default, or select permission attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
@@ -7312,12 +7434,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       "List the account's Prompt Library invocations by stable id, without expanding any prompt body.",
     safety: 'safe',
     placements: [],
+    bindings: { mcpToolName: 'prompts_invocations_list' },
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: false,
     },
     inputHints: {
@@ -7337,12 +7460,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       'Resolve one Prompt Library invocation, by its stable id, to the prompt text it produces.',
     safety: 'safe',
     placements: [],
+    bindings: { mcpToolName: 'prompts_invocation_resolve' },
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: false,
     },
     inputHints: {
@@ -7497,6 +7621,26 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     outputSchema: MachinesAgentsListOutputSchema,
   },
   {
+    id: 'workspace.files.search',
+    title: 'Search text in workspace files',
+    description: 'Search the addressed machine workspace and return one bounded page of grouped text matches with explicit coverage. Refine the query when hasMore is true.',
+    sideEffectClass: 'read',
+    safety: 'safe',
+    placements: [],
+    bindings: { mcpToolName: 'workspace_files_search' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Search text in workspace files', fields: [
+      { path: 'machineId', title: 'Machine id', widget: 'text' },
+      { path: 'rootPath', title: 'Workspace root', widget: 'text' },
+      { path: 'query', title: 'Search text', widget: 'text' },
+      { path: 'matchCase', title: 'Match case', widget: 'boolean' },
+      { path: 'regex', title: 'Regular expression', widget: 'boolean' },
+      { path: 'includeHidden', title: 'Include hidden files', widget: 'boolean' },
+    ] },
+    inputSchema: WorkspaceFilesSearchActionInputSchema,
+    outputSchema: DaemonWorkspaceFileSearchResponseSchema,
+  },
+  {
     id: 'machines.agents.signIn.start',
     title: 'Sign in to an agent',
     description: 'Connect an accepted account, or open the agent native login on the selected machine.',
@@ -7522,6 +7666,20 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       { path: 'machineId', title: 'Machine id', widget: 'text' },
       { path: 'agentId', title: 'Agent id', widget: 'text' },
     ] },
+  },
+  {
+    id: 'machines.agents.signIn.cancel',
+    title: 'Cancel agent sign-in', sideEffectClass: 'write', safety: 'danger', placements: [],
+    bindings: { mcpToolName: 'machines_agents_sign_in_cancel' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: MachinesAgentsSignInCancelInputSchema, outputSchema: MachinesAgentsSignInCancelOutputSchema,
+  },
+  {
+    id: 'machines.agents.signIn.restart',
+    title: 'Restart agent sign-in', sideEffectClass: 'write', safety: 'danger', placements: [],
+    bindings: { mcpToolName: 'machines_agents_sign_in_restart' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: MachinesAgentsSignInCancelInputSchema, outputSchema: MachinesAgentsSignInStartOutputSchema,
   },
   {
     id: 'machines.agents.install',
@@ -7996,7 +8154,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     id: 'session.board.item.upsert',
     title: 'Create or update a Board item',
     description: 'Create or update one Session Board item at a stable id. Creation requires an atomic first placement; expectedItemRevision is the exact optimistic-concurrency operand.',
-    safety: 'safe',
+    safety: 'danger',
     sideEffectClass: 'write',
     placements: [],
     bindings: { mcpToolName: 'session_board_item_upsert' },
@@ -8067,7 +8225,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     id: 'session.board.layout.update',
     title: 'Organize the Session Board',
     description: 'Apply exactly one semantic Board organization change: create, rename, move or remove a view, or place, move, unpin, resize or set a shared frame style on an item placement. Frame styles are card or plain; null clears the override. Moves use stable sibling anchors, never indices.',
-    safety: 'safe',
+    safety: 'danger',
     sideEffectClass: 'write',
     placements: [],
     bindings: { mcpToolName: 'session_board_layout_update' },
@@ -8763,6 +8921,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
   },
   {
     id: 'session.public_link.create',
+    projectObservationOutput: projectPublicLinkCreationObservation,
     title: 'Create Session public link',
     safety: 'danger',
     requiredAuthority: 'account_automation',
@@ -8774,7 +8933,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     sideEffectClass: 'danger',
     inputHints: { fields: [] },
     inputSchema: SessionPublicLinkCreateActionInputV1Schema,
-    outputSchema: SessionPublicLinkSettingsV1Schema,
+    outputSchema: SessionPublicLinkCreateActionResultV1Schema,
     serverTransport: { method: 'POST', path: '/v1/public-shares' },
   },
   {
@@ -9346,6 +9505,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     title: 'Wait for session idle',
     description: 'Wait until the session becomes idle or the timeout elapses.',
     safety: 'safe',
+    sideEffectClass: 'read',
     placements: [],
     bindings: { mcpToolName: 'session_wait_idle' },
     examples: {
@@ -9895,10 +10055,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     id: 'ui.voice_global.reset',
     title: 'Reset voice agent',
     sideEffectClass: 'write',
-    safety: 'safe',
+    safety: 'danger',
+    executionPlacement: 'client',
+    requiredAuthority: 'account_automation',
     placements: ['voice_panel', 'command_palette', 'slash_command'],
     slash: { tokens: ['/h.voice.reset'] },
-    bindings: { voiceClientToolName: 'resetGlobalVoiceAgent' },
+    bindings: { voiceClientToolName: 'resetGlobalVoiceAgent', mcpToolName: 'ui_voice_global_reset' },
     inputHints: {
       title: 'Reset voice agent',
       description: 'Reset the global voice agent state (clears the current voice conversation).',
@@ -9910,8 +10072,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     surfaces: {
       ui: true,
       voice: true,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: false,
       rpc: false,
       },
@@ -9975,15 +10137,15 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     sideEffectClass: 'read',
     safety: 'safe',
     placements: [],
-    bindings: { voiceClientToolName: 'readCurrentUiContext' },
+    bindings: { voiceClientToolName: 'readCurrentUiContext', mcpToolName: 'read_current_ui_context' },
     examples: {
       voice: { argsExample: '{}' },
     },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: true,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: false,
       rpc: false,
     },
@@ -10002,15 +10164,15 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     sideEffectClass: 'external',
     safety: 'safe',
     placements: [],
-    bindings: { voiceClientToolName: 'invokeCurrentUiCommand' },
+    bindings: { voiceClientToolName: 'invokeCurrentUiCommand', mcpToolName: 'invoke_current_ui_command' },
     examples: {
       voice: { argsExample: '{"commandId":"current-ui:1:0"}' },
     },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: true,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: false,
       rpc: false,
     },
@@ -10204,12 +10366,64 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     sideEffectClass: 'read',
     placements: [],
     bindings: { mcpToolName: 'prompt_doc_get' },
-    surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: z.object({ artifactId: z.string().min(1) }).strict(),
     outputSchema: z.object({ ok: z.literal(true), artifactId: z.string().min(1), title: z.string().min(1), markdown: z.string() }).strict(),
     inputHints: { title: 'Read prompt document', fields: [
       { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
     ] },
+  },
+  {
+    id: 'prompt_doc.create',
+    title: 'Create prompt document',
+    description: 'Create an Account-private prompt document in the Happier prompt library.',
+    safety: 'danger',
+    sideEffectClass: 'danger',
+    placements: [],
+    bindings: { mcpToolName: 'prompt_doc_create' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: z.object({ title: z.string().min(1), markdown: z.string(), folderId: z.string().nullable().optional(),
+      tags: z.array(z.string()).optional(), favorite: z.boolean().optional() }).strict(),
+    outputSchema: z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict(),
+    inputHints: { title: 'Create prompt document', fields: [
+      { path: 'title', title: 'Title', widget: 'text', required: true },
+      { path: 'markdown', title: 'Markdown', widget: 'textarea', required: true },
+      { path: 'folderId', title: 'Folder id', widget: 'text' },
+      { path: 'tags', title: 'Tags', widget: 'text_list', listSeparator: 'comma' },
+      { path: 'favorite', title: 'Favourite', widget: 'boolean' },
+    ] },
+  },
+  {
+    id: 'prompt_doc.favorite.set',
+    title: 'Set prompt favourite',
+    description: 'Set a prompt document favourite without changing its content.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    placements: [],
+    bindings: { mcpToolName: 'prompt_doc_favorite_set' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: z.object({ artifactId: z.string().min(1), favorite: z.boolean() }).strict(),
+    outputSchema: z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict(),
+    inputHints: { title: 'Set prompt favourite', fields: [
+      { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
+      { path: 'favorite', title: 'Favourite', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'prompts.library.list',
+    title: 'List prompt library',
+    description: 'List prompt document headers without fetching their bodies.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    placements: [],
+    bindings: { mcpToolName: 'prompts_library_list' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: z.object({ query: z.string().optional(), includeBundles: z.literal(false).optional() }).strict(),
+    outputSchema: z.object({ coverage: z.enum(['complete', 'partial', 'unavailable']), items: z.array(z.object({
+      artifactId: z.string().min(1), title: z.string(), folderId: z.string().nullable(), tags: z.array(z.string()),
+      favorite: z.boolean(), updatedAtMs: z.number(),
+    }).strict()) }).strict(),
+    inputHints: { title: 'List prompt library', fields: [{ path: 'query', title: 'Search', widget: 'text' }] },
   },
   {
     id: 'prompt_doc.update',
@@ -10889,11 +11103,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       title: 'List external session candidates',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
-        { path: 'providerId', title: 'Provider id', widget: 'text', required: true },
+        { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
         { path: 'source', title: 'External source', widget: 'textarea', required: true },
         { path: 'cursor', title: 'Cursor', widget: 'text' },
         { path: 'limit', title: 'Limit', widget: 'text' },
         { path: 'searchTerm', title: 'Search term', widget: 'text' },
+        { path: 'searchTarget', title: 'Search target (metadata or content)', widget: 'text' },
+        { path: 'searchMode', title: 'Metadata search mode (fast or full)', widget: 'text' },
       ],
     },
   },
@@ -11248,6 +11464,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
   // inference. Its exact schemas remain in the canonical family projection.
   ...SCM_GIT_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec),
   ...COMMAND_PALETTE_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec),
+  ...FIND_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec),
+  ...PROMPT_PICKER_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec),
+  ...SESSION_PENDING_NEXT_ACTION_SPECS,
 ] as const));
 
 const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
@@ -11295,11 +11514,19 @@ export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_A
  * are intentionally absent from the generic API and trusted-plugin catalogs.
  */
 const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.composer_ingress,
+  ...ACTION_ID_FAMILIES_V1.workflow_authoring,
+  ...ACTION_ID_FAMILIES_V1.list_reorder,
+  ...ACTION_ID_FAMILIES_V1.session_organization_move,
+  'account.encryption.historicalKey.forget',
+  'account.encryption.automationTemplates.recover',
+  ...NOTIFICATION_CONFIGURATION_ACTION_IDS,
+  ...APP_UPDATE_ACTION_IDS,
   ...ACTION_ID_FAMILIES_V1.session_terminals,
   ...ACTION_ID_FAMILIES_V1.workspace_layout,
   ...APP_SHELL_ACTION_IDS,
   'connectedServices.identityPrivacy.set',
-  ...ACTION_ID_FAMILIES_V1.home_hub_layout,
+  'home.reachNudge.dismiss',
   ...SETTINGS_DECLARATION_ACTION_IDS_V1,
   'homes.connect',
   'machines.add.command',
@@ -11310,8 +11537,6 @@ const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
   'machines.add.ssh.cancel',
   'servers.list',
   'projects.list',
-  'prompts.invocations.list',
-  'prompts.invocation.resolve',
   'session.target.primary.set',
   'session.target.tracked.set',
   'devices.simulator.input.orientation',
@@ -11418,6 +11643,9 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
 
   // Account/server data can run before an exact machine is known.
   register('account', [
+    'home.hub.layout.get',
+    'home.hub.layout.update',
+    ...ACTION_ID_FAMILIES_V1.todo_session_link,
     ...ACTION_ID_FAMILIES_V1.observation,
     ...ACTION_ID_FAMILIES_V1.connected_services_configuration.filter((id) => id !== 'connectedServices.identityPrivacy.set' && id !== 'connectedServices.quota.reset'),
     ...WORK_BOARD_ACTION_IDS_V1,
@@ -11438,6 +11666,11 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.session_read_state,
     ...ACTION_ID_FAMILIES_V1.session_access,
     'prompt_doc.get',
+    'prompt_doc.create',
+    'prompt_doc.favorite.set',
+    'prompts.library.list',
+    'prompts.invocations.list',
+    'prompts.invocation.resolve',
     'prompt_doc.update',
     'prompt_bundle.update',
     // The custom ACP catalog is an Account setting: no machine has to be reachable to edit it.
@@ -11449,7 +11682,8 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
     ...ACTION_ID_FAMILIES_V1.account_plugin_data,
     ...ACTION_ID_FAMILIES_V1.account_sessions,
-    ...ACTION_ID_FAMILIES_V1.account_security,
+    ...ACTION_ID_FAMILIES_V1.account_security.filter((id) => id !== 'account.encryption.historicalKey.forget'
+      && id !== 'account.encryption.automationTemplates.recover'),
     ...ACTION_ID_FAMILIES_V1.account_api_tokens,
     ...ACTION_ID_FAMILIES_V1.session_organization_resources,
     ...ACTION_ID_FAMILIES_V1.identity_github_apps,
@@ -11464,6 +11698,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.teams,
     ...ACTION_ID_FAMILIES_V1.identity_providers,
     ...SHARED_SAVED_SECRET_ACTION_IDS_V1,
+    ...ACTION_ID_FAMILIES_V1.widgets.filter((id) => id !== 'widgets.instance.refresh'),
     ...ACTION_ID_FAMILIES_V1.workflows.filter((actionId) => actionId !== 'workflow.run.start'),
   ]);
 
@@ -11474,6 +11709,9 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
   register('client', ACTION_ID_FAMILIES_V1.capture_viewing);
   register('client', ACTION_ID_FAMILIES_V1.scope);
   register('client', ACTION_ID_FAMILIES_V1.command_palette);
+  register('client', ACTION_ID_FAMILIES_V1.find);
+  register('client', ACTION_ID_FAMILIES_V1.prompt_picker);
+  register('client', ACTION_ID_FAMILIES_V1.widgets.filter((id) => id === 'widgets.instance.refresh'));
 
   // A canonical Session resolves its current machine/daemon owner. Execution
   // runs are intentionally absent: detached runs have no Session owner.
@@ -11520,6 +11758,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     'paths.list_recent',
     'agents.backends.list',
     'machines.agents.list',
+    'workspace.files.search',
     ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
     'agents.models.list',
     'agents.config_options.list',
@@ -11591,8 +11830,12 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
     ...spec,
     requiredAuthority,
     executionPlacement,
+    cli: executionPlacement === 'client' ? undefined : spec.cli,
     surfaces: {
       ...spec.surfaces,
+      // The CLI has no client owner or transport to another app's owners.
+      // Agent/MCP exposure remains host-dependent; it can run in a UI executor.
+      cli: executionPlacement !== 'client' && spec.surfaces.cli,
       mcp: spec.surfaces.mcp || isAgentRequestablePresentUserActionId(spec.id)
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
       agent: spec.surfaces.agent || isAgentRequestablePresentUserActionId(spec.id)
@@ -11649,9 +11892,17 @@ type LiteralActionSpecDefinition<TSpec> = TSpec extends Readonly<{
     : TSpec
   : never;
 
-type DirectActionSpecDefinition = LiteralActionSpecDefinition<
-  (typeof ACTION_SPECS_WITHOUT_APPROVAL)[number]
->;
+// Filter each tuple row before forming its union: widened factory rows would
+// otherwise absorb the concrete rows and erase their exact schema carriers.
+type LiteralActionSpecTupleDefinition<TSpecs extends readonly PreNormalizedActionSpec[]> = {
+  [K in keyof TSpecs]: LiteralActionSpecDefinition<TSpecs[K]>;
+}[number];
+
+type DirectActionSpecDefinition =
+  | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD>
+  | LiteralActionSpecDefinition<(typeof ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES)[number]>
+  | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX>
+  | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX>;
 
 type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
   id: infer TActionId;
@@ -11659,6 +11910,7 @@ type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
   // These families have exact per-ID schema definitions below. Their generic
   // row factories must not reintroduce widened schema unions into the catalog.
   ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | WorkspaceActionId
+    | SessionCanvasActionId | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1
     ? never
     : TSpec
   : never;
@@ -11819,6 +12071,26 @@ type WorkspaceActionSpecDefinition = {
   >;
 }[WorkspaceActionId];
 
+type WidgetInstanceActionSpecDefinition = {
+  [TActionId in WidgetInstanceActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof WidgetInstanceActionInputSchemasV1)[TActionId],
+    (typeof WidgetInstanceActionOutputSchemasV1)[TActionId],
+    never,
+    (typeof WIDGET_INSTANCE_ACTION_SPECS_V1)[number]['requiredAuthority']
+  >;
+}[WidgetInstanceActionIdV1];
+
+type WidgetDefinitionActionSpecDefinition = {
+  [TActionId in WidgetDefinitionActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof WidgetDefinitionActionInputSchemasV1)[TActionId],
+    (typeof WidgetDefinitionActionOutputSchemasV1)[TActionId],
+    never,
+    (typeof WIDGET_DEFINITION_ACTION_SPECS_V1)[number]['requiredAuthority']
+  >;
+}[WidgetDefinitionActionIdV1];
+
 type SessionTerminalActionSpecDefinition = {
   [TActionId in SessionTerminalActionId]: CanonicalActionSchemaDefinition<
     TActionId,
@@ -11915,10 +12187,29 @@ type AccountSecurityActionSpecDefinition =
     >;
 
 export type CanonicalActionSpecDefinition =
+  | { [Id in VoiceConversationActionId]: CanonicalActionSchemaDefinition<Id,
+      (typeof VoiceConversationActionInputSchemas)[Id], (typeof VoiceConversationActionOutputSchemas)[Id]>
+    }[VoiceConversationActionId]
+  | (typeof COMPOSER_INGRESS_ACTION_SPECS)[number]
+  | (typeof WORKFLOW_AUTHORING_ACTION_SPECS)[number]
+  | { [Id in SessionCanvasActionId]: CanonicalActionSchemaDefinition<Id,
+      (typeof SESSION_CANVAS_ACTION_INPUT_SCHEMAS)[Id], (typeof SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS)[Id]>
+    }[SessionCanvasActionId]
+  | { [Id in NotificationConfigurationActionId]: CanonicalActionSchemaDefinition<Id,
+      (typeof NotificationConfigurationActionInputSchemas)[Id], (typeof NotificationConfigurationActionOutputSchemas)[Id]>
+    }[NotificationConfigurationActionId]
+  | { [Id in AppUpdateActionId]: CanonicalActionSchemaDefinition<Id,
+      (typeof AppUpdateActionInputSchemas)[Id], (typeof AppUpdateActionOutputSchemas)[Id]>
+    }[AppUpdateActionId]
   | SessionTerminalActionSpecDefinition
   | WorkspaceActionSpecDefinition
+  | WidgetInstanceActionSpecDefinition
+  | WidgetDefinitionActionSpecDefinition
   | (typeof SCOPE_ACTION_SPECS)[number]
   | (typeof COMMAND_PALETTE_ACTION_SPECS)[number]
+  | (typeof FIND_ACTION_SPECS)[number]
+  | (typeof PROMPT_PICKER_ACTION_SPECS)[number]
+  | (typeof SESSION_PENDING_NEXT_ACTION_SPECS)[number]
   | SettingsDeclarationActionSpecDefinition
   | WorkBoardActionSpecDefinition
   | ArtifactAccessActionSpecDefinition
@@ -12025,6 +12316,12 @@ export type PluginInvocableActionSpec = Readonly<{
 
 type PluginActionSpecForId<TActionId extends PluginInvocableActionId> = CanonicalActionSpecById[TActionId];
 
+// Preserve each row's exact input/output while dynamic catalog lookups consume
+// the parser interface, not a union of hundreds of Zod implementation classes.
+type ActionSchemaCarriersById<TSchemas> = Readonly<{
+  [TActionId in keyof TSchemas]: z.ZodType<z.output<TSchemas[TActionId]>, z.input<TSchemas[TActionId]>>;
+}>;
+
 export type PluginActionInputById = Readonly<{
   [TActionId in PluginInvocableActionId]: z.input<PluginActionInputSchemaById[TActionId]>;
 }>;
@@ -12087,7 +12384,7 @@ const PLUGIN_INVOCABLE_ACTION_SPECS = ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(
 
 function projectPluginActionInputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
-): PluginActionInputSchemaById;
+): ActionSchemaCarriersById<PluginActionInputSchemaById>;
 function projectPluginActionInputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
 ): object {
@@ -12106,7 +12403,7 @@ function projectPluginActionInputSchemas(
 
 function projectPluginActionOutputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
-): PluginActionOutputSchemaById;
+): ActionSchemaCarriersById<PluginActionOutputSchemaById>;
 function projectPluginActionOutputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
 ): object {
@@ -12126,11 +12423,11 @@ function projectPluginActionOutputSchemas(
   ));
 }
 
-export const PLUGIN_ACTION_INPUT_SCHEMAS: PluginActionInputSchemaById = projectPluginActionInputSchemas(
+export const PLUGIN_ACTION_INPUT_SCHEMAS: ActionSchemaCarriersById<PluginActionInputSchemaById> = projectPluginActionInputSchemas(
   PLUGIN_INVOCABLE_ACTION_SPECS,
 );
 
-export const PLUGIN_ACTION_OUTPUT_SCHEMAS: PluginActionOutputSchemaById = projectPluginActionOutputSchemas(
+export const PLUGIN_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PluginActionOutputSchemaById> = projectPluginActionOutputSchemas(
   PLUGIN_INVOCABLE_ACTION_SPECS,
 );
 
@@ -12229,7 +12526,7 @@ export const PublicActionIdSchema = z.custom<PublicActionId>(
 
 function projectPublicActionInputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
-): PublicActionInputSchemaById;
+): ActionSchemaCarriersById<PublicActionInputSchemaById>;
 function projectPublicActionInputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
 ): object {
@@ -12247,7 +12544,7 @@ function projectPublicActionInputSchemas(
 function projectPublicActionOutputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
   projection: 'public',
-): PublicActionOutputSchemaById;
+): ActionSchemaCarriersById<PublicActionOutputSchemaById>;
 function projectPublicActionOutputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
   projection: 'signed-root',
@@ -12276,11 +12573,11 @@ export const SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS = projectPublicActionOutputSchema
   'signed-root',
 );
 
-export const PUBLIC_ACTION_INPUT_SCHEMAS: PublicActionInputSchemaById = projectPublicActionInputSchemas(
+export const PUBLIC_ACTION_INPUT_SCHEMAS: ActionSchemaCarriersById<PublicActionInputSchemaById> = projectPublicActionInputSchemas(
   PUBLIC_ACTION_SPECS,
 );
 
-export const PUBLIC_ACTION_OUTPUT_SCHEMAS: PublicActionOutputSchemaById = projectPublicActionOutputSchemas(
+export const PUBLIC_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PublicActionOutputSchemaById> = projectPublicActionOutputSchemas(
   PUBLIC_ACTION_SPECS,
   'public',
 );
@@ -12354,6 +12651,11 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'agents.acp.backends.delete': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_doc.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_doc.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompt_doc.create': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompt_doc.favorite.set': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompts.library.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompts.invocations.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompts.invocation.resolve': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_bundle.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_asset.export': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_registry.install': HOST_DOMAIN_PLUGIN_CALLER_POLICY,

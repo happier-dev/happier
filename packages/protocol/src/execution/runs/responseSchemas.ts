@@ -9,6 +9,7 @@ import {
   ExecutionRunLaunchOriginSchema,
   ExecutionRunResumeHandleSchema,
   ExecutionRunRetentionPolicySchema,
+  ExecutionRunVoiceAgentIntentInputV1Schema,
   type ExecutionRunClass,
   type ExecutionRunDisplay,
   type ExecutionRunIntent,
@@ -177,6 +178,8 @@ export const ExecutionRunPublicStateSchema = z.object({
   availableActionIds: z.array(z.string().min(1)).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.optional(),
   transcript: ExecutionRunTranscriptSchema.optional(),
+  /** Retained admission policy; reconnecting clients must not replace it with current preferences. */
+  voicePolicy: ExecutionRunVoiceAgentIntentInputV1Schema.shape.voicePolicy,
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),

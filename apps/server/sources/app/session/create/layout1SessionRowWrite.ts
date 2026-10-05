@@ -5,12 +5,20 @@ import { workflowRunIdentityWhere } from "@/app/workflows/workflowRunService";
 import {
     encodeSessionOwnerMetadataEnvelopeV1,
     SESSION_METADATA_LAYOUT_VERSION_V1,
+    AutomationDefinitionCreateRequestSchema,
 } from "@happier-dev/protocol";
 
 import { applySessionCreationPlacementInTx } from "@/app/session/organization/organizationMutations";
 import { writeSessionDataKeyEnvelopeInTx } from "@/app/session/encryption/sessionDataKeyEnvelopePersistence";
 import type { SessionArchiveTransitionPublication } from "@/app/session/archive/publishSessionArchiveTransition";
 import type { Tx } from "@/storage/inTx";
+import { isPrismaErrorCode } from "@/storage/prisma";
+import { createAutomationInTx } from "@/app/automations/automationCrudService";
+import { AutomationValidationError } from "@/app/automations/automationValidation";
+import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
+import { admitSessionLifecycleAutomationRunsTx } from "@/app/automations/automationSessionLifecycleAdmission";
+import { resolveAutomationRecipeFeaturePolicy } from "@/app/automations/automationRecipeFeaturePolicy";
+import type { AutomationTriggerCreateRequest } from "@happier-dev/protocol";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { publishSessionCreationInTx } from "./publishSessionCreationInTx";
 import type { ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions";
@@ -96,6 +104,14 @@ export class SessionInitialAccessError extends Error {
     constructor(readonly code: SessionAccessGrantErrorCode | "session_initial_access_creator_mismatch") {
         super(code);
         this.name = "SessionInitialAccessError";
+    }
+}
+
+/** Initial trigger admission is part of Session birth; a refusal rolls all writes back. */
+export class SessionInitialTriggerAdmissionError extends Error {
+    constructor(readonly code: "invalid_input" | "target_unavailable" | "feature_disabled") {
+        super(code);
+        this.name = "SessionInitialTriggerAdmissionError";
     }
 }
 
@@ -294,6 +310,53 @@ export async function insertLayout1SessionRowInTx(
             authentication: params.authentication,
         });
         if (!bindingResult.ok) throw new SessionTeamCredentialBindingError(bindingResult.reason);
+    }
+    if (prepared.initialTriggers?.length) {
+        const featurePolicy = await resolveAutomationRecipeFeaturePolicy({ tx });
+        if (!featurePolicy.workflowsEnabled) throw new SessionInitialTriggerAdmissionError("feature_disabled");
+        try {
+            for (const admission of prepared.initialTriggers) {
+                const triggers: AutomationTriggerCreateRequest[] = [];
+                for (const { triggerId, trigger } of admission.triggers) {
+                    if (trigger.kind === "sessionLifecycle") {
+                        triggers.push({ triggerId, trigger: { ...trigger, sourceSessionId: session.id } });
+                    } else if (trigger.kind === "schedule") {
+                        triggers.push({ triggerId, trigger });
+                    } else {
+                        // PR triggers need their Session's Channel binding; plugin/run
+                        // sources likewise require their existing post-birth setup owner.
+                        throw new SessionInitialTriggerAdmissionError("target_unavailable");
+                    }
+                }
+                const boundInput = AutomationDefinitionCreateRequestSchema.safeParse({
+                    ...admission, scopeSessionId: session.id, triggers,
+                });
+                if (!boundInput.success) throw new SessionInitialTriggerAdmissionError("invalid_input");
+                await createAutomationInTx(tx, {
+                    accountId: prepared.accountId,
+                    input: boundInput.data,
+                    newbornSession: session,
+                });
+            }
+            const admissions = await admitSessionLifecycleAutomationRunsTx({
+                tx, accountId: prepared.accountId,
+                occurrence: { v: 1, kind: "sessionLifecycle", event: "sessionStarted",
+                    sourceSessionId: session.id, occurredAt: session.createdAt.getTime() },
+            });
+            for (const admission of admissions) {
+                if (admission.result.kind === "ineligible") {
+                    throw new SessionInitialTriggerAdmissionError(
+                        admission.result.reason === "featureDisabled" ? "feature_disabled" : "invalid_input",
+                    );
+                }
+            }
+        } catch (error) {
+            if (error instanceof AutomationValidationError || error instanceof AutomationStoredContentReadError
+                || isPrismaErrorCode(error, "P2002")) {
+                throw new SessionInitialTriggerAdmissionError("invalid_input");
+            }
+            throw error;
+        }
     }
     await publishSessionCreationInTx(tx, { session, ownerAccountMode: params.ownerAccountMode });
     return session;

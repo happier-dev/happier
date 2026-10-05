@@ -943,7 +943,7 @@ describe("automation trigger-set CRUD", () => {
             accountId: account.id,
             automationId: created.id,
             input: {
-                expectedTemplateVersion: 1,
+                expectedTemplateVersion: pausedWithDefinition!.templateVersion,
                 name: "Pause shapes",
                 description: null,
                 enabled: true,
@@ -969,7 +969,7 @@ describe("automation trigger-set CRUD", () => {
             accountId: account.id,
             automationId: created.id,
             input: {
-                expectedTemplateVersion: 1,
+                expectedTemplateVersion: reconcilePaused!.templateVersion,
                 name: "Pause shapes",
                 description: null,
                 enabled: true,

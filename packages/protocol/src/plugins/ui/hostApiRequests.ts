@@ -255,8 +255,8 @@ export type PluginUiSessionPendingPermissionV1 =
 /**
  * The live state of one Session this Account's client can open. Lifecycle,
  * runtime, operational state, title and workspace are the canonical Session
- * awareness projection's own fields, never a second derivation. The object is
- * closed.
+ * awareness projection's own fields. Work presentation comes from the host's
+ * shared Work owner, including report-aware settlement. Both objects are closed.
  */
 export const PluginUiSessionStateV1Schema = z.object({
   sessionId: z.string().trim().min(1),
@@ -266,6 +266,11 @@ export const PluginUiSessionStateV1Schema = z.object({
   lifecycle: SessionAwarenessLifecycleV1Schema,
   runtime: SessionAwarenessRuntimeV1Schema,
   operational: SessionAwarenessOperationalPrimaryV1Schema,
+  workStatus: z.object({
+    bucket: z.enum(['needs_you', 'working', 'finished', 'idle', 'offline']),
+    tone: z.enum(['neutral', 'attention', 'danger']),
+    word: z.string(),
+  }).strict(),
   workspace: SessionAwarenessWorkspaceV1Schema.optional(),
   pendingPermissions: z.array(PluginUiSessionPendingPermissionV1Schema),
 }).strict();

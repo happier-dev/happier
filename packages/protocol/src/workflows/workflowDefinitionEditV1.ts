@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { WorkflowAuthoredResultReferenceSchema, WorkflowBlockIdSchema, type WorkflowAuthoredResultReference } from './workflowReferenceV1.js';
-import { WorkflowArtifactRevisionV1Schema } from './workflowDefinitionV1.js';
+import { WorkflowArtifactRevisionV1Schema, WorkflowDefinitionMetadataV1Schema } from './workflowDefinitionV1.js';
 import { WorkflowDefinitionIdV1Schema } from './workflowIdsV1.js';
 import {
   WorkflowBlockSchema, WorkflowDefinitionV1Schema, WorkflowInputDefinitionSchema, WorkflowStepExecutionSelectionSchema,
   WorkflowStepSchema, WorkflowActionLeafV1Schema, WorkflowInsertBlockV1Schema,
 } from './workflowV1.js';
-import type { WorkflowCondition } from './workflowReferenceV1.js';
+import type { WorkflowCondition, WorkflowAuthoredProducerRef, WorkflowValueReference } from './workflowReferenceV1.js';
+import type { WorkflowActionLeafV1 } from './workflowLeafV1.js';
 import type {
   WorkflowBlock,
   WorkflowDefinitionV1,
@@ -22,7 +23,7 @@ export { WorkflowInsertBlockV1Schema, type WorkflowInsertBlockV1 } from './workf
 export type WorkflowDefinitionDraftV1 = Readonly<{
   name: string;
   inputs: readonly WorkflowInputDefinition[];
-  defaults: WorkflowStepExecutionSelection;
+  defaults: WorkflowDefinitionV1['defaults'];
   blocks: readonly WorkflowBlock[];
   roles?: WorkflowDefinitionV1['roles'];
   finalOutput?: WorkflowAuthoredResultReference;
@@ -76,6 +77,12 @@ export function collectWorkflowBlockIds(draft: WorkflowDefinitionDraftV1): Reado
     }
   }
   return ids;
+}
+
+/** Authored executable leaves; containers and repeated runtime occurrences do not count. */
+export function countWorkflowStepsV1(blocks: readonly WorkflowBlock[]): number {
+  return walkWorkflowBlocks(blocks).filter((block) =>
+    block.kind === 'step' || block.kind === 'action' || block.kind === 'workflow' || block.kind === 'wait').length;
 }
 
 export function findWorkflowBlock(draft: WorkflowDefinitionDraftV1, blockId: string): WorkflowBlock | null {
@@ -289,6 +296,116 @@ export function resolvePreviousResultInputForInsertion(
   if (previous === undefined || previous.kind !== 'step') return null;
   return { kind: 'result', producer: { blockId: previous.id, scope: { kind: 'current' } }, path: [] };
 }
+
+/** Copies one authored subtree, remapping only typed references to copied identities. */
+export function copyWorkflowBlocks(
+  blocks: readonly WorkflowBlock[],
+  takenIds: ReadonlySet<string>,
+  inputs: ReadonlyMap<string, string> = new Map(),
+): Readonly<{ blocks: readonly WorkflowBlock[]; remapResult: (ref: WorkflowAuthoredResultReference) => WorkflowAuthoredResultReference }> {
+  const occupied = new Set(takenIds);
+  const ids = new Map<string, string>();
+  for (const block of walkWorkflowBlocks(blocks)) {
+    for (const id of [block.id, ...(block.kind === 'parallel' ? block.branches.map((branch) => branch.id) : [])]) {
+      let next = id;
+      for (let suffix = 2; occupied.has(next); suffix += 1) next = `${id}-${suffix}`;
+      occupied.add(next);
+      ids.set(id, next);
+    }
+  }
+  const sourceBlocks = new Map(walkWorkflowBlocks(blocks).map((block) => [block.id, block]));
+  const producer = (ref: WorkflowAuthoredProducerRef): WorkflowAuthoredProducerRef => ({ ...ref,
+    blockId: ids.get(ref.blockId) ?? ref.blockId,
+    scope: ref.scope.kind === 'previous_iteration'
+      ? { ...ref.scope, loopBlockId: ids.get(ref.scope.loopBlockId) ?? ref.scope.loopBlockId } : ref.scope,
+  });
+  const result = (ref: WorkflowAuthoredResultReference): WorkflowAuthoredResultReference => {
+    // A loop's aggregate is keyed by its child block ids; named JSON result fields are not ids.
+    const path = [...ref.path];
+    if (sourceBlocks.get(ref.producer.blockId)?.kind === 'loop') {
+      const childIndex = path[0] === 'last' ? 1 : path[0] === 'iterations' && typeof path[1] === 'number' ? 2 : -1;
+      const child = path[childIndex];
+      if (typeof child === 'string' && ids.has(child)) path[childIndex] = ids.get(child)!;
+    }
+    return { ...ref, producer: producer(ref.producer), path };
+  };
+  const reference = (ref: WorkflowValueReference): WorkflowValueReference => {
+    switch (ref.kind) {
+      case 'input': return { ...ref, name: inputs.get(ref.name) ?? ref.name };
+      case 'result': return result(ref);
+      case 'workspace':
+      case 'loop_trailing_count': return { ...ref, producer: producer(ref.producer) };
+      default: return ref;
+    }
+  };
+  const condition = (value: WorkflowCondition): WorkflowCondition => {
+    switch (value.kind) {
+      case 'exists': return { ...value, value: reference(value.value) };
+      case 'compare': return { ...value, left: reference(value.left), right: reference(value.right) };
+      case 'all':
+      case 'any': return { ...value, conditions: value.conditions.map(condition) };
+      case 'not': return { ...value, condition: condition(value.condition) };
+    }
+  };
+  const copyStep = (block: WorkflowStep): WorkflowStep => ({
+    ...block, id: ids.get(block.id)!,
+    ...(block.onlyWhen === undefined ? {} : { onlyWhen: condition(block.onlyWhen) }),
+    input: block.input.map(reference),
+    ...(block.execution === undefined ? {} : { execution: {
+      ...block.execution,
+      ...(block.execution.conversation?.kind === 'from_step' ? { conversation: {
+        ...block.execution.conversation, producer: producer(block.execution.conversation.producer),
+      } } : {}),
+      ...(block.execution.workspace?.kind === 'from_step' ? { workspace: {
+        ...block.execution.workspace, producer: producer(block.execution.workspace.producer),
+      } } : {}),
+    } }),
+  });
+  const copyAction = (block: WorkflowActionLeafV1): WorkflowActionLeafV1 => ({
+    ...block, id: ids.get(block.id)!,
+    ...(block.onlyWhen === undefined ? {} : { onlyWhen: condition(block.onlyWhen) }),
+    input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key,
+      value.kind === 'list' ? { ...value, items: value.items.map((item) => item.kind === 'origin_session_id' ? item : reference(item)) }
+        : value.kind === 'origin_session_id' ? value : reference(value)])),
+  });
+  const copy = (block: WorkflowBlock): WorkflowBlock => {
+    const identity = { id: ids.get(block.id)! };
+    const guarded = 'onlyWhen' in block && block.onlyWhen !== undefined ? { onlyWhen: condition(block.onlyWhen) } : {};
+    switch (block.kind) {
+      case 'step': return copyStep(block);
+      case 'action': return copyAction(block);
+      case 'workflow': return { ...block, ...identity, ...guarded, input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key, reference(value)])) };
+      case 'wait': return { ...block, ...identity, ...guarded };
+      case 'parallel': return { ...block, ...identity, ...guarded, branches: block.branches.map((branch) => ({
+        ...branch, id: ids.get(branch.id)!, blocks: branch.blocks.map(copy),
+      })) };
+      case 'if': return { ...block, ...identity, when: condition(block.when), then: block.then.map(copy), otherwise: block.otherwise.map(copy) };
+      case 'loop': {
+        const repetition = block.repetition;
+        const maxIterations = 'maxIterations' in repetition && typeof repetition.maxIterations !== 'number'
+          ? { ...repetition.maxIterations, name: inputs.get(repetition.maxIterations.name) ?? repetition.maxIterations.name }
+          : 'maxIterations' in repetition ? repetition.maxIterations : undefined;
+        const copiedRepetition = repetition.kind === 'count' ? { ...repetition, count: reference(repetition.count) }
+          : repetition.kind === 'items' ? { ...repetition, items: reference(repetition.items) }
+          : repetition.kind === 'until' ? { ...repetition, maxIterations: maxIterations!, stopWhen: condition(repetition.stopWhen) }
+          : { ...repetition, maxIterations: maxIterations!, evaluator: repetition.evaluator.kind === 'step' ? copyStep(repetition.evaluator) : copyAction(repetition.evaluator) };
+        return { ...block, ...identity, ...guarded, body: block.body.map(copy), repetition: copiedRepetition };
+      }
+    }
+  };
+  return { blocks: blocks.map(copy), remapResult: result };
+}
+
+export function duplicateWorkflowBlock<TDraft extends WorkflowDefinitionDraftV1>(
+  draft: TDraft, blockId: string,
+): Readonly<{ draft: TDraft; blockId: string | null }> {
+  const source = findWorkflowBlock(draft, blockId);
+  const list = findWorkflowBlockListRef(draft, blockId);
+  if (source === null || list === null) return { draft, blockId: null };
+  const copy = copyWorkflowBlocks([source], collectWorkflowBlockIds(draft)).blocks[0]!;
+  return { draft: insertWorkflowBlock(draft, { list, block: copy, afterBlockId: blockId }), blockId: copy.id };
+}
+
 
 export function insertWorkflowBlock<TDraft extends WorkflowDefinitionDraftV1>(
   draft: TDraft,
@@ -855,6 +972,7 @@ export const WorkflowDefinitionEditRequestV1Schema = z.object({
 export const WorkflowDefinitionEditResultV1Schema = z.object({
   definition: WorkflowDefinitionV1Schema,
   revision: WorkflowArtifactRevisionV1Schema,
+  metadata: WorkflowDefinitionMetadataV1Schema,
   changedBlockIds: z.array(WorkflowBlockIdSchema),
 }).strict();
 export type WorkflowDefinitionEditRequestV1 = z.infer<typeof WorkflowDefinitionEditRequestV1Schema>;

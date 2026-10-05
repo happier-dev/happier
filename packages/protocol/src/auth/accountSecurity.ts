@@ -46,6 +46,21 @@ const NormalizedEmailWireV1Schema = z.string().max(VERIFIED_EMAIL_MAX_SCALARS * 
 const TransitionRequestDigestWireV1Schema = z.string().regex(/^aemrb1_[A-Za-z0-9_-]{43}$/);
 
 export const AccountSecurityGetRequestV1Schema = z.object({}).strict();
+/** Device-local historical custody; no caller-selected Account or credential material. */
+export const AccountHistoricalEncryptionKeyForgetInputV1Schema = z.object({}).strict();
+export const AccountHistoricalEncryptionKeyForgetResultV1Schema = z.object({
+  status: z.enum(['forgotten', 'nothing_retained', 'cancelled']),
+}).strict();
+export type AccountHistoricalEncryptionKeyForgetResultV1 = z.infer<typeof AccountHistoricalEncryptionKeyForgetResultV1Schema>;
+/** Client-custody recovery rewrites templates individually and never discards key material. */
+export const AccountEncryptionAutomationTemplatesRecoverInputV1Schema = z.object({}).strict();
+export const AccountEncryptionAutomationTemplatesRecoverResultV1Schema = z.object({
+  templates: z.array(z.object({
+    automationId: z.string().min(1),
+    status: z.enum(['recovered', 'already_plain', 'retained_e2ee', 'locked', 'conflict']),
+  }).strict()),
+}).strict();
+export type AccountEncryptionAutomationTemplatesRecoverResultV1 = z.infer<typeof AccountEncryptionAutomationTemplatesRecoverResultV1Schema>;
 export const AccountSecurityGetResponseV1Schema = z.object({
   v: z.literal(1),
   encryptionMode: z.enum(['plain', 'e2ee']),

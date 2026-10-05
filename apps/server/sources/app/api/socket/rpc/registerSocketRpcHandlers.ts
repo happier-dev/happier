@@ -81,6 +81,7 @@ const MAX_RPC_METHOD_NAME_LENGTH = 512;
 const RPC_REGISTERED_METHODS_SOCKET_DATA_KEY = "rpcRegisteredMethods";
 const MACHINE_VISIBLE_CLIENT_RPC_METHODS = new Set<string>([
     RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
+    RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
 ]);
 
 type SessionPublisherPresenceForRpc = Pick<
@@ -792,30 +793,33 @@ export function registerSocketRpcHandlers(params: Readonly<{
     });
 
     params.socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: unknown) => {
+        const method = normalizeRpcMethodName((data as { method?: unknown } | undefined)?.method);
+        const reject = (error: string, retryable: boolean) => params.socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+            type: "register", error, ...(method ? { method } : {}), retryable,
+        });
         try {
             if (params.ephemeralRunnerAdmission?.kind === "api-token-session-viewer") {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                reject("Forbidden", false);
                 return;
             }
-            const method = normalizeRpcMethodName((data as { method?: unknown } | undefined)?.method);
             if (!method) {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Invalid method name" });
+                reject("Invalid method name", false);
                 return;
             }
 
             if (
                 params.ephemeralRunnerAdmission?.kind === "machine-runtime"
-                && (
-                    !canEphemeralRunnerMachineRegisterRpcMethod({
-                        admission: params.ephemeralRunnerAdmission,
-                        method,
-                    })
-                    || !await verifyCurrentMaterializedRunnerPrincipal(
-                        params.ephemeralRunnerAdmission.principal,
-                    )
-                )
+                && !canEphemeralRunnerMachineRegisterRpcMethod({
+                    admission: params.ephemeralRunnerAdmission,
+                    method,
+                })
             ) {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                reject("Forbidden", false);
+                return;
+            }
+            if (params.ephemeralRunnerAdmission?.kind === "machine-runtime"
+                && !await verifyCurrentMaterializedRunnerPrincipal(params.ephemeralRunnerAdmission.principal)) {
+                reject("Forbidden", true);
                 return;
             }
             const isMachineTransferRegistration = readSocketClientType(params.socket) === "machine-scoped"
@@ -831,7 +835,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 && !sessionAuthorization
                 && !isMachineOwnedSessionSpawnRegistration
             ) {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE });
+                reject(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, false);
                 return;
             }
             if (
@@ -839,18 +843,18 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 && readSocketClientType(params.socket) !== "session-scoped"
                 && !isMachineOwnedSessionSpawnRegistration
             ) {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                reject("Forbidden", false);
                 return;
             }
             if (
                 isReservedServerOriginRpcMethod(method)
                 && !canRegisterReservedServerOriginRpcMethod({ socket: params.socket, method })
             ) {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                reject("Forbidden", true);
                 return;
             }
             if (!await canRegisterSessionScopedRpcMethod({ socket: params.socket, accountId: params.userId, method })) {
-                params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                reject("Forbidden", true);
                 return;
             }
             const machineScopedSocketMachineId = readMachineScopedSocketMachineId(params.socket);
@@ -860,15 +864,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     socketMachineId: machineId,
                     method,
                 })) {
-                    params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Forbidden" });
+                    reject("Forbidden", false);
                     return;
                 }
                 const state = await readMachineAvailabilityState({ accountId: params.userId, machineId });
                 if (state !== "available") {
-                    params.socket.emit(SOCKET_RPC_EVENTS.ERROR, {
-                        type: "register",
-                        error: state === "replaced" ? "Machine replaced" : "Machine unavailable",
-                    });
+                    reject(state === "replaced" ? "Machine replaced" : "Machine unavailable", true);
                     return;
                 }
             }
@@ -887,7 +888,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
         } catch (error) {
             log({ module: "websocket-rpc", level: "error" }, `Error in rpc-register: ${error}`);
-            params.socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: "register", error: "Internal error" });
+            reject("Internal error", true);
         }
     });
 

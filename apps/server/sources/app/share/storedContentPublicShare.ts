@@ -4,7 +4,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, buildPublicShareCreatedUpdate, buildPublicShareUpdatedUpdate, buildPublicShareDeletedUpdate, } from "@/app/events/eventRouter";
 import { createHash, timingSafeEqual, randomUUID } from "crypto";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
-import { resolveStoredContentPublicShareOrigin } from "./storedContentPublicShareOrigin";
+import { resolveStoredContentPublicShareSubjectOrigin } from "./storedContentPublicShareOrigin";
 import { createLocalServicePublicRateLimitChecker } from "@/app/local/services/public/rateLimits";
 import { readLocalServicesFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { artifactVisibleWhere } from "@/app/artifacts/artifactClassification";
@@ -236,7 +236,7 @@ async function persistStoredContentPublicShare(tx: Tx, input: Readonly<{
 }>) {
     const { existing } = input;
     const id = existing?.id ?? randomUUID();
-    if (input.keyDerivation === "fragment_v1" && (!resolveStoredContentPublicShareOrigin(id)
+    if (input.keyDerivation === "fragment_v1" && (!resolveStoredContentPublicShareSubjectOrigin({ id, artifactId: input.subject.kind === 'artifact' ? input.subject.id : null })
         || !createLocalServicePublicRateLimitChecker(readLocalServicesFeatureEnv(process.env).publicRateLimitDependency)))
         return { type: "error" as const, error: "public_share_isolation_unavailable" as const };
     const hash = input.material ? createHash("sha256").update(input.material, "utf8").digest() : null;
@@ -297,7 +297,7 @@ export async function resolveStoredContentPublicShareShell(lookupId: string, hos
         return null;
     const useLimit = resolvePublicShareUseLimit(row.maxUses);
     if (useLimit.type === "invalid" || (useLimit.type === "capped" && row.useCount >= useLimit.maxUses)) return null;
-    const origin = resolveStoredContentPublicShareOrigin(row.id, env);
+    const origin = resolveStoredContentPublicShareSubjectOrigin(row, env);
     if (!origin || new URL(origin).hostname !== hostname)
         return null;
     const admission = checkStoredContentPublicShareRateLimit(row.id, clientKey, env);

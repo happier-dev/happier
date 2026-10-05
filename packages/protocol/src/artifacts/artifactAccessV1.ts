@@ -37,7 +37,7 @@ export const ArtifactAccessGrantRowV1Schema = z.object({
   accessLevel: ArtifactAccessLevelV1Schema,
   createdByAccountId: z.string().min(1),
   createdAt: z.number().int().nonnegative(),
-  display: z.object({ name: z.string(), username: z.string().nullable().optional() }).strict(),
+  display: z.object({ name: z.string().nullable(), username: z.string().nullable().optional() }).strict(),
 }).strict();
 export type ArtifactAccessGrantRowV1 = z.infer<typeof ArtifactAccessGrantRowV1Schema>;
 
@@ -48,8 +48,11 @@ export const ArtifactAccessGrantsListResponseV1Schema = z.object({
   grants: z.array(ArtifactAccessGrantRowV1Schema),
 }).strict();
 export const ArtifactAccessGrantMutationResponseV1Schema = ArtifactAccessGrantsListResponseV1Schema.extend({
+  access: ArtifactCallerAccessV1Schema.nullable(),
   changed: z.boolean(),
-}).strict();
+}).strict().refine((response) => response.access !== null || response.grants.length === 0, {
+  message: 'A revoked caller cannot receive the grant roster', path: ['grants'],
+});
 export type ArtifactAccessGrantsListResponseV1 = z.infer<typeof ArtifactAccessGrantsListResponseV1Schema>;
 export type ArtifactAccessGrantMutationResponseV1 = z.infer<typeof ArtifactAccessGrantMutationResponseV1Schema>;
 

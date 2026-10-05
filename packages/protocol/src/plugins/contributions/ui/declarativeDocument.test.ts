@@ -38,6 +38,41 @@ describe('declarative document normalizer v1', () => {
 
   const action = { pluginId: 'com.acme.dashboard', localId: 'refresh' } as const;
 
+  it('qualifies declared drag nodes and rejects undeclared, foreign, or schema-invalid references', () => {
+    const dragSources = [{ identity: { pluginId: 'com.acme.dashboard', localId: 'card' }, referenceSchema: {
+      type: 'object', properties: { cardId: { type: 'string' } }, required: ['cardId'], additionalProperties: false,
+    } }] as const;
+    const dropTargets = [{ pluginId: 'com.acme.dashboard', localId: 'tray' }];
+    const root = { kind: 'dropTarget', targetId: 'tray', input: { lane: 'review' }, children: [
+      { kind: 'dragSource', sourceId: 'card', reference: { cardId: '42' }, children: [{ kind: 'text', text: 'Review' }] },
+    ] };
+    const normalize = (candidate: unknown) => normalizePluginDeclarativeDocumentV1({
+      pluginId: 'com.acme.dashboard', occurrenceId: 'occurrenceId-4', actions: [], dragSources, dropTargets,
+      document: { version: 1, root: candidate },
+    });
+    const normalized = normalize(root);
+    expect(normalized.root).toMatchObject({ target: { qualifiedId: 'com.acme.dashboard/tray', occurrenceId: 'occurrenceId-4' },
+      children: [{ source: { qualifiedId: 'com.acme.dashboard/card', occurrenceId: 'occurrenceId-4' }, reference: { cardId: '42' } }] });
+    expect(PluginDeclarativeProjectedNodeV1Schema.parse(normalized.root)).toEqual(normalized.root);
+    expectNormalizationFailure(() => normalize({ ...root, targetId: 'missing' }), 'plugin_declarative_drag_missing');
+    expectNormalizationFailure(() => normalize({ ...root, targetId: { pluginId: 'com.foreign.plugin', localId: 'tray' } }), 'plugin_declarative_drag_scope_invalid');
+    expectNormalizationFailure(() => normalize({ kind: 'dragSource', sourceId: 'card', reference: { sessionId: 'forged' }, children: [] }), 'plugin_declarative_drag_reference_invalid');
+    expect(PluginDeclarativeNodeV2Schema.safeParse({ ...root, actionId: 'session.message.send' }).success).toBe(false);
+  });
+
+  it('carries a page widget area by name and readable context only, for a mounted plugin page', () => {
+    const root = { kind: 'widgetArea', area: 'pinned', context: { repository: 'happier' } };
+    const normalize = (candidate: unknown) => normalizePluginDeclarativeDocumentV1({
+      pluginId: 'com.acme.dashboard', occurrenceId: 'occurrenceId-4', actions: [], document: { version: 1, root: candidate },
+    });
+    const normalized = normalize(root);
+    expect(normalized.root).toEqual({ ...root, path: 'root', order: 0 });
+    expect(PluginDeclarativeProjectedNodeV1Schema.parse(normalized.root)).toEqual(normalized.root);
+    // A node names an area; it cannot name a Home, Account, surface or layout.
+    expect(PluginDeclarativeNodeV2Schema.safeParse({ ...root, surface: { kind: 'home' } }).success).toBe(false);
+    expect(PluginDeclarativeNodeV2Schema.safeParse({ ...root, area: '' }).success).toBe(false);
+  });
+
   it('preserves a canonical host Action request without manufacturing contribution authority', () => {
     const root = { kind: 'action', hostAction: 'session.message.send', label: 'Send', input: { text: 'Hello' } };
     const normalized = normalizePluginDeclarativeDocumentV1({

@@ -1,6 +1,6 @@
 import { inTx, type Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import type { SessionReportsToSetResultV1 } from '@happier-dev/protocol';
+import type { SessionReportsToSetResultV1, SessionReportsToOptionsV1 } from '@happier-dev/protocol';
 import { resolveEffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import { evaluateCurrentSessionContextPairInTx, mayInjectSessionContextInTx } from '@/app/session/access/sessionContextInjection';
 import { acquireSessionReportsToHomeFenceInTx } from './sessionReportsToFence';
@@ -33,15 +33,15 @@ function seedCurrentState(source: Parameters<typeof readCurrentSourceSessionFoll
 const forbidden = (reason: 'read' | 'input' | 'pairwise'): SessionReportsToSetResult =>
     ({ ok: false, error: 'reports_to_forbidden', reason });
 
-async function mutateSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInput, createdChild: boolean): Promise<SessionReportsToSetResult> {
-    // Every existing-child mutation takes the Home fence before *any* read.
-    if (!createdChild) await acquireSessionReportsToHomeFenceInTx(tx);
+type ReportsToAdmission = Readonly<{ ok: true }> | Extract<SessionReportsToSetResult, { ok: false }>;
+
+/** The same endpoint and pairwise owner serves read-only options and final mutation. */
+async function readReportsToAdmissionInTx(tx: Tx, input: Omit<SessionReportsToSetInput, 'expectedLeadSessionId'>,
+    existingLeadSessionId: string | null): Promise<ReportsToAdmission> {
     const account = await tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } });
     if (account?.status !== 'active') return forbidden('read');
-    const child = await tx.session.findUnique({ where: { id: input.sessionId }, select: SOURCE_SELECT });
-    if (!child) return forbidden('read');
-    const existing = await tx.sessionReportsTo.findUnique({ where: { sessionId: input.sessionId } });
-    const endpointIds = [...new Set([input.sessionId, ...(input.leadSessionId ? [input.leadSessionId] : existing ? [existing.leadSessionId] : [])])];
+    const endpointIds = [...new Set([input.sessionId, ...(input.leadSessionId ? [input.leadSessionId]
+        : existingLeadSessionId ? [existingLeadSessionId] : [])])];
     const access = await Promise.all(endpointIds.map((sessionId) => resolveEffectiveSessionAccess(tx, {
         accountId: input.accountId, sessionId, authentication: input.authentication,
     })));
@@ -55,20 +55,63 @@ async function mutateSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInpu
         });
         if (!pair.ok) return forbidden('pairwise');
     }
+    return { ok: true };
+}
+
+async function reportsToWouldCycleInTx(tx: Tx, sessionId: string, leadSessionId: string): Promise<boolean> {
+    const visited = new Set([sessionId]);
+    let ancestor: string | null = leadSessionId;
+    while (ancestor !== null) {
+        if (visited.has(ancestor)) return true;
+        visited.add(ancestor);
+        const parent: { leadSessionId: string } | null = await tx.sessionReportsTo.findUnique({
+            where: { sessionId: ancestor }, select: { leadSessionId: true },
+        });
+        ancestor = parent?.leadSessionId ?? null;
+    }
+    return false;
+}
+
+/** Reads only requested candidates; no grants, keys, runtime state or relation edges are written. */
+export async function readSessionReportsToOptions(input: Readonly<{
+    accountId: string; sessionId: string; candidateSessionIds: readonly string[]; authentication: SessionAccessAuthentication;
+}>): Promise<SessionReportsToOptionsV1> {
+    return inTx(async (tx) => {
+        const sourceAccess = await resolveEffectiveSessionAccess(tx, input);
+        const existing = sourceAccess?.capabilities.readTranscript === true
+            ? await tx.sessionReportsTo.findUnique({ where: { sessionId: input.sessionId }, select: { leadSessionId: true } }) : null;
+        const currentLeadSessionId = existing?.leadSessionId ?? null;
+        const candidates: SessionReportsToOptionsV1['candidates'] = [];
+        for (const sessionId of [...new Set(input.candidateSessionIds)]) {
+            const admission = await readReportsToAdmissionInTx(tx, {
+                accountId: input.accountId, sessionId: input.sessionId, leadSessionId: sessionId, authentication: input.authentication,
+            }, currentLeadSessionId);
+            if (!admission.ok) {
+                candidates.push({ sessionId, allowed: false,
+                    reason: admission.error === 'reports_to_forbidden' ? admission.reason : 'cycle' });
+            } else if (await reportsToWouldCycleInTx(tx, input.sessionId, sessionId)) {
+                candidates.push({ sessionId, allowed: false, reason: 'cycle' });
+            } else {
+                candidates.push({ sessionId, allowed: true });
+            }
+        }
+        return { sessionId: input.sessionId, currentLeadSessionId, candidates };
+    });
+}
+
+async function mutateSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInput, createdChild: boolean): Promise<SessionReportsToSetResult> {
+    // Every existing-child mutation takes the Home fence before *any* read.
+    if (!createdChild) await acquireSessionReportsToHomeFenceInTx(tx);
+    const child = await tx.session.findUnique({ where: { id: input.sessionId }, select: SOURCE_SELECT });
+    if (!child) return forbidden('read');
+    const existing = await tx.sessionReportsTo.findUnique({ where: { sessionId: input.sessionId } });
+    const admission = await readReportsToAdmissionInTx(tx, input, existing?.leadSessionId ?? null);
+    if (!admission.ok) return admission;
     if ((existing?.leadSessionId ?? null) !== input.expectedLeadSessionId) return { ok: false, error: 'reports_to_cas_conflict' };
     if ((existing?.leadSessionId ?? null) === input.leadSessionId) {
         return { ok: true, sessionId: input.sessionId, leadSessionId: input.leadSessionId, attachedAt: existing?.attachedAt.getTime() ?? null };
     }
-    if (!createdChild && input.leadSessionId !== null) {
-        const visited = new Set([input.sessionId]);
-        let ancestor: string | null = input.leadSessionId;
-        while (ancestor !== null) {
-            if (visited.has(ancestor)) return { ok: false, error: 'reports_to_cycle' };
-            visited.add(ancestor);
-            const parent: { leadSessionId: string } | null = await tx.sessionReportsTo.findUnique({ where: { sessionId: ancestor }, select: { leadSessionId: true } });
-            ancestor = parent?.leadSessionId ?? null;
-        }
-    }
+    if (!createdChild && input.leadSessionId !== null && await reportsToWouldCycleInTx(tx, input.sessionId, input.leadSessionId)) return { ok: false, error: 'reports_to_cycle' };
     // The Session's existing projection timestamp also separates detach/reattach
     // in one clock tick; no relation incarnation or historical tombstone is added.
     const changedAt = new Date(Math.max(Date.now(), child.updatedAt.getTime() + 1, (existing?.attachedAt.getTime() ?? -1) + 1));

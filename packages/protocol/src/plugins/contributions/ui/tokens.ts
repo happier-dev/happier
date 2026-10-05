@@ -31,6 +31,8 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   // A destination about external conversations (two overlapping speech
   // bubbles, distinct from a Session's single bubble), and a paused state mark.
   'conversations',
+  'waveform',
+  'desktop',
   'pause',
   // Whole-surface failures distinguish temporary unavailability from denied access.
   'failure',

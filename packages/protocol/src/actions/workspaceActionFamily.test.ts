@@ -3,6 +3,22 @@ import { ActionIdSchema } from './actionIds.js';
 import { WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, WORKSPACE_ACTION_SPECS } from './workspaceActionFamily.js';
 
 describe('workspace client actions', () => {
+  it('accepts semantic placement for kept opens and moves while rejecting ambiguous reorder positions', () => {
+    expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'].safeParse({ href: '/session/a', groupId: 'target', beforeTabId: 'anchor', reuseExisting: true, mode: 'splitLeft' }).success).toBe(true);
+    expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.move'].safeParse({ tabId: 'a', targetGroupId: 'target', beforeTabId: 'anchor' }).success).toBe(true);
+    const reorder = WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.reorder'];
+    expect(reorder.safeParse({ tabId: 'a', beforeTabId: 'anchor' }).success).toBe(true);
+    expect(reorder.safeParse({ tabId: 'a', beforeTabId: null }).success).toBe(true);
+    expect(reorder.safeParse({ tabId: 'a', index: 0, beforeTabId: 'anchor' }).success).toBe(false);
+    expect(reorder.safeParse({ tabId: 'a' }).success).toBe(false);
+  });
+  it('requires a destination for split opens without accepting replacement-tab semantics', () => {
+    const open = WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'];
+    expect(open.safeParse({ mode: 'splitLeft' }).success).toBe(false);
+    expect(open.safeParse({ href: '/session/a', mode: 'splitLeft', tabId: 'replace' }).success).toBe(false);
+    expect(open.safeParse({ mode: 'newTab', beforeTabId: 'anchor' }).success).toBe(true);
+  });
+
   it('discovers tab and layout capabilities through the canonical Action vocabulary', () => {
     for (const id of [
       'workspace.tabs.list', 'workspace.tabs.open', 'workspace.tabs.activate', 'workspace.tabs.close',

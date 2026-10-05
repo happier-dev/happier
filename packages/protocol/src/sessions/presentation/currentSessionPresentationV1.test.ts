@@ -5,6 +5,7 @@ import {
   CurrentSessionPresentationBindV1Schema,
   CurrentSessionPresentationBindResultV1Schema,
   CurrentSessionPresentationIntentV1Schema,
+  CurrentSessionPresentationActionInputV1Schema,
   CurrentSessionPresentationStateV1Schema,
   CurrentSessionPresentationUnbindV1Schema,
   currentSessionPresentationEntryIdentityV1,
@@ -19,6 +20,31 @@ const owner = (pluginId: string, invocationId: string) => ({
 });
 
 describe('current-session presentation wire contract', () => {
+  it('keeps widget instance mutations behind qualified widget Actions, not author presentation', () => {
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} };
+    const intents = [
+      { kind: 'companion.item.add', item: { kind: 'instance', instance } },
+      { kind: 'companion.item.remove', item: { kind: 'builtin', id: 'session_summary' }, expectedInstance: instance },
+      { kind: 'companion.instance.inputs.set', instanceId: 'copy-a', bindings: {} },
+      { kind: 'companion.instance.inputs.reset', instanceId: 'copy-a' },
+      { kind: 'companion.instance.rename', instanceId: 'copy-a', displayName: 'Checks' },
+    ];
+    for (const intent of intents) {
+      expect(CurrentSessionPresentationIntentV1Schema.safeParse(intent).success).toBe(true);
+      expect(CurrentSessionPresentationActionInputV1Schema.safeParse({ intent }).success).toBe(false);
+    }
+    expect(CurrentSessionPresentationActionInputV1Schema.safeParse({ intent: {
+      kind: 'companion.item.add', item: { kind: 'builtin', id: 'session_summary' },
+    } }).success).toBe(true);
+  });
+  it('admits a closed conditional instance-removal snapshot through the existing intent', () => {
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} };
+    const intent = { kind: 'companion.item.remove', item: { kind: 'instance', instance }, expectedInstance: instance,
+      expectedPresentation: { frameStyle: null, nativeIndex: 1 } };
+    expect(CurrentSessionPresentationIntentV1Schema.safeParse(intent).success).toBe(true);
+    expect(CurrentSessionPresentationIntentV1Schema.safeParse({ ...intent,
+      expectedPresentation: { ...intent.expectedPresentation, clientId: 'forged-authority' } }).success).toBe(false);
+  });
   it('keeps bind refusal and exact retirement closed and typed', () => {
     expect(CurrentSessionPresentationBindResultV1Schema.parse({
       status: 'rejected',
@@ -237,7 +263,10 @@ describe('current-session presentation wire contract', () => {
       { kind: 'companion.item.add', item: { kind: 'builtin', id: 'changes' } },
       { kind: 'companion.item.add', item: { kind: 'builtin', id: 'local_services' } },
       { kind: 'companion.item.add', item: { kind: 'pane', paneId: 'git', frameStyle: 'plain' } },
-      { kind: 'companion.item.add', item: { kind: 'plugin', surface: { pluginId: 'acme.tools', localId: 'glance' } } },
+      { kind: 'companion.item.add', item: { kind: 'instance', instance: { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: {} } } },
+      { kind: 'companion.instance.inputs.set', instanceId: 'copy-a', bindings: { session: { kind: 'context', slot: 'session' } } },
+      { kind: 'companion.instance.inputs.reset', instanceId: 'copy-a' },
+      { kind: 'companion.instance.rename', instanceId: 'copy-a', displayName: 'Pinned checks' },
       { kind: 'companion.item.frameStyle.set', item: { kind: 'pane', paneId: 'git' }, frameStyle: 'card' },
       { kind: 'companion.item.frameStyle.set', item: { kind: 'widget', widgetId: 'note-1' }, frameStyle: null },
       { kind: 'companion.item.remove', item: { kind: 'widget', widgetId: 'note-1' } },
@@ -261,6 +290,7 @@ describe('current-session presentation wire contract', () => {
     expect(CurrentSessionPresentationIntentV1Schema.safeParse({ kind: 'board.item.delete', widgetId: 'note-1' }).success).toBe(false);
     expect(CurrentSessionPresentationIntentV1Schema.safeParse({ kind: 'board.open', mode: 'overlay' }).success).toBe(false);
     expect(CurrentSessionPresentationIntentV1Schema.safeParse({ kind: 'companion.show', sessionId: 'caller-selected' }).success).toBe(false);
+    expect(CurrentSessionPresentationIntentV1Schema.safeParse({ kind: 'companion.item.add', item: { kind: 'plugin', surface: { pluginId: 'acme.tools', localId: 'glance' } } }).success).toBe(false);
 
     // Item order is a position in the current preference, not a product quota.
     // The controller clamps it to the actual list, so the wire must not invent a

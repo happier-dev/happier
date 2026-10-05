@@ -270,6 +270,13 @@ export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySee
  */
 export const ExecutionRunVoiceAgentIntentInputV1Schema = z.object({
   commitModelSelection: ProviderBoundModelRefSchema.optional(),
+  voicePolicy: z.object({
+    assistantLanguage: z.string().trim().min(1).nullable(),
+    welcome: z.object({
+      enabled: z.boolean(),
+      mode: z.enum(['immediate', 'on_first_turn']),
+    }).strict(),
+  }).strict().optional(),
 }).strict();
 export type ExecutionRunVoiceAgentIntentInputV1 = z.infer<typeof ExecutionRunVoiceAgentIntentInputV1Schema>;
 

@@ -13,6 +13,10 @@ export const PluginAgentCliExecutableMetadataSchema = z.object({
   alternativeBinaryNames: UniqueNonEmptyStringsSchema.optional(),
   alternativeBinaryFallbackEnabledEnvVar: NonEmptyStringSchema.optional(),
   knownUserBinDirSuffixes: UniqueNonEmptyStringsSchema.nullable().optional(),
+  knownEnvironmentBinDirs: z.array(z.object({
+    envVar: NonEmptyStringSchema,
+    relativeDir: NonEmptyStringSchema,
+  }).strict()).min(1).optional(),
   sourcePreference: PluginAgentCliSourcePreferenceSchema,
   acceptsJavaScriptFileOverride: z.boolean().optional(),
   systemCommandResolutionStrategy: z.enum(['path-first', 'known-user-first-runnable']).optional(),

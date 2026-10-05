@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { PluginUiHostMethodV1Schema } from './hostApiDefinition.js';
 
 import {
   PluginUiAcquireComposerInputLockRequestV1Schema,
@@ -44,6 +45,13 @@ const surface = {
   platform: 'web',
   channel: 'internal',
 } as const;
+
+describe('mounted entity drag host methods', () => {
+  it('negotiates hosted adapters through the canonical Host API vocabulary', () => {
+    expect(PluginUiHostMethodV1Schema.safeParse('readEntityDragItem').success).toBe(true);
+    expect(PluginUiHostMethodV1Schema.safeParse('updateEntityDragDrop').success).toBe(true);
+  });
+});
 
 const admittedPoint = {
   pointId: 'connection',
@@ -423,7 +431,7 @@ describe('plugin UI open and Action components', () => {
 
         const serverStartDraft = {
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            directory: '/workspace',
+            directory: { kind: 'path', path: '/workspace' },
             agentTarget: {
                 kind: 'agent',
                 identity: { pluginId: 'happier.agent.claude', localId: 'claude' },

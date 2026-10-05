@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { updatePromptDocInLibrary, readPromptDocInLibrary, type PromptLibraryArtifactStore } from '../prompts/library/promptLibraryActionOperations.js';
+import { createPromptDocInLibrary, updatePromptDocInLibrary, readPromptDocInLibrary, type PromptLibraryArtifactStore } from '../prompts/library/promptLibraryActionOperations.js';
 import { PromptDocBodyV1Schema } from '../prompts/library/promptDocV2.js';
 
 // Artifact custody and document persistence are the real external storage boundaries.
 function harness() {
   let markdown = 'Now: investigate';
   let approval: ApprovalRequest | null = null;
+  let created = 0;
   const store: PromptLibraryArtifactStore = {
+    create: async () => { created += 1; return 'created'; },
     read: async (artifactId) => artifactId === 'memory' ? {
       id: artifactId, revision: { headerVersion: 1, bodyVersion: 1 }, header: { v: 1, kind: 'prompt_doc.v2', title: 'Memory' },
       body: JSON.stringify({ v: 1, markdown, createdAtMs: 1, updatedAtMs: 1 }),
@@ -38,11 +40,24 @@ function harness() {
     isApprovalExecutionOriginCurrent: async () => true,
     promptDocUpdate: async ({ signal, ...request }) => updatePromptDocInLibrary({ store, request, signal }),
     promptDocGet: async ({ artifactId, signal }) => readPromptDocInLibrary({ store, artifactId, signal }),
+    promptDocCreate: async ({ signal, ...request }) => createPromptDocInLibrary({ store, request, signal }),
   };
-  return { executor: createActionExecutor(deps), read: () => ({ markdown, approval }) };
+  return { executor: createActionExecutor(deps), read: () => ({ markdown, approval, created }) };
 }
 
 describe('workstream memory document Agent approval', () => {
+  it('requires approval for agent creation and creates exactly once after approval', async () => {
+    const { executor, read } = harness();
+    const result = await executor.execute('prompt_doc.create', { title: 'Saved', markdown: 'Verbatim', favorite: true },
+      { surface: 'agent', defaultSessionId: 'worker', serverId: 'home', actionRequestId: 'create-proposal' });
+    expect(result.ok).toBe(true);
+    expect(read()).toMatchObject({ created: 0, approval: { status: 'open', actionId: 'prompt_doc.create' } });
+    const context = { surface: 'ui', authority: 'present_user', serverId: 'home' } as const;
+    expect((await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, context)).ok).toBe(true);
+    expect(read()).toMatchObject({ created: 1, approval: { status: 'executed' } });
+    await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, context);
+    expect(read().created).toBe(1);
+  });
   it('keeps a proposal pending until approved, then executes it once', async () => {
     const { executor, read } = harness();
     const result = await executor.execute('prompt_doc.update', {

@@ -29,6 +29,7 @@ import {
 } from "@/app/workflows/workflowRunAccess";
 import {
     ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS,
+    AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
     ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
     AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
     AUTOMATION_V3_RUN_LIST_MAX_ITEMS,
@@ -45,6 +46,7 @@ import {
     AutomationRunResultStoredV1Schema,
     deriveAutomationOccurrenceKeyV1,
     parseAutomationStoredDefinitionExecutionRecipeV1,
+    AutomationTemplatePayloadV1Schema,
     normalizeAutomationTemplateEnvelopeStoredRead,
     parseAutomationStoredWorkflowDefinitionRecipeV2,
     pluginJsonValuesEqual,
@@ -129,6 +131,7 @@ import {
 import {
     validateSessionLifecycleExecutionTargetInequality,
     validateSessionLifecycleTriggerRegistrationTx,
+    type AutomationSessionBirthContext,
 } from "./automationSessionLifecycleRegistration";
 import {
     automationSessionLifecycleConfigurationsEqual,
@@ -4149,6 +4152,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     serverIdentityId: string | null;
     now: Date;
     existing?: AutomationTriggerItem | null;
+    newbornSession?: AutomationSessionBirthContext;
 }>): Promise<NormalizedAutomationTriggerWrite> {
     const common = {
         enabled: params.input.enabled,
@@ -4265,6 +4269,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
                 automationTargetType: params.automation.targetType,
                 automationExistingSessionId,
                 input: params.input,
+                newbornSession: params.newbornSession,
             })
             : submittedDefinition;
         const encoded = encodeAutomationSessionLifecycleConfiguration(lifecycle);
@@ -4552,34 +4557,216 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
     }
 }
 
-export async function createAutomation(params: {
-    accountId: string;
-    input: AutomationUpsertInput;
-
-}): Promise<AutomationListItem> {
-    const triggerInputs: readonly AutomationTriggerCreateRequest[] =
-        isAutomationCurrentUpsertInput(params.input)
-            ? params.input.triggers
-            : params.input.schedule.kind === "manual" ? [] : [{
+function resolveAutomationCreateTriggerInputs(input: AutomationUpsertInput): readonly AutomationTriggerCreateRequest[] {
+    return isAutomationCurrentUpsertInput(input)
+            ? input.triggers
+            : input.schedule.kind === "manual" ? [] : [{
                 triggerId: AutomationTriggerIdSchema.parse(randomUUID()),
                 trigger: {
                     kind: "schedule",
                     enabled: true,
-                    schedule: params.input.schedule.kind === "interval"
+                    schedule: input.schedule.kind === "interval"
                         ? {
                             kind: "interval",
                             scheduleExpr: null,
-                            everyMs: params.input.schedule.everyMs,
-                            timezone: params.input.schedule.timezone ?? null,
+                            everyMs: input.schedule.everyMs,
+                            timezone: input.schedule.timezone ?? null,
                         }
                         : {
                             kind: "cron",
-                            scheduleExpr: params.input.schedule.scheduleExpr,
+                            scheduleExpr: input.schedule.scheduleExpr,
                             everyMs: null,
-                            timezone: params.input.schedule.timezone ?? null,
+                            timezone: input.schedule.timezone ?? null,
                         },
                 },
             }];
+}
+
+/** Canonical Automation create writer, composable with Session birth in its transaction. */
+export async function createAutomationInTx(tx: Tx, params: Readonly<{
+    accountId: string;
+    input: AutomationUpsertInput;
+    serverIdentityId?: string | null;
+    newbornSession?: AutomationSessionBirthContext;
+}>): Promise<AutomationListItem> {
+    const triggerInputs = resolveAutomationCreateTriggerInputs(params.input);
+    if (isAutomationCurrentUpsertInput(params.input)) {
+        const rejoined = await tryRejoinAutomationCreateTx({
+            tx,
+            accountId: params.accountId,
+            input: params.input,
+        });
+        if (rejoined) return rejoined;
+    }
+    let currentDefinition: CurrentAutomationDefinitionWrite | null = null;
+    let legacyDefinition: Readonly<{
+        targetType: AutomationLegacyTargetType;
+        templateCiphertext: string;
+        accountMode: "e2ee" | "plain";
+        legacyExistingSessionId?: string;
+    }> | null = null;
+
+    if (isAutomationCurrentUpsertInput(params.input)) {
+
+        currentDefinition = await normalizeCurrentAutomationDefinitionWriteTx({
+            tx,
+            accountId: params.accountId,
+            executionRecipe: params.input.executionRecipe,
+            expectedTemplateVersion: 1,
+        });
+    } else {
+        legacyDefinition = {
+            targetType: params.input.targetType,
+            templateCiphertext: params.input.templateCiphertext,
+            accountMode: await assertAutomationTemplateMatchesCurrentAccountModeTx(tx, {
+                accountId: params.accountId,
+                targetType: params.input.targetType,
+                templateCiphertext: params.input.templateCiphertext,
+                legacyTemplateEnvelopeAdmission:
+                    params.input.legacyTemplateEnvelopeAdmission,
+            }),
+            ...(params.input.legacyTemplateEnvelopeAdmission
+                ? {
+                    legacyExistingSessionId:
+                        params.input.legacyTemplateEnvelopeAdmission.existingSessionId,
+                }
+                : {}),
+        };
+    }
+    const definition = currentDefinition ?? legacyDefinition;
+    if (!definition) {
+        throw new Error("Automation definition normalization failed");
+    }
+    // Assignment-liveness: an enabled Automation must own at least one
+    // enabled execution assignment; a disabled draft may own none.
+    assertAutomationAssignmentLiveness({
+        enabled: params.input.enabled,
+        assignments: params.input.assignments ?? [],
+    });
+    await assertWorkflowTriggerContextTx(tx, {
+        accountId: params.accountId, targetType: definition.targetType,
+        workflowDefinitionId: params.input.workflowDefinitionId ?? null,
+        scopeSessionId: params.input.scopeSessionId ?? null,
+        assignments: params.input.assignments ?? [],
+    });
+
+    await validateExistingSessionAutomationTargetTx({
+        tx,
+        accountId: params.accountId,
+        targetType: definition.targetType,
+        templateCiphertext: definition.templateCiphertext,
+        accountMode: definition.accountMode,
+        ...(currentDefinition?.strictExistingSessionId
+            ? { strictExistingSessionId: currentDefinition.strictExistingSessionId }
+            : {}),
+        ...(legacyDefinition?.legacyExistingSessionId
+            ? { legacyExistingSessionId: legacyDefinition.legacyExistingSessionId }
+            : {}),
+    });
+
+    const now = new Date();
+    const automationId = isAutomationCurrentUpsertInput(params.input)
+        ? params.input.automationId
+        : randomUUID();
+    const created = await tx.automation.create({
+        data: {
+            id: automationId,
+            accountId: params.accountId,
+            name: params.input.name,
+            description: params.input.description ?? null,
+            enabled: params.input.enabled,
+            targetType: definition.targetType,
+            workflowDefinitionId: params.input.workflowDefinitionId ?? null,
+            scopeSessionId: params.input.scopeSessionId ?? null,
+            templateCiphertext: definition.templateCiphertext,
+            templateVersion: 1,
+        },
+        select: { id: true },
+    });
+    let hasEnabledEventTrigger = false;
+    for (const { triggerId, trigger: input } of triggerInputs) {
+        const normalized = await normalizeAutomationTriggerWriteTx({
+            tx,
+            accountId: params.accountId,
+            automation: {
+                id: created.id,
+                targetType: definition.targetType,
+                templateCiphertext: definition.templateCiphertext,
+                templateVersion: 1,
+                scopeSessionId: params.input.scopeSessionId ?? null,
+            },
+            triggerId,
+            triggerRevision: 0,
+            input,
+            serverIdentityId: params.serverIdentityId ?? null,
+            newbornSession: params.newbornSession,
+            now,
+        });
+        await tx.automationTrigger.create({
+            data: {
+                id: triggerId,
+                automationId: created.id,
+                revision: 0,
+                ...normalized.data,
+            },
+        });
+        hasEnabledEventTrigger ||= normalized.isEvent && input.enabled;
+    }
+
+    if (hasEnabledEventTrigger) {
+        await ensureAutomationEventCatalogStateTx({
+            tx,
+            accountId: params.accountId,
+            projectionChanged: params.input.enabled,
+        });
+    }
+
+    const assignments = await replaceAutomationAssignmentsTx({
+        tx,
+        accountId: params.accountId,
+        automationId: created.id,
+        assignments: params.input.assignments ?? [],
+    });
+
+    if (params.input.enabled) {
+        await ensureAutomationScheduleCursorsTx({
+            tx,
+            automationId: created.id,
+            now,
+        });
+    }
+
+    const automation = await loadAutomationTx(tx, {
+        accountId: params.accountId,
+        automationId: created.id,
+    });
+    if (!automation) {
+        throw new Error("Failed to load created automation");
+    }
+
+    const cursor = await markAutomationChangedTx(tx, {
+        accountId: params.accountId,
+        automationId: created.id,
+    });
+
+    afterTx(tx, () => {
+        emitAutomationUpsert({ accountId: params.accountId, automation, cursor });
+        emitAssignmentUpdates({
+            accountId: params.accountId,
+            automationId: automation.id,
+            cursor,
+            assignments,
+        });
+    });
+
+    return automation;
+}
+
+export async function createAutomation(params: {
+    accountId: string;
+    input: AutomationUpsertInput;
+}): Promise<AutomationListItem> {
+    const triggerInputs = resolveAutomationCreateTriggerInputs(params.input);
     // Durable-push correspondence is resolved against this host's server
     // identity; acquiring it must not nest inside the definition transaction.
     const durablePushEvent = triggerInputs.find(({ trigger }) =>
@@ -4589,177 +4776,7 @@ export async function createAutomation(params: {
     const serverIdentityId = await resolveAutomationDurablePushServerIdentityId(
         durablePushEvent?.trigger.kind === "pluginEvent" ? durablePushEvent.trigger : null,
     );
-    const create = async () => await inTx(async (tx) => {
-        if (isAutomationCurrentUpsertInput(params.input)) {
-            const rejoined = await tryRejoinAutomationCreateTx({
-                tx,
-                accountId: params.accountId,
-                input: params.input,
-            });
-            if (rejoined) return rejoined;
-        }
-        let currentDefinition: CurrentAutomationDefinitionWrite | null = null;
-        let legacyDefinition: Readonly<{
-            targetType: AutomationLegacyTargetType;
-            templateCiphertext: string;
-            accountMode: "e2ee" | "plain";
-            legacyExistingSessionId?: string;
-        }> | null = null;
-
-        if (isAutomationCurrentUpsertInput(params.input)) {
-
-            currentDefinition = await normalizeCurrentAutomationDefinitionWriteTx({
-                tx,
-                accountId: params.accountId,
-                executionRecipe: params.input.executionRecipe,
-                expectedTemplateVersion: 1,
-            });
-        } else {
-            legacyDefinition = {
-                targetType: params.input.targetType,
-                templateCiphertext: params.input.templateCiphertext,
-                accountMode: await assertAutomationTemplateMatchesCurrentAccountModeTx(tx, {
-                    accountId: params.accountId,
-                    targetType: params.input.targetType,
-                    templateCiphertext: params.input.templateCiphertext,
-                    legacyTemplateEnvelopeAdmission:
-                        params.input.legacyTemplateEnvelopeAdmission,
-                }),
-                ...(params.input.legacyTemplateEnvelopeAdmission
-                    ? {
-                        legacyExistingSessionId:
-                            params.input.legacyTemplateEnvelopeAdmission.existingSessionId,
-                    }
-                    : {}),
-            };
-        }
-        const definition = currentDefinition ?? legacyDefinition;
-        if (!definition) {
-            throw new Error("Automation definition normalization failed");
-        }
-        // Assignment-liveness: an enabled Automation must own at least one
-        // enabled execution assignment; a disabled draft may own none.
-        assertAutomationAssignmentLiveness({
-            enabled: params.input.enabled,
-            assignments: params.input.assignments ?? [],
-        });
-        await assertWorkflowTriggerContextTx(tx, {
-            accountId: params.accountId, targetType: definition.targetType,
-            workflowDefinitionId: params.input.workflowDefinitionId ?? null,
-            scopeSessionId: params.input.scopeSessionId ?? null,
-            assignments: params.input.assignments ?? [],
-        });
-
-        await validateExistingSessionAutomationTargetTx({
-            tx,
-            accountId: params.accountId,
-            targetType: definition.targetType,
-            templateCiphertext: definition.templateCiphertext,
-            accountMode: definition.accountMode,
-            ...(currentDefinition?.strictExistingSessionId
-                ? { strictExistingSessionId: currentDefinition.strictExistingSessionId }
-                : {}),
-            ...(legacyDefinition?.legacyExistingSessionId
-                ? { legacyExistingSessionId: legacyDefinition.legacyExistingSessionId }
-                : {}),
-        });
-
-        const now = new Date();
-        const automationId = isAutomationCurrentUpsertInput(params.input)
-            ? params.input.automationId
-            : randomUUID();
-        const created = await tx.automation.create({
-            data: {
-                id: automationId,
-                accountId: params.accountId,
-                name: params.input.name,
-                description: params.input.description ?? null,
-                enabled: params.input.enabled,
-                targetType: definition.targetType,
-                workflowDefinitionId: params.input.workflowDefinitionId ?? null,
-                scopeSessionId: params.input.scopeSessionId ?? null,
-                templateCiphertext: definition.templateCiphertext,
-                templateVersion: 1,
-            },
-            select: { id: true },
-        });
-        let hasEnabledEventTrigger = false;
-        for (const { triggerId, trigger: input } of triggerInputs) {
-            const normalized = await normalizeAutomationTriggerWriteTx({
-                tx,
-                accountId: params.accountId,
-                automation: {
-                    id: created.id,
-                    targetType: definition.targetType,
-                    templateCiphertext: definition.templateCiphertext,
-                    templateVersion: 1,
-                    scopeSessionId: params.input.scopeSessionId ?? null,
-                },
-                triggerId,
-                triggerRevision: 0,
-                input,
-                serverIdentityId,
-                now,
-            });
-            await tx.automationTrigger.create({
-                data: {
-                    id: triggerId,
-                    automationId: created.id,
-                    revision: 0,
-                    ...normalized.data,
-                },
-            });
-            hasEnabledEventTrigger ||= normalized.isEvent && input.enabled;
-        }
-
-        if (hasEnabledEventTrigger) {
-            await ensureAutomationEventCatalogStateTx({
-                tx,
-                accountId: params.accountId,
-                projectionChanged: params.input.enabled,
-            });
-        }
-
-        const assignments = await replaceAutomationAssignmentsTx({
-            tx,
-            accountId: params.accountId,
-            automationId: created.id,
-            assignments: params.input.assignments ?? [],
-        });
-
-        if (params.input.enabled) {
-            await ensureAutomationScheduleCursorsTx({
-                tx,
-                automationId: created.id,
-                now,
-            });
-        }
-
-        const automation = await loadAutomationTx(tx, {
-            accountId: params.accountId,
-            automationId: created.id,
-        });
-        if (!automation) {
-            throw new Error("Failed to load created automation");
-        }
-
-        const cursor = await markAutomationChangedTx(tx, {
-            accountId: params.accountId,
-            automationId: created.id,
-        });
-
-        afterTx(tx, () => {
-            emitAutomationUpsert({ accountId: params.accountId, automation, cursor });
-            emitAssignmentUpdates({
-                accountId: params.accountId,
-                automationId: automation.id,
-                cursor,
-                assignments,
-            });
-        });
-
-        return automation;
-    });
+    const create = async () => await inTx((tx) => createAutomationInTx(tx, { ...params, serverIdentityId }));
     try {
         return await create();
     } catch (error) {
@@ -4784,12 +4801,29 @@ export async function createAutomation(params: {
     }
 }
 
+function assertRetainedLegacyAutomationTemplateForAccountMode(
+    row: Pick<AutomationListItem, "targetType" | "templateCiphertext">,
+    mode: "plain" | "e2ee",
+): void {
+    if (
+        !isAutomationLegacyTargetType(row.targetType)
+        || parseAutomationStoredDefinitionExecutionRecipeV1(row.templateCiphertext).kind === "available"
+    ) return;
+    assertAutomationTemplateEnvelopeForAccountMode(
+        row.templateCiphertext,
+        mode,
+        row.targetType,
+        readLegacyExistingSessionTemplateAdmission(row.templateCiphertext, row.targetType),
+    );
+}
+
 export async function updateAutomation(params: {
     accountId: string;
     automationId: string;
     input: AutomationPatchInput;
 
     expectedTemplateVersion?: number;
+    retainedLegacyTemplateRecovery?: boolean;
 }): Promise<AutomationListItem | null> {
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
@@ -4811,6 +4845,61 @@ export async function updateAutomation(params: {
         const legacyInput = isAutomationCurrentPatchInput(params.input)
             ? null
             : params.input;
+        if (params.retainedLegacyTemplateRecovery) {
+            if (
+                accountFence.account.currentness.encryptionMode !== "plain"
+                || params.expectedTemplateVersion === undefined
+                || !legacyInput?.templateCiphertext
+                || legacyInput.targetType !== undefined
+                || !isAutomationLegacyTargetType(existing.targetType)
+                || parseAutomationStoredDefinitionExecutionRecipeV1(existing.templateCiphertext).kind === "available"
+            ) {
+                throw new AutomationValidationError("Only a stored predecessor template in a plain Account can be recovered");
+            }
+            let source;
+            try {
+                source = normalizeAutomationTemplateEnvelopeStoredRead(JSON.parse(existing.templateCiphertext));
+            } catch {
+                throw new AutomationValidationError("Stored predecessor template is invalid");
+            }
+            if (!source) throw new AutomationValidationError("Stored predecessor template is invalid");
+            if (source.legacyExistingSessionId && source.envelope.kind === AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND) {
+                const session = await tx.session.findFirst({
+                    where: { id: source.legacyExistingSessionId, accountId: params.accountId },
+                    select: { encryptionMode: true },
+                });
+                if (session?.encryptionMode === "e2ee") {
+                    throw new AutomationValidationError("Retained E2EE Session templates must remain encrypted");
+                }
+            }
+            assertAutomationTemplateEnvelopeForAccountMode(
+                legacyInput.templateCiphertext, "plain", existing.targetType,
+            );
+            const target = normalizeAutomationTemplateEnvelopeStoredRead(JSON.parse(legacyInput.templateCiphertext));
+            const targetPayload = target && "payload" in target.envelope
+                ? AutomationTemplatePayloadV1Schema.safeParse(target.envelope.payload)
+                : null;
+            if (!targetPayload?.success
+                || targetPayload.data.sessionEncryptionKeyBase64 !== undefined
+                || targetPayload.data.sessionEncryptionVariant !== undefined
+                || targetPayload.data.sessionEncryptionMode === "e2ee"
+                || (existing.targetType === "new_session" && targetPayload.data.existingSessionId !== undefined)) {
+                throw new AutomationValidationError("Recovered predecessor template must contain a valid plain Automation payload");
+            }
+            if (existing.targetType === "existing_session") {
+                const sourcePayload = "payload" in source.envelope
+                    ? AutomationTemplatePayloadV1Schema.safeParse(source.envelope.payload)
+                    : null;
+                const sourceSessionId = source.legacyExistingSessionId
+                    ?? (sourcePayload?.success
+                        ? sourcePayload.data.existingSessionId
+                        : undefined);
+                const targetSessionId = targetPayload.data.existingSessionId;
+                if (!sourceSessionId || sourceSessionId !== targetSessionId) {
+                    throw new AutomationValidationError("Predecessor template recovery must preserve its existing Session target");
+                }
+            }
+        }
         const currentDefinition = isAutomationCurrentPatchInput(params.input)
             ? await normalizeCurrentAutomationDefinitionWriteTx({
                 tx,
@@ -4848,7 +4937,7 @@ export async function updateAutomation(params: {
                 typeof legacyInput?.templateCiphertext === "string"
                 || legacyInput?.targetType !== undefined
             );
-        let accountMode: "e2ee" | "plain" | undefined = currentDefinition?.accountMode;
+        let accountMode = currentDefinition?.accountMode ?? accountFence.account.currentness.encryptionMode;
         if (legacyDefinitionMutation) {
             if (!isAutomationLegacyTargetType(effectiveTargetType)) {
                 throw new AutomationValidationError(
@@ -4862,6 +4951,8 @@ export async function updateAutomation(params: {
                 legacyTemplateEnvelopeAdmission:
                     effectiveLegacyTemplateEnvelopeAdmission,
             });
+        } else if (!currentDefinition) {
+            assertRetainedLegacyAutomationTemplateForAccountMode(existing, accountMode);
         }
 
         // The retained strict recipe already carries the schema-owned target
@@ -4878,7 +4969,7 @@ export async function updateAutomation(params: {
             accountId: params.accountId,
             targetType: effectiveTargetType,
             templateCiphertext: effectiveTemplateCiphertext,
-            ...(accountMode ? { accountMode } : {}),
+            accountMode,
             ...(effectiveExistingSessionId
                 ? { strictExistingSessionId: effectiveExistingSessionId }
                 : {}),
@@ -5200,6 +5291,12 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 expectedTemplateVersion: existing.templateVersion + 1,
             })
             : null;
+        if (!currentDefinition) {
+            assertRetainedLegacyAutomationTemplateForAccountMode(
+                existing,
+                accountFence.account.currentness.encryptionMode,
+            );
+        }
         const revisionUpdate = currentDefinition
             ? { templateVersion: existing.templateVersion + 1, templateCiphertext: currentDefinition.templateCiphertext }
             : advanceAutomationDefinitionRevision(existing);
@@ -5233,8 +5330,13 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             accountId: params.accountId,
             targetType: effectiveAutomation.targetType,
             templateCiphertext: effectiveAutomation.templateCiphertext,
-            ...(currentDefinition ? { accountMode: currentDefinition.accountMode } : {}),
+            accountMode: currentDefinition?.accountMode ?? accountFence.account.currentness.encryptionMode,
             ...(effectiveExistingSessionId ? { strictExistingSessionId: effectiveExistingSessionId } : {}),
+            ...(!currentDefinition && isAutomationLegacyTargetType(existing.targetType)
+                ? { legacyExistingSessionId: readLegacyExistingSessionTemplateAdmission(
+                    existing.templateCiphertext, existing.targetType,
+                )?.existingSessionId }
+                : {}),
         });
         for (const item of params.input.triggers) {
             if (item.kind !== "existing") continue;

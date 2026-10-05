@@ -207,7 +207,7 @@ export async function migrateAccountJsonKvEncryptionInTx(params: Readonly<{
         if (
             !valueMatchesMode(
                 row.key,
-                privacyKit.encodeBase64(row.value),
+                privacyKit.encodeBase64(new Uint8Array(row.value)),
                 params.fromMode,
             )
         ) {

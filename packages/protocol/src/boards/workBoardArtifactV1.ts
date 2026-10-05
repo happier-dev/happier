@@ -52,7 +52,10 @@ function readBody(artifact: Pick<WorkBoardArtifactV1, 'artifactId' | 'header' | 
     if (artifact.header.kind !== WORK_BOARD_ARTIFACT_KIND_V1 || artifact.header.v !== 1 || typeof artifact.body !== 'string') {
         throw new WorkBoardMutationErrorV1('invalid_board_record');
     }
-    try { return JSON.parse(artifact.body); } catch { throw new WorkBoardMutationErrorV1('invalid_board_record'); }
+    try { return JSON.parse(artifact.body); } catch {
+        // Syntax-invalid Board content is unreadable data; retain its original bytes for isolation.
+        return artifact.body;
+    }
 }
 
 export function readWorkBoardArtifactV1(artifact: Pick<WorkBoardArtifactV1, 'artifactId' | 'header' | 'body'>): WorkBoardV1 | null {

@@ -41,3 +41,18 @@ export const SessionReportsToSetResultV1Schema = z.union([
   }).strict(),
 ]);
 export type SessionReportsToSetResultV1 = z.infer<typeof SessionReportsToSetResultV1Schema>;
+
+/** Read-only, request-scoped admission evidence; it never grants write authority. */
+export const SessionReportsToOptionsRequestV1Schema = z.object({
+  candidateSessionIds: z.array(SessionIdV1Schema),
+}).strict();
+export const SessionReportsToEligibilityV1Schema = z.union([
+  z.object({ sessionId: SessionIdV1Schema, allowed: z.literal(true) }).strict(),
+  z.object({ sessionId: SessionIdV1Schema, allowed: z.literal(false), reason: z.enum(['read', 'input', 'pairwise', 'cycle']) }).strict(),
+]);
+export const SessionReportsToOptionsV1Schema = z.object({
+  sessionId: SessionIdV1Schema,
+  currentLeadSessionId: SessionIdV1Schema.nullable(),
+  candidates: z.array(SessionReportsToEligibilityV1Schema),
+}).strict();
+export type SessionReportsToOptionsV1 = z.infer<typeof SessionReportsToOptionsV1Schema>;

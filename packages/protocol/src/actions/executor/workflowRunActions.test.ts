@@ -66,6 +66,32 @@ function ownerDeps(storage: WorkflowAccountRunActionDeps['storage']): WorkflowAc
 }
 
 describe('shared Account workflow run owner', () => {
+  it('refuses invalid typed Workflow input before workspace preparation or Run admission', async () => {
+    const inputType = { pluginId: 'com.acme.inputs', localId: 'repository' };
+    const prepareWorkspace = vi.fn(async () => ({ ok: true as const, workspaceTarget: {
+      project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }));
+    const operations: string[] = [];
+    const deps = { ...ownerDeps({ execute: async operation => {
+      operations.push(String(operation.operation));
+      if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      if (operation.operation === 'admit') return { kind: 'created', run: runSnapshot().run };
+      return { invocations: [] };
+    } }), prepareWorkspace,
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+      inputTypeDeps: { resolveInputType: async () => ({ identity: inputType, occurrenceId: 'current', definition: {
+        id: inputType.localId, title: 'Repository', semantic: 'repository', valueSchema: { type: 'object' as const,
+          properties: { repositoryId: { type: 'string' as const } }, required: ['repositoryId'], additionalProperties: false },
+      } }) },
+    };
+    const owner = createWorkflowAccountRunActionOwner(deps);
+    await expect(owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({ runId,
+      source: { kind: 'inline', definition: { ...definition, inputs: [{ name: 'repository', valueType: 'json', required: true, inputType }] } },
+      inputs: { repository: { repositoryId: 42 } },
+    }), context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default', externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+      project: { machineId: 'machine-a', directory: '/repo' } } } })).rejects.toMatchObject({ code: 'input_type_value_invalid' });
+    expect(prepareWorkspace).not.toHaveBeenCalled();
+    expect(operations).not.toContain('admit');
+  });
   it('returns the frozen child definitions with authorized Run detail rather than resolving current library content', async () => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const frozenChildren = { 'builtin:review': definition };
@@ -240,7 +266,7 @@ describe('shared Account workflow run owner', () => {
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'catalog', workflow, pluginVersion: '1.2.3' } });
     const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const, callerPermissionMode: 'default',
       sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({}),
-      ...(surface === 'agent' ? { actionCaller: { kind: 'session' as const, sessionId: 'caller-session' }, defaultSessionId: 'caller-session' } : {}),
+      ...(surface === 'agent' ? { actionCaller: { kind: 'session' as const, sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'caller-session' } : {}),
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
     await expect(owner.execute({ actionId: 'workflow.run.start',
       input: { ...input, source: { kind: 'catalog', workflow, pluginVersion: '0.9.0' } }, context }))

@@ -33,7 +33,7 @@ describe('the shared definition edit owner', () => {
       ops: [{ kind: 'set_step_prompt', blockId: 'step-1', text: 'After' }, { kind: 'rename', name: 'New' }] });
     expect(result).toEqual({ definition: { ...definition, blocks: [{ ...definition.blocks[0],
       document: { text: 'After', references: [], attachments: [] } }] },
-      revision: { headerVersion: 3, bodyVersion: 4 }, changedBlockIds: ['step-1'] });
+      revision: { headerVersion: 3, bodyVersion: 4 }, metadata: { ...metadata, title: 'New' }, changedBlockIds: ['step-1'] });
     expect(update).toHaveBeenCalledExactlyOnceWith({ artifactId: definitionId, expectedRevision: revision,
       header: { kind: 'workflow-definition.v1', definitionId, revision: result.revision, metadata: { ...metadata, title: 'New' } },
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition: result.definition }) });

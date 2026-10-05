@@ -28,6 +28,7 @@ import {
 } from "@/app/kv/accountScopedKv";
 import { applyUserKvMutationsInTx, type KVMutation } from "@/app/kv/kvMutate";
 import { deletePublicFile, deletePrivateFile } from "@/storage/blob/files";
+import { hasPendingArtifactBlobUploadInTx, isPrivateArtifactBlobUpload } from "@/app/artifacts/artifactBlobService";
 import { inTx, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 
@@ -536,7 +537,7 @@ async function captureAccountErasureBlobLocatorsInTx(
     const [uploadedFiles, privatePetAssets, privateArtifactBlobs] = await Promise.all([
         tx.uploadedFile.findMany({
             where: { accountId },
-            select: { id: true, path: true },
+            select: { id: true, path: true, reuseKey: true },
             orderBy: [{ path: "asc" }, { id: "asc" }],
         }),
         tx.accountPetAsset.findMany({
@@ -550,9 +551,13 @@ async function captureAccountErasureBlobLocatorsInTx(
         }),
     ]);
     return Object.freeze({
-        publicFiles: Object.freeze(uploadedFiles.map(({ id, path }) => Object.freeze({ id, path }))),
+        publicFiles: Object.freeze(uploadedFiles.filter(row => !isPrivateArtifactBlobUpload(row))
+            .map(({ id, path }) => Object.freeze({ id, path }))),
         privatePetAssets: Object.freeze(privatePetAssets.map(({ id, objectKey }) => Object.freeze({ id, objectKey }))),
-        privateArtifactBlobs: Object.freeze(privateArtifactBlobs.map(({ id, storageKey }) => Object.freeze({ id, objectKey: storageKey }))),
+        privateArtifactBlobs: Object.freeze([
+            ...privateArtifactBlobs.map(({ id, storageKey }) => Object.freeze({ id, objectKey: storageKey })),
+            ...uploadedFiles.filter(isPrivateArtifactBlobUpload).map(({ id, path }) => Object.freeze({ id, objectKey: path })),
+        ]),
     });
 }
 
@@ -637,6 +642,13 @@ export async function deleteAccountForErasure(input: Readonly<{
         if (transitionAdmission.status === "account_not_found") return { status: "already-deleted" as const };
         if (transitionAdmission.status === "account_inconsistent") {
             throw new Error("Account deletion requires a consistent Account encryption mode.");
+        }
+
+        // Keep the caller's authentication usable for retry while a different API
+        // replica owns pending IO. The Account fence prevents a new candidate
+        // from being captured between this check and the terminal disable.
+        if (await hasPendingArtifactBlobUploadInTx(tx, input.accountId)) {
+            return { status: "rejected" as const, code: "account_erasure_blob_delete_failed" as const };
         }
 
         // Terminal disable and credential revocation commit before the first

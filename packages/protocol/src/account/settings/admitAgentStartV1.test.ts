@@ -68,7 +68,9 @@ describe('admitAgentStartV1', () => {
       ok: false, refusal: { code: 'policy_denied_field', field: 'environmentVariables' },
     });
     for (const kind of ['definition_write', 'trigger_write'] as const) {
-      expect(admitAgentStartV1(policy, { kind, leaves: [leaf(facts)] }, baseline)).toMatchObject({
+      const request: AgentStartRequestV1 = kind === 'definition_write'
+        ? { kind, leaves: [leaf(facts)] } : { kind, scope: 'workflow', leaves: [leaf(facts)] };
+      expect(admitAgentStartV1(policy, request, baseline)).toMatchObject({
         ok: false, refusal: { code: 'definition_exceeds_authority', blockId: 'block',
           cause: { code: 'policy_denied_field', field: 'environmentVariables' } },
       });
@@ -192,8 +194,71 @@ describe('admitAgentStartV1', () => {
     expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, originless(3))).toMatchObject({ ok: true, stamped: { workDepth: 4 } });
     expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, originless(4))).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
     for (const kind of ['definition_write', 'trigger_write'] as const) {
-      expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind, leaves: [leaf()] }, session(3))).toMatchObject({ ok: true, stamped: { workDepth: 4 } });
+      const authored: AgentStartRequestV1 = kind === 'definition_write'
+        ? { kind, leaves: [leaf()] } : { kind, scope: 'workflow', leaves: [leaf()] };
+      expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, authored, session(3))).toMatchObject({ ok: true, stamped: { workDepth: 4 } });
     }
+  });
+
+  it('admits a deferred workflow selection without approving a future child engine', () => {
+    const request = { kind: 'workflow_run_leaf', selection: 'deferred', leaf: {
+      blockId: 'review', kind: 'action', actionId: 'review.start',
+      runsAs: { kind: 'background_run', intent: 'review' }, workspaceWrites: 'deny',
+      facts: { machineId: 'machine', directory: '/workspace', permissionMode: 'default',
+        agentTarget: { kind: 'unresolved' }, modelSelection: { kind: 'unresolved' } },
+    } } as const;
+    const context: AgentStartContextV1 = { ...baseline, allowLists: {
+      v: 1, allowedRoleIds: [], allowedAgentTargetKeys: [],
+    } };
+    const policy = { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      allowBackendTargetOverride: false, allowModelOverride: false };
+    expect(admitAgentStartV1(policy, request, context)).toEqual({ ok: true, stamped: { workDepth: 1 } });
+    // Ordinary unresolved starts and authored definitions still fail closed.
+    expect(admitAgentStartV1(policy, { kind: 'workflow_run_leaf', leaf: request.leaf }, context))
+      .toMatchObject({ ok: false, refusal: { code: 'policy_denied_field', field: 'agentTarget' } });
+    expect(admitAgentStartV1(policy, { kind: 'definition_write', leaves: [request.leaf] }, context))
+      .toMatchObject({ ok: false, refusal: { code: 'definition_exceeds_authority' } });
+    expect(admitAgentStartV1(policy, { ...request, leaf: { ...request.leaf, facts: {
+      ...request.leaf.facts, agentTarget: otherTarget,
+    } } }, context)).toMatchObject({ ok: false, refusal: { code: 'policy_denied_field', field: 'agentTarget' } });
+  });
+
+  it('admits a deferred run at the limit but refuses its later child at the frozen run depth', () => {
+    const context: AgentStartContextV1 = { ...baseline,
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 3 } };
+    const request = { kind: 'workflow_run_leaf', selection: 'deferred', leaf: {
+      ...leaf(), kind: 'action', engine: undefined, actionId: 'review.start',
+      facts: { agentTarget: { kind: 'unresolved' } },
+    } } as const;
+    const run = admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, context);
+    expect(run).toEqual({ ok: true, stamped: { workDepth: 4 } });
+    if (!run.ok) throw new Error(run.refusal.code);
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      { kind: 'workflow_run_leaf', leaf: leaf() }, { ...baseline,
+        caller: { kind: 'originless', runId: 'frozen-run', runDepth: run.stamped.workDepth },
+      })).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
+  });
+
+  it('refuses decidable authority, policy, ceiling and depth violations before deferred selection', () => {
+    const request = { kind: 'workflow_run_leaf', selection: 'deferred', targetSessionId: 'worker', leaf: {
+      ...leaf(), kind: 'action', engine: undefined, actionId: 'review.start',
+      facts: { agentTarget: { kind: 'unresolved' } },
+    } } as const;
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      { ...request, targetSessionId: 'stranger' }, baseline))
+      .toMatchObject({ ok: false, refusal: { code: 'subtree_denied' } });
+    expect(admitAgentStartV1({ ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowCustomDirectory: false },
+      { ...request, leaf: { ...request.leaf, facts: { ...request.leaf.facts, directory: '/elsewhere' } } }, baseline))
+      .toMatchObject({ ok: false, refusal: { code: 'policy_denied_field', field: 'directory' } });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      { ...request, leaf: { ...request.leaf, facts: { ...request.leaf.facts, permissionMode: 'yolo' } } }, baseline))
+      .toMatchObject({ ok: false, refusal: { code: 'permission_exceeds_ceiling' } });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, { ...baseline,
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 4, turnDepth: 0 },
+    })).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      { ...request, leaf: { ...request.leaf, roleId: 'missing' } }, baseline))
+      .toMatchObject({ ok: false, refusal: { code: 'role_target_unavailable' } });
   });
 
   it('compares role effort through the canonical reasoning-effort option used by Session and Run starts', () => {
@@ -251,7 +316,7 @@ describe('admitAgentStartV1', () => {
     ['allowConnectedServicesOverride', 'connectedServices', { connectedServices: { v: 2, bindingsByServiceId: { 'happier.service.codex/subscription': { source: 'native' } } } }, { connectedServices: { kind: 'unresolved' } }],
     ['allowMcpSelectionOverride', 'mcpSelection', { mcpSelection: { v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] } }, { mcpSelection: { kind: 'unresolved' } }],
     ['allowTranscriptStorageOverride', 'transcriptStorage', { transcriptStorage: 'direct' }, { transcriptStorage: { kind: 'unresolved' } }],
-  ] as const;
+  ] satisfies ReadonlyArray<readonly [keyof typeof DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, string, AgentStartFactsV1, AgentStartFactsV1]>;
   it.each(restrictions)('checks authoring %s facts and unresolved selections per leaf', (flag, field, changed, unresolved) => {
     for (const kind of ['definition_write', 'trigger_write'] as const) {
       for (const facts of [changed, unresolved]) {

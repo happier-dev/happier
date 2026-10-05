@@ -70,8 +70,8 @@ export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
     authoredIn: 'contributes.sessionInfoSections' as const,
   }),
   /**
-   * Embedded Session content a Board/Details/sidebar/Companion/mobile host
-   * frames as one Session widget. `content` covers a framed card whose host
+   * Universal configured content. Session/App name executable data contexts,
+   * while the hosting surface owns placement. `content` covers a framed card whose host
    * owns bounds and scrolling; `fill` covers the expanded/focused host where
    * the surface owns its own content scroll. Compactness is measured host
    * geometry already carried by the generic surface context, so it is

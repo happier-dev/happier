@@ -39,6 +39,22 @@ function baseSpec(overrides: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe('ActionSpec.cli declaration', () => {
+  it('projects the landed explanation lifecycle through canonical friendly CLI commands', () => {
+    const commands = listActionCliCommandDeclarations();
+    for (const [id, path] of [
+      ['scm.diffSummary.capture', ['scm', 'diff-summary', 'capture']],
+      ['scm.diffSummary.generate', ['scm', 'diff-summary', 'generate']],
+      ['scm.diffSummary.result.edit', ['scm', 'diff-summary', 'result', 'edit']],
+      ['scm.diffSummary.result.undo', ['scm', 'diff-summary', 'result', 'undo']],
+      ['scm.diffSummary.result.delete', ['scm', 'diff-summary', 'result', 'delete']],
+      ['scm.diffSummary.refine', ['scm', 'diff-summary', 'refine']],
+      ['scm.diffSummary.addOutputs', ['scm', 'diff-summary', 'add-outputs']],
+      ['scm.diffSummary.discuss', ['scm', 'diff-summary', 'discuss']],
+      ['scm.diffSummary.reviewed.mark', ['scm', 'diff-summary', 'reviewed', 'mark']],
+    ] as const) {
+      expect(commands.some((entry) => entry.spec.id === id && entry.binding.path.join(' ') === path.join(' ')), id).toBe(true);
+    }
+  });
   it('accepts a friendly path with positionals drawn from the caller shape', () => {
     const parsed = ActionSpecSchema.safeParse(baseSpec({
       cli: {

@@ -1,4 +1,7 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export * from './plugins/actions/clientInvocationV1.js';
+export * from './home/index.js';
+export { sessionBoardPlacedDestinationRetainsPlacementV1 } from './sessions/board/layoutOperations.js';
 export * from './actions/specs/wait.js';
 export * from './sessions/awareness/waitV1.js';
 export * from './sessions/messages/emptyCanonicalTurnDiffSuppression.js';
@@ -16,7 +19,7 @@ export { readSessionUpdatedMessageChangeHintV1 } from './changes/index.js';
 export * from './crypto/sessionDataKeyBundleV0.js';
 export * from './crypto/sessionDataKeyBundleWebCrypto.js';
 export * from './daemon/agentSignIn.js';
-export { startMachineAgentSignIn } from './daemon/startAgentSignIn.js';
+export { startMachineAgentSignIn, cancelMachineAgentSignIn, restartMachineAgentSignIn } from './daemon/startAgentSignIn.js';
 
 export {
   resolveAgentSetupHostPlatform,
@@ -559,6 +562,7 @@ export {
 } from './connect/generatedBuiltInLegacyConnectedAccountCompatibility.js';
 export * from './connect/qualifiedConnectedAccountsV4.js';
 export * from './connect/qualifiedConnectedAccountsV4QueryCodec.js';
+export * from './connect/qualifiedConnectedAccountGroupRequestsV4.js';
 export {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
@@ -978,6 +982,7 @@ export {
   PluginToolSurfaceV2Schema,
   PluginToolContributionV2Schema,
   normalizePluginActionInputHintsV2,
+  hasValidPluginConnectedAccountPurposeBindingsV2,
   normalizePluginActionSlashV2,
   pluginActionRequiresConfirmationPresentation,
   type PluginActionAvailabilityV2,
@@ -1215,6 +1220,11 @@ export {
   PluginWorkflowContributionV1Schema,
   type PluginWorkflowContributionV1,
 } from './plugins/contributions/v2.js';
+export * from './plugins/contributions/entityDragDrop.js';
+export {
+  PluginInputTypeContributionV1Schema,
+  type PluginInputTypeContributionV1,
+} from './plugins/contributions/inputTypes.js';
 export {
   PluginSystemToolAcpFingerprintV1Schema,
   type PluginSystemToolAcpFingerprintV1,
@@ -1549,9 +1559,11 @@ export {
   VoiceCredentialSourceSchema,
   VoiceCredentialSlotIdSchema,
   VoiceProviderContributionSchema,
+  VoiceServiceMarkSchema,
   VoiceProviderSettingFieldSchema,
   VoiceProviderSettingsActionDeclarationSchema,
   VoiceProviderSettingsPresentationSchema,
+  resolveVoiceProviderLanguagePreference,
   VoiceProviderSettingsSchema,
   VoiceRawCredentialGrantDeclarationSchema,
   VoiceSettingReadinessDeclarationSchema,
@@ -1578,6 +1590,7 @@ export {
   type VoiceCredentialSource,
   type VoiceCredentialSlotId,
   type VoiceProviderContribution,
+  type VoiceServiceMark,
   type VoiceProviderSettingField,
   type VoiceProviderSettingsActionDeclaration,
   type VoiceProviderSettingsPresentation,
@@ -1598,6 +1611,7 @@ export {
 } from './plugins/contributions/jsonSchemaValues.js';
 export {
   evaluatePluginPolicyExpressionV2,
+  PluginPolicyExpressionV2Schema,
   type PluginAvailabilityDescriptorV2,
   PluginJsonSchemaV2Schema,
   PluginJsonValueV2Schema,
@@ -1702,6 +1716,12 @@ export {
   type PluginDeclarativeSettingsInventoryEntryV1,
   type PluginDeclarativeTargetedSurfaceHandleV1,
 } from './plugins/contributions/ui/declarativeDocument.js';
+export * from './plugins/contributions/ui/declarativeDataV1.js';
+export { readPluginDeclarativeDataSourcesV1 } from './plugins/contributions/ui/declarativeDocumentAuthoringV1.js';
+export {
+  PluginUiWidgetAreaDeclarationsV1Schema,
+  type PluginUiWidgetAreaDeclarationV1,
+} from './plugins/contributions/ui/widgetAreas.js';
 export {
   PluginDeclarativeProjectedActionBindingV1Schema,
   PluginDeclarativeProjectedCollectionRowCommandV1Schema,
@@ -1767,10 +1787,6 @@ export {
   PluginUiDestinationPlacementV1Schema,
   PluginUiAppPageColumnV1Schema,
   PluginUiWidgetHomeV1Schema,
-  PluginUiWidgetPlacementV1Schema,
-  PluginUiWidgetSessionPlacementsV1Schema,
-  PluginUiWidgetAppPlacementsV1Schema,
-  readPluginUiWidgetPlacementsV1,
   PluginUiDestinationRankHintV1Schema,
   PluginUiSettingsHostGroupIdV1Schema,
   PluginUiSettingsGroupReferenceV1Schema,
@@ -1794,7 +1810,6 @@ export {
   type PluginUiDestinationPlacementV1,
   type PluginUiAppPageColumnV1,
   type PluginUiWidgetHomeV1,
-  type PluginUiWidgetPlacementV1,
   type PluginUiSettingsHostGroupIdV1,
   type PluginUiSettingsGroupReferenceV1,
   type PluginUiSettingsGroupV1,
@@ -3310,6 +3325,15 @@ export {
   type DaemonWorkspaceFileListErrorCode,
   type DaemonWorkspaceFileListRequest,
   type DaemonWorkspaceFileListResponse,
+  DaemonWorkspaceFileSearchRequestSchema,
+  DaemonWorkspaceFileSearchResponseSchema,
+  DaemonWorkspaceFileSearchErrorCodeSchema,
+  WorkspaceFileSearchMatchV1Schema,
+  WorkspaceFileSearchFileV1Schema,
+  WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES,
+  type DaemonWorkspaceFileSearchRequest,
+  type DaemonWorkspaceFileSearchResponse,
+  type WorkspaceFileSearchFileV1,
 } from './machines/workspaceFiles.js';
 
 // Canonical create-or-rejoin vocabulary shared with host consumers. The
@@ -3869,6 +3893,9 @@ export {
   VoiceAgentTurnCancelledEventV1Schema,
   VoiceAgentTurnFinalEventV1Schema,
   createVoiceAgentOutputTurnV1,
+  canAppendVoiceAgentOutputEventsV1,
+  fitVoiceAgentOutputTextV1,
+  VOICE_OUTPUT_INCOMPLETE_TEXT,
   ingestVoiceAgentOutputEventV1,
   type VoiceAgentOutputEffectV1,
   type VoiceAgentOutputEventV1,
@@ -4840,6 +4867,8 @@ export {
   SessionListViewV1Schema,
   SessionOperationalReasonV1Schema,
   buildSessionAwarenessListResultV1,
+  readSessionAwarenessWorkStatusV1,
+  readSessionWorkStateGroupV1,
   hasActivityClearlyAfterTerminalProjectionV1,
   hasProjectedActiveTurnV1,
   isProjectedSessionStalledV1,
@@ -4902,6 +4931,7 @@ export {
   AgentStartSessionCallerV1Schema,
   admitAgentStartV1,
   readAgentStartCallerWorkDepthV1,
+  AgentStartRefusalV1Schema,
   type AgentStartCallerV1,
   type AgentStartContextV1,
   type AgentStartSessionCallerV1,
@@ -5859,6 +5889,8 @@ export {
   PluginProjectedComposerAttachmentEntryV1Schema,
   PluginProjectedComposerControlEntryV1Schema,
   PluginProjectedComposerRegionEntryV1Schema,
+  PluginProjectedDragSourceEntryV1Schema,
+  PluginProjectedDropTargetEntryV1Schema,
   PluginProjectedFamilyEntryV2Schema,
   PluginProjectedFamilyV2Schema,
   PluginProjectedAgentV2Schema,
@@ -5945,6 +5977,8 @@ export {
   type PluginProjectedComposerAttachmentEntryV1,
   type PluginProjectedComposerControlEntryV1,
   type PluginProjectedComposerRegionEntryV1,
+  type PluginProjectedDragSourceEntryV1,
+  type PluginProjectedDropTargetEntryV1,
   type PluginProjectedFamilyEntryV2,
   type PluginProjectedFamilyV2,
   type PluginProjectedAgentV2,
@@ -6120,6 +6154,11 @@ export {
 } from './sessions/external/historicalImportIdentity.js';
 
 export {
+  createExternalSessionContentMatchSnippet,
+  findExternalSessionContentMatchRange,
+} from './sessions/external/contentSearchMatch.js';
+
+export {
   ExternalSessionTranscriptItemIdV1Schema,
   ExternalSessionTerminalSourceObservationV1Schema,
   ExternalSessionTranscriptSourceTimestampV1Schema,
@@ -6175,6 +6214,12 @@ export {
   type ExternalSessionsAgentId,
   type ExternalSessionsSource,
   type ExternalSessionsSearchMode,
+  ExternalSessionsSearchTargetSchema,
+  ExternalSessionsContentCoverageSchema,
+  ExternalSessionCandidateMatchV1Schema,
+  type ExternalSessionsSearchTarget,
+  type ExternalSessionsContentCoverage,
+  type ExternalSessionCandidateMatchV1,
   type ExternalSessionCandidateV1,
   type ExternalSessionCandidateThreadV1,
   type ExternalSessionsCandidatesListRequest,
@@ -7382,6 +7427,11 @@ export {
 
 export {
   exportPromptLibraryArtifact,
+  createPromptDocInLibrary,
+  setPromptDocFavorite,
+  listPromptLibrary,
+  normalizePromptTags,
+  type PromptLibraryListItem,
   findPromptExternalLink,
   installPromptRegistryItemInLibrary,
   readPromptLibraryArtifactForExport,
@@ -7393,6 +7443,8 @@ export {
   type PromptLibraryArtifactStore,
   type PromptLibraryStoredArtifact,
 } from './prompts/library/promptLibraryActionOperations.js';
+
+export { renderPromptTemplateTextV1, type RenderedPromptTemplateTextV1 } from './prompts/library/renderPromptTemplateTextV1.js';
 
 export {
   PromptExternalLinkEntryV1Schema,
@@ -7524,6 +7576,8 @@ export {
   PromptInvocationTargetV1Schema,
   PromptInvocationsV1Schema,
   normalizePromptInvocationTokenV1,
+  isPromptInvocationAvailable,
+  validatePromptInvocationTokenV1,
   type PromptInvocationAvailabilityV1,
   type PromptInvocationBehaviorV1,
   type PromptInvocationEntryV1,
@@ -7531,6 +7585,7 @@ export {
   type PromptInvocationsV1,
   type PromptInvocationTokenV1,
 } from './prompts/library/promptInvocationsV1.js';
+export { listPromptInvocationsInLibrary, resolvePromptInvocationInLibrary } from './prompts/library/promptInvocationActionOperations.js';
 
 // System prompt assembly (shared between UI + CLI)
 export {
@@ -9432,8 +9487,12 @@ export { SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from './sessions/messages/session
 export * from './sessions/listFilter/index.js';
 export * from './boards/index.js';
 export * from './artifacts/artifactAccessV1.js';
+export * from './artifacts/artifactAccountEncryptionMigrationV1.js';
 export * from './artifacts/artifactActionsV1.js';
 export * from './artifacts/artifactBinaryV1.js';
+export * from './artifacts/artifactHtmlV1.js';
+export * from './artifacts/artifactListSelectionV1.js';
+export * from './artifacts/artifactWorkspaceFileV1.js';
 export * from './artifacts/artifactHeaderRestorationV1.js';
 export * from './artifacts/artifactExcerptV1.js';
 export * from './artifacts/artifactSharingV1.js';
@@ -9445,12 +9504,29 @@ export * from './computer/v1.js';
 export * from './actions/specs/machineConnection.js';
 export { AutomationTemplatePayloadV1Schema, decodeAutomationTemplate, encodeAutomationTemplate } from './automations/automationTemplatePayloadV1.js';
 export type { AutomationTemplatePayloadV1 } from './automations/automationTemplatePayloadV1.js';
-export { readAutomationTemplateStoredEnvelopeV1, readAutomationTemplateStoredPayloadV1, automationTemplateStoredPayloadMatchesEnvelopeV1, openAutomationTemplateStoredV1 } from './automations/automationTemplateStoredV1.js';
-export type { AutomationTemplateStoredOpenResultV1 } from './automations/automationTemplateStoredV1.js';
+export { readAutomationTemplateStoredEnvelopeV1, readAutomationTemplateStoredPayloadV1, automationTemplateStoredPayloadMatchesEnvelopeV1, openAutomationTemplateStoredV1, openAutomationTemplateStoredForMigrationV1 } from './automations/automationTemplateStoredV1.js';
+export type { AutomationTemplateStoredOpenResultV1, AutomationTemplateRetainedSessionV1 } from './automations/automationTemplateStoredV1.js';
 export { SessionTerminalTargetV1Schema, SessionTerminalMemberV1Schema, SessionTerminalTabV1Schema, SessionTerminalWorkspaceV1Schema } from './terminal/workspace.js';
 export { SessionTerminalLayoutV1Schema } from './terminal/workspace.js';
 export type { SessionTerminalTargetV1, SessionTerminalLayoutV1, SessionTerminalMemberV1, SessionTerminalTabV1, SessionTerminalWorkspaceV1 } from './terminal/workspace.js';
 export * from './account/authoringMemory.js';
 export * from './account/authoringMemoryImport.js';
 export * from './daemon/pluginCaptureSources.js';
+export * from './voice/recognitionLanguage.js';
+export * from './sessions/encryption/sessionDataKeyPreparationPass.js';
+export * from './sessions/encryption/prepareSessionDataKeyEnvelopeItemV1.js';
+export {
+  SessionProviderCliAttachPrepareRequestV1Schema,
+  SessionProviderCliAttachPrepareResultV1Schema,
+  type SessionProviderCliAttachPrepareRequestV1,
+  type SessionProviderCliAttachPrepareResultV1,
+} from './sessions/control/sessionProviderCliAttachPrepareV1.js';
 export * from './reviews/reviewPublicationEvidence.js';
+export {
+  GlassSurfaceMaterialSchema,
+  GlassSurfaceMaterialsSchema,
+  type GlassSurfaceMaterial,
+  type GlassSurfaceMaterials,
+  type GlassSurfaceGroup,
+  type GlassBlurStep,
+} from './account/settings/glassSurfaceMaterials.js';

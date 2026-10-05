@@ -133,6 +133,7 @@ export interface ArtifactForCaller {
 type ArtifactReadFailure = Readonly<{ ok: false; error: "artifact_not_found" | "artifact_content_unavailable"; ownerAccountId?: string }>;
 export type ArtifactReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller }> | ArtifactReadFailure;
 export type ArtifactHeaderForCaller = Omit<ArtifactForCaller, "body" | "bodyVersion">;
+export type ArtifactListItemForCaller = ArtifactHeaderForCaller & Partial<Pick<ArtifactForCaller, "body" | "bodyVersion">>;
 export type ArtifactHeaderReadResult = Readonly<{ ok: true; artifact: ArtifactHeaderForCaller }> | ArtifactReadFailure;
 
 type StoredRecipientEnvelope = Readonly<{ encryptedDataKey: Uint8Array; recipientContentPublicKeyFingerprint: string }>;
@@ -161,6 +162,14 @@ function projectArtifactHeader(row: StoredArtifactHeader, access: ArtifactAccess
         access: access.level, encryptionMode: access.encryptionMode, header,
         headerVersion: row.headerVersion, dataEncryptionKey: key,
         seq: row.seq, createdAt: row.createdAt, updatedAt: row.updatedAt } };
+}
+
+function projectArtifactBody(header: ArtifactHeaderForCaller,
+    row: Readonly<{ body: Uint8Array; bodyVersion: number; dataEncryptionKey: Uint8Array }>): ArtifactReadResult {
+    const body = openArtifactStoredContentBytes({ accountId: header.ownerAccountId, artifactId: header.id,
+        mode: header.encryptionMode, dataEncryptionKey: row.dataEncryptionKey, content: row.body, field: "body" });
+    return body ? { ok: true, artifact: { ...header, body, bodyVersion: row.bodyVersion } }
+        : { ok: false, error: "artifact_content_unavailable", ownerAccountId: header.ownerAccountId };
 }
 
 async function recipientEnvelopeInTx(tx: Tx, artifactId: string, actorAccountId: string): Promise<Uint8Array<ArrayBuffer> | null> {
@@ -194,18 +203,16 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
     if (!header.ok) return header;
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: { body: true, bodyVersion: true, dataEncryptionKey: true } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const body = openArtifactStoredContentBytes({ accountId: header.artifact.ownerAccountId, artifactId: input.artifactId,
-        mode: header.artifact.encryptionMode, dataEncryptionKey: row.dataEncryptionKey, content: row.body, field: "body" });
-    return body ? { ok: true, artifact: { ...header.artifact, body, bodyVersion: row.bodyVersion } }
-        : { ok: false, error: "artifact_content_unavailable", ownerAccountId: header.artifact.ownerAccountId };
+    return projectArtifactBody(header.artifact, row);
 }
 
 /** Batch list projection preserves the endpoint's existing keyset and page size without per-row queries. */
 export async function listArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; limit: number; cursor: Readonly<{ updatedAt: Date; id: string }> | null;
-}>): Promise<ArtifactHeaderForCaller[]> {
+    includeBody?: boolean;
+}>): Promise<ArtifactListItemForCaller[]> {
     const candidates = await listArtifactCandidatesInTx(tx, input.actorAccountId);
-    const result: ArtifactHeaderForCaller[] = [];
+    const result: ArtifactListItemForCaller[] = [];
     let cursor = input.cursor;
     while (result.length < input.limit) {
         const rows = await tx.artifact.findMany({ where: {
@@ -216,6 +223,7 @@ export async function listArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
             ] } : {}),
         }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: input.limit, select: {
             ...artifactAccessFactsSelect(input.actorAccountId), ...headerContentSelect,
+            body: input.includeBody === true, bodyVersion: input.includeBody === true,
             keyEnvelopes: { where: { recipientAccountId: input.actorAccountId }, select: {
                 encryptedDataKey: true, recipientContentPublicKeyFingerprint: true, recipient: { select: RECIPIENT_READINESS_SELECT },
             } },
@@ -231,7 +239,12 @@ export async function listArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
                 if (access.level === "owner") throw new Error("Artifact content is unavailable");
                 continue;
             }
-            result.push(read.artifact);
+            const content = input.includeBody ? projectArtifactBody(read.artifact, row) : read;
+            if (!content.ok) {
+                if (access.level === "owner") throw new Error("Artifact content is unavailable");
+                continue;
+            }
+            result.push(content.artifact);
             if (result.length === input.limit) return result;
         }
         if (rows.length < input.limit) break;
@@ -257,7 +270,7 @@ export async function listArtifactAccessGrantsInTx(tx: Tx, input: Readonly<{
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId, access: access.level,
         grants: [
             ...accounts.map(row => ({ principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account) ?? row.accountId, username: row.account.username } })),
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
             ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
                 createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
             ...groups.map(row => ({ principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroupId }, accessLevel: row.accessLevel,

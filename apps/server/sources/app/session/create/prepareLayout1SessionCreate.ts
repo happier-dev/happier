@@ -10,6 +10,8 @@ import {
     SessionReportsToV1Schema,
     type SessionReportsToV1,
     type SessionReportsToSetResultV1,
+    SessionInitialTriggerAdmissionV1Schema,
+    type SessionInitialTriggerAdmissionV1,
 } from "@happier-dev/protocol";
 import type { SessionAccessGrantErrorCode } from "@/app/session/access/sessionAccessGrantService";
 import type { SessionTeamCredentialBindingIntentListV1 } from "@happier-dev/protocol/teams";
@@ -53,6 +55,7 @@ export type Layout1SessionCreateRejection =
     | Readonly<{ reason: "encryption-mode-not-allowed"; code: EncryptionPolicyRejectionCode }>
     | Readonly<{ reason: "privacy-upgrade-required" }>
     | Readonly<{ reason: "invalid-organization-placement" }>
+    | Readonly<{ reason: "session-initial-trigger-invalid"; code: "invalid_input" | "target_unavailable" | "feature_disabled" }>
     | Readonly<{
         reason: "session-initial-access-invalid";
         code: SessionAccessGrantErrorCode | "session_initial_access_creator_mismatch";
@@ -82,6 +85,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
     requestedStorageState: "machine_only" | undefined;
     organizationPlacement: SessionOrganizationPlacementInput | undefined;
     initialAccess?: SessionInitialAccessMaterializedV1;
+    initialTriggers?: readonly SessionInitialTriggerAdmissionV1[];
     primaryTeamId?: string | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
     accountEncryptionMode: AccountEncryptionMode;
@@ -103,6 +107,7 @@ export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 
     requestedStorageState: "machine_only" | undefined;
     organizationPlacement: SessionOrganizationPlacementInput | undefined;
     initialAccess?: SessionInitialAccessMaterializedV1;
+    initialTriggers?: readonly SessionInitialTriggerAdmissionV1[];
     primaryTeamId?: string | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
     storagePolicy: EncryptionStoragePolicy;
@@ -211,6 +216,10 @@ export function prepareLayout1SessionCreate(
     if (!origin.success) return { ok: false, rejection: { reason: "invalid-params" } };
     const reportsTo = SessionReportsToV1Schema.optional().safeParse(request.reportsTo);
     if (!reportsTo.success) return { ok: false, rejection: { reason: "invalid-params" } };
+    const initialTriggers = SessionInitialTriggerAdmissionV1Schema.array().optional().safeParse(request.initialTriggers);
+    if (!initialTriggers.success) {
+        return { ok: false, rejection: { reason: "session-initial-trigger-invalid", code: "invalid_input" } };
+    }
     const modeRejection = admitRequestedSessionEncryptionMode({
         storagePolicy: request.storagePolicy,
         requestedEncryptionMode: request.requestedEncryptionMode,
@@ -258,6 +267,7 @@ export function prepareLayout1SessionCreate(
             requestedStorageState: request.requestedStorageState,
             organizationPlacement: request.organizationPlacement,
             initialAccess: request.initialAccess,
+            ...(initialTriggers.data !== undefined ? { initialTriggers: initialTriggers.data } : {}),
             primaryTeamId: request.primaryTeamId,
             ...(request.teamCredentialBindings !== undefined ? { teamCredentialBindings: request.teamCredentialBindings } : {}),
             storagePolicy: request.storagePolicy,

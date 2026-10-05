@@ -1,3 +1,6 @@
+import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
+import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
+import { readArtifactAccountEncryptionMigrationInventoryInTx } from '@/app/artifacts/artifactAccountEncryptionMigrationInventory';
 import { eventRouter, buildNewArtifactUpdate, buildUpdateArtifactUpdate, buildDeleteArtifactUpdate } from "@/app/events/eventRouter";
 import { inTx } from "@/storage/inTx";
 import {
@@ -18,6 +21,8 @@ import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/
 import { listArtifactBodyRevisionsInTx, restoreArtifactBodyRevision } from "@/app/artifacts/artifactRevisionService";
 import { ArtifactStorageSizeUnavailableError, readArtifactStorageUsageInTx } from "@/app/artifacts/artifactStorageService";
 import { readArtifactBlob } from '@/app/artifacts/artifactBlobService';
+import { resolveStoredContentPublicShareOrigin } from '@/app/share/storedContentPublicShareOrigin';
+import { registerArtifactHtmlViewerRoutes } from '../share/registerPublicShareViewerRoutes';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import {
     ArtifactCallerAccessV1Schema,
@@ -33,6 +38,8 @@ import {
     ArtifactStorageUsageV1Schema,
     ArtifactQuotaExceededV1Schema,
     ArtifactBlobWriteV1Schema, ArtifactBlobReadResponseV1Schema,
+    ArtifactHtmlPreviewResponseV1Schema,
+    ArtifactAccountEncryptionMigrationInventoryV1Schema,
 } from "@happier-dev/protocol";
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = 500;
@@ -53,6 +60,36 @@ function parseArtifactListCursor(value: string | undefined): { updatedAt: Date; 
 }
 
 export function artifactsRoutes(app: Fastify) {
+    registerArtifactUploadRoutes(app);
+    registerArtifactHtmlViewerRoutes(app);
+    app.get('/v1/account/encryption/artifacts', {
+        preHandler: app.authenticate,
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'artifacts') },
+        schema: { querystring: z.object({ afterId: z.string().min(1).optional(),
+            limit: z.coerce.number().int().min(1).max(DEFAULT_ARTIFACT_LIST_LIMIT).optional() }).strict(),
+            response: { 200: ArtifactAccountEncryptionMigrationInventoryV1Schema,
+                503: z.object({ error: z.literal('artifact_content_unavailable') }).strict() } },
+    }, async (request, reply) => {
+        const inventory = await inTx(tx => readArtifactAccountEncryptionMigrationInventoryInTx({ tx, accountId: request.userId,
+            afterId: request.query.afterId, limit: request.query.limit ?? DEFAULT_ARTIFACT_LIST_LIMIT }));
+        return inventory ? reply.send(inventory) : reply.code(503).send({ error: 'artifact_content_unavailable' });
+    });
+    app.get('/v1/artifacts/:id/html-preview', {
+        preHandler: app.authenticate,
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'artifacts') },
+        schema: { params: z.object({ id: z.string().min(1) }).strict(), response: {
+            200: ArtifactHtmlPreviewResponseV1Schema,
+            404: z.object({ error: z.literal('Artifact not found') }),
+            503: z.object({ error: z.enum(['artifact_content_unavailable', 'artifact_html_isolation_unavailable']) }),
+        } },
+    }, async (request, reply) => {
+        const read = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }));
+        if (!read.ok) return read.error === 'artifact_not_found'
+            ? reply.code(404).send({ error: 'Artifact not found' }) : reply.code(503).send({ error: 'artifact_content_unavailable' });
+        const origin = resolveStoredContentPublicShareOrigin(request.params.id);
+        if (!origin) return reply.code(503).send({ error: 'artifact_html_isolation_unavailable' });
+        return reply.send({ url: `${origin}/a/${encodeURIComponent(request.params.id)}` });
+    });
     app.get('/v1/artifacts/:id/blobs/:blobId', {
         preHandler: app.authenticate,
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'artifacts') },
@@ -151,12 +188,15 @@ export function artifactsRoutes(app: Fastify) {
             querystring: z.object({
                 limit: z.coerce.number().int().min(1).max(500).optional(),
                 cursor: z.string().min(1).optional(),
+                includeBody: z.literal('true').optional(),
             }),
             response: {
                 200: z.array(z.object({
                     id: z.string(),
                     header: z.string(),
                     headerVersion: z.number(),
+                    body: z.string().optional(),
+                    bodyVersion: z.number().optional(),
                     dataEncryptionKey: z.string(),
                     seq: z.number(),
                     createdAt: z.number(),
@@ -173,13 +213,14 @@ export function artifactsRoutes(app: Fastify) {
         }
     }, async (request, reply) => {
         const userId = request.userId;
-        const query = request.query as { limit?: number; cursor?: string };
+        const query = request.query as { limit?: number; cursor?: string; includeBody?: 'true' };
         const listLimit = typeof query.limit === "number" ? query.limit : DEFAULT_ARTIFACT_LIST_LIMIT;
         const cursor = parseArtifactListCursor(query.cursor);
         if (query.cursor && !cursor) return reply.code(400).send({ error: 'Failed to get artifacts' });
 
         try {
-            const artifacts = await inTx(tx => listArtifactHeadersForCallerInTx(tx, { actorAccountId: userId, limit: listLimit, cursor }));
+            const artifacts = await inTx(tx => listArtifactHeadersForCallerInTx(tx, { actorAccountId: userId, limit: listLimit, cursor,
+                includeBody: query.includeBody === 'true' }));
 
             const projected = artifacts.map((artifact) => {
                 return {
@@ -189,6 +230,7 @@ export function artifactsRoutes(app: Fastify) {
                     encryptionMode: artifact.encryptionMode,
                     header: privacyKit.encodeBase64(artifact.header),
                     headerVersion: artifact.headerVersion,
+                    ...(artifact.body === undefined ? {} : { body: privacyKit.encodeBase64(artifact.body), bodyVersion: artifact.bodyVersion }),
                     dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
                     seq: artifact.seq,
                     createdAt: artifact.createdAt.getTime(),
@@ -357,66 +399,8 @@ export function artifactsRoutes(app: Fastify) {
             }
         }
     }, async (request, reply) => {
-        const userId = request.userId;
-        const { id, header, body, dataEncryptionKey, blob } = request.body;
-
-        try {
-            log({ module: 'api', artifactId: id, userId }, 'Creating artifact');
-            const result = await createArtifact({
-                actorUserId: userId,
-                artifactId: id,
-                header: privacyKit.decodeBase64(header),
-                body: privacyKit.decodeBase64(body),
-                dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
-                blob,
-            });
-
-            if (!result.ok) {
-                if (result.error === 'quota_exceeded') return reply.code(413).send({ error: result.error, budget: result.budget, limitBytes: result.limitBytes, usedBytes: result.usedBytes });
-                if (result.error === 'invalid-params') {
-                    return reply.code(400).send({ error: 'Invalid parameters' });
-                }
-                if (result.error === 'conflict') {
-                    return reply.code(409).send({
-                        error: 'Artifact with this ID already exists for another account'
-                    });
-                }
-
-                return reply.code(500).send({ error: 'Failed to create artifact' });
-            }
-
-            if (result.didWrite) {
-                const newArtifactPayload = buildNewArtifactUpdate(result.artifact, result.cursor, randomKeyNaked(12));
-                eventRouter.emitUpdate({
-                    userId,
-                    payload: newArtifactPayload,
-                    recipientFilter: { type: 'user-scoped-only' }
-                });
-            } else {
-                log({ module: 'api', artifactId: id, userId }, 'Found existing artifact');
-            }
-
-            const read = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: userId, artifactId: id }));
-            if (!read.ok) return reply.code(500).send({ error: 'Failed to create artifact' });
-            const artifact = read.artifact;
-            return reply.send({
-                id: artifact.id,
-                ownerAccountId: artifact.ownerAccountId,
-                access: artifact.access,
-                encryptionMode: artifact.encryptionMode,
-                header: privacyKit.encodeBase64(artifact.header),
-                headerVersion: artifact.headerVersion,
-                body: privacyKit.encodeBase64(artifact.body),
-                bodyVersion: artifact.bodyVersion,
-                dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
-                seq: artifact.seq,
-                createdAt: artifact.createdAt.getTime(),
-                updatedAt: artifact.updatedAt.getTime()
-            });
-        } catch (error) {
-            log({ module: 'api', level: 'error' }, `Failed to create artifact: ${error}`);
-            return reply.code(500).send({ error: 'Failed to create artifact' });
-        }
+        const result = await createArtifactHttpMutation(request.userId, request.body);
+        return reply.code(result.statusCode).send(result.body);
     });
 
     registerCreateArtifactRoute('/v1/artifacts', false);
@@ -434,7 +418,7 @@ export function artifactsRoutes(app: Fastify) {
                 expectedHeaderVersion: z.number().int().min(0).optional(),
                 body: z.string().optional(),
                 expectedBodyVersion: z.number().int().min(0).optional(),
-                blob: ArtifactBlobWriteV1Schema.optional(),
+                blob: ArtifactBlobWriteV1Schema.nullable().optional(),
             }).strict().refine(value => requiresBlob ? value.blob !== undefined : value.blob === undefined),
             response: {
                 200: z.union([
@@ -458,6 +442,7 @@ export function artifactsRoutes(app: Fastify) {
                 404: z.object({
                     error: z.literal('Artifact not found')
                 }),
+                409: z.object({ error: z.literal('artifact_binary_content_requires_explicit_update') }),
                 413: ArtifactQuotaExceededV1Schema,
                 500: z.object({
                     error: z.literal('Failed to update artifact')
@@ -465,87 +450,8 @@ export function artifactsRoutes(app: Fastify) {
             }
         }
     }, async (request, reply) => {
-        const userId = request.userId;
-        const { id } = request.params;
-        const { header, expectedHeaderVersion, body, expectedBodyVersion, blob } = request.body;
-
-        try {
-            if (header !== undefined && expectedHeaderVersion === undefined) {
-                return reply.code(400).send({ error: 'Invalid parameters' });
-            }
-            if (body !== undefined && expectedBodyVersion === undefined) {
-                return reply.code(400).send({ error: 'Invalid parameters' });
-            }
-
-            const headerParam = header !== undefined && expectedHeaderVersion !== undefined
-                ? { bytes: privacyKit.decodeBase64(header), expectedVersion: expectedHeaderVersion }
-                : undefined;
-            const bodyParam = body !== undefined && expectedBodyVersion !== undefined
-                ? { bytes: privacyKit.decodeBase64(body), expectedVersion: expectedBodyVersion }
-                : undefined;
-
-            if (!headerParam && !bodyParam) {
-                return reply.code(400).send({ error: 'Invalid parameters' });
-            }
-
-            const result = await updateArtifact({
-                actorUserId: userId,
-                artifactId: id,
-                header: headerParam,
-                body: bodyParam,
-                blob,
-            });
-
-            if (!result.ok) {
-                if (result.error === 'quota_exceeded') return reply.code(413).send({ error: result.error, budget: result.budget, limitBytes: result.limitBytes, usedBytes: result.usedBytes });
-                if (result.error === 'invalid-params') {
-                    return reply.code(400).send({ error: 'Invalid parameters' });
-                }
-                if (result.error === 'not-found') {
-                    return reply.code(404).send({ error: 'Artifact not found' });
-                }
-
-                if (result.error === 'version-mismatch') {
-                    return reply.send({
-                        success: false as const,
-                        error: 'version-mismatch' as const,
-                        ...(headerParam && result.current && {
-                            currentHeaderVersion: result.current.headerVersion,
-                            currentHeader: Buffer.from(result.current.header).toString('base64'),
-                        }),
-                        ...(bodyParam && result.current && {
-                            currentBodyVersion: result.current.bodyVersion,
-                            currentBody: Buffer.from(result.current.body).toString('base64'),
-                        }),
-                    });
-                }
-                return reply.code(500).send({ error: 'Failed to update artifact' });
-            }
-
-            const headerUpdate = headerParam && result.header
-                ? { value: header!, version: result.header.version }
-                : undefined;
-            const bodyUpdate = bodyParam && result.body
-                ? { value: body!, version: result.body.version }
-                : undefined;
-
-            const legacyRecipient = result.ownerUpdate ?? { accountId: userId, cursor: result.cursor };
-            const updatePayload = buildUpdateArtifactUpdate(id, legacyRecipient.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate);
-            eventRouter.emitUpdate({
-                userId: legacyRecipient.accountId,
-                payload: updatePayload,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
-
-            return reply.send({
-                success: true as const,
-                ...(headerUpdate && { headerVersion: headerUpdate.version }),
-                ...(bodyUpdate && { bodyVersion: bodyUpdate.version }),
-            });
-        } catch (error) {
-            log({ module: 'api', level: 'error' }, `Failed to update artifact: ${error}`);
-            return reply.code(500).send({ error: 'Failed to update artifact' });
-        }
+        const result = await updateArtifactHttpMutation(request.userId, request.params.id, request.body);
+        return reply.code(result.statusCode).send(result.body);
     });
 
     registerUpdateArtifactRoute('/v1/artifacts/:id', false);

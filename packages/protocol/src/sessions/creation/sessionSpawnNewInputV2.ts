@@ -34,6 +34,7 @@ import { SessionReportsToV1Schema } from '../relations/sessionReportsToV1.js';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
+import { SessionInitialTriggerV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 
 /**
  * One Message-owned input admitted before the new Session runtime may start.
@@ -80,6 +81,7 @@ export const SessionSpawnNewInputV2BaseSchema = z.object({
   checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.nullable().optional(),
   title: z.string().trim().min(1).optional(),
   initialInput: SessionSpawnNewInitialInputV1Schema.optional(),
+  initialTriggers: z.array(z.lazy(() => SessionInitialTriggerV1Schema)).optional(),
   initialAccess: SessionInitialAccessDraftV1Schema.optional(),
   reportsTo: SessionReportsToV1Schema.optional(),
   primaryTeamId: z.string().min(1).nullable().optional(),

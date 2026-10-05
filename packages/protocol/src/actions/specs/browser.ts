@@ -324,8 +324,8 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
 
 export const BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
   'browser.sandbox.install': BrowserSandboxInstallResultV1Schema,
-  'browser.control.takeControl': BrowserCommandDispatchResultV1Schema,
-  'browser.control.handBack': BrowserCommandDispatchResultV1Schema,
+  'browser.control.takeControl': z.union([BrowserCommandDispatchResultV1Schema, BrowserAutomationInterruptedResultV1Schema]),
+  'browser.control.handBack': z.union([BrowserCommandDispatchResultV1Schema, BrowserAutomationInterruptedResultV1Schema]),
   'browser.view.open': BrowserCommandDispatchResultV1Schema,
   'browser.view.close': BrowserCommandDispatchResultV1Schema,
   'browser.view.focus': BrowserCommandDispatchResultV1Schema,

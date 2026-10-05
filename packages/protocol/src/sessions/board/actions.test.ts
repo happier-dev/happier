@@ -45,6 +45,15 @@ const item = {
 } as const;
 
 describe('Session Board Action contracts', () => {
+  it('binds configured widget instance identity to the canonical Board item id on cleartext write seams', () => {
+    const widget = { ...item, source: { kind: 'widget', instance: { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'status' } }, bindings: {} } } };
+    const upsert = { itemId: 'copy-a', expectedItemRevision: revision, item: widget };
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse(upsert).success).toBe(true);
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...upsert, itemId: 'copy-b' }).success).toBe(false);
+    const mutation = { operation: 'upsert_item', itemId: 'copy-a', expectedItemRevision: revision, itemContent: { t: 'plain', v: widget } };
+    expect(SessionBoardMutationV1Schema.safeParse(mutation).success).toBe(true);
+    expect(SessionBoardMutationV1Schema.safeParse({ ...mutation, itemId: 'copy-b' }).success).toBe(false);
+  });
   it('binds one Board mutation to its exact Home request through the shared binder', () => {
     const mutation = SessionBoardMutationV1Schema.parse({
       operation: 'update_layout',
@@ -522,6 +531,13 @@ describe('Session Board Action contracts', () => {
     expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse(
       upsertEvidence({ tabId: 'overview', width: 'wide' }, layoutWithWideNote),
     ).success).toBe(true);
+    expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse(
+      upsertEvidence({ tabId: 'overview', frameStyle: 'plain' }, layoutWithWideNote),
+    ).success).toBe(false);
+    expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse(
+      upsertEvidence({ tabId: 'overview', frameStyle: 'plain' }, { ...layoutWithWideNote,
+        tabs: [{ ...layoutWithWideNote.tabs[0]!, items: [{ itemId: 'note', width: 'wide', frameStyle: 'plain' }] }] }),
+    ).success).toBe(true);
     // The item must still be present in the intended view.
     expect(SessionBoardActionRecoveryEvidenceV1Schema.safeParse(
       upsertEvidence({ tabId: 'other' }, layoutWithWideNote),
@@ -580,6 +596,14 @@ describe('Session Board Action contracts', () => {
     } as const;
     const binding = { expectedServerId: 'home-1', expectedSessionId: 'session-1' } as const;
     expect(parseSessionBoardActionPortResultV1('session.board.item.upsert', input, result, binding).success).toBe(true);
+    const framedInput = { ...input, placement: { ...input.placement, frameStyle: 'plain' as const } };
+    expect(parseSessionBoardActionPortResultV1('session.board.item.upsert', framedInput, {
+      ...result, destination: { ...result.destination, frameStyle: 'plain' },
+    }, binding).success).toBe(true);
+    expect(parseSessionBoardActionPortResultV1('session.board.item.upsert', framedInput, result, binding).success).toBe(false);
+    expect(parseSessionBoardActionPortResultV1('session.board.item.upsert', framedInput, {
+      ...result, destination: { ...result.destination, frameStyle: 'card' },
+    }, binding).success).toBe(false);
     expect(parseSessionBoardActionPortResultV1('session.board.item.upsert', input, result).success).toBe(false);
     expect(parseSessionBoardActionPortResultV1('session.board.item.upsert', input, {
       ...result, serverId: 'other-home',

@@ -776,6 +776,10 @@ async function startAutomationRunInternal(params: {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
 
+        if (await readMachineAvailabilityStateInTx({
+            tx, accountId: params.accountId, machineId: params.machineId,
+        }) !== "available") return null;
+
         if (!await hasExpectedAutomationAccountCurrentnessTx({
             tx,
             accountId: params.accountId,

@@ -6,6 +6,30 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./home": {
+      "types": "./dist/home/index.d.ts",
+      "default": "./dist/home/index.js"
+    },
+    "./widgets": {
+      "types": "./dist/widgets/index.d.ts",
+      "default": "./dist/widgets/index.js"
+    },
+    "./profiles/v2/profileId": {
+      "types": "./dist/profiles/v2/profileId.d.ts",
+      "default": "./dist/profiles/v2/profileId.js"
+    },
+    "./plugins/ui/entityDragDrop": {
+      "types": "./dist/plugins/ui/entityDragDrop.d.ts",
+      "default": "./dist/plugins/ui/entityDragDrop.js"
+    },
+    "./inputs": {
+      "types": "./dist/inputs/index.d.ts",
+      "default": "./dist/inputs/index.js"
+    },
+    "./inputs/runtime": {
+      "types": "./dist/inputs/runtime.d.ts",
+      "default": "./dist/inputs/runtime.js"
+    },
     "./sharing/public-viewer": {
       "types": "./dist/sharing/publicViewer.d.ts",
       "default": "./dist/sharing/publicViewer.js"
@@ -37,6 +61,10 @@
     "./server/relayDrift": {
       "types": "./dist/server/relayDrift.d.ts",
       "default": "./dist/server/relayDrift.js"
+    },
+    "./auth/terminalConnectLinkV4": {
+      "types": "./dist/auth/terminalConnectLinkV4.d.ts",
+      "default": "./dist/auth/terminalConnectLinkV4.js"
     },
     "./auth/apiTokenGrant": {
       "types": "./dist/auth/apiTokenGrant.d.ts",

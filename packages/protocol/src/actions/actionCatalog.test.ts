@@ -18,9 +18,9 @@ import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 
 describe('actionCatalog action-definition adapter', () => {
-  it('projects a discovered Action definition as strict external JSON', () => {
+  it.each(['machines.list', 'session.spawn_new'] as const)('projects a discovered %s Action definition as strict external JSON', (actionId) => {
     const actionSpec = projectActionDefinitionForExternalDiscovery(
-      actionSpecToActionDefinitionV1(getActionSpec('machines.list'), { surface: 'api' }),
+      actionSpecToActionDefinitionV1(getActionSpec(actionId), { surface: 'api' }),
     );
 
     const prepared = prepareExternalActionResponseEnvelopeV1({
@@ -185,8 +185,8 @@ describe('actionCatalog action-definition adapter', () => {
     expect(definitions.every((definition) => definition.surfaces.cli === true)).toBe(true);
   });
 
-  it('projects every Agent-visible Action definition through the canonical schema boundary', () => {
-    const definitions = listActionDefinitionsForCatalogSurface({ surface: 'agent' });
+  it.each(['agent', 'voice'] as const)('projects every %s-visible Action definition through the canonical schema boundary', (surface) => {
+    const definitions = listActionDefinitionsForCatalogSurface({ surface });
 
     expect(definitions.length).toBeGreaterThan(0);
     for (const definition of definitions) {

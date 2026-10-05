@@ -227,7 +227,7 @@ describe("Artifact document grants (real SQLite)", () => {
             const list = await app.inject({ method: "GET", url: grantsUrl, headers: { "x-test-user-id": admin.id } });
             expect(list.statusCode).toBe(200);
             expect(list.json()).toMatchObject({ ownerAccountId: owner.id, access: "admin", grants: [
-                { principal: { kind: "account", accountId: admin.id }, accessLevel: "admin" },
+                { principal: { kind: "account", accountId: admin.id }, accessLevel: "admin", display: { name: null, username: null } },
             ] });
             const delegated = await app.inject({ method: "PUT", url: grantsUrl, headers: { "x-test-user-id": admin.id },
                 payload: { artifactId: artifact.id, principal: { kind: "account", accountId: outsider.id }, accessLevel: "view" } });

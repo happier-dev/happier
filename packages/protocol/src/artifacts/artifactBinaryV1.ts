@@ -17,6 +17,27 @@ export const ArtifactBlobStoredContentV1Schema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('encrypted'), c: bytesBase64 }).strict(),
 ]);
 export type ArtifactBlobStoredContentV1 = z.infer<typeof ArtifactBlobStoredContentV1Schema>;
+/** Signed conversion directives identify staged bytes rather than carrying them inline. */
+export const ArtifactBlobAccountEncryptionStageV1Schema = z.object({
+  t: z.enum(['plain', 'encrypted']), uploadId: z.string().uuid(),
+  contentSha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type ArtifactBlobAccountEncryptionStageV1 = z.infer<typeof ArtifactBlobAccountEncryptionStageV1Schema>;
+const uploadIdentity = {
+  artifactId: z.string().min(1), blobId: z.string().uuid(), t: z.enum(['plain', 'encrypted']),
+  sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+};
+const artifactUuid = z.string().uuid();
+/** Destination metadata stays small; file bytes use the finite-transfer chunk owner. */
+export const ArtifactBlobUploadInitV1Schema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('create'), ...uploadIdentity, artifactId: artifactUuid,
+    header: z.string(), body: z.string(), dataEncryptionKey: z.string() }).strict(),
+  z.object({ kind: z.literal('update'), ...uploadIdentity,
+    header: z.string().optional(), expectedHeaderVersion: z.number().int().nonnegative().optional(),
+    body: z.string(), expectedBodyVersion: z.number().int().nonnegative() }).strict(),
+  z.object({ kind: z.literal('encryption-conversion'), ...uploadIdentity, artifactId: artifactUuid }).strict(),
+]);
+export type ArtifactBlobUploadInitV1 = z.infer<typeof ArtifactBlobUploadInitV1Schema>;
 export const ArtifactBlobWriteV1Schema = z.object({
   blobId: z.string().uuid(), content: ArtifactBlobStoredContentV1Schema.optional(),
 }).strict();

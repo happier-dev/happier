@@ -98,6 +98,7 @@
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/iroh-native": "0.0.0",
     "@happier-dev/peer-mediation": "0.0.0",
+    "@happier-dev/transfers": "0.0.0",
     "@happier-dev/peer-transport": "0.0.0",
     "@happier-dev/plugins-review-coderabbit": "0.0.0",
     "@happier-dev/plugins-review-deepsec": "0.0.0",

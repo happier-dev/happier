@@ -9,6 +9,7 @@ import type {
 } from './actionSettings.js';
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
+import { readWidgetActionSurfaceV1, readWidgetActionDestinationV1 } from '../widgets/actionsV1.js';
 
 export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
@@ -51,6 +52,7 @@ function isApprovalAction(actionId: ActionId): boolean {
  * UI-state edits with no page egress and stay unprompted.
  */
 export const EGRESS_SENSITIVE_AGENT_FLOOR = [
+  'artifact.public_link.audit',
   'computer.targets.list',
   'computer.capture',
   'computer.query',
@@ -151,11 +153,28 @@ const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_ID_SET: ReadonlySet<ActionId> = n
  * - `session.responsibility.set`: teams-lane-04/11-responsible-assignment.md
  *   §7.1 — "Dangerous mutation confirmation is required by default and may be
  *   explicitly disabled by the user in the canonical Actions policy."
+ * - Shared Board edits, definition edits/deletion and frozen snapshot publication:
+ *   widgets-platform §4 — the same configurable policy owns their UI approval.
  */
 const PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET: ReadonlySet<ActionId> = new Set<ActionId>([
   'session.responsibility.set',
   'session.reports_to.set',
+  'session.board.item.upsert',
+  'session.board.layout.update',
+  'widgets.definition.update',
+  'widgets.definition.delete',
+  'widgets.snapshot.post',
 ]);
+
+function usesPresentUserUiPolicyConfirmation(actionId: ActionId, input: unknown): boolean {
+  if (PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET.has(actionId)) return true;
+  if (!actionId.startsWith('widgets.instance.') || getActionSpec(actionId).safety !== 'danger') return false;
+  const surface = readWidgetActionSurfaceV1(input);
+  const destination = actionId === 'widgets.instance.move' ? readWidgetActionDestinationV1(input) : null;
+  // Missing target facts cannot establish that a write is only personal. The
+  // executor supplies admitted input; Home/Companion inherit their safe owner policy.
+  return !surface || surface.owner.kind === 'sessionBoard' || destination?.owner.kind === 'sessionBoard';
+}
 
 type ActionSurfaceKey = keyof ActionSurfaces;
 type NonAgentActionSurfaceKey = Exclude<ActionSurfaceKey, 'agent'>;
@@ -244,6 +263,7 @@ function requiresDefaultApprovalFloor(
   actionId: ActionId,
   ctx?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation'> | null,
   defaultSafety?: ActionSpec['safety'],
+  input?: unknown,
 ): boolean {
   const surface = resolveApprovalSurface(ctx);
   if (actionId === 'capture.view') return true;
@@ -258,7 +278,7 @@ function requiresDefaultApprovalFloor(
   if (
     surface.kind === 'non_agent'
     && (
-      (surface.surface === 'ui' && !PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET.has(actionId))
+      (surface.surface === 'ui' && !usesPresentUserUiPolicyConfirmation(actionId, input))
       || (surface.surface === 'cli' && ctx?.presentUserConfirmation?.actionId === actionId)
     )
     && ctx?.authority === 'present_user'
@@ -292,6 +312,9 @@ export function isApprovalRequiredByActionsSettings(
   settings: ActionsSettingsV1,
   ctx?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null,
   defaultSafety?: ActionSpec['safety'],
+  /** Contributed Action manifest default, resolved by its shared admission owner. */
+  contributedApprovalDefault?: boolean,
+  input?: unknown,
 ): boolean {
   if (isAgentApprovalRequestSurface(ctx?.surface) && isAgentRequestablePresentUserActionId(actionId)) return true;
   if (requiresWorkflowTriggerAgentApproval(actionId, ctx)) return true;
@@ -310,7 +333,9 @@ export function isApprovalRequiredByActionsSettings(
   if (surface.kind !== 'ambiguous' && waived.includes(surface.surface)) return false;
 
   const builtInActionId = ActionIdSchema.safeParse(actionId);
-  return builtInActionId.success && requiresDefaultApprovalFloor(builtInActionId.data, ctx, defaultSafety);
+  return builtInActionId.success
+    ? requiresDefaultApprovalFloor(builtInActionId.data, ctx, defaultSafety, input)
+    : contributedApprovalDefault === true;
 }
 
 /**
@@ -326,8 +351,9 @@ export function isApprovalRequiredByActionsSettings(
 function resolveUnwiredApprovalDefault(
   actionId: ActionId,
   context: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation'> | null | undefined,
+  input?: unknown,
 ): boolean {
-  return requiresDefaultApprovalFloor(actionId, context);
+  return requiresDefaultApprovalFloor(actionId, context, undefined, input);
 }
 
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
@@ -344,10 +370,10 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     : typeof args.requiredByPolicy === 'boolean'
     ? args.requiredByPolicy
     : args.settings
-      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings, args.context, args.defaultSafety)
+      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings, args.context, args.defaultSafety, undefined, args.input)
       : args.defaultSafety !== undefined
-        ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety)
-        : resolveUnwiredApprovalDefault(args.actionId, args.context);
+        ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input)
+        : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input);
   // Only the incumbent host-stamped approved replay bypass avoids creating a
   // second request. A waived setting or a bare policy false is not that proof.
   const required = !isApprovalAction(args.actionId)

@@ -486,6 +486,7 @@ describe("artifactWriteService", () => {
                 dataEncryptionKey: artifactBytes(ARTIFACT_PLAIN_DATA_KEY_MARKER),
             };
             txFixture.artifact.findFirst
+                .mockResolvedValueOnce(initial) // authorized cleanup admission
                 .mockResolvedValueOnce(initial) // live owner/grant lookup
                 .mockResolvedValueOnce(initial) // pre-CAS content read
                 .mockResolvedValueOnce({ ...initial, headerVersion: 11, bodyVersion: 21 });

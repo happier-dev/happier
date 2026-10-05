@@ -324,3 +324,11 @@ export {
 } from './savedSecretCatalogV1.js';
 
 export * from './savedSecretResourceActionsV1.js';
+export {
+  GlassSurfaceMaterialSchema,
+  GlassSurfaceMaterialsSchema,
+  type GlassSurfaceMaterial,
+  type GlassSurfaceMaterials,
+  type GlassSurfaceGroup,
+  type GlassBlurStep,
+} from './glassSurfaceMaterials.js';

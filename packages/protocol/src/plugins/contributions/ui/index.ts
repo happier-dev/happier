@@ -6,6 +6,7 @@ export {
 export * from './artifacts.js';
 export * from './compatibility.js';
 export * from './declarativeDocument.js';
+export * from './declarativeDataV1.js';
 export * from './declarativeProjectedModelV1.js';
 export * from './hostedWeb.js';
 export * from './hostedHtmlSourceV1.js';
@@ -20,13 +21,14 @@ export * from './sessionHeaderActions.js';
 export * from './transcriptActivities.js';
 export * from './sessionInfoSections.js';
 export * from './surfaceRegistry.js';
+export { PluginUiWidgetAreaDeclarationV1Schema, PluginUiWidgetAreaDeclarationsV1Schema } from './widgetAreas.js';
 export * from './surfaceTargets.js';
 export * from './tokens.js';
 export type {
   PluginUiAppPageColumnV1,
+  PluginUiWidgetAreaDeclarationV1,
   PluginUiDestinationPlacementV1,
   PluginUiWidgetHomeV1,
-  PluginUiWidgetPlacementV1,
   PluginUiViewDestinationBindingV2,
   PluginUiViewDestinationBindingInputV2,
   PluginUiViewInlineBindingInputV2,
@@ -38,11 +40,8 @@ export {
   PluginUiAppPageColumnV1Schema,
   PluginUiDestinationPlacementV1Schema,
   PluginUiWidgetHomeV1Schema,
-  PluginUiWidgetPlacementV1Schema,
-  PluginUiWidgetSessionPlacementsV1Schema,
-  PluginUiWidgetAppPlacementsV1Schema,
-  readPluginUiWidgetPlacementsV1,
 } from './v2.js';
+export { selectPluginUiWidgetEntriesV1 } from './widgetInventory.js';
 export {
   PLUGIN_TRANSCRIPT_PRESENTATION_NODE_V1_KINDS,
   PluginTranscriptPresentationNodeV1Schema,

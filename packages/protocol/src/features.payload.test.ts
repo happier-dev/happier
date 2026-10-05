@@ -37,6 +37,35 @@ function readOptionalPath(root: unknown, path: ReadonlyArray<string>): unknown {
 }
 
 describe('FeaturesResponseSchema', () => {
+  it('degrades malformed optional live-stream relay diagnostics without losing Home identity', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: { voice: { enabled: true } },
+      capabilities: {
+        serverIdentity: { serverIdentityId: 'srv_qa-voice' },
+        machines: {
+          liveStream: { serverRouted: { caps: { maxBitrateBps: 'invalid' }, disabledReason: null } },
+        },
+      },
+    });
+
+    expect(parsed.capabilities.serverIdentity.serverIdentityId).toBe('srv_qa-voice');
+    expect(parsed.features.voice.enabled).toBe(true);
+    expect(parsed.capabilities.machines.liveStream.serverRouted).toEqual({
+      caps: null,
+      disabledReason: 'relay_caps_missing',
+    });
+  });
+
+  it('accepts uncapped and partially capped relay policy without inventing limits', () => {
+    for (const caps of [{}, { maxBitrateBps: 64_000 }]) {
+      const parsed = FeaturesResponseSchema.parse({
+        features: {},
+        capabilities: { machines: { liveStream: { serverRouted: { caps, disabledReason: null } } } },
+      });
+      expect(parsed.capabilities.machines.liveStream.serverRouted).toEqual({ caps, disabledReason: null });
+    }
+  });
+
   it('keeps an optional Home host fact and treats malformed facts as unknown', () => {
     const known = { kind: 'known', machineName: 'Studio', platform: 'darwin', mobility: 'stationary' };
     expect(FeaturesResponseSchema.parse({ features: {}, capabilities: {}, homeHostFact: known }).homeHostFact).toEqual(known);

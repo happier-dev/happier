@@ -7,6 +7,15 @@ const otherAgent = { kind: 'agent' as const, identity: { pluginId: 'happier.agen
 const model = { v: 1 as const, ref: { agentTargetKey: 'happier.agent.claude/claude', providerConnectionId: null, modelId: 'model' }, updatedAt: 0 };
 
 describe('workflow step selection', () => {
+  it('projects unresolved role fields for authoring without weakening admission or inventing an Agent', () => {
+    const defaults = { agentTarget: agent, modelSelection: model, permissionMode: 'read-only' as const,
+      executionTarget: { kind: 'session' as const } };
+    const step = { engine: { role: 'scout' }, conversation: { kind: 'from_step' as const,
+      producer: { blockId: 'prior', scope: { kind: 'current' as const } } } };
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step, purpose: 'authoring' }).selection)
+      .toEqual({ permissionMode: 'read-only', conversation: step.conversation });
+    expect(() => selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step })).toThrow(/target_unavailable/);
+  });
   it('exports the pure selection owner', () => {
     expect(selectionOwner).toHaveProperty('resolveWorkflowStepSelectionV1');
   });

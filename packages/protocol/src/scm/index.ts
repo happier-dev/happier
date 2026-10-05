@@ -32,6 +32,7 @@ export * from './diffSummary.js';
 export * from './diffSummaryResult.js';
 export * from './diffSummaryCommitPlan.js';
 export * from './repositoryProvisioning.js';
+export * from './repositoryClone.js';
 export * from './worktrees.js';
 import {
   ScmBranchSourceRefSchema,

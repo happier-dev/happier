@@ -38,6 +38,7 @@ import {
     SessionOwnerMetadataEnvelopeV1Schema,
     SessionSharedMetadataV1Schema,
     SessionUserActionRequiredOccurrenceV1Schema,
+    SessionAgentStateActivitySummaryV1Schema,
     SESSION_METADATA_LAYOUT_VERSION_V1,
     type PrimaryTurnStatusV1,
     type AccountEncryptionMigrateSessionsDirective,
@@ -2322,6 +2323,39 @@ export async function updateSessionRuntimeActivityProjection(params: {
     });
 }
 
+/** Shared by legacy Agent-state and tuple CAS writers; terminal settlement wins. */
+function normalizePendingRequestActivitySummary(
+    summary: Readonly<{
+        pendingPermissionRequestCount?: number;
+        pendingUserActionRequestCount?: number;
+        pendingRequestNewestCreatedAt?: number | null;
+    }>,
+    latestTurnStatus: unknown,
+) {
+    const count = (value: number | undefined) =>
+        typeof value === "number" && Number.isFinite(value)
+            ? Math.max(0, Math.floor(value))
+            : undefined;
+    const permissionCount = count(summary.pendingPermissionRequestCount);
+    const userActionCount = count(summary.pendingUserActionRequestCount);
+    const hasCounts = permissionCount !== undefined || userActionCount !== undefined;
+    const newestCreatedAt = typeof summary.pendingRequestNewestCreatedAt === "number"
+        && Number.isFinite(summary.pendingRequestNewestCreatedAt)
+        ? Math.max(0, Math.floor(summary.pendingRequestNewestCreatedAt))
+        : null;
+    const terminal = isTerminalPrimaryTurnStatus(parseStoredPrimaryTurnStatus(latestTurnStatus));
+    return {
+        ...(permissionCount !== undefined
+            ? { pendingPermissionRequestCount: terminal ? 0 : permissionCount } : {}),
+        ...(userActionCount !== undefined
+            ? { pendingUserActionRequestCount: terminal ? 0 : userActionCount } : {}),
+        ...(hasCounts ? { pendingRequestObservedAt:
+            !terminal && (permissionCount ?? 0) + (userActionCount ?? 0) > 0
+                ? new Date(newestCreatedAt ?? Date.now()) : null,
+        } : {}),
+    };
+}
+
 export async function updateSessionAgentState(params: {
     actorUserId: string;
     sessionId: string;
@@ -2342,30 +2376,6 @@ export async function updateSessionAgentState(params: {
     const expectedVersion = typeof params.expectedVersion === "number" ? params.expectedVersion : NaN;
     const agentStateCiphertext =
         typeof params.agentStateCiphertext === "string" || params.agentStateCiphertext === null ? params.agentStateCiphertext : undefined;
-    const pendingPermissionRequestCount =
-        typeof params.pendingPermissionRequestCount === "number" && Number.isFinite(params.pendingPermissionRequestCount)
-            ? Math.max(0, Math.floor(params.pendingPermissionRequestCount))
-            : undefined;
-    const pendingUserActionRequestCount =
-        typeof params.pendingUserActionRequestCount === "number" && Number.isFinite(params.pendingUserActionRequestCount)
-            ? Math.max(0, Math.floor(params.pendingUserActionRequestCount))
-            : undefined;
-    const hasPendingRequestCountUpdate =
-        typeof pendingPermissionRequestCount === "number"
-        || typeof pendingUserActionRequestCount === "number";
-    const pendingRequestNewestCreatedAt =
-        params.pendingRequestNewestCreatedAt === null
-            ? null
-            : typeof params.pendingRequestNewestCreatedAt === "number"
-                && Number.isFinite(params.pendingRequestNewestCreatedAt)
-                ? Math.max(0, Math.floor(params.pendingRequestNewestCreatedAt))
-                : undefined;
-    const pendingRequestObservedAt =
-        hasPendingRequestCountUpdate
-            ? ((pendingPermissionRequestCount ?? 0) + (pendingUserActionRequestCount ?? 0)) > 0
-                ? pendingRequestNewestCreatedAt ?? Date.now()
-                : null
-            : undefined;
     const parsedUserActionRequiredOccurrences =
         SessionUserActionRequiredOccurrenceV1Schema.array().safeParse(
             params.userActionRequiredOccurrences ?? [],
@@ -2461,18 +2471,12 @@ export async function updateSessionAgentState(params: {
             const parentTurnIsTerminal = isTerminalPrimaryTurnStatus(
                 parseStoredPrimaryTurnStatus(session.latestTurnStatus),
             );
-            const settledPendingPermissionRequestCount =
-                typeof pendingPermissionRequestCount === "number" && parentTurnIsTerminal
-                    ? 0
-                    : pendingPermissionRequestCount;
-            const settledPendingUserActionRequestCount =
-                typeof pendingUserActionRequestCount === "number" && parentTurnIsTerminal
-                    ? 0
-                    : pendingUserActionRequestCount;
-            const settledPendingRequestObservedAt =
-                pendingRequestObservedAt !== undefined && parentTurnIsTerminal
-                    ? null
-                    : pendingRequestObservedAt;
+            const pendingSummary = normalizePendingRequestActivitySummary(params, session.latestTurnStatus);
+            const settledPendingPermissionRequestCount = pendingSummary.pendingPermissionRequestCount;
+            const settledPendingUserActionRequestCount = pendingSummary.pendingUserActionRequestCount;
+            const settledPendingRequestObservedAt = pendingSummary.pendingRequestObservedAt instanceof Date
+                ? pendingSummary.pendingRequestObservedAt.getTime()
+                : pendingSummary.pendingRequestObservedAt;
 
             const { count } = await tx.session.updateMany({
                 where: {
@@ -2484,20 +2488,7 @@ export async function updateSessionAgentState(params: {
                 data: {
                     agentState: agentStateCiphertext,
                     agentStateVersion: expectedVersion + 1,
-                    ...(typeof settledPendingPermissionRequestCount === "number"
-                        ? { pendingPermissionRequestCount: settledPendingPermissionRequestCount }
-                        : {}),
-                    ...(typeof settledPendingUserActionRequestCount === "number"
-                        ? { pendingUserActionRequestCount: settledPendingUserActionRequestCount }
-                        : {}),
-                    ...(settledPendingRequestObservedAt !== undefined
-                        ? {
-                            pendingRequestObservedAt:
-                                settledPendingRequestObservedAt === null
-                                    ? null
-                                    : new Date(settledPendingRequestObservedAt),
-                        }
-                        : {}),
+                    ...pendingSummary,
                 },
             });
             if (count === 0) {
@@ -4449,6 +4440,10 @@ function toMetadataEnvelopeTupleVersionMismatch(
 function isValidSessionMetadataEnvelopeTupleInput(
     params: UpdateSessionMetadataEnvelopeTupleInput,
 ): boolean {
+    if ("activitySummaryV1" in params && (
+        (params.mode !== "owner" && params.mode !== "owner_migration")
+        || !SessionAgentStateActivitySummaryV1Schema.safeParse(params.activitySummaryV1).success
+    )) return false;
     if (
         params.mode === "owner_team_credential_binding"
         && !SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse({
@@ -4873,6 +4868,7 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
             where: { id: params.sessionId },
             select: {
                 active: true,
+                latestTurnStatus: true,
                 metadataLayoutVersion: true,
                 metadataVersion: true,
                 metadata: true,
@@ -4923,6 +4919,7 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
                 ownerMetadata: nextOwnerMetadata,
                 agentState: nextAgentState,
                 agentStateVersion: nextAgentStateVersion,
+                ...normalizePendingRequestActivitySummary(params.activitySummaryV1 ?? {}, current.latestTurnStatus),
             },
         });
         if (updated.count !== 1) {
@@ -5036,6 +5033,7 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
         where: { id: params.sessionId },
         select: {
             active: true,
+            latestTurnStatus: true,
             metadataLayoutVersion: true,
             metadataVersion: true,
             metadata: true,
@@ -5171,6 +5169,9 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
             metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
             agentState: params.agentState.ciphertext,
             agentStateVersion: nextAgentStateVersion,
+            ...normalizePendingRequestActivitySummary(
+                params.mode === "owner" ? params.activitySummaryV1 ?? {} : {}, current.latestTurnStatus,
+            ),
         }
         : {
             metadata: params.sharedMetadata.ciphertext,

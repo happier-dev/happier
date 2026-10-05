@@ -13,6 +13,8 @@ export {
   type PluginUiHostTransportOperationV1,
 } from './hostApiDefinition.js';
 export * from './storedImage.js';
+export * from './entityDragDrop.js';
+export * from './entityDragDropHost.js';
 export {
   PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
   PluginUiHostApiWireEnvelopeV1Schema,
@@ -332,3 +334,4 @@ export type {
   PluginUiMountContextV1,
 } from './surfaceContext.js';
 export * from './liveStream.js';
+export * from './widgetArea.js';

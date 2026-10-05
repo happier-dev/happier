@@ -2,34 +2,61 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
+
+const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
 
 describe('declared settings Actions', () => {
-  it('discovers settings and invokes the same host settings owner from agent and CLI surfaces', async () => {
+  it('admits typed exact operation input and validated result facts', async () => {
+    // The answering UI is the process boundary; input/output admission stays real.
+    const executor = createActionExecutor({ settingsDeclarationAction: async ({ input }: Parameters<NonNullable<ActionExecutorDeps['settingsDeclarationAction']>>[0]) => {
+      expect(input).toEqual({ anchor: 'voiceAdvanced.modelPackInstall', input: { kind: 'model_pack', packId: 'stt-small', machineId: 'machine-a' } });
+      return { anchor: 'voiceAdvanced.modelPackInstall', status: 'completed', value: { packId: 'stt-small', installed: true } };
+    } } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('settings.invoke', {
+      anchor: 'voiceAdvanced.modelPackInstall', input: { kind: 'model_pack', packId: 'stt-small', machineId: 'machine-a' },
+    }, { surface: 'agent', actionsSettings })).toEqual({ ok: true, result: {
+      anchor: 'voiceAdvanced.modelPackInstall', status: 'completed', value: { packId: 'stt-small', installed: true },
+    } });
+    expect(await executor.execute('settings.invoke', { anchor: 'voiceAdvanced.modelPackInstall',
+      input: { kind: 'model_pack', packId: 'stt-small', accountId: 'injected' },
+    }, { surface: 'agent', actionsSettings })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
+  it('discovers settings and invokes the same client settings owner from supported surfaces', async () => {
     const items = [{ anchor: 'appearance.density', pageId: 'appearance', title: 'Density',
       readable: true, writable: true, sensitive: false, storageScope: 'local' }];
     // The UI host is the process boundary; Protocol retains real admission and result validation.
     const deps = { settingsDeclarationAction: async ({ actionId }: { actionId: string }) => (
-      actionId === 'settings.list' ? { items } : { anchor: 'appearance.density', value: 'compact' }
+      actionId === 'settings.list' ? { items } : actionId === 'settings.invoke' ? { anchor: 'appearance.density', status: 'interaction_opened' } : { anchor: 'appearance.density', value: 'compact' }
     ) } as unknown as ActionExecutorDeps;
     const executor = createActionExecutor(deps);
-    expect(await executor.execute('settings.list' as ActionId, {}, { surface: 'agent' }))
+    expect(await executor.execute('settings.list' as ActionId, {}, { surface: 'agent', actionsSettings }))
       .toEqual({ ok: true, result: { items } });
-    expect(await executor.execute('settings.set' as ActionId, { anchor: 'appearance.density', value: 'compact' }, { surface: 'cli' }))
+    const unconfirmed = await executor.execute('settings.set' as ActionId, { anchor: 'appearance.density', value: 'compact' }, { surface: 'mcp', actionsSettings });
+    expect(unconfirmed, JSON.stringify(unconfirmed))
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(await executor.execute('settings.set' as ActionId, { anchor: 'appearance.density', value: 'compact' }, {
-      surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'settings.set' },
+      // The answering UI owns direct present-user confirmation; MCP requires an approval transport.
+      surface: 'ui', actionsSettings, authority: 'present_user', presentUserConfirmation: { actionId: 'settings.set' },
     }))
       .toEqual({ ok: true, result: { anchor: 'appearance.density', value: 'compact' } });
-    for (const id of ['settings.list', 'settings.get', 'settings.set']) {
-      expect(getActionSpec(id as ActionId).surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true });
+    expect(await executor.execute('settings.invoke' as ActionId, { anchor: 'appearance.density' }, { surface: 'agent', actionsSettings }))
+      .toEqual({ ok: true, result: { anchor: 'appearance.density', status: 'interaction_opened' } });
+    // Client-placed Actions have no CLI transport to the answering app's owner.
+    expect(await executor.execute('settings.set', { anchor: 'appearance.density', value: 'compact' }, { surface: 'cli', actionsSettings }))
+      .toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface' } });
+    for (const id of ['settings.list', 'settings.get', 'settings.set', 'settings.invoke']) {
+      expect(getActionSpec(id as ActionId).surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false });
     }
   });
 
   it('rejects unknown selectors and malformed results without interpreting them as settings values', async () => {
     const executor = createActionExecutor({ settingsDeclarationAction: async () => ({ anchor: 'appearance.density' }) } as unknown as ActionExecutorDeps);
-    expect(await executor.execute('settings.set' as ActionId, { anchor: 'appearance.density', value: 'compact', accountId: 'other' }, { surface: 'cli' }))
+    const malformedInput = await executor.execute('settings.set' as ActionId, { anchor: 'appearance.density', value: 'compact', accountId: 'other' }, { surface: 'mcp', actionsSettings });
+    expect(malformedInput, JSON.stringify(malformedInput))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    expect(await executor.execute('settings.get' as ActionId, { anchor: 'appearance.density' }, { surface: 'agent' }))
-      .toMatchObject({ ok: false });
+    expect(await executor.execute('settings.get' as ActionId, { anchor: 'appearance.density' }, { surface: 'agent', actionsSettings }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
 });

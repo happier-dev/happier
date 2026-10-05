@@ -5,6 +5,12 @@ import { WorkflowActionFailureV1Schema } from '../workflowProgressV1.js';
 import { SessionTriggerListResultV1Schema } from './workflowTriggerActionsV1.js';
 
 describe('workflow trigger Action boundary', () => {
+  it('distinguishes unavailable PR links from a successfully empty projection', () => {
+    const unavailable = { sessionId: 'session-one', sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } };
+    expect(SessionTriggerListResultV1Schema.safeParse(unavailable).success).toBe(true);
+    expect(SessionTriggerListResultV1Schema.parse({ sessionId: 'session-one', sets: [], pullRequestLinks: [] }).pullRequestLinks).toEqual([]);
+    expect(SessionTriggerListResultV1Schema.safeParse({ ...unavailable, pullRequestLinks: { ...unavailable.pullRequestLinks, links: [] } }).success).toBe(false);
+  });
   it('qualifies session PR-link reads instead of accepting an unaddressed list', () => {
     const pullRequestLinks = [{ provider: 'github', repository: 'happier-dev/happier', number: 42 }];
     expect(SessionTriggerListResultV1Schema.safeParse({ sets: [], pullRequestLinks }).success).toBe(false);

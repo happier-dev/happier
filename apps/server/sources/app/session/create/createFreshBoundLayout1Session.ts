@@ -8,6 +8,7 @@ import {
     isSessionOwnerEnvelopeError,
     isSessionTeamCredentialBindingError,
     SessionInitialAccessError,
+    SessionInitialTriggerAdmissionError,
     SessionCreationOriginError,
     SessionCreationReportsToError,
     type Layout1SessionCreateOutcome,
@@ -36,6 +37,9 @@ export function classifyLayout1SessionCreateThrow(
     if (isSessionOwnerEnvelopeError(error)) return { reason: "invalid-params" };
     if (error instanceof SessionInitialAccessError) {
         return { reason: "session-initial-access-invalid", code: error.code };
+    }
+    if (error instanceof SessionInitialTriggerAdmissionError) {
+        return { reason: "session-initial-trigger-invalid", code: error.code };
     }
     if (isSessionTeamCredentialBindingError(error)) {
         return { reason: "team-credential-binding-invalid", code: error.reason };

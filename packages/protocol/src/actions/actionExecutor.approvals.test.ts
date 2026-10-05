@@ -14,6 +14,8 @@ import { AutomationDefinitionReconcileRequestSchema, type AutomationDefinitionDe
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '../automations/automationWorkflowRecipeV2.js';
 import { resolveWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionResolverV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
+import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitionArtifactV1.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 const securityTokenSummary = {
@@ -155,6 +157,57 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it('copies an Account widget definition into the exact shared approval payload before publication', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const definitions = createWidgetDefinitionArtifactPortV1({ ...boundary.transport,
+      read: async (id, options) => { const row = await boundary.transport.read(id, options); return row ? { ...row, ownerAccountId: 'account' } : null; },
+      list: async options => { const page = await boundary.transport.list(options); return { ...page,
+        items: page.items.map(row => ({ ...row, ownerAccountId: 'account' })) }; },
+    }, { accountId: 'account' });
+    const definition = await definitions.create({ v: 1, id: 'private-definition', name: 'Checks',
+      inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+      body: { kind: 'declarative', document: { version: 1, root: { kind: 'metric', label: 'Checks',
+        value: { path: ['count'], type: 'number' }, data: { kind: 'resource', resource: { pluginId: 'acme.metrics', localId: 'counts' },
+          input: {}, inputSchema: { type: 'object', additionalProperties: false },
+          outputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'], additionalProperties: false } } } } },
+      provenance: { source: { kind: 'authored' }, authorAccountId: 'account' } });
+    const shared = structuredClone(definition);
+    if (shared.body.kind !== 'declarative' || shared.body.document.root.kind !== 'metric'
+      || shared.body.document.root.data.kind !== 'resource') throw new Error('Expected metric declaration');
+    delete shared.body.document.root.data.input;
+    let request: ApprovalRequest | null = null;
+    // Artifact and approval persistence are the boundaries; their domain owners remain real.
+    const executor = createExecutor({ widgetDefinitionArtifacts: definitions,
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'share-definition' }; },
+    });
+    expect(await executor.execute('widgets.instance.add', {
+      surface: { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'shared' } },
+      instance: { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} },
+      placement: {},
+    }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', defaultSessionId: 'shared' }))
+      // This boundary captures the pending blocking request; no live user waiter is installed.
+      .toEqual({ ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' });
+    expect(request).toMatchObject({ actionArgs: { instance: { definition: { kind: 'inline', definition: shared } } } });
+    expect(definition.body).not.toEqual(shared.body);
+    await definitions.update(definition.id, { name: 'Later', body: { kind: 'declarative',
+      document: { version: 1, root: { kind: 'text', text: 'Changed' } } } });
+    expect(request).toMatchObject({ actionArgs: { instance: { definition: { kind: 'inline', definition: shared } } } });
+  });
+  it('refuses private connection choices before a shared widget approval is persisted', async () => {
+    let persisted = false;
+    const executor = createExecutor({ widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      approvalsCreate: async () => { persisted = true; return { artifactId: 'private-choice' }; },
+    });
+    expect(await executor.execute('widgets.instance.add', {
+      surface: { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'shared' } },
+      instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'example' }, bindings: {} },
+      viewerValues: { connection: { service: { pluginId: 'acme.metrics', localId: 'cloud' }, accountId: 'private' } }, placement: {},
+    }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', defaultSessionId: 'shared' })).toMatchObject({ ok: false, errorCode: 'widget_inputs_unavailable' });
+    expect(persisted).toBe(false);
+  });
   it('persists the human computer access choice with the edited target for the blocking waiter', async () => {
     const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
     let request = createApprovalRequest('open', {

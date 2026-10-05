@@ -41,6 +41,15 @@ export function createSessionTerminalControlServiceabilityV1Schema(zod: typeof z
 
 export const SessionTerminalControlServiceabilityV1Schema = createSessionTerminalControlServiceabilityV1Schema(z);
 
+export function createHerdrTerminalMetadataSchema(zod: typeof z, context: TerminalMetadataContext = 'legacy') {
+  const string = (maximum: number) => context === 'owner' ? zod.string().max(maximum) : zod.string();
+  const shape = {
+    sessionName: string(20_000), socketPath: string(100_000),
+    terminalId: string(2_000), paneId: string(2_000).optional(),
+  };
+  return context === 'owner' ? zod.object(shape).strict() : zod.object(shape);
+}
+
 function createTerminalObjectSchema(zod: typeof z, context: TerminalMetadataContext) {
   // Owner envelopes retain their existing bounded, closed policy. Legacy flat
   // metadata remains a round-trip custodian with permissive presentation fields.
@@ -62,12 +71,7 @@ function createTerminalObjectSchema(zod: typeof z, context: TerminalMetadataCont
         paneId: string(2_000).optional(),
         socketDirV1: string(100_000).optional(),
       }).optional(),
-      herdr: object({
-        sessionName: string(20_000),
-        socketPath: string(100_000),
-        terminalId: string(2_000),
-        paneId: string(2_000).optional(),
-      }).optional(),
+      herdr: createHerdrTerminalMetadataSchema(zod, context).optional(),
       windows: object({
         host: zod.enum(['windows_terminal', 'console']),
         windowId: string(2_000).optional(),

@@ -112,6 +112,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.GET_DIRECTORY_TREE]: 'daemon.filesystem.getDirectoryTree',
   [RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS]: 'daemon.filesystem.listRoots',
   [RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY]: 'daemon.filesystem.browseDirectory',
+  [RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH]: 'workspace.files.search',
   [RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS]: 'bugreport.collectDiagnostics',
   [RPC_METHODS.BUGREPORT_GET_LOG_TAIL]: 'bugreport.getLogTail',
   [RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT]: 'bugreport.uploadArtifact',

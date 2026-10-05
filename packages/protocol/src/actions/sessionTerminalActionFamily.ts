@@ -4,7 +4,7 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
 export const SESSION_TERMINAL_ACTION_IDS = [
   'session.terminals.list', 'session.terminals.open', 'session.terminals.split',
-  'session.terminals.focus', 'session.terminals.close', 'session.terminals.close_tab', 'session.terminals.close_others', 'session.terminals.resize',
+  'session.terminals.focus', 'session.terminals.restart', 'session.terminals.open_in_details', 'session.terminals.close', 'session.terminals.close_tab', 'session.terminals.close_others', 'session.terminals.resize',
   'session.terminals.rename', 'session.terminals.list_view', 'session.terminals.run_script', 'session.terminals.detach', 'session.terminals.reorder',
 ] as const;
 export type SessionTerminalActionId = typeof SESSION_TERMINAL_ACTION_IDS[number];
@@ -16,6 +16,8 @@ export const SESSION_TERMINAL_ACTION_INPUT_SCHEMAS = {
   'session.terminals.open': scope.extend({ target: SessionTerminalTargetV1Schema, title: id.optional() }).strict(),
   'session.terminals.split': scope.extend({ tabId: id.optional(), target: SessionTerminalTargetV1Schema, title: id.optional() }).strict(),
   'session.terminals.focus': terminal,
+  'session.terminals.restart': terminal,
+  'session.terminals.open_in_details': terminal,
   'session.terminals.close': terminal,
   'session.terminals.close_tab': scope.extend({ tabId: id }).strict(),
   'session.terminals.close_others': scope.extend({ tabId: id }).strict(),
@@ -33,6 +35,8 @@ export const SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS = {
   'session.terminals.open': opened,
   'session.terminals.split': opened,
   'session.terminals.focus': mutation,
+  'session.terminals.restart': mutation,
+  'session.terminals.open_in_details': mutation,
   'session.terminals.close': mutation,
   'session.terminals.close_tab': mutation,
   'session.terminals.close_others': mutation,
@@ -45,7 +49,7 @@ export const SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS = {
 } as const;
 function row<const T extends SessionTerminalActionId>(actionId: T, title: string) {
   const mutatesProcess = actionId === 'session.terminals.run_script' || actionId === 'session.terminals.open' || actionId === 'session.terminals.split'
-    || actionId === 'session.terminals.close' || actionId === 'session.terminals.close_tab' || actionId === 'session.terminals.close_others';
+    || actionId === 'session.terminals.close' || actionId === 'session.terminals.close_tab' || actionId === 'session.terminals.close_others' || actionId === 'session.terminals.restart';
   return {
     id: actionId, title,
     description: 'Operate on the invoking mounted client session terminal pane. Scope IDs are Home-qualified; a headless host returns unsupported_action. Closing stops owned shell terminals; attached agent terminals and borrowed views are only removed from the pane.',
@@ -61,6 +65,7 @@ function row<const T extends SessionTerminalActionId>(actionId: T, title: string
 export const SESSION_TERMINAL_ACTION_SPECS = [
   row('session.terminals.list', 'List session terminal tabs'), row('session.terminals.open', 'Open session terminal tab'),
   row('session.terminals.split', 'Split session terminal tab'), row('session.terminals.focus', 'Focus session terminal'),
+  row('session.terminals.restart', 'Restart mounted session terminal'), row('session.terminals.open_in_details', 'Open session terminal in Details'),
   row('session.terminals.close', 'Close session terminal'), row('session.terminals.close_others', 'Close other terminal tabs'),
   row('session.terminals.close_tab', 'Close terminal tab'), row('session.terminals.resize', 'Resize terminal split'),
   row('session.terminals.rename', 'Rename session terminal'), row('session.terminals.list_view', 'Show terminal list'),

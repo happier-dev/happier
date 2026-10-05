@@ -6,7 +6,8 @@ export function redactPublicShareCapabilityUrl(rawUrl: string): string {
   const storedContentRedacted = rawUrl.replace(
     /(\/s\/)([^/?#\s]+)(?:[?#][^\s]*)?/g,
     '$1:lookup',
-  ).replace(/(\/v1\/public-shares\/)([^/?#\s]+)(\/content)(?=[/?#\s]|$)/g, '$1:lookup$3');
+  ).replace(/(\/a\/)([^/?#\s]+)(?:[?#][^\s]*)?/g, '$1:artifact')
+    .replace(/(\/v1\/public-shares\/)([^/?#\s]+)(\/content)(?=[/?#\s]|$)/g, '$1:lookup$3');
   const publicShareRedacted = storedContentRedacted.replace(
     /(\/(?:v1\/public-share|share|join)\/)([^/?#\s]+)/g,
     '$1:token',

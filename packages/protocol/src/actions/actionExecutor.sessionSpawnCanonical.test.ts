@@ -400,6 +400,54 @@ describe('session.spawn_new canonical execution', () => {
     expect(sessionSpawnNew).not.toHaveBeenCalled();
   });
 
+  it('binds host Voice creation retries to the admitted Home and Account without promoting authority', async () => {
+    const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
+      type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
+    }));
+    const executor = createActionExecutor({ sessionSpawnNew, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const context = {
+      surface: 'voice' as const, authority: 'account_automation' as const,
+      actionCaller: { kind: 'host' as const }, serverId: 'server-1', runtimeAccountId: 'account-1',
+      actionRequestId: 'voice-request-1',
+    };
+    const { creationKey: _creationKey, ...input } = canonicalInput;
+    for (const scope of [context, context, { ...context, runtimeAccountId: 'account-2' }, { ...context, serverId: 'server-2' }]) {
+      expect(await executor.execute('session.spawn_new', input, scope)).toMatchObject({ ok: true });
+    }
+    const args = sessionSpawnNew.mock.calls.map(([args]) => args);
+    expect(args[0]?.sessionCreationTag).toBe(deriveSessionCreationTagV1({
+      callerCreationNamespace: JSON.stringify(['voice', 'server-1', 'account-1']),
+      creationKey: 'action-request:voice-request-1',
+    }));
+    expect(args[1]?.sessionCreationTag).toBe(args[0]?.sessionCreationTag);
+    expect(new Set(args.map((args) => args.sessionCreationTag)).size).toBe(3);
+    expect(args.every((args) => args.context?.authority === 'account_automation')).toBe(true);
+  });
+
+  it.each([
+    { serverId: 'server-1' },
+    { runtimeAccountId: 'account-1' },
+    { serverId: 'server-1', runtimeAccountId: 'account-1', authority: undefined },
+  ])('refuses host Voice creation with incomplete admitted scope: %j', async (scope) => {
+    const sessionSpawnNew = vi.fn();
+    const executor = createActionExecutor({ sessionSpawnNew, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('session.spawn_new', canonicalInput, {
+      surface: 'voice', authority: 'account_automation', actionCaller: { kind: 'host' }, ...scope,
+    })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('retains required approval for a scoped host Voice creation', async () => {
+    const sessionSpawnNew = vi.fn();
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'voice-spawn-approval' }));
+    const executor = createActionExecutor({ sessionSpawnNew, approvalsCreate, isActionApprovalRequired: () => true } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('session.spawn_new', canonicalInput, {
+      surface: 'voice', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'server-1', runtimeAccountId: 'account-1',
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'voice-spawn-approval' } });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['missing target', {}],
     ['Session target', { externalActionTarget: { kind: 'session' as const, sessionId: 'session-1' } }],
@@ -621,7 +669,7 @@ describe('session.spawn_new canonical execution', () => {
           inputSchema: {
             properties: {
               directory: expect.objectContaining({
-                anyOf: expect.arrayContaining([
+                oneOf: expect.arrayContaining([
                   expect.objectContaining({
                     type: 'object',
                     properties: expect.objectContaining({

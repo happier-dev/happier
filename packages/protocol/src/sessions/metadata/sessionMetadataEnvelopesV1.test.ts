@@ -127,6 +127,29 @@ function material(byte: number): AccountScopedCryptoMaterial {
   };
 }
 
+describe('Voice binding owner metadata', () => {
+  it.each([{}, { targetServerId: null }, { targetServerId: 'target-home' }])('round-trips existing Voice target scope through the plain owner envelope: %j', (targetScope) => {
+    const voiceConversationBindingV1 = {
+      v: 1 as const, adapterId: 'local_conversation', controlSessionId: 'control-session',
+      transcriptMode: 'native_session' as const, targetSessionId: 'target-session', updatedAt: 25,
+      ...targetScope,
+    };
+    const created = createSessionOwnerMetadataV1({ metadata: { voiceConversationBindingV1 } });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(`Voice owner metadata rejected: ${created.unsupportedFields.join(', ')}`);
+    const envelope = createPlainSessionOwnerMetadataEnvelopeV1(created.ownerMetadata);
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) throw new Error('Voice owner envelope unavailable');
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata: { voiceConversationBindingV1 } });
+    expect(sharedMetadata).not.toHaveProperty('voiceConversationBindingV1');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata: opened.ownerMetadata }).voiceConversationBindingV1)
+      .toEqual(voiceConversationBindingV1);
+    expect(createSessionOwnerMetadataV1({ metadata: { voiceConversationBindingV1: { ...voiceConversationBindingV1, targetServerId: 7 } } }).ok).toBe(false);
+    expect(createSessionOwnerMetadataV1({ metadata: { voiceConversationBindingV1: { ...voiceConversationBindingV1, unrecognizedAuthority: true } } }).ok).toBe(false);
+  });
+});
+
 describe('terminal host owner metadata', () => {
   it.each([
     { mode: 'herdr', requested: 'herdr', herdr: { sessionName: 'work', socketPath: '/tmp/herdr.sock', terminalId: 'term_1', paneId: 'w1:p2' } },
@@ -920,6 +943,15 @@ describe('session metadata privacy envelopes v1', () => {
     } as const;
     expect(SessionMetadataTuplePatchV1Schema.parse(ownerPatch))
       .toEqual(ownerPatch);
+    const activitySummaryV1 = {
+      pendingPermissionRequestCount: 1,
+      pendingUserActionRequestCount: 1,
+      pendingRequestNewestCreatedAt: 250,
+    } as const;
+    expect(SessionMetadataTuplePatchV1Schema.parse({ ...ownerPatch, activitySummaryV1 }))
+      .toEqual({ ...ownerPatch, activitySummaryV1 });
+    expect(SessionMetadataTuplePatchV1Schema.safeParse({ ...sharedEditorPatch, activitySummaryV1 }).success)
+      .toBe(false);
     expect(SessionMetadataTuplePatchV1Schema.safeParse({
       ...ownerPatch,
       publisherPrecondition: {

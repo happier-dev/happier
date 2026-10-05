@@ -4,6 +4,8 @@ import {
   deriveReviewCommentStructuralMutationV1,
   applyReviewCommentPreparedSensitiveMutationV1,
   ReviewCommentStructuralMutationV1Schema,
+  ReviewCommentPrepareMutationResponseV1Schema,
+  ReviewCommentCommitMutationResponseV1Schema,
 } from './mutation.js';
 import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, openStoredReviewCommentV1 } from './content.js';
 
@@ -17,6 +19,19 @@ const input = {
 const runtime = { now: () => 1000, createId: (prefix: string) => `${prefix}-1` };
 
 describe('canonical Review Comment structural mutations', () => {
+  it('uses the canonical Review error codes in both prepared and committed failures', () => {
+    const failed = [{ commentId: 'missing-comment', errorCode: 'review_comment_not_found', error: 'Missing comment' }];
+    const prepared = { v: 1, receipt: 'receipt', request: { v: 1,
+      mutation: projectReviewCommentStructuralMutationV1('reviews.comments.create', input),
+      contentCommitment: 'a'.repeat(43) }, records: [], replayed: false, failed };
+    const committed = { v: 1, comments: [], replayed: false, failed };
+    expect(ReviewCommentPrepareMutationResponseV1Schema.safeParse(prepared).success).toBe(true);
+    expect(ReviewCommentCommitMutationResponseV1Schema.safeParse(committed).success).toBe(true);
+    const unknownFailure = [{ ...failed[0], errorCode: 'external_unknown_error' }];
+    expect(ReviewCommentPrepareMutationResponseV1Schema.safeParse({ ...prepared, failed: unknownFailure }).success).toBe(false);
+    expect(ReviewCommentCommitMutationResponseV1Schema.safeParse({ ...committed, failed: unknownFailure }).success).toBe(false);
+  });
+
   it('admits no sensitive create fields and reconstructs the server-assigned record for sealing', () => {
     const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
     expect(JSON.stringify(mutation)).not.toContain('private');
@@ -41,6 +56,19 @@ describe('canonical Review Comment structural mutations', () => {
       });
       expect(() => deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1', actor, current: [first.structural], runtime })).toThrow();
     }
+  });
+
+  it('does not turn an external runtime error into a Review bulk failure', () => {
+    const create = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
+    const first = deriveReviewCommentStructuralMutationV1({ mutation: create, accountId: 'account-1', actor, current: [], runtime }).records[0]!;
+    const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.bulkTransition', {
+      projectId: 'project-1', commentIds: [first.structural.id], expectedServerRevisions: { [first.structural.id]: 1 },
+      expectedState: 'open', toState: 'dismissed', reason: 'No longer needed', clientMutationId: 'bulk-1', bulkActionId: 'bulk-action-1',
+    });
+    const externalError = Object.assign(new Error('ID source unavailable'), { code: 'EIO' });
+    expect(() => deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1', actor, current: [first.structural],
+      runtime: { now: runtime.now, createId: () => { throw externalError; } },
+    })).toThrow(externalError);
   });
 
   it('derives an edit from admitted currentness and preserves private history for its revised binding', () => {
