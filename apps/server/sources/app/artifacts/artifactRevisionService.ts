@@ -4,6 +4,8 @@ import { readArtifactForCallerInTx } from "./artifactAccessService";
 import { openArtifactStoredContentBytes } from "./artifactStoredContent";
 import { updateArtifactTx, type UpdateArtifactResult } from "./artifactWriteService";
 import { cleanupArtifactOrphanBlobs } from './artifactBlobService';
+import { ArtifactBodyEnvelopeV1Schema, decodePlainArtifactStoredContent, sameStrictJsonValue } from '@happier-dev/protocol';
+import * as privacyKit from 'privacy-kit';
 
 /** Reads history under the same current access, mode and recipient envelope admission as the head. */
 export async function listArtifactBodyRevisionsInTx(tx: Tx, input: Readonly<{
@@ -23,12 +25,13 @@ export async function listArtifactBodyRevisionsInTx(tx: Tx, input: Readonly<{
     return { ok: true as const, revisions: projected, retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount };
 }
 
-/** Restore the prior body with a caller-prepared current header, atomically advancing both head versions. */
+/** Restore the selected body with caller-prepared provenance, atomically advancing both head versions. */
 export async function restoreArtifactBodyRevision(input: Readonly<{
     actorUserId: string;
     artifactId: string;
     bodyVersion: number;
     header: Uint8Array;
+    body?: Uint8Array;
     expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }>;
 }>): Promise<UpdateArtifactResult> {
     try {
@@ -42,10 +45,18 @@ export async function restoreArtifactBodyRevision(input: Readonly<{
             const bytes = openArtifactStoredContentBytes({ accountId: read.artifact.ownerAccountId, artifactId: input.artifactId,
                 mode: read.artifact.encryptionMode, field: "body", dataEncryptionKey: read.artifact.dataEncryptionKey, content: revision.body });
             if (!bytes) return { ok: false, error: "internal" };
+            if (input.body !== undefined && read.artifact.encryptionMode === 'plain') {
+                const selected = ArtifactBodyEnvelopeV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(bytes)));
+                const replacement = ArtifactBodyEnvelopeV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(Buffer.from(input.body))));
+                // Provenance may change; the selected content and binary reference stay authoritative.
+                if (!selected.success || !replacement.success || !sameStrictJsonValue(selected.data.body, replacement.data.body)) {
+                    return { ok: false, error: 'invalid-params' };
+                }
+            }
             return await updateArtifactTx(tx, { actorUserId: input.actorUserId, artifactId: input.artifactId,
                 expectedRevision: input.expectedRevision,
                 header: { bytes: input.header, expectedVersion: input.expectedRevision.headerVersion },
-                body: { bytes, expectedVersion: input.expectedRevision.bodyVersion }, restoredBlobId: revision.blobId });
+                body: { bytes: input.body ?? bytes, expectedVersion: input.expectedRevision.bodyVersion }, restoredBlobId: revision.blobId });
         });
         if (result.ok) await cleanupArtifactOrphanBlobs(input.artifactId);
         return result;

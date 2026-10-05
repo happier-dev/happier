@@ -173,7 +173,7 @@ describe('configured widget Actions', () => {
 
   it('round-trips independent Home copies through the existing Artifact writer and refuses another Account', async () => {
     const boundary = createWorkBoardArtifactBoundary();
-    const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.transport,
+    const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.forAccount(surface.accountId),
       read: async (id, options) => { const row = await boundary.transport.read(id, options); return row ? { ...row, ownerAccountId: surface.accountId } : null; },
     }, { accountId: surface.accountId });
     const executor = createActionExecutor({
@@ -213,7 +213,7 @@ describe('configured widget Actions', () => {
   });
   it('fails closed before Artifact disclosure when the captured Account retires or the caller cancels', async () => {
     const boundary = createWorkBoardArtifactBoundary(); let reads = 0; let retired = false;
-    const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.transport,
+    const homeHubArtifacts = createHomeHubArtifactPortV1({ ...boundary.forAccount(surface.accountId),
       read: async (id, options) => { reads++; const row = await boundary.transport.read(id, options); return row ? { ...row, ownerAccountId: surface.accountId } : null; },
     }, { accountId: surface.accountId });
     const executor = createActionExecutor({ homeHubArtifacts,

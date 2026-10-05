@@ -118,4 +118,17 @@ describe('ordinary Artifact Actions', () => {
     });
     expect(header.source).toEqual({ sessionId: 'session-1' });
   });
+  it('restores Workflow preview labels from the selected definition rather than its displaced header', () => {
+    const definitionId = '11111111-1111-4111-8111-111111111111';
+    const header = prepareArtifactHeaderForRevisionV1({ artifactId: definitionId,
+      header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 2, bodyVersion: 2 },
+        metadata: { title: 'Workflow' }, previewSteps: ['Displaced step'] },
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1,
+        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+        blocks: [{ kind: 'step', id: 'prior', document: { text: 'Historical step', references: [], attachments: [] },
+          input: [], result: { kind: 'text' } }] } }),
+      expectedRevision: { headerVersion: 2, bodyVersion: 2 }, nextRevision: { headerVersion: 3, bodyVersion: 3 } });
+    expect(header.previewSteps).toEqual(['Historical step']);
+    expect(header.revision).toEqual({ headerVersion: 3, bodyVersion: 3 });
+  });
 });

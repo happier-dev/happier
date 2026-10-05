@@ -3,14 +3,16 @@ import { x25519 } from '@noble/curves/ed25519';
 import { z } from 'zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decodePlainArtifactStoredContent,
-    WorkBoardV1Schema, buildWorkBoardItemKeyV1, createActionExecutor, createWorkBoardV1 } from '@happier-dev/protocol';
+    WorkBoardV1Schema, buildHomeHubArtifactIdV1, buildWorkBoardItemKeyV1, createActionExecutor, createWorkBoardV1 } from '@happier-dev/protocol';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { buildWidgetSurfaceArtifactIdV1 } from '@happier-dev/protocol/widgets';
 import { createCliActionDeps } from './createCliActionDeps';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
 describe('CLI Board Actions through the Artifact owner', () => {
-    it.each(['plain', 'e2ee'] as const)('round-trips Board create/list/edit/delete through the existing %s Artifact codec', async mode => {
+    it.each([['plain', false], ['plain', true], ['e2ee', false], ['e2ee', true]] as const)(
+        'round-trips Board create/list/edit/delete through the existing %s Artifact codec (Home read unavailable: %s)', async (mode, initiallyUnavailable) => {
         const secret = new Uint8Array(32).fill(7);
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
         const credentials = { token, encryption: mode === 'plain' ? null
@@ -19,6 +21,14 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const updateSchema = z.object({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number() });
         const rows = new Map<string, z.infer<typeof createSchema> & { headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number;
             ownerAccountId: string; access: 'owner'; encryptionMode: 'plain' | 'e2ee' }>();
+        const homeArtifactId = buildHomeHubArtifactIdV1('owner');
+        const area = { serverId: 'board-home', accountId: 'owner',
+            owner: { kind: 'pluginArea', pluginId: 'com.acme.test', pageId: 'dashboard', area: 'main' } } as const;
+        const areaArtifactId = buildWidgetSurfaceArtifactIdV1(area);
+        let withholdCreatedHome = initiallyUnavailable;
+        let withholdCreatedAreaOnce = initiallyUnavailable;
+        let homeCreates = 0;
+        let areaCreates = 0;
         const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
             expect(new URL(url).origin).toBe('https://board-home.test');
@@ -28,6 +38,12 @@ describe('CLI Board Actions through the Artifact owner', () => {
             if (path === '/v1/artifacts') return { status: 200, data: [...rows.values()] };
             const artifactId = decodeURIComponent(path.split('/')[3] ?? '');
             const row = rows.get(artifactId);
+            // A create receipt is not readable content. Only the exact Home read is temporarily unavailable.
+            if (withholdCreatedHome && row && path === `/v1/artifacts/${homeArtifactId}`) return { status: 404 };
+            if (withholdCreatedAreaOnce && row && path === `/v1/artifacts/${areaArtifactId}`) {
+                withholdCreatedAreaOnce = false;
+                return { status: 404 };
+            }
             if (path.endsWith('/access/recipients') && row) return { status: 200, data: {
                 artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, encryptionMode: mode,
                 dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [],
@@ -37,6 +53,10 @@ describe('CLI Board Actions through the Artifact owner', () => {
         vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
             if (new URL(url).pathname === '/v1/artifacts') {
                 const parsed = createSchema.parse(input);
+                if (parsed.id === homeArtifactId) homeCreates++;
+                if (parsed.id === areaArtifactId) areaCreates++;
+                const incumbent = rows.get(parsed.id);
+                if (incumbent) return { status: 200, data: incumbent };
                 const row = { ...parsed, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
                     ownerAccountId: 'owner', access: 'owner' as const, encryptionMode: mode };
                 rows.set(row.id, row); return { status: 200, data: row };
@@ -96,8 +116,21 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const homeInstance = { v: 1, id: 'home-copy', displayName: 'Named Home copy',
             definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: { repo: { kind: 'value', value: 'my/repo' } } } as const;
         const homeRef = { surface: home, instanceId: homeInstance.id };
+        if (initiallyUnavailable) {
+            const unreadableHome = await executor.execute('widgets.instance.add', { surface: home, instance: homeInstance }, context);
+            expect(unreadableHome, JSON.stringify(unreadableHome)).toMatchObject({ ok: false, errorCode: 'widget_add_unknown',
+                details: { reasonCode: 'widget_write_ack_unknown' } });
+            expect(rows.has(homeArtifactId)).toBe(true);
+            // Recovery reads the same already-written singleton instead of inventing acknowledged content.
+            withholdCreatedHome = false;
+        }
         const addedHome = await executor.execute('widgets.instance.add', { surface: home, instance: homeInstance }, context);
-        expect(addedHome, JSON.stringify(addedHome)).toMatchObject({ ok: true });
+        expect(addedHome, JSON.stringify(addedHome)).toMatchObject(initiallyUnavailable
+            ? { ok: false, errorCode: 'widget_instance_already_exists' } : { ok: true });
+        expect(await executor.execute('widgets.instance.list', { surface: home }, context)).toMatchObject({ ok: true, result: {
+            instances: expect.arrayContaining([expect.objectContaining({ instance: homeInstance })]),
+        } });
+        expect(homeCreates).toBe(1);
         expect(await executor.execute('widgets.instance.width.set', { ref: homeRef, width: 'full' }, context)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.instance.frame.set', { ref: homeRef, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
         const movedHome = await executor.execute('widgets.instance.move', { ref: homeRef, to: { surface, index: 0 } }, context);
@@ -110,6 +143,19 @@ describe('CLI Board Actions through the Artifact owner', () => {
             expect.objectContaining({ definition: homeInstance.definition, instanceCount: 1 }),
             expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'removed-definition' }, instanceCount: 0 }),
         ]) } });
+        const areaInstance = { ...homeInstance, id: 'area-copy' };
+        if (initiallyUnavailable) {
+            const unreadableArea = await executor.execute('widgets.instance.add', { surface: area, instance: areaInstance }, context);
+            expect(unreadableArea, JSON.stringify(unreadableArea)).toMatchObject({ ok: false, errorCode: 'widget_add_unknown',
+                details: { reasonCode: 'widget_write_ack_unknown' } });
+            expect(rows.has(areaArtifactId)).toBe(true);
+        }
+        const addedArea = await executor.execute('widgets.instance.add', { surface: area, instance: areaInstance }, context);
+        expect(addedArea, JSON.stringify(addedArea)).toMatchObject({ ok: true });
+        expect(areaCreates).toBe(1);
+        expect(await executor.execute('widgets.instance.list', { surface: area }, context)).toMatchObject({ ok: true, result: {
+            instances: [{ instance: areaInstance, width: 'half' }],
+        } });
         const homeState = await executor.execute('widgets.instance.list', { surface: home }, context);
         expect(homeState).toMatchObject({ ok: true, result: { instances: expect.not.arrayContaining([expect.objectContaining({ instance: homeInstance })]) } });
         expect(await executor.execute('widgets.instance.remove', { ref: { surface, instanceId: homeInstance.id } }, context)).toMatchObject({ ok: true });

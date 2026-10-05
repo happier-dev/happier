@@ -8,10 +8,7 @@ describe('Home layout Account Actions', () => {
     it.each([true, false])('preserves the issued Artifact acknowledgment after retirement (applied: %s)', async applied => {
         const boundary = createWorkBoardArtifactBoundary();
         const accountId = 'one';
-        const transport = { ...boundary.transport, read: async (...args: Parameters<typeof boundary.transport.read>) => {
-            const row = await boundary.transport.read(...args);
-            return row ? { ...row, ownerAccountId: accountId } : null;
-        } };
+        const transport = boundary.forAccount(accountId);
         await createHomeHubArtifactPortV1(transport, { accountId }).apply({ kind: 'visibility', sectionId: 'setup', hidden: true });
         let current = true;
         const port = createHomeHubArtifactPortV1({ ...transport, update: async input => {
@@ -35,9 +32,7 @@ describe('Home layout Account Actions', () => {
     it('admits agent and CLI Home edits through the same Artifact owner and preserves instance/layout/setup state on reload', async () => {
         const boundary = createWorkBoardArtifactBoundary();
         const accountId = 'one';
-        const port = createHomeHubArtifactPortV1({ ...boundary.transport, read: async (...args) => {
-            const row = await boundary.transport.read(...args); return row ? { ...row, ownerAccountId: accountId } : null;
-        } }, { accountId });
+        const port = createHomeHubArtifactPortV1(boundary.forAccount(accountId), { accountId });
         const executor = createActionExecutor({ homeHubArtifacts: port } as unknown as ActionExecutorDeps);
         expect(getActionSpec('home.hub.layout.update')).toMatchObject({ executionPlacement: 'account', surfaces: { cli: true, rpc: true } });
         const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'count' }, bindings: {} };

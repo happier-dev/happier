@@ -510,9 +510,30 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}/content/binary`, headers: headers(owner.id),
                 payload: { body: replacementBody, expectedBodyVersion: 1, blob: null } })).statusCode).toBe(200);
             expect((await get()).json()).toEqual({ blobId, content });
-            expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(owner.id),
-                payload: { header, expectedHeaderVersion: 1, expectedBodyVersion: 2 } })).statusCode).toBe(200);
+            const restoredBody = mode === "plain" ? encodePlainArtifactStoredContent({ body: reference,
+                provenance: { savedBy: { kind: 'person', accountId: owner.id }, restoredFromBodyVersion: 1 } })
+                : privacyKit.encodeBase64(Uint8Array.of(4, 5));
+            const restore = (overrides: Readonly<Record<string, unknown>> = {}) => app.inject({ method: "POST",
+                url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(owner.id),
+                payload: { header, body: restoredBody, expectedHeaderVersion: 1, expectedBodyVersion: 2, ...overrides } });
+            const beforeRestore = await db.artifact.findUniqueOrThrow({ where: { id } });
+            const retainedBeforeRestore = await db.artifactRevision.count({ where: { artifactId: id } });
+            const invalidBody = mode === "plain" ? body('different content') : body('plain content');
+            expect((await restore({ body: invalidBody })).statusCode).toBe(400);
+            expect((await restore({ expectedBodyVersion: 1 })).json()).toMatchObject({ success: false, error: 'version-mismatch' });
+            expect((await app.inject({ method: 'POST', url: `/v1/artifacts/${id}/revisions/100/restore`, headers: headers(owner.id),
+                payload: { header, body: restoredBody, expectedHeaderVersion: 1, expectedBodyVersion: 2 } })).statusCode).toBe(404);
+            process.env.HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES = '1';
+            expect((await restore()).statusCode).toBe(413);
+            delete process.env.HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES;
+            expect(await db.artifact.findUniqueOrThrow({ where: { id } })).toEqual(beforeRestore);
+            expect(await db.artifactRevision.count({ where: { artifactId: id } })).toBe(retainedBeforeRestore);
+            const restored = await restore();
+            expect(restored.statusCode, restored.body).toBe(200);
             expect((await db.artifact.findUniqueOrThrow({ where: { id } })).currentBlobId).toBe(blobId);
+            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${id}`, headers: headers(owner.id) })).json())
+                .toMatchObject({ headerVersion: 2, bodyVersion: 3, body: restoredBody });
+            expect((await get()).json()).toEqual({ blobId, content });
             // A reused id must never overwrite the object retained by a prior save.
             expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}/content/binary`, headers: headers(owner.id), payload: {
                 body: binaryBody, expectedBodyVersion: 3, blob: { blobId, content: mode === "plain" ? { t: "plain", v: "AA==" } : { t: "encrypted", c: "AA==" } },
@@ -679,6 +700,10 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
                 payload: { body: privacyKit.encodeBase64(replacement), expectedBodyVersion: 1 } })).statusCode).toBe(200);
             await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: editor.id, accessLevel: "edit", createdByAccountId: owner.id } });
             expect((await app.inject({ method: "GET", url: `/v1/artifacts/${id}/revisions`, headers: headers(editor.id) })).statusCode).toBe(503);
+            expect((await app.inject({ method: 'POST', url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(editor.id),
+                payload: { header: privacyKit.encodeBase64(restoredHeader), body: privacyKit.encodeBase64(restoredHeader),
+                    expectedHeaderVersion: 1, expectedBodyVersion: 2 } })).statusCode).toBe(404);
+            expect((await db.artifact.findUniqueOrThrow({ where: { id } })).body).toEqual(replacement);
             const census = await inTx(tx => readArtifactRecipientCensusInTx(tx, { actorAccountId: owner.id, artifactId: id }));
             if (!census.ok) throw new Error(census.error);
             const fingerprint = census.value.recipients.find(row => row.recipientAccountId === editor.id)!.contentPublicKeyFingerprint!;
@@ -695,7 +720,9 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             expect((await db.artifactRevision.findUniqueOrThrow({ where: { artifactId_bodyVersion: { artifactId: id, bodyVersion: 2 } } })).body).toEqual(replacement);
             await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: "view" } });
             expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(editor.id),
-                payload: { header: privacyKit.encodeBase64(restoredHeader), expectedHeaderVersion: 2, expectedBodyVersion: 3 } })).statusCode).toBe(404);
+                payload: { header: privacyKit.encodeBase64(restoredHeader), body: privacyKit.encodeBase64(restoredHeader),
+                    expectedHeaderVersion: 2, expectedBodyVersion: 3 } })).statusCode).toBe(404);
+            expect(await db.artifact.findUniqueOrThrow({ where: { id } })).toEqual(restored);
             await db.account.update({ where: { id: editor.id }, data: createSignedAccountContentBinding() });
             expect((await app.inject({ method: "GET", url: `/v1/artifacts/${id}/revisions`, headers: headers(editor.id) })).statusCode).toBe(503);
         });

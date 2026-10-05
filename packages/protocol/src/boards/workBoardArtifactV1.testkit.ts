@@ -1,5 +1,6 @@
 import { buildWorkBoardArtifactHeaderV1, type WorkBoardArtifactTransportV1, type WorkBoardArtifactV1 } from './workBoardArtifactV1.js';
 import { WorkBoardV1Schema } from './workBoardV1.js';
+import type { HomeHubArtifactTransportV1 } from '../home/homeHubArtifactV1.js';
 
 /** Artifact persistence is the genuine boundary; tests retain the real Board schema, editor and CAS replay. */
 export function createWorkBoardArtifactBoundary(initial: readonly unknown[] = []) {
@@ -42,7 +43,12 @@ export function createWorkBoardArtifactBoundary(initial: readonly unknown[] = []
             written = true; rows.delete(id); return { ok: true };
         },
     };
-    return { transport, rows, reads, updates, add, offline: (next: boolean) => { offline = next; },
+    const forAccount = (accountId: string): HomeHubArtifactTransportV1 => ({
+        read: async (id, options) => { const row = await transport.read(id, options); return row ? { ...row, ownerAccountId: accountId } : null; },
+        create: async input => { await transport.create(input); return { ...rows.get(input.artifactId)!, ownerAccountId: accountId }; },
+        update: transport.update,
+    });
+    return { transport, forAccount, rows, reads, updates, add, offline: (next: boolean) => { offline = next; },
         readCollection: () => rows.size === 0 && !written ? null : { v: 1, boards: [...rows.values()].map(row => {
             if (typeof row.body !== 'string') throw new Error('invalid_board_record');
             return JSON.parse(row.body);

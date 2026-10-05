@@ -6,7 +6,7 @@ const surface: WidgetSurfaceRefV1 = { serverId: 'home', accountId: 'one', owner:
 const instance = (id: string, value = 'A') => ({ v: 1 as const, id, definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: { session: { kind: 'value' as const, value } } });
 function boundary() {
     const b = createWorkBoardArtifactBoundary();
-    const transport = { ...b.transport, read: async (id: string) => { const row = await b.transport.read(id); return row ? { ...row, ownerAccountId: 'one' } : null; } };
+    const transport = b.forAccount('one');
     const port = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
     return { ...b, transport, port };
 }

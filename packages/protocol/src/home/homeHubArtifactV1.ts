@@ -18,7 +18,9 @@ export function buildHomeHubArtifactIdV1(accountId: string): string {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 export type HomeHubArtifactV1 = WorkBoardArtifactV1 & Readonly<{ ownerAccountId: string }>;
-export type HomeHubArtifactTransportV1 = Pick<WorkBoardArtifactTransportV1, 'create' | 'update'> & Readonly<{
+export type HomeHubArtifactTransportV1 = Pick<WorkBoardArtifactTransportV1, 'update'> & Readonly<{
+    /** Exact acknowledged singleton content, including the incumbent in a same-id create race. */
+    create(input: Parameters<WorkBoardArtifactTransportV1['create']>[0]): Promise<HomeHubArtifactV1>;
     read(artifactId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<HomeHubArtifactV1 | null>;
 }>;
 export type HomeHubLayoutResultV1 = ReturnType<typeof buildHomeHubLayoutResult>;
@@ -50,12 +52,15 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
         if (options.shouldContinue && !options.shouldContinue()) throw new HomeHubMutationErrorV1('home_hub_scope_retired');
     };
     const widgets = async (signal?: AbortSignal) => { check(signal); const value = await options.readWidgets?.(signal) ?? []; check(signal); return value; };
+    const validate = (value: HomeHubArtifactV1 | null) => {
+        if (value && (value.artifactId !== artifactId || value.ownerAccountId !== options.accountId)) throw new HomeHubMutationErrorV1('home_hub_account_mismatch');
+        return value;
+    };
     const fetch = async (signal?: AbortSignal) => {
         check(signal);
         const value = await transport.read(artifactId, { signal });
         check(signal);
-        if (value && (value.artifactId !== artifactId || value.ownerAccountId !== options.accountId)) throw new HomeHubMutationErrorV1('home_hub_account_mismatch');
-        return value;
+        return validate(value);
     };
     const accept = (layout: HomeHubLayoutValue, revision?: WorkBoardArtifactRevisionV1, signal?: AbortSignal) => {
         if (!signal?.aborted && (!options.shouldContinue || options.shouldContinue())) options.onLayout?.(layout, revision);
@@ -83,10 +88,15 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
                 if (next === current) return complete(current, artifact?.revision);
                 check(signal);
                 if (!artifact) {
-                    try { await transport.create({ artifactId, header, body: JSON.stringify(next), signal }); }
-                    catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'conflict')) throw error; }
-                    const acknowledged = await fetch(signal);
-                    if (!acknowledged) throw new HomeHubMutationErrorV1('invalid_home_hub_record');
+                    let acknowledged: HomeHubArtifactV1;
+                    try { acknowledged = await transport.create({ artifactId, header, body: JSON.stringify(next), signal }); }
+                    catch (error) {
+                        if (!(error instanceof Error && 'code' in error && error.code === 'conflict')) throw error;
+                        // No successful receipt: re-read and replay only while this Account is current.
+                        check(signal);
+                        continue;
+                    }
+                    validate(acknowledged);
                     const winner = open(acknowledged);
                     if (sameStrictJsonValue(winner, next)) return complete(winner, acknowledged.revision);
                     // Another client created the singleton first: replay against its authoritative content.
