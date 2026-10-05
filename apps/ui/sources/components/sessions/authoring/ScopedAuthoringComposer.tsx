@@ -141,6 +141,10 @@ export const ScopedAuthoringComposer = React.forwardRef<
             currentPath?: string | null;
             profileId?: string | null;
             onProfileClick?: () => void;
+            agentPickerOptions?: React.ComponentProps<typeof AgentInput>['agentPickerOptions'];
+            agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
+            onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
+            onAgentClick?: () => void;
         }>;
     }>
 >((props, forwardedRef) => {
@@ -469,6 +473,10 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 currentPath={context?.currentPath ?? undefined}
                 profileId={context?.profileId ?? undefined}
                 onProfileClick={context?.onProfileClick}
+                agentPickerOptions={context?.agentPickerOptions}
+                agentPickerSelectedOptionId={context?.agentPickerSelectedOptionId}
+                onAgentPickerSelect={editable ? context?.onAgentPickerSelect : undefined}
+                onAgentClick={context?.onAgentClick}
                 contentPaddingHorizontal={0}
             />
             {pluginPresentation.afterComposer}

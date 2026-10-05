@@ -14,6 +14,7 @@ import type {
 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { WorkflowDraftValidation } from '@/sync/domains/workflows/workflowAuthoring';
+import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import {
     collectWorkflowBlockIds,
@@ -335,6 +336,10 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                     current.kind === 'step' ? { ...current, input: [...input] } : current
                                 )))}
                                 onChangeExecutionField={(field, value) => onChange(setWorkflowStepExecutionField(draft, block.id, field, value))}
+                                onChangeExecutionFields={(fields) => onChange(updateWorkflowBlock(draft, block.id, current => current.kind === 'step'
+                                    ? { ...current, execution: withWorkflowAuthoringEngineFields(current.execution ?? {}, fields) } : current))}
+                                onChangeEngine={(engine) => onChange(updateWorkflowBlock(draft, block.id, current => current.kind === 'step'
+                                    ? { ...current, execution: withWorkflowAuthoringEngine(current.execution ?? {}, engine) } : current))}
                                 {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
                                 {...(registerPromptRef === undefined ? {} : { registerPromptRef })}
                                 editable={editable}

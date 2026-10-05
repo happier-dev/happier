@@ -8,7 +8,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildWorkflowReviewedRunSeed, storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { WorkflowEditorHostScreen } from './WorkflowEditorHostScreen';
-import { WorkflowBuiltinSourceScreen } from './WorkflowPluginSourceScreen';
+import { WorkflowBuiltinEditorHostScreen } from './WorkflowCatalogEditorHostScreen';
 import { AgentInputChipPickerPanel } from '@/components/sessions/agentInput/components/AgentInputChipPickerPanel';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -74,7 +74,7 @@ describe('editor workflow composer', () => {
     it('reads a builtin through the editor with settings, Run now and Duplicate instead of Save', async () => {
         const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
         const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.requiresOriginSession !== true)!;
-        const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinSourceScreen workflow={builtin.id} intent="run" /></AppPaneProvider>);
+        const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinEditorHostScreen workflow={builtin.id} intent="run" /></AppPaneProvider>);
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         expect(body.props.documentPresentation).toMatchObject({ editable: false });

@@ -21,8 +21,8 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { t } from '@/text';
 
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
-import type { WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
-import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -55,7 +55,6 @@ import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
  */
 
 /** The step's engine group as its composer chip shows it: who runs it, on which model. */
-const STEP_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
 
 type WorkflowStepPromptFieldProps = Readonly<{
     custody: AuthoringComposerCustodyEntry;
@@ -70,6 +69,7 @@ type WorkflowStepPromptFieldProps = Readonly<{
     onFocusPrompt: () => void;
     /** The step's own chips in the composer's chip row (Step options). */
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    agentInputContext?: React.ComponentProps<typeof ScopedAuthoringComposer>['agentInputContext'];
 }>;
 
 /**
@@ -111,6 +111,7 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
                 placeholder={t('workflows.editor.promptPlaceholder')}
                 editable={props.editable}
                 onFocus={props.onFocusPrompt}
+                agentInputContext={props.agentInputContext}
                 {...(props.extraActionChips === undefined ? {} : { extraActionChips: props.extraActionChips })}
             />
         </View>
@@ -149,6 +150,8 @@ export function WorkflowStepEditor(props: Readonly<{
         field: TField,
         value: WorkflowStepExecutionSelection[TField] | undefined,
     ) => void;
+    onChangeExecutionFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
+    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
     /** The host's Agent and model catalogs for the in-composer engine chip. */
     authoringFacts?: SessionAuthoringControlFacts;
     /** Registers the prompt input so Add can focus it once layout is ready. */
@@ -225,42 +228,29 @@ export function WorkflowStepEditor(props: Readonly<{
     const agentId = resolveSessionAuthoringAgentId({ agentTarget: effective.agentTarget, facts: props.authoringFacts });
     const kindMark = agentId !== null && hasAgentIconMark(agentId, theme)
         ? <AgentIcon agentId={agentId} size={16} /> : <Icon name="robot" size={16} />;
-    const engineKey = JSON.stringify([effective.agentTarget ?? null, effective.modelSelection ?? null]);
-    const engineValuesRef = React.useRef<Readonly<{ key: string; values: WorkflowStepExecutionSelection }> | null>(null);
-    if (engineValuesRef.current?.key !== engineKey) {
-        engineValuesRef.current = {
-            key: engineKey,
-            values: { agentTarget: effective.agentTarget, modelSelection: effective.modelSelection },
-        };
-    }
-    const engineValues = engineValuesRef.current.values;
-    const overriddenEngine = listWorkflowStepOverriddenFields(step)
-        .filter((field) => (STEP_ENGINE_FIELDS as readonly string[]).includes(field)).join(',');
-    const latestEngineChangeRef = React.useRef(props.onChangeExecutionField);
-    latestEngineChangeRef.current = props.onChangeExecutionField;
-    const authoringFacts = props.authoringFacts;
-    const hasEngineControl = editable && props.onChangeExecutionField !== undefined;
-    const engineChip = React.useMemo<AgentInputExtraActionChip | null>(() => (hasEngineControl ? {
-        key: 'workflow-step-engine',
-        stabilityKey: `${engineKey}\u0000${overriddenEngine}`,
-        render: () => (
-            <SessionAuthoringControls
-                fields={STEP_ENGINE_FIELDS}
-                values={engineValues}
-                overriddenFields={new Set(overriddenEngine.split(',').filter(Boolean) as (typeof STEP_ENGINE_FIELDS)[number][])}
-                onChangeField={(field, value) => latestEngineChangeRef.current?.(
-                    field as (typeof STEP_ENGINE_FIELDS)[number],
-                    value as WorkflowStepExecutionSelection[(typeof STEP_ENGINE_FIELDS)[number]],
-                )}
-                {...(authoringFacts === undefined ? {} : { facts: authoringFacts })}
-                testIDPrefix={`${testIDPrefix}-step-${step.id}-engine`}
-            />
-        ),
-    } : null), [authoringFacts, engineKey, engineValues, hasEngineControl, overriddenEngine, step.id, testIDPrefix]);
-    const composerChips = React.useMemo(
-        () => (editable ? [...(engineChip === null ? [] : [engineChip]), stepOptionsChip] : undefined),
-        [editable, engineChip, stepOptionsChip],
-    );
+    const engine = step.execution?.engine ?? props.draft.defaults.engine;
+    const roleSelection = React.useMemo(() => ({
+        value: engine && 'role' in engine ? engine.role : null,
+        onChange: (role: string) => { if (editable) props.onChangeEngine?.({ role }); },
+    }), [editable, engine, props.onChangeEngine]);
+    const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
+        disabled: !editable, onChangeFields: props.onChangeExecutionFields, roleSelection });
+    const agentInputContext = React.useMemo(() => ({
+        agentType: enginePicker.agentId ?? agentId ?? undefined,
+        agentLabel: engine && 'role' in engine
+            ? props.draft.roles?.find(role => role.roleId === engine.role && 'name' in role)?.name ?? engine.role
+            : enginePicker.label,
+        modelMode: effective.modelSelection?.ref.modelId,
+        permissionMode: effective.permissionMode,
+        agentPickerOptions: enginePicker.options,
+        agentPickerSelectedOptionId: enginePicker.selectedOptionId,
+        onAgentPickerSelect: enginePicker.onSelect,
+        // The native AgentInput owns opening its options. This presence also keeps
+        // the effective engine chip visible in a read-only document.
+        onAgentClick: enginePicker.onAgentClick,
+    }), [agentId, effective.modelSelection, effective.permissionMode, enginePicker.agentId,
+        engine, props.draft.roles, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
+    const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
     const displayName = workflowStepPromptLabel(step)
@@ -310,6 +300,7 @@ export function WorkflowStepEditor(props: Readonly<{
                         onChangeDocument={handleChangeDocument}
                         onCommitDocument={props.onCommitDocument}
                         onFocusPrompt={handleFocusPrompt}
+                        agentInputContext={agentInputContext}
                         {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
                     />
                 </View>

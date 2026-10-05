@@ -8,7 +8,7 @@ import {
 import { WorkflowMissingDefinitionState } from '@/components/workflows/screens/WorkflowMissingDefinitionState';
 import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows';
-import { WorkflowPluginSourceScreen, WorkflowBuiltinSourceScreen } from '@/components/workflows/screens/WorkflowPluginSourceScreen';
+import { WorkflowPluginEditorHostScreen, WorkflowBuiltinEditorHostScreen } from '@/components/workflows/screens/WorkflowCatalogEditorHostScreen';
 
 /**
  * Saved workflow detail. The row, this detail and the edit route share one
@@ -42,9 +42,9 @@ export function SavedWorkflowRoute(): React.ReactElement {
     return (
         <WorkflowsGate>
             {parseWorkflowDefinitionRefV1(definitionId)?.kind === 'plugin' ? (
-                <WorkflowPluginSourceScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
+                <WorkflowPluginEditorHostScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
             ) : parseWorkflowDefinitionRefV1(definitionId)?.kind === 'builtin' ? (
-                <WorkflowBuiltinSourceScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
+                <WorkflowBuiltinEditorHostScreen workflow={definitionId} {...(intent === 'run' ? { intent } : {})} />
             ) : <WorkflowEditorHostScreen source={{
                 kind: 'saved',
                 definitionId,

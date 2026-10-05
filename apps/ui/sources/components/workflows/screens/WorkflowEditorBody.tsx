@@ -52,6 +52,8 @@ import {
     type WorkflowExistingSessionOption,
 } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
+import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
+import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
@@ -73,6 +75,7 @@ import { WorkflowBlockListEditor, type WorkflowDocumentPresentation } from '../e
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { WorkflowInspector } from '../editor/WorkflowInspector';
 import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import {
@@ -344,8 +347,13 @@ export type WorkflowEditorBodyProps = Readonly<{
     onChangeExecutionTarget?: (kind: WorkflowRunAsTargetKind) => void;
     /** Explicit, separate effects. Omit one to hide it in a host that cannot offer it. */
     onRunNow?: () => void;
+    /** A catalog's Session-scoped Run action uses the canonical Session chooser. */
+    runNowAction?: React.ReactNode;
     runNowAnchorRef?: React.RefObject<View | null>;
     onSave?: () => void;
+    /** Read-only catalog documents duplicate through the host's definition seed owner. */
+    onDuplicate?: () => void;
+    headerMeta?: React.ComponentProps<typeof PageHeader>['meta'];
     onImportJson?: () => void;
     onExportJson?: () => void;
     /**
@@ -414,10 +422,13 @@ export type WorkflowEditorBodyProps = Readonly<{
 }>;
 
 export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactElement {
+    const dragRuntime = useEntityDragDropRuntime();
+    const refreshDropMeasurements = React.useCallback(() => { void dragRuntime.refreshMeasurements(); }, [dragRuntime]);
     const testIDPrefix = props.testIDPrefix ?? 'workflow-editor';
     const { draft, onChange, onRunNow, onSave, onExportJson, runPending, savePending } = props;
     const documentEditable = props.documentPresentation?.editable !== false;
-    const canOpenSettings = documentEditable || props.triggersSection !== undefined;
+    const defaultAuthoringValues = React.useMemo(() => resolveWorkflowStepSelectionV1({ defaults: draft.defaults, purpose: 'authoring' }).selection, [draft.defaults]);
+    const canOpenSettings = true;
     const sessionDrop = useWorkflowSessionBinding({
         context: { scope: props.sessionBindingScope ?? null, draft, editable: documentEditable,
             whereMachineId: props.projectTarget?.machineId ?? null, candidates: props.sessionDropCandidates ?? props.existingSessions ?? [] },
@@ -776,7 +787,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     // Step options: an anchored popover beside the step's Customize control on
     // wide layouts, `@/modal` on a phone — one content either way.
     const openInspector = React.useCallback((blockId: string, anchorRef: React.RefObject<View | null>) => {
-        if (!documentEditable) return;
         props.onCustomizeBlock(blockId);
         // Every block kind has Step options (04 §5.2): a step's, a leaf's or a container's.
         if (findWorkflowBlock(draft, blockId) === null) return;
@@ -807,7 +817,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     React.useEffect(() => {
         const open = stepOptionsModalRef.current;
         if (open === null) return;
-        if (!documentEditable || findWorkflowBlock(draft, open.blockId) === null) {
+        if (findWorkflowBlock(draft, open.blockId) === null) {
             Modal.hide(open.id);
             stepOptionsModalRef.current = null;
             return;
@@ -819,7 +829,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         if (open !== null) Modal.hide(open.id);
     }, []);
     const stepOptionsPopoverBlockId = stepOptionsPopover !== null
-        && documentEditable
         && !compactLayout
         && findWorkflowBlock(draft, stepOptionsPopover.blockId) !== null
         ? stepOptionsPopover.blockId
@@ -987,7 +996,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         </>
     );
 
-    const saveStatusNode = (
+    const saveStatusNode = props.onDuplicate !== undefined ? (
+        <RoundButton testID={`${testIDPrefix}-duplicate`} size="small" display="inverted"
+            title={t('common.duplicate')} onPress={props.onDuplicate} />
+    ) : (
         <WorkflowSaveStatus
             state={props.saveConflict ? { kind: 'conflict', conflict: props.saveConflict } : (props.saveStatus ?? { kind: 'notSaved' })}
             localDraft={draft}
@@ -1023,7 +1035,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         <PageHeaderMenu testID={`${testIDPrefix}-menu`} actions={props.menuActions} />
     );
     const menu = backToRun === null ? pageMenu : <>{backToRun}{pageMenu}</>;
-    const runNowButton = onRunNow === undefined ? null : (
+    const runNowButton = props.runNowAction ?? (onRunNow === undefined ? null : (
         <View ref={props.runNowAnchorRef} collapsable={false}>
         <RoundButton
             testID={`${testIDPrefix}-run-now`}
@@ -1037,13 +1049,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             onPress={submitRun}
         />
         </View>
-    );
+    ));
 
     const identity = (
         <PageHeader
             testID={`${testIDPrefix}-header`}
             title={draft.name.trim().length > 0 ? draft.name : t('workflows.page.untitled')}
             alwaysShowTitle
+            meta={props.headerMeta}
             leading={(
                 <PageHeaderMarkSlot>
                     <Icon name="tree-structure" size={22} color={theme.colors.text.secondary} />
@@ -1146,6 +1159,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             <View testID={testIDPrefix} style={styles.root}>
                 <KeyboardAwareScrollView
                     testID={`${testIDPrefix}-scroll`}
+                    onScroll={refreshDropMeasurements}
+                    onLayout={refreshDropMeasurements}
                     style={styles.pageScroll}
                     contentContainerStyle={[styles.pageContent, maxWidthStyle]}
                     contentInsetAdjustmentBehavior="automatic"
@@ -1180,7 +1195,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                                 <SessionAuthoringControls
                                     disabled={!documentEditable}
                                     fields={HEADER_ENGINE_FIELDS}
-                                    values={draft.defaults}
+                                    values={defaultAuthoringValues} engine={draft.defaults.engine}
+                                    onChangeEngine={(engine) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
+                                    onChangeFields={(fields) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) }); }}
                                     overriddenFields="all"
                                     onChangeField={(field, value) => onChange(setWorkflowDefaultField(draft, field, value))}
                                     {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
@@ -1255,6 +1272,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const page = (
         <KeyboardAwareScrollView
             testID={`${testIDPrefix}-scroll`}
+            onScroll={refreshDropMeasurements}
+            onLayout={refreshDropMeasurements}
             style={styles.pageScroll}
             contentContainerStyle={[styles.pageContent, maxWidthStyle]}
             contentInsetAdjustmentBehavior="automatic"
@@ -1276,7 +1295,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 <SessionAuthoringControls
                     disabled={!documentEditable}
                     fields={HEADER_ENGINE_FIELDS}
-                    values={draft.defaults}
+                    values={defaultAuthoringValues} engine={draft.defaults.engine}
+                    onChangeEngine={(engine) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
+                    onChangeFields={(fields) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) }); }}
                     overriddenFields="all"
                     onChangeField={(field, value) => onChange(setWorkflowDefaultField(draft, field, value))}
                     {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}

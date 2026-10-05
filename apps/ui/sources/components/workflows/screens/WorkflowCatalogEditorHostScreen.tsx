@@ -1,16 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1, type JsonValue, type RoleOverrideV1, type WorkflowPluginSourceV1 } from '@happier-dev/protocol';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Text } from '@/components/ui/text/Text';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -20,16 +13,12 @@ import { isWorkflowProjectTarget, type WorkflowAuthoringTarget } from '@/sync/do
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t, tLoose } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { useWorkflowAuthoringComposerCustody } from '@/components/sessions/authoring/authoringComposerCustody';
-import { buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
+import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
-import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
-import { WorkflowFlowView } from '../flow/WorkflowFlowView';
-import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
 import { useWorkflowRunComposerModal } from '../run/useWorkflowRunComposerModal';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
@@ -37,10 +26,11 @@ import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflo
 import { resolveContextualWorkflowProjectTarget } from './resolveContextualWorkflowTarget';
 import { WorkflowMissingDefinitionState } from './WorkflowMissingDefinitionState';
 import { WorkflowBuiltinSessionButton } from '../library/WorkflowBuiltinsSection';
-import { WorkflowBlockListEditor } from '../editor/WorkflowBlockListEditor';
+import { WorkflowEditorBody, type WorkflowEditorView } from './WorkflowEditorBody';
+import { useWorkflowAuthoringHost } from './useWorkflowAuthoringHost';
 
 /** A read-only catalog source, read through the same paged library owner as every picker. */
-export function WorkflowPluginSourceScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
+export function WorkflowPluginEditorHostScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
     const library = useWorkflowDefinitionLibrary();
     const scope = useActiveServerAccountScope();
     const router = useRouter();
@@ -60,7 +50,7 @@ export function WorkflowPluginSourceScreen(props: Readonly<{ workflow: string; i
 }
 
 /** Local built-ins do not depend on the Account library being available. */
-export function WorkflowBuiltinSourceScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
+export function WorkflowBuiltinEditorHostScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
     const scope = useActiveServerAccountScope();
     const router = useRouter();
     const entry = getBuiltinWorkflowCatalogV1().find((item) => item.id === props.workflow);
@@ -69,7 +59,7 @@ export function WorkflowBuiltinSourceScreen(props: Readonly<{ workflow: string; 
         plugin={entry} serverId={scope?.serverId ?? null} intent={props.intent} />;
 }
 
-/** One read-only source viewer and one composer admission for plugin and built-in catalogs. */
+/** Catalog loading and admission only; the canonical editor owns the document. */
 function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | BuiltinWorkflowCatalogEntryV1; serverId: string | null; intent?: 'run' }>): React.ReactElement {
     const builtin = 'workflow' in props.plugin ? null : props.plugin;
     const plugin = 'workflow' in props.plugin ? props.plugin : {
@@ -95,15 +85,13 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     // Run now anchors its composer under itself, as in the editor (convo-N7).
     const runAnchorRef = React.useRef<View | null>(null);
     const runNow = useWorkflowRunNowController();
-    const projection = React.useMemo(() => projectWorkflowFlow(plugin.definition), [plugin.definition]);
     const machine = machines.find((entry) => entry.id === target?.machineId);
     const draft = React.useMemo(() => buildWorkflowEditorDraftFromDefinition({
         draftId: `catalog:${plugin.workflow}:${plugin.version}`, name: plugin.title, definition: plugin.definition,
     }), [plugin.definition, plugin.title, plugin.version, plugin.workflow]);
-    const blockIds = React.useMemo(() => walkWorkflowBlocks(draft.blocks).map((block) => block.id), [draft.blocks]);
-    const custody = useWorkflowAuthoringComposerCustody({ draftId: draft.draftId, blockIds });
-    const validation = React.useMemo(() => validateWorkflowEditorDraft(draft), [draft]);
     const [selectedBlockId, setSelectedBlockId] = React.useState<string | null>(null);
+    const [view, setView] = React.useState<WorkflowEditorView>('steps');
+    const host = useWorkflowAuthoringHost({ projectTarget: target, serverId: props.serverId });
 
     const duplicate = () => {
         if (!isCurrent()) return;
@@ -147,44 +135,24 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         const result = exportWorkflowDefinition({ definition: plugin.definition });
         if (result.ok) await confirmWorkflowDocumentExport({ name: plugin.title, json: result.json, isCurrent });
     };
-    return <ItemList>
+    return <>
         {runComposer}
-        <PageHeader title={plugin.title} description={plugin.description} meta={[{ key: 'catalog', text: builtin === null ? `${plugin.pluginId} · ${plugin.version}` : t('workflows.page.blocks.builtin') }]}
-            actions={<View style={styles.actions}>
-                <RoundButton testID={`${prefix}:export`} title={t('workflows.exportJson')} size="small" display="inverted" onPress={() => { void exportSource(); }} />
-                <RoundButton testID={`${prefix}:duplicate`} title={t('common.duplicate')} size="small" display="inverted" onPress={duplicate} />
-                {sessionBound && builtin !== null ? <WorkflowBuiltinSessionButton entry={builtin} testID={`${prefix}:session`} />
-                    : <View ref={runAnchorRef} collapsable={false}>
-                        <RoundButton testID={`${prefix}:run`} title={t('workflows.destination.rowMenu.runNow')} size="small" onPress={() => { runId.current = null; setOpen(true); }} />
-                    </View>}
-            </View>} />
-        <ItemGroup>
-            <SectionContentRow>
-                <Text testID={`${prefix}:read-only`}>{builtin === null ? t('workflows.plugins.readOnly') : t('workflows.examples.builtInDescription')}</Text>
-            </SectionContentRow>
-            {/* Where it runs: the Where owner's one field row ("Machine and project"), never a nested tile. */}
-            {!sessionBound ? <WorkflowProjectTargetControl presentation="field" target={target} machines={machines} onChange={setTarget}
-                machineName={machine ? getMachineDisplayName(machine) : null} testIDPrefix={prefix} /> : null}
-            <SectionContentRow><View style={styles.body}>
-                <WorkflowBlockListEditor
-                    draft={draft} list={{ kind: 'root' }} blocks={draft.blocks} depth={0}
-                    selectedBlockId={selectedBlockId} validation={validation}
-                    composerScope={{ kind: 'machine', machineId: target?.machineId ?? null, serverId: props.serverId,
-                        directory: typeof target?.directory === 'string' ? target.directory : null,
-                        machineHomeDir: machine?.metadata?.homeDir ?? null }}
-                    composerCustody={custody} presentation={{ editable: false }}
-                    onChange={() => {}} onCustomize={() => {}} onSelect={setSelectedBlockId}
-                    currentWorkflowRef={plugin.workflow} testIDPrefix={`${prefix}:document`}
-                />
-            </View></SectionContentRow>
-            <SectionContentRow><View style={styles.body}>
-                <WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix={`${prefix}:flow`} />
-            </View></SectionContentRow>
-        </ItemGroup>
-    </ItemList>;
+        <WorkflowEditorBody
+            draft={draft} onChange={() => {}} documentPresentation={{ editable: false,
+                note: builtin === null ? t('workflows.plugins.readOnly') : t('workflows.examples.builtInDescription') }}
+            machineName={machine ? getMachineDisplayName(machine) : null}
+            projectTarget={target} projectMachines={machines}
+            selectedBlockId={selectedBlockId} onSelectBlock={setSelectedBlockId} onCustomizeBlock={() => {}}
+            view={view} onChangeView={setView}
+            {...(sessionBound && builtin !== null
+                ? { runNowAction: <WorkflowBuiltinSessionButton entry={builtin} testID={`${prefix}-run-now`} /> }
+                : { onRunNow: () => { runId.current = null; setOpen(true); }, runNowAnchorRef })}
+            onDuplicate={duplicate} onExportJson={() => { void exportSource(); }}
+            menuActions={[{ id: 'export', label: t('workflows.exportJson'), onPress: () => { void exportSource(); } }]}
+            description={plugin.description}
+            headerMeta={[{ key: 'catalog', text: builtin === null ? `${plugin.pluginId} · ${plugin.version}` : t('workflows.page.blocks.builtin') }]}
+            authoringFacts={host.authoringFacts} composerScope={host.composerScope}
+            currentWorkflowRef={plugin.workflow} testIDPrefix={prefix}
+        />
+    </>;
 }
-
-const styles = StyleSheet.create((theme) => ({
-    actions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.margins.sm },
-    body: { gap: theme.margins.md },
-}));

@@ -45,6 +45,8 @@ import { WorkflowBlockOptions } from './WorkflowBlockOptions';
 import { issuesUnder, NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
+import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
+import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 
 /**
  * The one content owner for workflow and step settings (04 §5.2): one
@@ -108,7 +110,6 @@ const AGENT_SUMMARY_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget',
 
 
 export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactElement | null {
-    if (props.documentEditable === false) return <View>{props.runsAutomatically ?? null}</View>;
     if (props.subject.kind === 'block') {
         const block = findWorkflowBlock(props.draft, props.subject.blockId);
         // A subject that no longer resolves renders nothing and the host closes its presentation.
@@ -122,6 +123,8 @@ export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactEle
 /** Workflow subject: the Workflow settings groups, each a summary until it needs to be open. */
 function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElement {
     const { draft, onChange, testIDPrefix } = props;
+    const readOnly = props.documentEditable === false;
+    const defaultAuthoringValues = React.useMemo(() => resolveWorkflowStepSelectionV1({ defaults: draft.defaults, purpose: 'authoring' }).selection, [draft.defaults]);
     const executionTarget = props.executionTarget ?? 'session';
     const issues = props.validation?.issues ?? [];
     const disclosure = props.groupDisclosure ?? NO_DISCLOSURE;
@@ -140,7 +143,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
 
     const agentSummary = useSessionAuthoringFieldSummary({
         fields: AGENT_SUMMARY_FIELDS,
-        values: draft.defaults,
+        values: defaultAuthoringValues,
         ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
     });
     const agentValueSet = WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.some((field) => Object.hasOwn(draft.defaults, field));
@@ -179,12 +182,13 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                         target={props.projectTarget}
                         machineName={props.machineName}
                         {...(props.projectMachines === undefined ? {} : { machines: props.projectMachines })}
-                        {...(props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
+                        {...(readOnly || props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
                         testIDPrefix={testIDPrefix}
                     />
                 </View>
                 {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : (
                     <SegmentedChoiceItem<WorkflowRunAsTargetKind>
+                        disabled={readOnly}
                         testIDPrefix={`${testIDPrefix}-run-as`}
                         title={t('workflows.page.sections.eachStepRunsIn')}
                         // The consequence wraps; it is never cut to an ellipsis.
@@ -221,10 +225,23 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                     <Text style={workflowEditorStyles.metaText}>{t('workflows.page.sections.agentDescription')}</Text>
                 </SectionContentRow>
                 <SessionAuthoringControls
+                    disabled={readOnly}
                     presentation="fields"
                     fields={WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS}
-                    values={draft.defaults}
+                    values={defaultAuthoringValues} engine={draft.defaults.engine}
+                    onChangeEngine={(engine) => { if (!readOnly) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
+                    onChangeFields={(fields) => {
+                        if (readOnly) return;
+                        let next = { ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) };
+                        const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
+                            runtimeDescriptorV1: draft.defaults.runtimeDescriptorV1,
+                            agentTarget: fields.agentTarget ?? draft.defaults.agentTarget, facts: props.authoringFacts,
+                        });
+                        if (retired !== draft.defaults.runtimeDescriptorV1) next = setWorkflowDefaultField(next, 'runtimeDescriptorV1', retired);
+                        onChange(next);
+                    }}
                     onChangeField={(field, value) => {
+                        if (readOnly) return;
                         let next = setWorkflowDefaultField(draft, field, value);
                         if (field === 'agentTarget') {
                             const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
@@ -248,7 +265,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 summary={(draft.roles?.map((role) => 'name' in role ? role.name : role.roleId).join(' · ')) || t('workflows.page.inspector.none')}
                 attention={issuesUnder(issues, ['/roles'])} valueSet={(draft.roles?.length ?? 0) > 0}
                 testID={`${testIDPrefix}-group-roles`}>
-                <WorkflowRolesEditor draft={draft} onChange={onChange} prefix={testIDPrefix} />
+                <WorkflowRolesEditor draft={draft} onChange={onChange} prefix={testIDPrefix} editable={!readOnly} />
             </WorkflowInspectorGroup>
 
             <WorkflowInspectorGroup
@@ -266,7 +283,10 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 testID={`${testIDPrefix}-group-conversation`}
             >
                 <SectionContentRow testID={`${testIDPrefix}-defaults-continuity-row`}>
-                    <WorkflowContinuityControls
+                    {readOnly ? <Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({
+                        draft, conversation: draft.defaults.conversation, workspace: draft.defaults.workspace,
+                        existingSessions: props.existingSessions,
+                    })}</Text> : <WorkflowContinuityControls
                         draft={draft}
                         conversation={draft.defaults.conversation}
                         workspace={draft.defaults.workspace}
@@ -277,7 +297,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                         })}
                         onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(draft, 'workspace', value))}
                         testIDPrefix={`${testIDPrefix}-defaults-continuity`}
-                    />
+                    />}
                 </SectionContentRow>
             </WorkflowInspectorGroup>
 
@@ -291,18 +311,20 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 testID={`${testIDPrefix}-group-inputs`}
             >
                 <SectionContentRow testID={`${testIDPrefix}-inputs-row`}>
-                    <WorkflowInputsEditor
+                    {readOnly ? draft.inputs.map(input => <Text key={input.name} style={workflowEditorStyles.metaText}>
+                        {input.description ?? input.name}
+                    </Text>) : <WorkflowInputsEditor
                         inputs={draft.inputs}
                         onChange={(inputs) => onChange(setWorkflowInputs(draft, inputs))}
                         testIDPrefix={testIDPrefix}
-                    />
+                    />}
                 </SectionContentRow>
                 <SectionContentRow testID={`${testIDPrefix}-final-output-row`}>
-                    <WorkflowFinalOutputEditor
+                    {readOnly ? <Text style={workflowEditorStyles.metaText}>{finalOutputLabel}</Text> : <WorkflowFinalOutputEditor
                         draft={draft}
                         onChange={(finalOutput) => onChange(setWorkflowFinalOutput(draft, finalOutput))}
                         testIDPrefix={testIDPrefix}
-                    />
+                    />}
                 </SectionContentRow>
             </WorkflowInspectorGroup>
         </>

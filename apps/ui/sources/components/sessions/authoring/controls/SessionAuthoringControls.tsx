@@ -3,18 +3,18 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
-import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
+import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
+import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import type { SelectionListStep } from '@/components/ui/selectionList';
 import { Typography } from '@/constants/Typography';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
@@ -34,6 +34,7 @@ import { SessionAuthoringConnectedServicesField } from './SessionAuthoringConnec
 import { SessionAuthoringMcpSelectionField } from './SessionAuthoringMcpSelectionField';
 import { useSessionAuthoringControls } from './useSessionAuthoringControls';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useSessionAuthoringEnginePicker } from './useSessionAuthoringEnginePicker';
 
 /**
  * The standalone, controlled Session-authoring controls.
@@ -123,29 +124,6 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-function buildRootStep(params: Readonly<{
-    id: string;
-    title: string;
-    options: readonly SessionAuthoringFieldOption[];
-    onSelect: (optionId: string) => void;
-}>): SelectionListStep {
-    return {
-        id: `${params.id}-root`,
-        title: params.title,
-        sections: [{
-            kind: 'static',
-            id: params.id,
-            options: params.options.map((option) => ({
-                id: option.id,
-                label: option.label,
-                ...(option.subtitle === undefined ? {} : { subtitle: option.subtitle }),
-                ...(option.disabled === true ? { disabled: true } : {}),
-                ...(option.disabled === true ? {} : { onSelect: () => params.onSelect(option.id) }),
-            })),
-        }],
-    };
-}
-
 /** One selectable value: a chip that names the current choice and its picker. */
 function SessionAuthoringOptionChip(props: Readonly<{
     controlId: string;
@@ -154,6 +132,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
     selectedOptionId: string;
     /** Shown instead of "Default" when the selection names no offered option. */
     unselectedLabel?: string;
+    valueLabel?: string;
+    pickerOptions?: readonly AgentInputChipPickerOption[];
     disabled?: boolean;
     presentation: SessionAuthoringControlsPresentation;
     /** Set for this subject rather than inherited: the chip is bordered and says so. */
@@ -165,13 +145,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
-    const currentLabel = resolveSessionAuthoringOptionLabel(props.options, props.selectedOptionId, props.unselectedLabel);
-    const rootStep = React.useMemo(() => buildRootStep({
-        id: props.controlId,
-        title: props.title,
-        options: props.options,
-        onSelect: props.onSelect,
-    }), [props.controlId, props.onSelect, props.options, props.title]);
+    const currentLabel = props.valueLabel ?? resolveSessionAuthoringOptionLabel(props.options, props.selectedOptionId, props.unselectedLabel);
+    const pickerOptions = props.pickerOptions ?? props.options;
 
     return (
         <>
@@ -220,17 +195,15 @@ function SessionAuthoringOptionChip(props: Readonly<{
                 </HappierPressable>
             </View>
 
-            <AgentInputSelectionListPopover
+            <AgentInputChipPickerPopover
                 open={open}
                 anchorRef={anchorRef}
-                rootStep={rootStep}
+                title={props.title}
+                options={pickerOptions}
                 selectedOptionId={props.selectedOptionId}
-                onSelect={() => {
-                    // The per-option `onSelect` above is the action source; this
-                    // wrapper owns the (web-deferred) close path.
-                }}
+                onSelect={props.onSelect}
                 onRequestClose={() => setOpen(false)}
-                maxHeightCap={360}
+                maxHeightCap={460}
             />
         </>
     );
@@ -389,6 +362,10 @@ export type SessionAuthoringControlsProps = Readonly<{
     /** Which fields to render, in the caller's order. */
     fields: readonly SessionAuthoringFieldId[];
     values: WorkflowSessionAuthoringSelection;
+    /** Atomic engine selection (Agent, model, mode and effort/config). */
+    onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
+    engine?: WorkflowEngineSelectionV1;
+    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
     onChangeField: (
         field: SessionAuthoringFieldId,
         value: WorkflowSessionAuthoringSelection[SessionAuthoringFieldId],
@@ -477,6 +454,14 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
     const { theme } = useUnistyles();
 
     const { agentId, controls } = useResolvedSessionAuthoringControls(props.values, facts, props.metadata);
+    const roleSelection = React.useMemo(() => props.onChangeEngine === undefined ? undefined : {
+        value: props.engine && 'role' in props.engine ? props.engine.role : null,
+        onChange: (role: string) => { if (!props.disabled) props.onChangeEngine?.({ role }); },
+    }, [props.disabled, props.engine, props.onChangeEngine]);
+    const enginePicker = useSessionAuthoringEnginePicker({ values: props.values, facts,
+        disabled: props.disabled, onChangeFields: props.onChangeFields, roleSelection });
+    const engineField = props.onChangeFields === undefined ? undefined
+        : props.fields.find(field => field === 'agentTarget' || field === 'modelSelection');
 
     const chipRenderContext = React.useMemo<AgentInputExtraActionChipRenderContext>(() => ({
         chipStyle: (pressed: boolean) => [styles.chip, pressed ? styles.chipPressed : null],
@@ -498,6 +483,25 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             style={presentation === 'fields' ? styles.fields : styles.root}
         >
             {props.fields.map((field) => {
+                if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
+                    if (field !== engineField) return null;
+                    const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: props.values, controls, facts, agentId });
+                    const modelLabel = modelControl.kind === 'options'
+                        ? resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
+                        : props.values.modelSelection?.ref.modelId;
+                    const rendered = <SessionAuthoringOptionChip
+                        controlId="engine" title={t('workflows.page.sections.agentTitle')}
+                        options={[]} pickerOptions={enginePicker.options}
+                        selectedOptionId={enginePicker.selectedOptionId ?? ''}
+                        valueLabel={props.engine && 'role' in props.engine ? props.engine.role : [enginePicker.label, modelLabel].filter(Boolean).join(' · ')}
+                        disabled={props.disabled} presentation={presentation}
+                        changed={isChanged('agentTarget') || isChanged('modelSelection')}
+                        onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}
+                    />;
+                    return presentation === 'chips' ? <React.Fragment key={field}>{rendered}</React.Fragment>
+                        : <Item key={field} testID={`${testIDPrefix}-${engineField}-row`}
+                            title={t('workflows.page.sections.agentTitle')} mode="info" accessoryLayout="adaptive" rightElement={rendered} />;
+                }
                 const control = resolveSessionAuthoringFieldControl({
                     field,
                     values: props.values,

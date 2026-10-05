@@ -20,11 +20,13 @@ export function WorkflowRolesEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
     onChange: (next: WorkflowEditorDraft) => void;
     prefix: string;
+    editable?: boolean;
 }>) {
     const catalog = useRoleCatalog();
     const presentEngine = useRoleEnginePresentation();
     const [adding, setAdding] = React.useState(false);
     const roles = props.draft.roles ?? [];
+    const editable = props.editable !== false;
     const roleIds = [...new Set([
         ...roles.map((role) => role.roleId),
         ...walkWorkflowBlocks(props.draft.blocks).flatMap((block) => {
@@ -61,19 +63,20 @@ export function WorkflowRolesEditor(props: Readonly<{
                 {inline ? <>
                     <FieldItem label={t('roles.settings.nameTitle')}>
                         <FieldTextInput value={inline.name} accessibilityLabel={t('roles.settings.nameTitle')}
-                            testID={`${prefix}-name`} onChangeText={(name) => update(roles.map((role) => role.roleId === roleId ? { ...inline, name } : role))} />
+                            testID={`${prefix}-name`} editable={editable} onChangeText={(name) => { if (editable) update(roles.map((role) => role.roleId === roleId ? { ...inline, name } : role)); }} />
                     </FieldItem>
                     <FieldItem label={t('roles.settings.instructionsTitle')}>
                         <FieldTextInput value={inline.instructions} multiline accessibilityLabel={t('roles.settings.instructionsTitle')}
-                            testID={`${prefix}-instructions`} onChangeText={(instructions) => update(roles.map((role) => role.roleId === roleId ? { ...inline, instructions } : role))} />
+                            testID={`${prefix}-instructions`} editable={editable} onChangeText={(instructions) => { if (editable) update(roles.map((role) => role.roleId === roleId ? { ...inline, instructions } : role)); }} />
                     </FieldItem>
                 </> : null}
                 {effective.ok ? <>
                     <FieldItem label={effective.selection.name}>
                         <RoleEngineField engine={effective.selection.engine} label={engine?.label ?? null} leading={engine?.icon}
-                            onChange={(value) => change({ engine: value })} testID={`${prefix}-engine`} />
+                            disabled={!editable} onChange={(value) => { if (editable) change({ engine: value }); }} testID={`${prefix}-engine`} />
                     </FieldItem>
                     <SegmentedChoiceItem title={t('roles.settings.runsAsTitle')}
+                        disabled={!editable}
                         value={effective.selection.runsAs.kind} options={[
                             { id: 'session', label: t('workflows.page.sections.aSession') },
                             { id: 'background_run', label: t('workflows.page.sections.aBackgroundRun') },
@@ -81,11 +84,11 @@ export function WorkflowRolesEditor(props: Readonly<{
                         onChange={(kind) => change({ runsAs: kind === 'session' ? { kind: 'session' }
                             : { kind: 'background_run', intent: effective.selection.runsAs.kind === 'background_run' ? effective.selection.runsAs.intent : 'delegate' } })} />
                 </> : <Text accessibilityRole="alert">{`${inline?.name ?? roleId} · ${t(catalog.status === 'loading' ? 'common.loading' : 'roles.settings.engineUnavailable')}`}</Text>}
-                {pin ? <RoundButton size="small" display="inverted" title={t(inline ? 'common.remove' : 'roles.session.reset')}
+                {pin && editable ? <RoundButton size="small" display="inverted" title={t(inline ? 'common.remove' : 'roles.session.reset')}
                     testID={`${prefix}-reset`} onPress={() => update(roles.filter((role) => role.roleId !== roleId))} /> : null}
             </View>;
         })}
-        <DropdownMenu testID={`${props.prefix}-add-role`} open={adding} onOpenChange={setAdding} search
+        {!editable ? null : <DropdownMenu testID={`${props.prefix}-add-role`} open={adding} onOpenChange={setAdding} search
             trigger={({ toggle }) => <RoundButton size="small" display="inverted" title={t('roles.session.addRoleConfirm')}
                 testID={`${props.prefix}-add-role-trigger`} onPress={toggle} />}
             items={[
@@ -100,6 +103,6 @@ export function WorkflowRolesEditor(props: Readonly<{
                     const entry = catalog.entries.find((candidate) => `catalog:${candidate.roleId}` === choiceId);
                     if (entry) update([...roles, { roleId: entry.roleId }]);
                 }
-            }} />
+            }} />}
     </View>;
 }

@@ -144,6 +144,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
                 label: entry.title,
                 ...(entry.subtitle === null ? {} : { subtitle: entry.subtitle }),
                 target,
+                backendTarget: entry.backendTarget,
                 // The catalog already resolved the operational Agent for this
                 // target. Carrying only the strict target would force every
                 // consumer to re-derive it, and the one that did could not name
@@ -257,6 +258,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
 
     return React.useMemo<SessionAuthoringControlFacts>(() => ({
         agentTargets,
+        agentPickerContext: { machineId, serverId, directory },
         contextualDefaultAgentTarget,
         profiles,
         machineName,
@@ -264,5 +266,5 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
         windowsTerminalAvailable,
         connectedServices,
         ...(mcp === undefined ? {} : { mcp }),
-    }), [agentTargets, connectedServices, contextualDefaultAgentTarget, machineName, mcp, profiles, targetIsWindows, windowsTerminalAvailable]);
+    }), [agentTargets, connectedServices, contextualDefaultAgentTarget, directory, machineId, machineName, mcp, profiles, serverId, targetIsWindows, windowsTerminalAvailable]);
 }

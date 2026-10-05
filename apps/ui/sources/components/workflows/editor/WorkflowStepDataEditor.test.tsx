@@ -11,7 +11,7 @@ import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdit
 import { formatWorkflowValueReference, WorkflowStepDataEditor } from './WorkflowStepDataEditor';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { formatWorkflowLoopSentence } from './WorkflowLoopEditor';
-import { KEEP_GOING_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/keepGoing';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol';
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 
 /**
@@ -81,7 +81,8 @@ function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstan
 
 describe('WorkflowStepDataEditor field selects', () => {
     it('reads builtin loop conditions as human reference labels, including typed stop reasons', () => {
-        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'keep-going', name: 'Keep going', definition: KEEP_GOING_WORKFLOW_V1 });
+        const definition = getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:keep-going')!.definition;
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'keep-going', name: 'Keep going', definition });
         const loop = draft.blocks[0]!;
         const condition = draft.blocks[1]!;
         if (loop.kind !== 'loop' || condition.kind !== 'if') throw new Error('Invalid builtin fixture');
