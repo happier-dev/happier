@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { Encryption } from '@/sync/encryption/encryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
 import type { ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { ArtifactBodyV1Schema, decodePlainArtifactStoredContent, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol';
+import { ArtifactBodyV1Schema, decodePlainArtifactStoredContent, encodeBase64, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol';
+import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 
 describe('createArtifactWithHeaderViaApi', () => {
@@ -29,9 +30,16 @@ describe('createArtifactWithHeaderViaApi', () => {
     let blob: ArtifactBlobStoredContentV1 | null = null;
     const request = vi.fn(async (path: string, init?: RequestInit) => {
       if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode, updatedAt: 0 }));
-      if (path === '/v1/artifacts/content/binary') {
-        saved = JSON.parse(String(init?.body)) as ArtifactCreateRequest;
-        blob = saved.blob?.content ?? null;
+      if (path === ARTIFACT_UPLOAD_PATH_V1) {
+        if (!(init?.body instanceof ArrayBuffer)) throw new Error('Expected canonical Artifact upload frame');
+        const frame = new Uint8Array(init.body);
+        const separator = frame.indexOf(10);
+        const metadata = decodeArtifactUploadMetadataV1(frame.subarray(0, separator));
+        if (metadata.kind !== 'create') throw new Error('Expected create destination');
+        const content = encodeBase64(frame.subarray(separator + 1));
+        blob = metadata.t === 'plain' ? { t: 'plain', v: content } : { t: 'encrypted', c: content };
+        saved = { id: metadata.artifactId, header: metadata.header, body: metadata.body, dataEncryptionKey: metadata.dataEncryptionKey,
+          blob: { blobId: metadata.blobId, content: blob } };
       }
       if (!saved) throw new Error('Missing created Artifact');
       if (path.endsWith('/recipients')) return new Response(JSON.stringify({ artifactId: saved.id, ownerAccountId: 'owner', access: 'owner',
