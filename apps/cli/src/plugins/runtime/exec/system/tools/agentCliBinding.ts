@@ -7,10 +7,13 @@ import type {
 } from '@/plugins/runtime/exec/privateContract';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import {
   resolveAgentCliLaunchSpecForRuntime,
   type AgentCliLaunchSpec,
 } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
+
+import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 
 import type { PluginExecSystemToolDefinition } from './definitions';
 import { createPluginExecSystemToolResolver } from './resolveGrant';
@@ -62,7 +65,11 @@ function createBoundAgentCliSystemToolService(params: Readonly<{
 
             const launch = params.resolveLaunch();
             if (!launch) {
-                return failUnavailable(params.agentId, 'canonical Agent CLI resolution failed');
+                throw new PluginError({
+                    code: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
+                    message: AGENT_CLI_MISSING_PREVIEW,
+                    retryable: false,
+                });
             }
             if (!isAbsolute(launch.resolvedPath) || !isAbsolute(launch.command)) {
                 return failUnavailable(params.agentId, 'canonical Agent CLI resolution was not absolute');
