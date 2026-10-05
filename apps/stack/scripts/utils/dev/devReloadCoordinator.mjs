@@ -56,6 +56,8 @@ function normalizeDescriptors(descriptors) {
 }
 
 async function readDescriptorSignaturesAsync(descriptors) {
+  // First-party descriptors share the runtime-input traversal policy. This map
+  // belongs to one observation, not to the coordinator's lifetime.
   const pathSamples = new Map();
   const pairs = await Promise.all(descriptors.map(async (descriptor) => {
     try {
