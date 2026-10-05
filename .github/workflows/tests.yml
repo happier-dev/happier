@@ -268,13 +268,18 @@ jobs:
         id: gate-compiler
         run: |
           echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
+          compiler_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
+          compiler_cgroup_directory="/sys/fs/cgroup$compiler_cgroup_path"
+          echo "GATE_COMPILER_CGROUP=$compiler_cgroup_directory" >> "$GITHUB_ENV"
           echo "Compiler host memory before execution:"
           free -h
+          echo "Compiler host cgroup identity:"
+          cat /proc/self/cgroup
           echo "Compiler host cgroup memory events before execution:"
-          if [ -r /sys/fs/cgroup/memory.events ]; then
-            cat /sys/fs/cgroup/memory.events
+          if [ -r "$compiler_cgroup_directory/memory.events" ]; then
+            cat "$compiler_cgroup_directory/memory.events"
           else
-            echo "Root cgroup memory.events unavailable; kernel evidence remains necessary."
+            echo "Current cgroup memory.events unavailable; kernel evidence remains necessary."
           fi
           yarn -s typecheck:compiler
       - name: Report host evidence after compiler termination
@@ -285,16 +290,16 @@ jobs:
           echo "Compiler host cgroup identity:"
           cat /proc/self/cgroup
           for observation in memory.events memory.max memory.peak memory.current; do
-            compiler_observation_path="/sys/fs/cgroup/$observation"
+            compiler_observation_path="$GATE_COMPILER_CGROUP/$observation"
             echo "$compiler_observation_path:"
             if [ -r "$compiler_observation_path" ]; then
               cat "$compiler_observation_path"
             else
-              echo "Unavailable at root cgroup; no conclusion from the missing observation."
+              echo "Unavailable at current cgroup; no conclusion from the missing observation."
             fi
           done
           echo "Kernel journal since compiler execution began:"
-          if ! sudo -n journalctl --kernel --since "$GATE_COMPILER_STARTED_AT" --no-pager; then
+          if ! sudo -n journalctl --dmesg --since "$GATE_COMPILER_STARTED_AT" --no-pager; then
             echo "Kernel journal unavailable; compiler termination sender remains unknown."
           fi
 
