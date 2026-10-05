@@ -129,7 +129,7 @@ export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
 }>): void {
   const { rpcHandlerManager } = params;
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_LOG_TAIL, async (rawParams: any) => {
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_LOG_TAIL, async (rawParams: any) => {
     const maxBytes = typeof rawParams?.maxBytes === 'number' && Number.isFinite(rawParams.maxBytes)
       ? Math.min(Math.max(Math.floor(rawParams.maxBytes), 1024), 1_000_000)
       : 200_000;
