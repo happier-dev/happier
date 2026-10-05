@@ -2762,7 +2762,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         expect(rpcMetricsMocks.recordRpcUnregistration).toHaveBeenCalledWith("sess_1:execution.run.stream.start");
     });
 
-    it.each([RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'ui.actions.contributed.execute'])("notifies the owning machine socket for %s registration, unregistration, or disconnect", async (rpcMethod) => {
+    it.each([RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'ui.actions.contributed.execute', 'ui.actions.execute.v1'])("notifies the owning machine socket for %s registration, unregistration, or disconnect", async (rpcMethod) => {
         const { io, addToRoom, createRoomAwareSocket, emitToRoom } = createRoomAwareIo();
         const uiSocket = createRoomAwareSocket({
             id: "ui-socket",
@@ -2809,7 +2809,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         expect(daemonSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
     });
 
-    it.each([RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'ui.actions.contributed.execute'])("hydrates a reconnecting machine socket from existing %s registrations", async (rpcMethod) => {
+    it.each([RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'ui.actions.contributed.execute', 'ui.actions.execute.v1'])("hydrates a reconnecting machine socket from existing %s registrations", async (rpcMethod) => {
         const { io, addToRoom, createRoomAwareSocket } = createRoomAwareIo();
         const uiSocket = createRoomAwareSocket({
             id: "ui-socket",
