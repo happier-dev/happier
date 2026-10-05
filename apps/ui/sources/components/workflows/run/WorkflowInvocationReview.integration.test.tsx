@@ -43,10 +43,6 @@ const routerMock = await vi.hoisted(async () => {
 });
 vi.mock('expo-router', () => routerMock.module);
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
-vi.mock('@/sync/runtime/getSyncSingleton', async () => {
-    const { createSyncSingletonLoaderMock } = await import('@/dev/testkit/harness/syncSingletonLoader');
-    return createSyncSingletonLoaderMock();
-});
 const machineRpc = vi.hoisted(() => vi.fn<WorkflowActionTransport>(async () => { throw new Error('offline_machine'); }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 vi.mock('react-native', async () => {

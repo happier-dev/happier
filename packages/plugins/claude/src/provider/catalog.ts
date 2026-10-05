@@ -2,14 +2,14 @@ import {
   ANTHROPIC_EFFORT_LEVELS,
   buildAnthropicModelOptions,
   type AnthropicEffortLevel,
-} from '@happier-dev/protocol/providers/anthropic-models';
+} from '@happier-dev/plugin-sdk/first-party/claude';
 export {
   ANTHROPIC_EFFORT_LEVELS,
   buildAnthropicModelOptions,
   normalizeAnthropicModelDisplayName,
   formatAnthropicEffortLevelLabel,
   type AnthropicEffortLevel,
-} from '@happier-dev/protocol/providers/anthropic-models';
+} from '@happier-dev/plugin-sdk/first-party/claude';
 
 import type {
   ProviderCatalogParsedModel,

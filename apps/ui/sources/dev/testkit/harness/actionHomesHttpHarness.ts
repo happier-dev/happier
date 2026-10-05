@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 
 // A generated third-party WebView asset is not part of an HTTP Action journey. Its multi-MB
 // source otherwise enters the default executor's presentation import graph during collection.
@@ -37,19 +37,11 @@ function accountOf(init: RequestInit | undefined): string | null {
 
 /** Bridges Metro's call-time require to the real Vitest executor; substitutes no Action logic. */
 export async function installRealActionExecutorModuleLoader(): Promise<() => void> {
-    const executor = await import('@/sync/ops/actions/defaultActionExecutor');
-    type Loader = (request: string, parent?: { filename?: string }, isMain?: boolean) => unknown;
-    const { createRequire } = getVitestNodeBuiltin<{ createRequire(filename: string | URL): (id: string) => unknown }>('node:module');
-    const module = createRequire(import.meta.url)('node:module') as { _load: Loader };
-    const previousLoad = module._load;
-    const load: Loader = function (request, parent, isMain) {
-        if (request === './defaultActionExecutor' && parent?.filename?.replaceAll('\\', '/').endsWith('/sync/ops/actions/frontDoorRuntimeActionExecutor.ts')) return executor;
-        return previousLoad.call(module, request, parent, isMain);
-    };
-    module._load = load;
-    return () => {
-        if (module._load === load) module._load = previousLoad;
-    };
+    const bridge = await loadVitestModuleForNodeRequire(
+        new URL('../../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
+        () => import('@/sync/ops/actions/defaultActionExecutor'),
+    );
+    return bridge.dispose;
 }
 
 /**

@@ -108,6 +108,33 @@ describe('createPluginManifestJsonSchemaV2', () => {
 
     expect(PluginManifestV2Schema.safeParse(validManifest).success).toBe(true);
     expect(validateExternalManifest(validManifest)).toBe(true);
+
+    const manifestWithSessionExtrasValues = (values: unknown) => ({
+      ...validManifest,
+      contributes: {
+        agents: [{
+          id: 'fixture-agent',
+          title: 'Fixture Agent',
+          runtime: { kind: 'custom' },
+          primary: 'sessions',
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+          ui: {
+            behavior: {
+              descriptorId: 'acme.uiBehavior.v1',
+              payload: { sessionExtras: { outputKey: 'acmeMode', values } },
+            },
+          },
+        }],
+      },
+    });
+    const valid = manifestWithSessionExtrasValues(['fast', 'thorough']);
+    expect(PluginManifestV2Schema.safeParse(valid).success).toBe(true);
+    expect(validateExternalManifest(valid)).toBe(true);
+    for (const values of [[], 'fast', ['']]) {
+      const invalid = manifestWithSessionExtrasValues(values);
+      expect(PluginManifestV2Schema.safeParse(invalid).success).toBe(false);
+      expect(validateExternalManifest(invalid)).toBe(false);
+    }
   });
 
   it('rejects a host-rejected unknown behavior key at the generated schema boundary', () => {

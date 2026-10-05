@@ -67,7 +67,6 @@ vi.mock('expo-router', async () => {
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { confirm: platform.confirm } }).module);
-vi.mock('@/sync/runtime/getSyncSingleton', async () => (await import('@/dev/testkit/harness/syncSingletonLoader')).createSyncSingletonLoaderMock());
 // No Markdown is rendered in this controller journey. Fail if this absent third-party export is used.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected streaming Markdown in account setup'); },

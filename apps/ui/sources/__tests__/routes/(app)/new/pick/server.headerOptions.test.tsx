@@ -1,178 +1,148 @@
-import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import { installServerPickerRouteCommonModuleMocks } from './serverPickerRouteTestHelpers';
+import * as React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
-const stackOptionsCapture = vi.hoisted(() => {
-    let currentOptions: Record<string, unknown> | (() => Record<string, unknown>) | null = null;
-
+installTokenStorageWebPlatformMocks();
+installDisconnectedServerSocketBoundary();
+const capture = vi.hoisted(() => {
+    let options: Record<string, unknown> | (() => Record<string, unknown>) | null = null;
     return {
-        record(options: Record<string, unknown> | (() => Record<string, unknown>)) {
-            currentOptions = options;
-        },
-        reset() {
-            currentOptions = null;
-        },
-        getRaw() {
-            return currentOptions;
-        },
-        getResolved() {
-            if (!currentOptions) {
-                return null;
-            }
-            return typeof currentOptions === 'function' ? currentOptions() : currentOptions;
-        },
+        record(value: Record<string, unknown> | (() => Record<string, unknown>)) { options = value; },
+        reset() { options = null; },
+        getResolved() { return typeof options === 'function' ? options() : options; },
     };
 });
-const newSessionPresentationModeState = vi.hoisted(() => ({
-    value: 'auto' as 'auto' | 'screen' | 'modal',
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    params: { selectedId: '' },
+    navigation: { getState: () => ({ index: 1, routes: [{ key: 'prev' }, { key: 'current' }] }), dispatch: vi.fn() },
+    stackOptionsCapture: capture,
+}).module);
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+    (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+// Evaluate each real owner once, after its genuine browser/native boundaries exist.
+const importBrowser = installLocalStorageMock();
+const importLocks = installWebLockManagerMock();
+const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+setRuntimeFetch(async () => { throw new Error('Unexpected picker HTTP request before fixture arrangement'); });
+// The real app entry publishes the Sync producer before routes or connection cleanup run.
+await loadSyncSingletonForTests();
+const [
+    { AuthProvider, setCurrentAuth }, { default: Route },
+    { upsertServerProfile, setActiveServerId, saveHomeViewState, removeServerProfile },
+    { TokenStorage }, { storage }, { createDirectoryHttpFixture },
+    { disconnectActiveServerConnection }, { stopAllEndpointSupervisorsForTests },
+    { apiSocket }, { clearPersistence }, { resetSessionDraftRepositoryForTests },
+    { ItemList, ItemListStatic },
+] = [
+    await import('@/auth/context/AuthContext'), await import('@/app/(app)/new/pick/server'),
+    await import('@/sync/domains/server/serverProfiles'), await import('@/auth/storage/tokenStorage'),
+    await import('@/sync/domains/state/storage'), await import('@/sync/ops/accountDirectory/accountDirectoryTestFixtures'),
+    await import('@/sync/runtime/orchestration/connectionManager'), await import('@/sync/runtime/connectivity/endpointSupervisorPool'),
+    await import('@/sync/api/session/apiSocket'), await import('@/sync/domains/state/persistence'),
+    await import('@/sync/ops/sessionDrafts/sessionDraftRepository'), await import('@/components/ui/lists/ItemList'),
+];
+resetRuntimeFetch();
+importLocks.restore();
+importBrowser.restore();
+const initialStorageState = storage.getState();
+const homes: Array<Readonly<{ id: string; serverUrl: string }>> = [];
 
-installServerPickerRouteCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (options: Record<string, unknown>) => options.web ?? options.default,
-            },
-        });
-    },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const module = createExpoRouterMock({
-            params: { selectedId: '' },
-            navigation: {
-                getState: () => ({ index: 1, routes: [{ key: 'prev' }, { key: 'current' }] }),
-                dispatch: vi.fn(),
-            },
-            router: {
-                push: vi.fn(),
-                back: vi.fn(),
-                replace: vi.fn(),
-                setParams: vi.fn(),
-            },
-            stackOptionsCapture,
-        }).module;
-
-        return {
-            ...module,
-            useLocalSearchParams: () => ({ selectedId: '' }),
-        };
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (name: string) => {
-                if (name === 'newSessionPresentationModeV1') return newSessionPresentationModeState.value;
-                return null;
-            },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    header: { tint: '#000' },
-                    textSecondary: '#666',
-                },
-            },
-        });
-    },
+let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+let restoreBrowser: (() => void) | undefined;
+let restoreLocks: (() => void) | undefined;
+const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
+    status, headers: { 'Content-Type': 'application/json' },
 });
 
-vi.mock('@react-navigation/native', () => ({
-    CommonActions: { setParams: (params: any) => ({ type: 'SET_PARAMS', payload: params }) },
-}));
+beforeEach(async () => {
+    capture.reset();
+    restoreBrowser = installLocalStorageMock().restore;
+    restoreLocks = installWebLockManagerMock().restore;
+    setRuntimeFetch(async (input) => {
+        const url = new URL(String(input));
+        const home = homes.find((candidate) => candidate.serverUrl === url.origin);
+        if (!home) throw new Error(`Unexpected picker Home request: ${url.origin}`);
+        if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return json({});
+        if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return json(createRootLayoutFeaturesResponse({
+            capabilities: { serverIdentity: { serverIdentityId: home.id },
+                server: { canonicalServerUrl: url.origin } },
+        }));
+        if (url.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+        if (url.pathname === '/v1/account/encryption/currentness') return json({
+            mode: 'plain', version: 1, settingsVersion: 0, updatedAt: 0, signingKeyFingerprint: null, contentKeyFingerprint: null,
+            recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+        });
+        return json({ error: 'not-found' }, 404);
+    });
+    const homeA = await upsertServerProfile({ serverUrl: 'https://a.example.test', name: 'A' });
+    homes.push(homeA);
+    const homeB = await upsertServerProfile({ serverUrl: 'https://b.example.test', name: 'B' });
+    homes.push(homeB);
+    await setActiveServerId(homeA.id);
+    await saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: homeA.id });
+    const credentials = { token: createDirectoryHttpFixture().token };
+    for (const home of homes) expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials)).toBe(true);
+    storage.getState().applySettingsLocal({ newSessionPresentationModeV1: 'auto' });
+});
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
-    ItemListStatic: (props: any) => React.createElement('ItemListStatic', props, props.children),
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.children),
-}));
+afterEach(async () => {
+    try {
+        await screen?.unmount();
+        screen = undefined;
+        await disconnectActiveServerConnection();
+        apiSocket.disconnect();
+        await stopAllEndpointSupervisorsForTests();
+        setCurrentAuth(null);
+        for (const home of homes) {
+            expect(await TokenStorage.clearPendingExternalAuth({ serverId: home.id, serverUrl: home.serverUrl })).toBe(true);
+            expect(await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toBe(true);
+            await removeServerProfile(home.id);
+        }
+        homes.length = 0;
+        await clearPersistence();
+        resetSessionDraftRepositoryForTests();
+        storage.setState(initialStorageState, true);
+    } finally {
+        resetRuntimeFetch();
+        vi.restoreAllMocks();
+        restoreLocks?.();
+        restoreBrowser?.();
+    }
+});
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: () => ({ generation: 1, serverId: 'server-a' }),
-    loadHomeViewState: () => null,
-    loadEffectiveHomeViewState: () => null,
-    subscribeHomeViewState: () => () => {},
-    listServerProfiles: () => [
-        { id: 'server-a', name: 'A', serverUrl: 'http://a', lastUsedAt: 2 },
-        { id: 'server-b', name: 'B', serverUrl: 'http://b', lastUsedAt: 1 },
-    ],
-    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ generation: 1, serverId: 'server-a' }),
-}));
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ refreshFromActiveServer: vi.fn(async () => {}) }),
-}));
-
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: vi.fn(async () => ({ token: 'token', secret: 'secret' })),
-    },
-}));
-
-vi.mock('@/components/settings/server/hooks/useServerAuthStatusByServerId', () => ({
-    useServerAuthStatusByServerId: () => ({ 'server-a': 'signedIn', 'server-b': 'signedIn' }),
-}));
-
-vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
-    setActiveServerAndSwitch: vi.fn(async () => 'switched'),
-}));
+async function mountRoute() {
+    screen = await renderScreen(<AuthProvider initialCredentials={null}><Route /></AuthProvider>);
+    return screen;
+}
 
 describe('ServerPickerScreen header options', () => {
-    beforeEach(() => {
-        newSessionPresentationModeState.value = 'auto';
-        stackOptionsCapture.reset();
-    });
-
     it('does not provide a headerTitle function that returns a raw string (RN Web text node error)', async () => {
-        const { default: ServerPickerScreen } = await import('@/app/(app)/new/pick/server');
-        await renderScreen(React.createElement(ServerPickerScreen));
-
-        const resolvedOptions = stackOptionsCapture.getResolved();
-        expect(resolvedOptions).toBeTruthy();
-        expect(resolvedOptions?.headerTitle === undefined || typeof resolvedOptions?.headerTitle === 'string').toBe(true);
-        standardCleanup();
+        await mountRoute();
+        expect(capture.getResolved()).toBeTruthy();
+        expect(typeof capture.getResolved()?.headerTitle).toBe('string');
     });
-
     it('presents as a modal on web by default and as a regular screen when requested', async () => {
-        const { default: ServerPickerScreen } = await import('@/app/(app)/new/pick/server');
-
-        await renderScreen(React.createElement(ServerPickerScreen));
-        expect(stackOptionsCapture.getResolved()?.presentation).toBe('modal');
-        standardCleanup();
-
-        stackOptionsCapture.reset();
-        newSessionPresentationModeState.value = 'screen';
-
-        await renderScreen(React.createElement(ServerPickerScreen));
-        expect(stackOptionsCapture.getResolved()?.presentation).toBeUndefined();
-        standardCleanup();
+        await mountRoute();
+        expect(capture.getResolved()?.presentation).toBe('modal');
+        await act(async () => {
+            storage.getState().applySettingsLocal({ newSessionPresentationModeV1: 'screen' });
+        });
+        expect(capture.getResolved()?.presentation).toBeUndefined();
     });
-
     it('gives the standalone picker the only scroll viewport', async () => {
-        const { default: ServerPickerScreen } = await import('@/app/(app)/new/pick/server');
-        const screen = await renderScreen(React.createElement(ServerPickerScreen));
-
-        expect(screen.findAllByType('ItemList')).toHaveLength(1);
-        expect(screen.findAllByType('ItemListStatic')).toHaveLength(0);
-        standardCleanup();
+        const rendered = await mountRoute();
+        expect(rendered.findAllByType(ItemList)).toHaveLength(1);
+        expect(rendered.findAllByType(ItemListStatic)).toHaveLength(0);
+        expect(rendered.findAllByType('ScrollView')).toHaveLength(1);
     });
 });

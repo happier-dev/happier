@@ -2,11 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { projectLegacySessionAccessCapabilitiesV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
-import { createSyncSingletonLoaderMock, loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-
-// Metro's lazy CommonJS load is outside Vitest's graph. Keep the real Sync
-// singleton and its internal owners, replacing only that loader boundary.
-vi.mock('@/sync/runtime/getSyncSingleton', () => createSyncSingletonLoaderMock());
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());

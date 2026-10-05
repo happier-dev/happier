@@ -44,7 +44,6 @@ installDisconnectedServerSocketBoundary((socket) => {
         return socket;
     });
 });
-vi.mock('@/sync/runtime/getSyncSingleton', async () => (await import('@/dev/testkit/harness/syncSingletonLoader')).createSyncSingletonLoaderMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
