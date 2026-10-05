@@ -17,6 +17,8 @@ type MountInput = Readonly<{ hostApi: PluginUiHostApi; element: HTMLElement; mou
 export function isSecondaryEntityRowControl(event: Event, element: HTMLElement): boolean {
     const primary = 'button,[role="button"],[role="tab"],[role="treeitem"],[role="option"],[role="menuitem"],a[href],[role="link"]';
     const control = (event.target as Element | null)?.closest?.(`${primary},input,textarea,select,[role="checkbox"],[role="switch"],[contenteditable="true"]`);
+    // A menu/explicit secondary control stays secondary even when a noninteractive row has no primary button.
+    if (control?.matches('[aria-haspopup]:not([aria-haspopup="false"]),[data-entity-drag-secondary="true"]')) return true;
     return control !== null && control !== undefined && control !== element && control !== element.querySelector(primary);
 }
 
