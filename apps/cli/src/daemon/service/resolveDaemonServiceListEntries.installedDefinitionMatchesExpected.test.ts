@@ -183,7 +183,7 @@ describe('resolveDaemonServiceListEntries', () => {
           discoverInstalledDaemonServiceEntries: async () => [{
             serverId: 'default',
             name: 'Default background service',
-            installed: true,
+            verification: 'verified' as const, installed: true,
             path: expectedWrapperPath,
             platform: 'win32',
             mode: 'user',
