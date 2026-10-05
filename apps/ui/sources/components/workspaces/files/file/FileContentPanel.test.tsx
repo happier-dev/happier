@@ -723,6 +723,27 @@ describe('FileContentPanel', () => {
         expect(diffViewerPropsState.current?.virtualized).toBe(false);
     });
 
+    it('does not highlight a range whose selected interior no longer matches', async () => {
+        const { FileContentPanel } = await import('./FileContentPanel');
+        const { computeLineContentHash } = await import('@/utils/text/lineContentHash');
+        codeLinesViewPropsState.current = null;
+        await renderScreen(<FileContentPanel
+            theme={theme}
+            displayMode="file"
+            sessionId="s1"
+            filePath="src/a.ts"
+            diffContent={null}
+            fileContent={'first();\nchanged();\nlast();'}
+            language="typescript"
+            selectedLineKeys={new Set()}
+            lineSelectionEnabled={false}
+            onToggleLine={vi.fn()}
+            jumpToAnchor={{ kind: 'range', filePath: 'src/a.ts', startLine: 1, endLine: 3, startLineHash: computeLineContentHash('first();'), endLineHash: computeLineContentHash('last();'), selectedTextHash: computeLineContentHash('first();\noriginal();\nlast();') }}
+        />);
+        expect(codeLinesViewPropsState.current?.lines).toHaveLength(3);
+        expect(codeLinesViewPropsState.current?.scrollToLineId).toBeFalsy();
+    });
+
     it('renders empty message when file mode has no content', async () => {
         thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
         const { FileContentPanel } = await import('./FileContentPanel');

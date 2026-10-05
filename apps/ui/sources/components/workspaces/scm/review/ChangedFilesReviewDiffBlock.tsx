@@ -24,6 +24,7 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 
 export type ReviewDiffState = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'error';
@@ -47,6 +48,8 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
     onScrollToLine?: (windowY: number) => void;
     externalScrollView?: CodeLinesExternalScrollView;
     scrollToLineId?: string;
+    findModel?: ChangedFilesReviewFindModel;
+    findActive?: boolean;
     /** Edge to edge under the file header, without the inset rounded frame (the comparison stream). */
     flat?: boolean;
     evidenceOnly?: boolean;
@@ -87,6 +90,8 @@ function areChangedFilesReviewDiffBlockPropsEqual(
         || prev.onUpsertReviewCommentDraft !== next.onUpsertReviewCommentDraft
         || prev.onDeleteReviewCommentDraft !== next.onDeleteReviewCommentDraft
         || prev.scrollToLineId !== next.scrollToLineId
+        || prev.findModel !== next.findModel
+        || prev.findActive !== next.findActive
         || prev.onScrollToLine !== next.onScrollToLine
         || prev.externalScrollView !== next.externalScrollView
         || prev.onReviewCommentError !== next.onReviewCommentError
@@ -106,6 +111,10 @@ function areChangedFilesReviewDiffBlockPropsEqual(
 
 export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReviewDiffBlockProps) => {
     const { theme, sessionId, filePath, snapshotSignature } = props;
+    const findRangesByLineId = React.useSyncExternalStore(
+        React.useCallback((listener) => props.findModel?.subscribeFile(filePath, listener) ?? (() => {}), [filePath, props.findModel]),
+        () => props.findModel?.getFileSnapshot(filePath).ranges,
+    );
     const state = React.useSyncExternalStore(
         React.useCallback((listener) => props.diffStateSource.subscribe(filePath, listener), [filePath, props.diffStateSource]),
         React.useCallback(() => props.diffStateSource.getDiffState(filePath), [filePath, props.diffStateSource]),
@@ -285,6 +294,8 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         return (
             <View testID={blockTestId} style={[props.flat ? FLAT_BLOCK_STYLE : { paddingHorizontal: 16, paddingVertical: 8 }, noOverflowAnchor, noteColumnStyle]}>
                 <DiffReviewCommentsViewer
+                    findActive={props.findActive}
+                    findRangesByLineId={findRangesByLineId}
                     renderAfterLine={props.hunkNotes ? renderAfterLine : undefined}
                     scrollToLineId={props.scrollToLineId}
                     highlightLineId={props.scrollToLineId}
@@ -308,6 +319,8 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
             <View testID={blockTestId} style={[props.flat ? FLAT_BLOCK_STYLE : { paddingHorizontal: 16, paddingVertical: 8 }, noOverflowAnchor, noteColumnStyle]}>
             <View style={[props.flat ? FLAT_DIFF_FRAME_STYLE : { borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border.default }, diffContainerStyle, props.hunkNotes?.placement === 'column' ? { overflow: 'visible' } : null]}>
                 <DiffViewer
+                    findActive={props.findActive}
+                    findRangesByLineId={findRangesByLineId}
                     renderAfterLine={props.hunkNotes ? renderAfterLine : undefined}
                     scrollToLineId={props.scrollToLineId}
                     highlightLineId={props.scrollToLineId}

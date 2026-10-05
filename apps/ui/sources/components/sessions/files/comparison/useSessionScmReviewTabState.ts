@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewTarget } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
-const REVIEW_TAB_KEY = 'scmReview:working';
+const REVIEW_TAB_KEY = SESSION_DETAILS_SCM_REVIEW_TAB_KEY;
 const SCROLL_PERSIST_DEBOUNCE_MS = 250;
 const SCROLL_PERSIST_EPSILON_PX = 1;
 
@@ -23,7 +24,13 @@ function valuesEqual(key: string, previous: unknown, next: unknown): boolean {
 }
 
 /** Both live and captured Files preserve the existing review tab's scroll and collapse state. */
-export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<typeof useAppPaneScope>) {
+export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<typeof useAppPaneScope>, target: SessionScmReviewTarget = {}) {
+    // Explain is presentation on the semantic destination, shared by UI and session.open.
+    const explain = target.explain === true;
+    const openDetailsTab = pane.openDetailsTab;
+    const setExplain = React.useCallback((next: boolean) => {
+        openDetailsTab(createSessionScmReviewDetailsTab({ ...target, explain: next }), { intent: 'pinned' });
+    }, [openDetailsTab, target]);
     const raw = pane.scopeState?.details?.tabState?.[REVIEW_TAB_KEY];
     const persistedReviewTabState = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
     const initialStateRef = React.useRef<Readonly<{ sessionId: string; scrollTop: number | null; collapsedPaths: string[] | null }> | null>(null);
@@ -61,6 +68,6 @@ export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<
         timerRef.current = setTimeout(flushPendingScrollTop, SCROLL_PERSIST_DEBOUNCE_MS);
     }, [flushPendingScrollTop]);
     React.useEffect(() => flushPendingScrollTop, [flushPendingScrollTop]);
-    return { persistedReviewTabState, mountedInitialReviewState: initialStateRef.current,
+    return { persistedReviewTabState, mountedInitialReviewState: initialStateRef.current, explain, setExplain,
         setPersistedReviewTabState, onCollapsedPathsChange, onScrollTopChange };
 }

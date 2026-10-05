@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { SessionCanvasActionId, SessionCanvasActionOutcome } from '@happier-dev/protocol';
+import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { SessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
 
@@ -7,9 +9,12 @@ export type SessionSplitCanvasRuntimeSnapshot = Readonly<{
     focusedSessionId: string | null;
     openSessionIds: ReadonlyArray<string>;
     scope: SessionSplitCanvasScope | null;
+    entityScope: EntityDragScopeV1 | null;
+    canvasKey: string | null;
 }>;
 
 export type SessionSplitCanvasRuntimeController = Readonly<{
+    executeAction: (actionId: SessionCanvasActionId, input: unknown) => SessionCanvasActionOutcome;
     focusSession: (sessionId: string) => void;
     openSessionInSplit: (input: Readonly<{
         sessionId: string;
@@ -24,6 +29,8 @@ let snapshot: SessionSplitCanvasRuntimeSnapshot = {
     focusedSessionId: null,
     openSessionIds: [],
     scope: null,
+    entityScope: null,
+    canvasKey: null,
 };
 let controller: SessionSplitCanvasRuntimeController | null = null;
 let runtimeRegistrationVersion = 0;
@@ -74,9 +81,12 @@ export function registerSessionSplitCanvasRuntime(input: Readonly<{
     emitChange();
 
     return () => {
+        if (controller !== registrationKey || runtimeRegistrationVersion !== registrationVersion) return;
+        // Stop answering synchronously; only deleted-tree subscriber notification is deferred.
+        controller = null;
         pendingResetTimeout = setTimeout(() => {
             pendingResetTimeout = null;
-            if (controller !== registrationKey || runtimeRegistrationVersion !== registrationVersion) {
+            if (runtimeRegistrationVersion !== registrationVersion) {
                 return;
             }
             snapshot = {
@@ -84,9 +94,16 @@ export function registerSessionSplitCanvasRuntime(input: Readonly<{
                 focusedSessionId: null,
                 openSessionIds: [],
                 scope: null,
+                entityScope: null,
+                canvasKey: null,
             };
             controller = null;
             emitChange();
         }, 0);
     };
+}
+
+export async function invokeSessionCanvasAction(request: Readonly<{ actionId: SessionCanvasActionId; input: unknown; signal?: AbortSignal }>): Promise<SessionCanvasActionOutcome> {
+    if (request.signal?.aborted) return { status: 'refused', reason: 'cancelled' };
+    return controller ? controller.executeAction(request.actionId, request.input) : { status: 'unavailable' };
 }

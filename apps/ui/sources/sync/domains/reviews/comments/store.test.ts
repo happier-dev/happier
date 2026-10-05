@@ -79,4 +79,18 @@ describe('review comments UI state', () => {
 
         expect(selectReviewComments(upserted).map((row) => row.id)).toEqual(['c3', 'c2']);
     });
+
+    it('filters workflow authors by their run identity without including another author kind', () => {
+        const state = applyReviewCommentList(createEmptyReviewCommentsState(), {
+            items: [
+                comment({ id: 'workflow', author: { kind: 'workflow', runId: 'run-1' } }),
+                comment({ id: 'other-workflow', author: { kind: 'workflow', runId: 'run-2' } }),
+                comment({ id: 'user', author: { kind: 'user', userId: 'run-1' } }),
+            ],
+            cursor: null,
+        });
+
+        expect(selectReviewComments(state, { authorKind: 'workflow', authorId: 'run-1' }).map((row) => row.id))
+            .toEqual(['workflow']);
+    });
 });

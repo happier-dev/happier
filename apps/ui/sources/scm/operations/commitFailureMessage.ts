@@ -8,16 +8,10 @@ export function buildScmCommitFailureMessage(input: {
     commitSha?: string;
 }): string {
     const fallback = input.error || 'Failed to create commit';
-    const baseMessage = getScmUserFacingError({
+    return getScmUserFacingError({
         errorCode: input.errorCode,
         error: input.error,
         fallback,
     });
 
-    if (!input.commitSha) {
-        return baseMessage;
-    }
-
-    const shortSha = input.commitSha.slice(0, 12);
-    return `Commit ${shortSha} was created, but final repository sync failed. Your virtual selection is preserved. ${baseMessage}`;
 }

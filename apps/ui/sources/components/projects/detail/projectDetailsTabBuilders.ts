@@ -1,12 +1,14 @@
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
+import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
-export function createProjectFileDetailsTab(fullPath: string): DetailsTab {
+export function createProjectFileDetailsTab(fullPath: string, anchor?: FileTargetAnchor, anchorSource?: ReviewCommentSource): DetailsTab {
     const fileName = fullPath.split(/[\\/]/).pop() ?? fullPath;
     return {
         key: `file:${fullPath}`,
         kind: 'file',
         title: fileName,
-        resource: { kind: 'file', path: fullPath },
+        resource: { kind: 'file', path: fullPath, ...(anchor ? { anchor } : {}), ...(anchorSource ? { anchorSource } : {}) },
     };
 }
 

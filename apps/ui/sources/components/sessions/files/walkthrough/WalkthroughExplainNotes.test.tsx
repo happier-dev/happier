@@ -26,7 +26,7 @@ it('renders a many-hunk reading without traversing global stops or whole-file re
         ].join('\n') + '\n' },
     }] } };
     const reading = buildWalkthroughReading({ comparison, walkthrough: { state: 'complete', value: {
-        title: 'Many hunks', stops: occurrences.map((entry, index) => ({
+        title: 'Many hunks', intro: SPECIMEN_WALKTHROUGH.intro, stops: occurrences.map((entry, index) => ({
             id: `stop-${index}`, title: `Change ${index}`, explanationMarkdown: 'First sentence. Additional detail.', changeRefs: [entry.id],
         })), otherChangeRefs: [],
     } }, analysis: null, reviewed: null });

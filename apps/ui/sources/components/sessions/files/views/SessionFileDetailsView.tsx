@@ -6,6 +6,7 @@ import {
 } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
 
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
+import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 export type SessionFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
@@ -18,6 +19,8 @@ export type SessionFileDetailsViewProps = Readonly<{
     scopeId: string;
     filePath: string;
     deepLinkAnchor?: SessionFileDeepLinkAnchor | null;
+    findSeed?: FileFindSeed | null;
+    onFindSeedConsumed?: () => void;
     presentation?: 'screen' | 'panel';
     onStartEditingFile?: () => void;
     openableContentViewer?: WorkspaceFileOpenableContentViewerHost;
@@ -36,6 +39,8 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
             scope={scope}
             filePath={props.filePath}
             deepLinkAnchor={props.deepLinkAnchor ?? null}
+            findSeed={props.findSeed}
+            onFindSeedConsumed={props.onFindSeedConsumed}
             presentation={props.presentation}
             sessionIdForAugmentation={sessionId}
             onStartEditingFile={props.onStartEditingFile}

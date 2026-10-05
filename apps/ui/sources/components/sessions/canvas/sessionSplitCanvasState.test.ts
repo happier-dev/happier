@@ -1,317 +1,76 @@
 import { describe, expect, it } from 'vitest';
+import { collectSplitCanvasLeaves } from '@/components/appShell/splitCanvas/model/splitCanvasTree';
+import { collectOpenSessionIds, reconcileSessionSplitCanvasRouteAnchor, reduceSessionSplitCanvasState, resolveSessionSplitCanvasState, resolveSessionSplitCanvasKeyboardTarget, resolveSessionSplitCanvasRouteSessionAfterAction, runSessionSplitCanvasCommand } from './sessionSplitCanvasState';
 
-import { createInitialSessionSplitCanvasSnapshot } from '@/sync/domains/session/sessionSplitCanvasPersistence';
-import {
-    collectOpenSessionIds,
-    reconcileSessionSplitCanvasRouteAnchor,
-    reduceSessionSplitCanvasState,
-    resolveSessionSplitCanvasState,
-    resolveSessionSplitCanvasKeyboardTarget,
-    runSessionSplitCanvasCommand,
-} from './sessionSplitCanvasState';
+const scope = { serverId: 'home-a', accountId: 'account-a' };
+const initial = () => resolveSessionSplitCanvasState({ sessionId: 'a', scope });
+const open = (state: ReturnType<typeof initial>, sessionId: string) => runSessionSplitCanvasCommand(state, { type: 'openSession', sessionId, leafId: state.focusedLeafId! });
 
-describe('sessionSplitCanvasState', () => {
-    it('opens a new session beside the focused leaf and focuses it', () => {
-        const initial = resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        });
-
-        const next = runSessionSplitCanvasCommand(initial, {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        expect(next.focusedLeafId).toBe('session-leaf:sess_b');
-        expect(next.root).toEqual(expect.objectContaining({
-            kind: 'split',
-            axis: 'row',
-            first: expect.objectContaining({
-                id: 'session-leaf:sess_a',
-            }),
-            second: expect.objectContaining({
-                id: 'session-leaf:sess_b',
-            }),
-        }));
+describe('tabbed Session canvas state', () => {
+    it('adds/selects a route anchor without evicting existing members or changing leaf identity', () => {
+        const state = open(initial(), 'b');
+        const next = reconcileSessionSplitCanvasRouteAnchor(state, 'c');
+        expect(next.focusedLeafId).toBe(state.focusedLeafId);
+        expect(collectOpenSessionIds(next)).toEqual(['a', 'b', 'c']);
+        const restored = resolveSessionSplitCanvasState({ sessionId: 'a', scope, persistedSnapshot: { version: 1, scope, root: next.root, focusedLeafId: next.focusedLeafId, maximizedLeafId: null } });
+        expect(restored.root).toBe(next.root);
+        expect(collectSplitCanvasLeaves(restored.root)[0].payload.group.activeTabId).toBe(collectSplitCanvasLeaves(next.root)[0].payload.group.activeTabId);
+        const reveal = runSessionSplitCanvasCommand(next, { type: 'focusSession', sessionId: 'a' });
+        expect(collectOpenSessionIds(reveal)).toEqual(['a', 'b', 'c']);
+        expect(resolveSessionSplitCanvasKeyboardTarget(reveal, { routeSessionId: 'a', targetKind: 'session' })?.sessionId).toBe('a');
     });
 
-    it('focuses an existing session instead of duplicating it', () => {
-        const withSplit = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'down',
-        });
-
-        const next = runSessionSplitCanvasCommand(withSplit, {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        expect(next.focusedLeafId).toBe('session-leaf:sess_b');
-        expect(JSON.stringify(next.root)).toBe(JSON.stringify(withSplit.root));
+    it('moves tabs through the shared group owner and closes only an emptied source leaf', () => {
+        let state = open(initial(), 'b');
+        state = runSessionSplitCanvasCommand(state, { type: 'openSessionInSplit', sessionId: 'c', direction: 'right', measurement: { availableSizePx: 1000, minimumExistingSizePx: 320 } });
+        const leaves = collectSplitCanvasLeaves(state.root);
+        const a = leaves[0].payload.group.tabIds[0];
+        const b = leaves[0].payload.group.tabIds[1];
+        const targetLeafId = leaves[1].id;
+        state = runSessionSplitCanvasCommand(state, { type: 'moveTab', tabId: b, targetLeafId });
+        expect(collectOpenSessionIds(state)).toEqual(['a', 'c', 'b']);
+        state = runSessionSplitCanvasCommand(state, { type: 'moveTab', tabId: a, targetLeafId, beforeTabId: b });
+        expect(collectSplitCanvasLeaves(state.root)).toHaveLength(1);
+        expect(collectOpenSessionIds(state)).toEqual(['c', 'a', 'b']);
+        const same = runSessionSplitCanvasCommand(state, { type: 'moveTab', tabId: a, targetLeafId });
+        expect(same).toBe(state);
+        state = runSessionSplitCanvasCommand(state, { type: 'reorderTab', tabId: b, beforeTabId: a });
+        expect(collectOpenSessionIds(state)).toEqual(['c', 'b', 'a']);
     });
 
-    it('keeps the current split tree intact when the route anchor changes to a session that is already open', () => {
-        const withSplit = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        const next = reconcileSessionSplitCanvasRouteAnchor(withSplit, 'sess_b');
-
-        expect(next.focusedLeafId).toBe('session-leaf:sess_b');
-        expect(next.root).toEqual(expect.objectContaining({
-            kind: 'split',
-            first: expect.objectContaining({ id: 'session-leaf:sess_a' }),
-            second: expect.objectContaining({ id: 'session-leaf:sess_b' }),
-        }));
+    it('reanchors a closed route member, retains the last member and keeps composer commands on the active visible member', () => {
+        let state = open(initial(), 'b');
+        const leaf = collectSplitCanvasLeaves(state.root)[0];
+        const action = { type: 'closeTab', tabId: leaf.payload.group.tabIds[0] } as const;
+        expect(resolveSessionSplitCanvasRouteSessionAfterAction(state, action, { routeSessionId: 'a' })).toBe('b');
+        expect(resolveSessionSplitCanvasRouteSessionAfterAction(state, action, { routeSessionId: 'a', committedState: state })).toBeNull();
+        state = reduceSessionSplitCanvasState(state, action, { routeSessionId: 'a' });
+        expect(collectOpenSessionIds(state)).toEqual(['b']);
+        expect(runSessionSplitCanvasCommand(state, { type: 'closeTab', tabId: collectSplitCanvasLeaves(state.root)[0].payload.group.activeTabId! })).toBe(state);
+        expect(resolveSessionSplitCanvasKeyboardTarget(state, { routeSessionId: 'b', composerOwningLeafId: state.focusedLeafId, targetKind: 'composer' })).toMatchObject({ sessionId: 'b', source: 'composer' });
+        expect(resolveSessionSplitCanvasKeyboardTarget({ ...state, focusedLeafId: null }, { routeSessionId: '', targetKind: 'session' })).toBeNull();
     });
 
-    it('replaces a restored single-leaf snapshot with the current route anchor instead of auto-splitting', () => {
-        const restored = resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            persistedSnapshot: createInitialSessionSplitCanvasSnapshot({
-                sessionId: 'sess_b',
-                maxLeaves: 8,
-            }),
-        });
-
-        expect(restored.focusedLeafId).toBe('session-leaf:sess_a');
-        expect(collectOpenSessionIds(restored)).toEqual(['sess_a']);
-        expect(restored.root).toEqual(expect.objectContaining({
-            kind: 'leaf',
-            id: 'session-leaf:sess_a',
-            payload: {
-                sessionId: 'sess_a',
-            },
-        }));
+    it('requires measurement for a new edge and preserves all tabs on refused splits or another Account restore', () => {
+        const state = open(initial(), 'b');
+        expect(runSessionSplitCanvasCommand(state, { type: 'openSessionInSplit', sessionId: 'c', direction: 'right' })).toBe(state);
+        expect(runSessionSplitCanvasCommand(state, { type: 'openSessionInSplit', sessionId: 'c', direction: 'right', measurement: { availableSizePx: 500, minimumExistingSizePx: 320 } })).toBe(state);
+        const restored = resolveSessionSplitCanvasState({ sessionId: 'a', scope: { ...scope, accountId: 'other' }, persistedSnapshot: { version: 1, scope, root: state.root, focusedLeafId: state.focusedLeafId, maximizedLeafId: null } });
+        expect(collectOpenSessionIds(restored)).toEqual(['a']);
     });
 
-    it('preserves the persisted focused leaf when the route anchor is already present in a restored split snapshot', () => {
-        const restored = resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            persistedSnapshot: {
-                version: 1,
-                root: {
-                    id: 'split-root',
-                    kind: 'split',
-                    axis: 'row',
-                    ratio: 0.5,
-                    first: {
-                        id: 'session-leaf:sess_a',
-                        kind: 'leaf',
-                        leafKind: 'session',
-                        payload: {
-                            sessionId: 'sess_a',
-                        },
-                    },
-                    second: {
-                        id: 'session-leaf:sess_b',
-                        kind: 'leaf',
-                        leafKind: 'session',
-                        payload: {
-                            sessionId: 'sess_b',
-                        },
-                    },
-                },
-                focusedLeafId: 'session-leaf:sess_b',
-                maximizedLeafId: null,
-                maxLeaves: 8,
-            },
-        });
-
-        expect(collectOpenSessionIds(restored)).toEqual(['sess_a', 'sess_b']);
-        expect(restored.focusedLeafId).toBe('session-leaf:sess_b');
+    it('splits an existing tab without duplicating membership or accepting an undersized move', () => {
+        const state = open(initial(), 'b');
+        const leaf = collectSplitCanvasLeaves(state.root)[0];
+        const b = leaf.payload.group.tabIds[1];
+        const command = { type: 'splitTab', tabId: b, targetLeafId: leaf.id, direction: 'left', measurement: { availableSizePx: 1000, minimumExistingSizePx: 320 } } as const;
+        expect(runSessionSplitCanvasCommand(state, { ...command, measurement: { availableSizePx: 500, minimumExistingSizePx: 320 } })).toBe(state);
+        const next = runSessionSplitCanvasCommand(state, command);
+        expect(collectSplitCanvasLeaves(next.root)).toHaveLength(2);
+        expect(collectOpenSessionIds(next)).toEqual(['b', 'a']);
+        expect(new Set(collectSplitCanvasLeaves(next.root).map(node => node.id)).size).toBe(2);
+        expect(next.focusedLeafId).toBe(collectSplitCanvasLeaves(next.root)[0].id);
+        const bLeaf = collectSplitCanvasLeaves(next.root)[0];
+        expect(runSessionSplitCanvasCommand(next, { ...command, targetLeafId: bLeaf.id })).toBe(next);
     });
-
-    it('opens the requested route anchor in a new split leaf when capacity is available', () => {
-        const withSplit = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 3,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        const next = reconcileSessionSplitCanvasRouteAnchor(withSplit, 'sess_c', {
-            previousRouteSessionId: 'sess_a',
-        });
-
-        expect(next.focusedLeafId).toBe('session-leaf:sess_c');
-        expect(collectOpenSessionIds(next)).toEqual(['sess_a', 'sess_b', 'sess_c']);
-    });
-
-    it('replaces the previous route-owner leaf when the route anchor changes at the max leaf limit', () => {
-        const withSplit = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 2,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        const next = reconcileSessionSplitCanvasRouteAnchor(withSplit, 'sess_c', {
-            previousRouteSessionId: 'sess_a',
-        });
-
-        expect(next.focusedLeafId).toBe('session-leaf:sess_c');
-        expect(collectOpenSessionIds(next)).toEqual(['sess_c', 'sess_b']);
-        expect(next.root).toEqual(expect.objectContaining({
-            kind: 'split',
-            first: expect.objectContaining({ id: 'session-leaf:sess_c' }),
-            second: expect.objectContaining({ id: 'session-leaf:sess_b' }),
-        }));
-    });
-
-    it('allows closing the route-owner leaf when another session leaf remains', () => {
-        const withSplit = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 2,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        const next = reduceSessionSplitCanvasState(withSplit, {
-            type: 'closeLeaf',
-            leafId: 'session-leaf:sess_a',
-        }, {
-            routeSessionId: 'sess_a',
-        });
-
-        expect(collectOpenSessionIds(next)).toEqual(['sess_b']);
-        expect(next.focusedLeafId).toBe('session-leaf:sess_b');
-        expect(next.root).toEqual(expect.objectContaining({
-            kind: 'leaf',
-            id: 'session-leaf:sess_b',
-            payload: {
-                sessionId: 'sess_b',
-            },
-        }));
-    });
-
-    it('resolves keyboard command target from focused visible leaf before last interaction and route anchor', () => {
-        const state = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-
-        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
-            routeSessionId: 'sess_a',
-            lastInteractedLeafId: 'session-leaf:sess_a',
-            targetKind: 'session',
-        })).toEqual({
-            leafId: 'session-leaf:sess_b',
-            sessionId: 'sess_b',
-            source: 'focused',
-        });
-    });
-
-    it('falls back to the last-interacted visible leaf when no focused leaf is visible', () => {
-        const split = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-        const state = {
-            ...split,
-            focusedLeafId: null,
-        };
-
-        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
-            routeSessionId: 'sess_a',
-            lastInteractedLeafId: 'session-leaf:sess_b',
-            targetKind: 'session',
-        })).toEqual({
-            leafId: 'session-leaf:sess_b',
-            sessionId: 'sess_b',
-            source: 'lastInteracted',
-        });
-    });
-
-    it('falls back to the active route session when focus and last interaction are unavailable', () => {
-        const split = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-        const state = {
-            ...split,
-            focusedLeafId: null,
-        };
-
-        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
-            routeSessionId: 'sess_a',
-            lastInteractedLeafId: 'missing-leaf',
-            targetKind: 'session',
-        })).toEqual({
-            leafId: 'session-leaf:sess_a',
-            sessionId: 'sess_a',
-            source: 'route',
-        });
-    });
-
-    it('does not target an arbitrary leaf when no active route session is available', () => {
-        const state = {
-            ...resolveSessionSplitCanvasState({
-                sessionId: 'sess_a',
-                maxLeaves: 8,
-            }),
-            focusedLeafId: null,
-        };
-
-        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
-            routeSessionId: '',
-            lastInteractedLeafId: 'missing-leaf',
-            targetKind: 'session',
-        })).toBeNull();
-    });
-
-    it('keeps composer-targeted commands scoped to the composer-owning visible leaf', () => {
-        const split = runSessionSplitCanvasCommand(resolveSessionSplitCanvasState({
-            sessionId: 'sess_a',
-            maxLeaves: 8,
-        }), {
-            type: 'openSessionInSplit',
-            sessionId: 'sess_b',
-            direction: 'right',
-        });
-        const state = {
-            ...split,
-            focusedLeafId: 'session-leaf:sess_b',
-        };
-
-        expect(resolveSessionSplitCanvasKeyboardTarget(state, {
-            routeSessionId: 'sess_a',
-            composerOwningLeafId: 'session-leaf:sess_a',
-            targetKind: 'composer',
-        })).toEqual({
-            leafId: 'session-leaf:sess_a',
-            sessionId: 'sess_a',
-            source: 'composer',
-        });
-    });
-
 });

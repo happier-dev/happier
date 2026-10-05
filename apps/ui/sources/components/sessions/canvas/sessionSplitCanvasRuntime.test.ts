@@ -5,6 +5,8 @@ function createRuntimeSnapshot(routeSessionId: string) {
         routeSessionId,
         focusedSessionId: routeSessionId,
         openSessionIds: [routeSessionId],
+        entityScope: { serverId: 'server-a', accountId: 'account-a' },
+        canvasKey: 'server-a:machine-1:/repo',
         scope: {
             workspaceCacheKey: 'server-a:machine-1:/repo',
             serverId: 'server-a',
@@ -28,6 +30,7 @@ describe('sessionSplitCanvasRuntime', () => {
         const unregister = runtime.registerSessionSplitCanvasRuntime({
             snapshot: createRuntimeSnapshot('sess_a'),
             controller: {
+                executeAction: () => ({ status: 'unavailable' }),
                 focusSession: () => undefined,
                 openSessionInSplit: () => undefined,
             },
@@ -40,6 +43,7 @@ describe('sessionSplitCanvasRuntime', () => {
         await Promise.resolve();
 
         expect(listener).not.toHaveBeenCalled();
+        expect(runtime.getSessionSplitCanvasRuntimeController()).toBeNull();
         expect(runtime.getSessionSplitCanvasRuntimeSnapshot()).toEqual(createRuntimeSnapshot('sess_a'));
 
         await vi.runAllTimersAsync();
@@ -50,6 +54,8 @@ describe('sessionSplitCanvasRuntime', () => {
             focusedSessionId: null,
             openSessionIds: [],
             scope: null,
+            entityScope: null,
+            canvasKey: null,
         });
 
         unsubscribe();

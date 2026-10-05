@@ -22,14 +22,15 @@ import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLi
 import { buildSelectedDiffLineKey } from '@/scm/scmPatchSelection';
 import {
     buildReviewCommentDraftFromMarkdownRange,
-    formatReviewCommentCodeLineContent,
 } from '@/components/ui/code/reviewComments/buildReviewCommentDraftFromCodeLine';
+import { resolveCodeLineAnchor } from '@/components/ui/code/reviewComments/resolveCodeLineAnchor';
 import { ReviewCommentInlineComposer } from '@/components/ui/code/reviewComments/ReviewCommentInlineComposer';
 import { ReviewCommentSavedDrafts } from '@/components/ui/code/reviewComments/ReviewCommentSavedDrafts';
-import { computeLineContentHash, findLineIndexByContentHash, type LineContentHash } from '@/utils/text/lineContentHash';
 import { isWorkspaceFileReferenceAnchorForFile } from '@/utils/workspaceFileReferences/resolveWorkspaceFileReference';
 import { useMarkdownReadingAnchor } from './useMarkdownReadingAnchor';
+import { useFileContentScrollTarget } from './useFileContentScrollTarget';
 import type { FileDisplayMode } from './FileActionToolbar';
+import type { FileViewerFindSnapshot } from '@/components/workspaces/files/details/useFileViewerFind';
 
 const MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH = 768;
 const MARKDOWN_PREVIEW_COMPACT_PADDING = 16;
@@ -60,6 +61,7 @@ type FileContentPanelProps = {
     onReviewCommentError?: (message: string) => void;
     rangeSelectionActive?: boolean;
     jumpToAnchor?: ReviewCommentAnchor | null;
+    find?: FileViewerFindSnapshot;
     scrollTestID?: string;
     onLayout?: (e: any) => void;
     onContentSizeChange?: (width: number, height: number) => void;
@@ -146,140 +148,10 @@ export function areFileContentPanelPropsEqual(
     return true;
 }
 
-function getNormalizedAnchorStartLine(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>): number {
-    return anchor.kind === 'line' ? anchor.line : anchor.startLine;
-}
-
-function getNormalizedAnchorStartLineHash(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>) {
-    return anchor.kind === 'line' ? anchor.lineHash : anchor.startLineHash;
-}
-
-function getNormalizedAnchorEndLine(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>): number {
-    return anchor.kind === 'line' ? anchor.line : anchor.endLine;
-}
-
-function getNormalizedAnchorEndLineHash(anchor: Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>) {
-    return anchor.kind === 'line' ? anchor.lineHash : anchor.endLineHash;
-}
-
 type ResolvedJumpHighlight = Readonly<{
     scrollToLineId: string;
     highlightLineIds: ReadonlySet<string>;
 }>;
-
-function resolveLineIdRange(params: Readonly<{
-    lines: readonly CodeLine[];
-    startLineId: string;
-    endLineId: string;
-}>): ReadonlySet<string> {
-    const startIndex = params.lines.findIndex((line) => line.id === params.startLineId);
-    const endIndex = params.lines.findIndex((line) => line.id === params.endLineId);
-    if (startIndex < 0 || endIndex < 0) return new Set([params.startLineId]);
-
-    const from = Math.min(startIndex, endIndex);
-    const to = Math.max(startIndex, endIndex);
-    const ids = new Set<string>();
-    for (const line of params.lines.slice(from, to + 1)) {
-        if (!line.renderIsHeaderLine) ids.add(line.id);
-    }
-    if (ids.size === 0) ids.add(params.startLineId);
-    return ids;
-}
-
-function buildSingleLineJumpHighlight(lineId: string | null): ResolvedJumpHighlight | null {
-    return lineId ? { scrollToLineId: lineId, highlightLineIds: new Set([lineId]) } : null;
-}
-
-function buildRangeJumpHighlight(params: Readonly<{
-    lines: readonly CodeLine[];
-    startLineId: string | null;
-    endLineId: string | null;
-}>): ResolvedJumpHighlight | null {
-    if (!params.startLineId) return null;
-    return {
-        scrollToLineId: params.startLineId,
-        highlightLineIds: resolveLineIdRange({
-            lines: params.lines,
-            startLineId: params.startLineId,
-            endLineId: params.endLineId ?? params.startLineId,
-        }),
-    };
-}
-
-function resolveFileLineJumpTarget(params: Readonly<{
-    lines: readonly CodeLine[];
-    line: number;
-    lineHash?: LineContentHash;
-}>): string | null {
-    const exactTarget = params.lines.find((line) => {
-        if (line.renderIsHeaderLine || line.newLine !== params.line) return false;
-        if (!params.lineHash) return true;
-        return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'file', line })) === params.lineHash;
-    });
-    if (exactTarget) return exactTarget.id;
-
-    const hashIndex = findLineIndexByContentHash({
-        lines: params.lines,
-        lineHash: params.lineHash,
-        isCandidate: (line) => !line.renderIsHeaderLine,
-        getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'file', line }),
-    });
-    return hashIndex >= 0 ? params.lines[hashIndex]?.id ?? null : null;
-}
-
-function resolveLegacyDiffLineJumpTarget(params: Readonly<{
-    lines: readonly CodeLine[];
-    anchor: Extract<ReviewCommentAnchor, { kind: 'diffLine' }>;
-}>): string | null {
-    const side = params.anchor.side === 'before' ? 'before' : 'after';
-    const isSideCandidate = (line: CodeLine) => {
-        if (line.renderIsHeaderLine) return false;
-        return (line.kind === 'remove' ? 'before' : 'after') === side;
-    };
-    const exactTarget = params.lines.find((line) => {
-        if (!isSideCandidate(line) || (line.sourceIndex + 1) !== params.anchor.startLine) return false;
-        if (!params.anchor.lineHash) return true;
-        return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'diff', line })) === params.anchor.lineHash;
-    });
-    if (exactTarget) return exactTarget.id;
-
-    const hashIndex = findLineIndexByContentHash({
-        lines: params.lines,
-        lineHash: params.anchor.lineHash,
-        isCandidate: isSideCandidate,
-        getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'diff', line }),
-    });
-    return hashIndex >= 0 ? params.lines[hashIndex]?.id ?? null : null;
-}
-
-function resolveNormalizedDiffLineJumpTarget(params: Readonly<{
-    lines: readonly CodeLine[];
-    line: number;
-    side?: 'before' | 'after';
-    lineHash?: LineContentHash;
-}>): string | null {
-    const side = params.side === 'before' ? 'before' : 'after';
-    const isSideCandidate = (line: CodeLine) => {
-        if (line.renderIsHeaderLine) return false;
-        return (line.kind === 'remove' ? 'before' : 'after') === side;
-    };
-    const exactTarget = params.lines.find((line) => {
-        if (!isSideCandidate(line)) return false;
-        const renderedLine = side === 'before' ? line.oldLine : line.newLine;
-        if (renderedLine !== params.line) return false;
-        if (!params.lineHash) return true;
-        return computeLineContentHash(formatReviewCommentCodeLineContent({ source: 'diff', line })) === params.lineHash;
-    });
-    if (exactTarget) return exactTarget.id;
-
-    const hashIndex = findLineIndexByContentHash({
-        lines: params.lines,
-        lineHash: params.lineHash,
-        isCandidate: isSideCandidate,
-        getLineContent: (line) => formatReviewCommentCodeLineContent({ source: 'diff', line }),
-    });
-    return hashIndex >= 0 ? params.lines[hashIndex]?.id ?? null : null;
-}
 
 function FileContentPanelInner({
     theme,
@@ -304,6 +176,7 @@ function FileContentPanelInner({
     onReviewCommentError,
     rangeSelectionActive,
     jumpToAnchor,
+    find,
     scrollTestID,
     onLayout,
     onContentSizeChange,
@@ -356,6 +229,7 @@ function FileContentPanelInner({
             || jumpToAnchor?.kind === 'diffLine'
             || jumpToAnchor?.kind === 'line'
             || jumpToAnchor?.kind === 'range'
+            || find?.open
         );
 
     const lines = React.useMemo(() => {
@@ -412,65 +286,11 @@ function FileContentPanelInner({
     }, [displayMode, lines, selectedLineKeys]);
 
     const jumpHighlight = React.useMemo((): ResolvedJumpHighlight | null => {
-        const anchor = jumpToAnchor ?? null;
-        if (!anchor) return null;
-
-        if (displayMode === 'file' && anchor.kind === 'fileLine') {
-            return buildSingleLineJumpHighlight(resolveFileLineJumpTarget({
-                lines,
-                lineHash: anchor.lineHash,
-                line: anchor.startLine,
-            }));
-        }
-
-        if (
-            displayMode === 'file'
-            && (anchor.kind === 'line' || anchor.kind === 'range')
-            && isWorkspaceFileReferenceAnchorForFile({ anchor, filePath })
-        ) {
-            const startLineId = resolveFileLineJumpTarget({
-                lines,
-                line: getNormalizedAnchorStartLine(anchor),
-                lineHash: getNormalizedAnchorStartLineHash(anchor),
-            });
-            if (anchor.kind === 'line') return buildSingleLineJumpHighlight(startLineId);
-            const endLineId = resolveFileLineJumpTarget({
-                lines,
-                line: getNormalizedAnchorEndLine(anchor),
-                lineHash: getNormalizedAnchorEndLineHash(anchor),
-            });
-            return buildRangeJumpHighlight({ lines, startLineId, endLineId });
-        }
-
-        if (displayMode === 'diff' && anchor.kind === 'diffLine') {
-            return buildSingleLineJumpHighlight(resolveLegacyDiffLineJumpTarget({
-                lines,
-                anchor,
-            }));
-        }
-
-        if (
-            displayMode === 'diff'
-            && (anchor.kind === 'line' || anchor.kind === 'range')
-            && isWorkspaceFileReferenceAnchorForFile({ anchor, filePath })
-        ) {
-            const startLineId = resolveNormalizedDiffLineJumpTarget({
-                lines,
-                line: getNormalizedAnchorStartLine(anchor),
-                side: anchor.side,
-                lineHash: getNormalizedAnchorStartLineHash(anchor),
-            });
-            if (anchor.kind === 'line') return buildSingleLineJumpHighlight(startLineId);
-            const endLineId = resolveNormalizedDiffLineJumpTarget({
-                lines,
-                line: getNormalizedAnchorEndLine(anchor),
-                side: anchor.side,
-                lineHash: getNormalizedAnchorEndLineHash(anchor),
-            });
-            return buildRangeJumpHighlight({ lines, startLineId, endLineId });
-        }
-
-        return null;
+        if (!jumpToAnchor || (displayMode !== 'file' && displayMode !== 'diff')) return null;
+        const resolution = resolveCodeLineAnchor({ filePath, source: displayMode, lines, anchor: jumpToAnchor });
+        const first = resolution.lines[0];
+        if (!first) return null;
+        return { scrollToLineId: first.id, highlightLineIds: new Set(resolution.lines.map((line) => line.id)) };
     }, [displayMode, filePath, jumpToAnchor, lines]);
 
     const markdownHighlightRange = React.useMemo<MarkdownSourceRange | null>(() => {
@@ -482,6 +302,14 @@ function FileContentPanelInner({
         if (anchor.kind === 'range') return { startLine: anchor.startLine, endLine: anchor.endLine };
         return null;
     }, [displayMode, jumpToAnchor]);
+
+    const scrollToLineId = useFileContentScrollTarget(jumpHighlight?.scrollToLineId, find);
+
+    React.useEffect(() => {
+        if (displayMode === 'markdown' && find?.open && find.markdownLineTarget !== null) {
+            markdownReading.revealLine(find.markdownLineTarget);
+        }
+    }, [displayMode, find?.open, find?.markdownLineTarget, find?.revealRevision, markdownReading.revealLine]);
 
     const findMarkdownDraftsForRange = React.useCallback((range: MarkdownSourceRange): ReviewCommentDraft[] => {
         return draftsForThisView.filter((draft) => {
@@ -658,7 +486,8 @@ function FileContentPanelInner({
                 contentPaddingVertical={16}
                 externalScrollView={!virtualized && Platform.OS !== 'web' ? externalCodeScrollView : undefined}
                 virtualized={virtualized}
-                scrollToLineId={jumpHighlight?.scrollToLineId}
+                scrollToLineId={scrollToLineId}
+                findRangesByLineId={find?.lineRanges}
                 highlightLineId={jumpHighlight?.scrollToLineId}
                 highlightLineIds={jumpHighlight?.highlightLineIds}
                 wrapLines={effectiveWrapLines}
@@ -695,7 +524,9 @@ function FileContentPanelInner({
                 contentPaddingVertical={16}
                 externalScrollView={!effectiveDiffVirtualized && Platform.OS !== 'web' ? externalCodeScrollView : undefined}
                 virtualized={effectiveDiffVirtualized}
-                scrollToLineId={jumpHighlight?.scrollToLineId}
+                scrollToLineId={scrollToLineId}
+                findActive={find?.open}
+                findRangesByLineId={find?.lineRanges}
                 highlightLineId={jumpHighlight?.scrollToLineId}
                 highlightLineIds={jumpHighlight?.highlightLineIds}
                 wrapLines={effectiveWrapLines}
@@ -775,13 +606,15 @@ function FileContentPanelInner({
                             <MarkdownView
                                 testID="file-markdown-preview"
                                 markdown={fileContent}
-                                sourceRangeLayoutObserver={Platform.OS === 'web' ? markdownReading.observer : undefined}
+                                sourceRangeLayoutObserver={Platform.OS === 'web' || find?.open ? markdownReading.observer : undefined}
                                 profile="default"
                                 streamingMode="static"
                                 selectable
                                 onPressSourceRange={markdownSourceRangeActionsEnabled ? onPressMarkdownSourceRange : undefined}
                                 renderAfterSourceRange={reviewCommentsEnabled === true ? renderAfterMarkdownSourceRange : undefined}
                                 highlightSourceRange={markdownHighlightRange}
+                                findSourceRanges={find?.markdownRanges}
+                                findActive={find?.open}
                             />
                         </View>
                     </ScrollView>

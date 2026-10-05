@@ -631,7 +631,8 @@ describe('workspaceFileSearch', () => {
         expect(page.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ fullPath: 'packages/exact-needle.ts' }),
         ]));
-        expect(page.truncated).toBe(true);
+        expect(page.corpusTruncated).toBe(true);
+        expect(page.hasMore).toBe(true);
     });
 
     it('retains targeted-query truncation so repeated queries do not report complete coverage', async () => {
@@ -657,14 +658,42 @@ describe('workspaceFileSearch', () => {
         };
 
         const first = await mod.searchWorkspaceFiles(input);
-        expect(first.truncated).toBe(true);
+        expect(first.corpusTruncated).toBe(true);
         expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
 
         const second = await mod.searchWorkspaceFiles(input);
-        expect(second.truncated).toBe(true);
+        expect(second.corpusTruncated).toBe(true);
         // The retained truncation forces the existing bounded query path to run
         // again; a false-complete cache would stop at the Fuse result here.
         expect(machineRipgrepMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('reports page overflow independently of a complete filename corpus', async () => {
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths: ['src/needle.ts', 'src/needle.test.ts'], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const page = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'needle', resultType: 'file', limit: 1, includeCoverage: true });
+        expect(page.items).toHaveLength(1);
+        expect(page.corpusTruncated).toBe(false);
+        expect(page.hasMore).toBe(true);
+    });
+
+    it('queries globs directly without warming or contaminating the workspace fuzzy corpus', async () => {
+        machineRipgrepMock
+            .mockResolvedValueOnce({ ok: true, paths: ['nested/needle.ts'], truncated: true })
+            .mockResolvedValueOnce({ ok: true, paths: ['current.ts'], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const controller = new AbortController();
+        const page = await searchWorkspaceFiles({ scope: SCOPE_A, mode: 'glob', query: '*.ts', includeHidden: false,
+            signal: controller.signal, includeCoverage: true });
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
+        expect(machineRipgrepMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ query: '*.ts', includeHidden: false }));
+        expect(machineRipgrepMock.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ serverId: 'server-a', signal: controller.signal }));
+        expect(page.items.map((item) => item.fullPath)).toEqual(['nested/needle.ts', 'nested/']);
+        expect(page.corpusTruncated).toBe(true);
+        expect(page.hasMore).toBe(true);
+        const fuzzy = await searchWorkspaceFiles({ scope: SCOPE_A, query: '', resultType: 'file' });
+        expect(fuzzy.map((item) => item.fullPath)).toEqual(['current.ts']);
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
     });
 
     /**

@@ -221,6 +221,29 @@ export function resolveExternalSessionBrowseSourceOption(params: Readonly<{
     }) ?? null;
 }
 
+/** An older daemon can ignore a content selector, so only a current source advertisement admits it. */
+export function resolveExternalSessionBrowseContentSearchCapability(params: Readonly<{
+    providerId: ExternalSessionsAgentId | null;
+    projection: PluginProjectionV2 | null | undefined;
+    source: ExternalSessionsSource | null;
+}>): boolean | undefined {
+    if (!params.providerId || !params.source) return undefined;
+    const projected = resolveProjectedExternalSessionsAgent({
+        providerId: params.providerId,
+        projection: params.projection,
+    });
+    if (projected?.externalSessions.operations.listCandidates !== true) return undefined;
+    const declaration = projected.externalSessions.sources.find((source) => source.sourceKind === params.source?.kind);
+    if (!declaration || !parseExternalSessionsSourceForDeclaration(declaration, params.source)) return undefined;
+    return declaration.contentSearch;
+}
+
+export function resolveExternalSessionBrowseContentSearchSupported(
+    params: Parameters<typeof resolveExternalSessionBrowseContentSearchCapability>[0],
+): boolean {
+    return resolveExternalSessionBrowseContentSearchCapability(params) === true;
+}
+
 export function listExternalSessionBrowseProviderIds(params: Readonly<{
     accountScope?: ServerAccountScope | null;
     projection: PluginProjectionV2 | null | undefined;

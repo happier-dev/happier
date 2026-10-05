@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
+import { ChangedFilesReviewDiffAreaSelector } from './ChangedFilesReviewDiffAreaSelector';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => {
@@ -20,7 +21,6 @@ vi.mock('react-native-reanimated', async () => {
 const theme = { colors: { border: { default: '#ddd' }, surface: { inset: '#eee', base: '#fff' }, text: { primary: '#111' } } };
 
 it('chooses a diff area from one menu and retains trailing actions for a single area', async () => {
-    const { ChangedFilesReviewDiffAreaSelector } = await import('./ChangedFilesReviewDiffAreaSelector');
     // jsdom has no layout; only the browser geometry boundary is supplied.
     vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
     vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
@@ -37,8 +37,13 @@ it('chooses a diff area from one menu and retains trailing actions for a single 
         expect(document.querySelector('[data-testid="scm-review-diff-area-pending"]')).toBeNull();
         await act(async () => trigger?.click());
         await vi.waitFor(() => expect(document.querySelector('[data-testid="scm-review-diff-area-pending"]')).not.toBeNull());
-        await act(async () => document.querySelector<HTMLElement>('[data-testid="scm-review-diff-area-pending"]')?.click());
-        expect(onChange).toHaveBeenCalledWith('pending');
+        await act(async () => {
+            const item = document.querySelector<HTMLElement>('[data-testid="scm-review-diff-area-pending"]');
+            item?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+            item?.click();
+        });
+        await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith('pending'));
+        expect(onChange).toHaveBeenCalledTimes(1);
         await act(async () => root.render(<ChangedFilesReviewDiffAreaSelector theme={theme} diffArea="pending" availableModes={['pending']} labels={labels} onChange={onChange} trailingElement={<span data-testid="trailing">Action</span>} />));
         expect(container.querySelector('[data-testid="trailing"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="scm-review-diff-area-menu"]')).toBeNull();

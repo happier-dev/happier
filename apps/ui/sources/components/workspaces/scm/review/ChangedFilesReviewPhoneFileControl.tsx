@@ -12,10 +12,13 @@ import { Typography } from '@/constants/Typography';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { ChangedFilesReviewIndex } from './ChangedFilesReviewIndex';
+import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
+import { ChangedFilesReviewFindCount } from './ChangedFilesReviewFind';
 
 /** Phone Files' position and jump control, using the same list/tree index and focus owner as the rail. */
 export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     files: readonly ScmFileStatus[];
+    findModel?: ChangedFilesReviewFindModel;
     activePath: string | null;
     rootPath: string | null;
     commentCountByPath: ReadonlyMap<string, number>;
@@ -29,13 +32,15 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     const position = t('walkthrough.stopOf', { number: index + 1, total: props.files.length });
     const items = React.useMemo(() => props.files.map((file) => ({
         id: file.fullPath, title: file.fileName, subtitle: file.filePath, accessibilityLabel: file.fullPath,
-    })), [props.files]);
+        rightElement: <ChangedFilesReviewFindCount model={props.findModel} path={file.fullPath} />,
+    })), [props.files, props.findModel]);
     const focus = React.useCallback((path: string) => { props.onFocusPath(path); setOpen(false); }, [props.onFocusPath]);
     return <View testID="scm-comparison-file-control" style={styles.control}>
         <DropdownMenu testID="scm-comparison-file-picker" open={open} onOpenChange={setOpen}
             items={display.changesLayout === 'tree' ? [] : items} selectedId={props.activePath} onSelect={focus}
             emptyLabel={null}
             footer={display.changesLayout === 'tree' ? <ChangedFilesReviewIndex files={props.files} activePath={props.activePath}
+                findModel={props.findModel}
                 commentCountByPath={props.commentCountByPath} onFocusPath={focus} rootPath={props.rootPath} placement="comparisonStream" /> : null}
             trigger={({ toggle }) => <HappierPressable testID="scm-comparison-file-trigger" accessibilityRole="button"
                 accessibilityLabel={`${position} · ${active?.fullPath ?? ''}`} onPress={toggle}

@@ -16,6 +16,7 @@ installWorkspaceFileDetailsCommonModuleMocks({
         createModalModuleMock({
             spies: {
                 alert: (title, message, buttons) => modalAlertSpy(title, message, buttons),
+                show: (config) => { modalShowSpy(config); return 'comparison'; },
             },
         }).module,
 });
@@ -23,6 +24,7 @@ installWorkspaceFileDetailsCommonModuleMocks({
 type WorkspaceWriteFileFn = typeof import('@/sync/domains/workspaces/files/workspaceFileReadWrite').workspaceWriteFile;
 const workspaceWriteFileSpy = vi.hoisted(() => vi.fn<WorkspaceWriteFileFn>(async () => ({ success: true, hash: 'h1' })));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
+const modalShowSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/domains/workspaces/files/workspaceFileReadWrite', () => ({
     WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR: 'File exceeds the inline file write size limit',
@@ -73,6 +75,23 @@ describe('useWorkspaceFileEditorState (save/typing divergence)', () => {
     beforeEach(() => {
         workspaceWriteFileSpy.mockReset();
         modalAlertSpy.mockReset();
+        modalShowSpy.mockReset();
+    });
+
+    it('compares the latest disk version with the live draft without leaving edit mode', async () => {
+        const { Harness, getState, fileTextRef } = await createHarness();
+        const screen = await renderScreen(<Harness />);
+        await act(async () => { getState().startEditingFile(); getState().onEditorChange('my draft'); });
+        fileTextRef.current = 'changed on disk';
+        await screen.update(<Harness />);
+        expect(getState().fileChangedExternally).toBe(true);
+        await act(async () => { getState().compareFileEdits(); });
+        expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ oldText: 'changed on disk', newText: 'my draft', filePath: 'src/a.ts' }),
+        }));
+        expect(getState().isEditingFile).toBe(true);
+        expect(getState().getEditorText()).toBe('my draft');
+        expect(workspaceWriteFileSpy).not.toHaveBeenCalled();
     });
 
     it('does not seed the editor with the saved snapshot when the user typed during the async write', async () => {

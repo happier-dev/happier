@@ -18,6 +18,7 @@ export function useMarkdownReadingAnchor(identity: string, paddingTop: number) {
         anchorMeasured: false,
         scrollY: 0,
         requestedY: null as number | null,
+        requestedLine: null as number | null,
     }), [identity]);
     const restore = React.useCallback(() => {
         if (!state.pending || !state.anchor || !state.anchorMeasured) return;
@@ -29,6 +30,16 @@ export function useMarkdownReadingAnchor(identity: string, paddingTop: number) {
         state.scrollY = y;
         scrollRef.current?.scrollTo({ y, animated: false });
     }, [paddingTop, state]);
+    const revealRequestedLine = React.useCallback(() => {
+        if (state.requestedLine === null) return;
+        const index = state.ranges.findIndex((range) => range.sourceRange.startLine <= state.requestedLine!
+            && range.sourceRange.endLine >= state.requestedLine!);
+        if (index < 0) return;
+        state.anchor = { index, offset: 0 };
+        state.pending = true;
+        state.anchorMeasured = state.layouts.has(index);
+        if (state.anchorMeasured) { state.requestedLine = null; restore(); }
+    }, [restore, state]);
     const observer = React.useMemo<MarkdownSourceRangeLayoutObserver>(() => ({
         onRanges: (ranges) => {
             if (state.ranges === ranges) return;
@@ -46,15 +57,17 @@ export function useMarkdownReadingAnchor(identity: string, paddingTop: number) {
             state.anchorMeasured = false;
             state.ranges = ranges;
             state.indices = new Map(ranges.map((range, index) => [range.sourceRange.startLine, index]));
+            revealRequestedLine();
         },
         onLayout: (range, layout) => {
             const index = state.indices.get(range.sourceRange.startLine);
             if (index === undefined || state.ranges[index]?.markdown !== range.markdown) return;
             state.layouts.set(index, layout);
             if (state.anchor?.index === index) state.anchorMeasured = true;
+            revealRequestedLine();
             restore();
         },
-    }), [restore, state]);
+    }), [restore, revealRequestedLine, state]);
     const onScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         const y = event.nativeEvent.contentOffset.y;
         if (state.requestedY !== null && Math.abs(y - state.requestedY) < 1) {
@@ -64,6 +77,7 @@ export function useMarkdownReadingAnchor(identity: string, paddingTop: number) {
         }
         state.requestedY = null;
         state.pending = false;
+        state.requestedLine = null;
         state.scrollY = y;
         let index = -1;
         let closestY = -Infinity;
@@ -78,5 +92,9 @@ export function useMarkdownReadingAnchor(identity: string, paddingTop: number) {
     React.useLayoutEffect(() => {
         scrollRef.current?.scrollTo({ y: 0, animated: false });
     }, [state]);
-    return { scrollRef, observer, onScroll, onContentSizeChange: restore };
+    const revealLine = React.useCallback((line: number) => {
+        state.requestedLine = line;
+        revealRequestedLine();
+    }, [revealRequestedLine, state]);
+    return { scrollRef, observer, onScroll, onContentSizeChange: restore, revealLine };
 }
