@@ -10,6 +10,7 @@ import type { SessionListDragSnapshot } from '../drag/_types';
 import type { SessionListTreeDragSource, SessionListTreeModel } from '../drop-resolution/sessionListTreeTypes';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
 import type { SessionListCarry } from '../useSessionListEntityDragDrop';
+import type { EntityDragDropRuntime } from '@/components/ui/treeDragDrop';
 import {
     beginSessionListStagedMove,
     resolveSessionListStagedMoveResult,
@@ -53,6 +54,7 @@ export function useSessionListStagedMove(input: Readonly<{
     getItems: () => ReadonlyArray<SessionListIndexItem>;
     foldersFeatureEnabled: boolean;
     beginCarry: (snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard') => SessionListCarry | null;
+    runtime: EntityDragDropRuntime;
 }>): SessionListStagedMoveController {
     const stagedRef = React.useRef<Staged | null>(null);
     const [view, setView] = React.useState<SessionListStagedMoveView>(IDLE_VIEW);
@@ -93,6 +95,13 @@ export function useSessionListStagedMove(input: Readonly<{
         staged.carry.cancel();
         finish();
     }, [finish]);
+
+    React.useEffect(() => input.runtime.subscribe(() => {
+        const staged = stagedRef.current;
+        if (!staged) return;
+        const snapshot = input.runtime.getSnapshot();
+        if (snapshot.sourceId !== staged.carry.sourceId || snapshot.phase !== 'carrying') finish();
+    }), [input.runtime, finish]);
 
     const handleRowKey = React.useCallback((key: Readonly<{ sessionKey: string; label: string; key: string; repeat?: boolean }>) => {
         const staged = stagedRef.current && stagedRef.current.sessionKey === key.sessionKey ? stagedRef.current : null;

@@ -92,8 +92,8 @@ describe('resolveSessionRowInteractionPolicy', () => {
         dragEnabled: true,
     } as const;
 
-    it('keeps long-press for the menu on a phone and shows no grip outside Organize mode (K1)', () => {
-        const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs: 'ios', touchPrimaryPointer: true, organizeMode: false });
+    it.each(['ios', 'android'])('keeps long-press for the menu on %s and shows no grip outside Organize mode (K1)', (platformOs) => {
+        const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs, touchPrimaryPointer: true, organizeMode: false });
 
         expect(policy.enableLongPressContextMenu).toBe(true);
         expect(policy.showDragGrip).toBe(false);
@@ -133,14 +133,14 @@ describe('resolveSessionRowInteractionPolicy', () => {
         expect(policy.showDragGrip).toBe(false);
     });
 
-    it('keeps Android row long-press menus disabled so row presses remain clickable', () => {
+    it('does not offer an Android long-press menu when the row has no menu actions', () => {
         const policy = resolveSessionRowInteractionPolicy({
             platformOs: 'android',
             touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,
             canArchiveSession: false,
-            contextMenuItemCount: 2,
+            contextMenuItemCount: 0,
             contextMenuOpen: false,
             contextMenuWasOpen: false,
             dragEnabled: false,

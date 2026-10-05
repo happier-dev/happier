@@ -18,8 +18,8 @@ import {
     type WindowPointer,
 } from '@/components/ui/treeDragDrop';
 import { putSessionUnderLead } from '@/components/sessions/work/putSessionUnderLead';
-import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { getStorage } from '@/sync/domains/state/storage';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { resolveSessionListSessionRowDragPolicy } from '@/sync/domains/session/listing/sessionListLayout';
@@ -28,11 +28,10 @@ import type {
     SessionListOrderingSectionMode,
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
 import {
-    requireSessionOrganizationMutationScope,
+    type SessionOrganizationMutationScope,
     writeSessionOrganizationFolderAssignment,
 } from '@/sync/ops/sessionOrganization';
 
-import { commitSessionListDragIntent } from './drag/commitSessionListDragIntent';
 import { buildSessionListDragIntent } from './drag/sessionListDragIntent';
 import { buildSessionListDragSnapshot } from './drag/sessionListDragSnapshot';
 import { resolveSessionListDragPointer } from './drag/resolveSessionListDragPointer';
@@ -44,10 +43,6 @@ import {
     buildSessionListKeyboardMoveResult,
     type SessionListKeyboardMoveDirection,
 } from './move-sheet/buildSessionListKeyboardMoveResult';
-import {
-    buildSessionListMoveSheetTargets,
-    type SessionListMoveSheetTarget,
-} from './move-sheet/buildSessionListMoveSheetTargets';
 import { setTagsForSession } from './sessionTagUtils';
 import { useSessionListStagedMove } from './keyboardMove/useSessionListStagedMove';
 import { useSessionListEntityDragDrop, type SessionListBaseCommitContext, type SessionListCarry } from './useSessionListEntityDragDrop';
@@ -92,11 +87,6 @@ type SessionFolderAssignableSessionItem = Readonly<{
 
 type SessionListFolderSortModeV1 = 'foldersFirst' | 'mixed';
 
-type PendingSessionOrganizationCommit = Readonly<{
-    commit: () => Promise<Readonly<{ ok: boolean }>>;
-    resolve: (succeeded: boolean) => void;
-}>;
-
 export type UseSessionListRowInteractionsInput = Readonly<{
     folderActionsEnabled: boolean;
     isFolderActionsEnabledForServerId: (serverId: string | null | undefined) => boolean;
@@ -108,9 +98,9 @@ export type UseSessionListRowInteractionsInput = Readonly<{
     sessionListOrderingModeV1: SessionListOrderingModeV1;
     sessionListSectionModeV1: SessionListOrderingSectionMode;
     manualSessionOrderingEnabled: boolean;
-    setSessionListGroupOrderV1: (value: Record<string, string[]>) => void;
-    setSessionWorkspaceOrderV1: (value: Record<string, string[]>) => void;
-    setSessionFoldersV1: (value: SessionFoldersV1) => void;
+    setSessionListGroupOrderV1: (value: Record<string, string[]>, scope: SessionOrganizationMutationScope) => Promise<void>;
+    setSessionWorkspaceOrderV1: (value: Record<string, string[]>, scope: SessionOrganizationMutationScope) => Promise<void>;
+    setSessionFoldersV1: (value: SessionFoldersV1, scope: SessionOrganizationMutationScope) => Promise<void>;
     pinnedKeySet: ReadonlySet<string>;
     sessionTags: Readonly<Record<string, string[]>>;
     setSessionPinForKey: (sessionKey: string, pinned: boolean) => void;
@@ -214,19 +204,6 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     const setSessionTagsForKeyRef = React.useRef(input.setSessionTagsForKey);
     setSessionTagsForKeyRef.current = input.setSessionTagsForKey;
 
-    const commitSessionFoldersV1 = React.useCallback((next: SessionFoldersV1) => {
-        sessionFoldersV1Ref.current = next;
-        setSessionFoldersV1Ref.current(next);
-    }, []);
-    const commitSessionListGroupOrderV1 = React.useCallback((next: Record<string, string[]>) => {
-        groupOrderRef.current = next;
-        setSessionListGroupOrderV1Ref.current(next);
-    }, []);
-    const commitSessionWorkspaceOrderV1 = React.useCallback((next: Record<string, string[]>) => {
-        workspaceOrderRef.current = next;
-        setSessionWorkspaceOrderV1Ref.current(next);
-    }, []);
-
     const readViewportMetrics = React.useCallback((): TreeViewportMetrics => ({
         viewportWindowY: viewportWindowYRef.current,
         viewportWindowX: viewportWindowXRef.current,
@@ -291,8 +268,9 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
 
     const unregisterTreeRowBounds = React.useCallback<UnregisterSessionListTreeRowBounds>((rowId) => {
         measuredRowRefsRef.current.delete(rowId);
+        if (activeDragSnapshotRef.current?.source.sourceRowId === rowId) entityDragRuntime.cancel('source-row-retired');
         dropGeometryRegistry.unregisterRow(rowId);
-    }, [dropGeometryRegistry]);
+    }, [dropGeometryRegistry, entityDragRuntime]);
 
     const measureTreeRowViewportOffset = React.useCallback(async (
         rowId: string,
@@ -348,74 +326,38 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         });
     }, [autoscrollViewportHeight, autoscrollViewportTopY]);
 
-    const persistSessionFolderAssignmentByIds = React.useCallback(async (assignment: Readonly<{
-        serverId: string;
-        sessionId: string;
-        folderId: string | null;
-    }>) => {
-        if (!isFolderActionsEnabledForServerIdRef.current(assignment.serverId)) return;
-        const scope = await requireSessionOrganizationMutationScope(assignment.serverId);
-        await writeSessionOrganizationFolderAssignment({
-            scope,
-            sessionId: assignment.sessionId,
-            folderId: assignment.folderId,
-        });
+    const buildBaseCommitContext = React.useCallback((scope?: SessionOrganizationMutationScope): SessionListBaseCommitContext => {
+        const requireCapturedScope = () => {
+            if (!scope) throw new Error('Organization writes require the captured mutation scope');
+            return scope;
+        };
+        return {
+            latestItems: listItemsRef.current,
+            latestTree: latestTreeRef.current,
+            sessionFoldersV1: sessionFoldersV1Ref.current,
+            sessionListGroupOrderV1: groupOrderRef.current,
+            sessionWorkspaceOrderV1: workspaceOrderRef.current,
+            sessionListFolderSortModeV1: folderSortModeRef.current,
+            sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
+            sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
+            manualSessionOrderingEnabled: manualSessionOrderingEnabledRef.current,
+            isFolderOrganizationEnabled: (serverId) => isFolderActionsEnabledForServerIdRef.current(serverId),
+            now: () => Date.now(),
+            setSessionFoldersV1: async next => {
+                await setSessionFoldersV1Ref.current(next, requireCapturedScope());
+            },
+            setSessionListGroupOrderV1: async next => {
+                await setSessionListGroupOrderV1Ref.current(next, requireCapturedScope());
+            },
+            setSessionWorkspaceOrderV1: async next => {
+                await setSessionWorkspaceOrderV1Ref.current(next, requireCapturedScope());
+            },
+            setSessionFolderAssignment: async assignment => {
+                await writeSessionOrganizationFolderAssignment({ scope: requireCapturedScope(), sessionId: assignment.sessionId, folderId: assignment.folderId });
+            },
+            putSessionUnder: putSessionUnderLead,
+        };
     }, []);
-
-    const pendingOrganizationCommitsRef = React.useRef<PendingSessionOrganizationCommit[]>([]);
-    const runPendingOrganizationCommitsRef = React.useRef<() => void>(() => {});
-    const [, runPendingOrganizationCommits] = useHappyAction(async () => {
-        const pending = pendingOrganizationCommitsRef.current.shift();
-        if (!pending) return;
-        try {
-            const result = await pending.commit();
-            pending.resolve(result.ok);
-        } catch (error) {
-            pending.resolve(false);
-            if (pendingOrganizationCommitsRef.current.length > 0) {
-                runPendingOrganizationCommitsRef.current();
-            }
-            throw error;
-        }
-        if (pendingOrganizationCommitsRef.current.length > 0) {
-            runPendingOrganizationCommitsRef.current();
-        }
-    }, { mode: 'rerun_latest' });
-    runPendingOrganizationCommitsRef.current = runPendingOrganizationCommits;
-    const enqueueOrganizationCommit = React.useCallback((commit: () => Promise<Readonly<{ ok: boolean }>>): Promise<boolean> => (
-        new Promise<boolean>((resolve) => {
-            pendingOrganizationCommitsRef.current.push({ commit, resolve });
-            runPendingOrganizationCommits();
-        })
-    ), [runPendingOrganizationCommits]);
-
-    const buildBaseCommitContext = React.useCallback((): SessionListBaseCommitContext => ({
-        latestItems: listItemsRef.current,
-        latestTree: latestTreeRef.current,
-        sessionFoldersV1: sessionFoldersV1Ref.current,
-        sessionListGroupOrderV1: groupOrderRef.current,
-        sessionWorkspaceOrderV1: workspaceOrderRef.current,
-        sessionListFolderSortModeV1: folderSortModeRef.current,
-        sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
-        sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
-        manualSessionOrderingEnabled: manualSessionOrderingEnabledRef.current,
-        isFolderOrganizationEnabled: (serverId) => isFolderActionsEnabledForServerIdRef.current(serverId),
-        now: () => Date.now(),
-        setSessionFoldersV1: commitSessionFoldersV1,
-        setSessionListGroupOrderV1: commitSessionListGroupOrderV1,
-        setSessionWorkspaceOrderV1: commitSessionWorkspaceOrderV1,
-        setSessionFolderAssignment: persistSessionFolderAssignmentByIds,
-        putSessionUnder: putSessionUnderLead,
-    }), [
-        commitSessionFoldersV1,
-        commitSessionListGroupOrderV1,
-        commitSessionWorkspaceOrderV1,
-        persistSessionFolderAssignmentByIds,
-    ]);
-
-    const commitOrganizationIntent = React.useCallback((intent: ReturnType<typeof buildSessionListDragIntent>) => (
-        commitSessionListDragIntent({ intent, context: buildBaseCommitContext() })
-    ), [buildBaseCommitContext]);
 
     const resolvePointerGeometry = React.useCallback((pointer: WindowPointer | null): UseSessionInlineDragResolvedDrop => {
         const snapshot = activeDragSnapshotRef.current;
@@ -453,6 +395,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         getItems: () => listItemsRef.current,
         foldersFeatureEnabled: input.folderActionsEnabled,
         beginCarry: entityDragDrop.beginCarry,
+        runtime: entityDragRuntime,
     });
 
     /**
@@ -460,17 +403,15 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
      * admitted place draws its line or outline. The list itself never re-renders for a frame.
      */
     const resolveDropResult = React.useCallback((event: UseSessionInlineDragResolveDropResultEvent): UseSessionInlineDragResolvedDrop => {
-        autoscrollPointerY.value = event.pointer?.y ?? null;
         const carry = carryRef.current;
         if (!carry) return IDLE_RESOLVED_DROP;
         return { result: IDLE_RESOLVED_DROP.result, geometry: carry.move(event.pointer) };
-    }, [autoscrollPointerY]);
+    }, []);
 
     const commitTreeDropResult = React.useCallback(async (_event: UseSessionInlineDragDropResultEvent): Promise<void> => {
         suppressNextFolderFocusPressAfterDrag();
         const carry = carryRef.current;
         const snapshot = activeDragSnapshotRef.current;
-        carryRef.current = null;
         try {
             await carry?.end(true, null);
         } finally {
@@ -491,15 +432,14 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
             clearDragState();
             return;
         }
-        activeDragSnapshotRef.current = snapshot;
         carryRef.current?.cancel();
+        activeDragSnapshotRef.current = snapshot;
         carryRef.current = entityDragDrop.beginCarry(snapshot, 'pointer');
+        if (!carryRef.current) { clearDragState(); return; }
         setActiveDragSnapshot(snapshot);
         setNativeContextMenuSessionKey(null);
         setDraggingSessionKey(sessionKey);
         remeasureAllRegisteredRows();
-        autoscrollActive.value = true;
-        autoscrollPointerY.value = null;
     }, [autoscrollActive, autoscrollPointerY, clearDragState, entityDragDrop, input.folderActionsEnabled, remeasureAllRegisteredRows]);
 
     const handleDragUpdate = React.useCallback((_event: UseSessionInlineDragDropResultEvent) => {}, []);
@@ -546,96 +486,76 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         });
     }, []);
 
-    const scheduleSessionFolderAssignment = React.useCallback((
-        item: SessionFolderAssignableSessionItem,
-        folderId: string | null,
-    ): Promise<boolean> => {
-        const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
-        const sessionId = typeof item.session?.id === 'string' ? item.session.id.trim() : '';
-        if (!serverId || !sessionId || !isFolderActionsEnabledForServerIdRef.current(serverId)) {
-            return Promise.resolve(false);
-        }
-        return enqueueOrganizationCommit(async () => {
-            if (!isFolderActionsEnabledForServerIdRef.current(serverId)) return { ok: false };
-            await persistSessionFolderAssignmentByIds({ serverId, sessionId, folderId });
-            return { ok: true };
-        });
-    }, [enqueueOrganizationCommit, persistSessionFolderAssignmentByIds]);
+    const prepareTreeRowSource = React.useCallback((sourceRowId: string) => {
+        const source = buildSessionListDragSource({ tree: latestTreeRef.current, sourceRowId });
+        const metadata = source.metadata;
+        const sessionDragKey = metadata.kind === 'session' && metadata.serverId && metadata.sessionId
+            ? sessionAddressKey({ serverId: metadata.serverId, sessionId: metadata.sessionId }) : sourceRowId;
+        return entityDragDrop.prepareSource(buildSessionListDragSnapshot({ items: listItemsRef.current, viewItems: listItemsRef.current,
+            sessionDragKey, foldersFeatureEnabled: input.folderActionsEnabled }));
+    }, [entityDragDrop.prepareSource, input.folderActionsEnabled]);
 
-    const buildLatestGeometryFreeTree = React.useCallback(() => latestTreeRef.current, []);
-
-    const resolveMoveSheetTargets = React.useCallback((sourceRowId: string): readonly SessionListMoveSheetTarget[] => {
-        if (!input.folderActionsEnabled) return [];
+    const performTreeResult = React.useCallback(async (sourceRowId: string, result: ReturnType<typeof buildSessionListKeyboardMoveResult>) => {
+        const source = prepareTreeRowSource(sourceRowId);
+        const scope = entityDragDrop.scope;
+        const targetId = entityDragDrop.targetId;
+        if (!source || !scope || !targetId) { source?.dispose(); return false; }
         try {
-            const tree = buildLatestGeometryFreeTree();
-            const source = buildSessionListDragSource({ tree, sourceRowId });
-            return buildSessionListMoveSheetTargets({ tree, source });
-        } catch {
-            return [];
-        }
-    }, [buildLatestGeometryFreeTree, input.folderActionsEnabled]);
+            const metadata = latestTreeRef.current.rowMetadataById.get(sourceRowId);
+            if (!metadata) return false;
+            const intent = buildSessionListDragIntent({ result, sourceRowId,
+                sourceKind: metadata.kind === 'session' ? 'leaf' : 'container', snapshotSignature: '', scope });
+            const { scope: _scope, sourceSnapshotSignature: _signature, ...destination } = intent;
+            const outcome = await entityDragRuntime.perform(source.sourceId, targetId, destination, 'chooser');
+            return outcome?.status === 'applied';
+        } finally { source.dispose(); }
+    }, [entityDragDrop.scope, entityDragDrop.targetId, entityDragRuntime, prepareTreeRowSource]);
 
-    const enqueueTreeDropOperation = React.useCallback((pending: Readonly<{
-        sourceRowId: string;
-        sourceKind: ReturnType<typeof buildSessionListDragSource>['kind'];
-        result: ReturnType<typeof buildSessionListKeyboardMoveResult> | SessionListMoveSheetTarget['result'];
-    }>): Promise<boolean> => enqueueOrganizationCommit(() => commitOrganizationIntent(buildSessionListDragIntent({
-        result: pending.result,
-        sourceRowId: pending.sourceRowId,
-        sourceKind: pending.sourceKind,
-        snapshotSignature: `queued:${pending.sourceRowId}`,
-    }))), [commitOrganizationIntent, enqueueOrganizationCommit]);
-
-    const applyMoveSheetTarget = React.useCallback((sourceRowId: string, target: SessionListMoveSheetTarget): Promise<boolean> | null => {
-        if (target.disabled) return null;
+    const applyKeyboardMove = React.useCallback((sourceRowId: string, direction: SessionListKeyboardMoveDirection) => {
         try {
-            const tree = buildLatestGeometryFreeTree();
+            const tree = latestTreeRef.current;
             const source = buildSessionListDragSource({ tree, sourceRowId });
-            return enqueueTreeDropOperation({
-                sourceRowId,
-                sourceKind: source.kind,
-                result: target.result,
-            });
-        } finally {
-            clearDragState();
-        }
-    }, [buildLatestGeometryFreeTree, clearDragState, enqueueTreeDropOperation]);
+            const result = buildSessionListKeyboardMoveResult({ tree, source, direction });
+            return { result, committed: performTreeResult(sourceRowId, result) };
+        } catch { return null; }
+    }, [performTreeResult]);
 
-    const applyKeyboardMove = React.useCallback((
-        sourceRowId: string,
-        direction: SessionListKeyboardMoveDirection,
-    ): Readonly<{
-        result: ReturnType<typeof buildSessionListKeyboardMoveResult>;
-        committed: Promise<boolean>;
-    }> | null => {
-        if (!input.folderActionsEnabled) return null;
-        try {
-            const tree = buildLatestGeometryFreeTree();
-            const source = buildSessionListDragSource({ tree, sourceRowId });
-            const result = buildSessionListKeyboardMoveResult({
-                tree,
-                source,
-                direction,
-            });
-            const committed = enqueueTreeDropOperation({
-                sourceRowId,
-                sourceKind: source.kind,
-                result,
-            });
-            return { result, committed };
-        } catch {
-            return null;
-        } finally {
-            clearDragState();
-        }
-    }, [buildLatestGeometryFreeTree, clearDragState, enqueueTreeDropOperation, input.folderActionsEnabled]);
+    const moveToFolder = React.useCallback((serverId: string, sessionId: string, folderId: string | null) => {
+        const sourceRowId = treeRowId.session(serverId, sessionId);
+        const source = latestTreeRef.current.rowMetadataById.get(sourceRowId);
+        if (!source) return Promise.resolve(false);
+        const target = folderId ? treeRowId.folder(serverId, folderId) : source.rootId;
+        return performTreeResult(sourceRowId, { instruction: folderId
+            ? { kind: 'nest-into', targetId: target, containerId: target, parentId: target, depth: 1 }
+            : { kind: 'move-to-root', containerId: target, rootId: target, depth: 0 }, visual: { kind: 'none' } });
+    }, [performTreeResult]);
+
+    React.useEffect(() => {
+        const update = () => {
+            const snapshot = entityDragRuntime.getSnapshot();
+            const active = activeDragSnapshotRef.current;
+            const ours = active && snapshot.sourceId === carryRef.current?.sourceId;
+            if (active && carryRef.current && (!ours || (snapshot.phase !== 'carrying' && snapshot.phase !== 'pending'))) {
+                carryRef.current = null;
+                clearDragState();
+            }
+            const scroll = snapshot.phase === 'carrying' && snapshot.targetId === entityDragDrop.targetId && snapshot.admission?.status === 'allowed';
+            autoscrollActive.value = scroll;
+            autoscrollPointerY.value = scroll ? entityDragRuntime.getPointer()?.y ?? null : null;
+        };
+        const semantic = entityDragRuntime.subscribe(update);
+        const pointer = entityDragRuntime.subscribePointer(update);
+        update();
+        return () => { semantic(); pointer(); autoscrollActive.value = false; autoscrollPointerY.value = null; };
+    }, [autoscrollActive, autoscrollPointerY, clearDragState, entityDragDrop.targetId, entityDragRuntime]);
 
     return {
         activeDragSnapshot,
         entityDragDrop,
         stagedMove,
         applyKeyboardMove,
-        applyMoveSheetTarget,
+        prepareTreeRowSource,
+        moveToFolder,
         consumeFolderFocusPressAfterDrag,
         draggingSessionKey,
         dropOverlayShared,
@@ -655,10 +575,8 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         nativeContextMenuSessionKey,
         registerTreeRowBounds,
         measureTreeRowViewportOffset,
-        resolveMoveSheetTargets,
         resolveDropResult,
         resolveTreeDropResult: resolveDropResult,
-        scheduleSessionFolderAssignment,
         setNativeContextMenuSessionKey,
         unregisterTreeRowBounds,
         handleNativeContextMenuOpenChangeSessionKey,

@@ -4,7 +4,8 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
+import { createModelBackedSessionItemTestComponent, createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixture';
+import { createSessionFixture } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,9 +20,12 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 const mockGesture = { type: 'pan' };
-vi.mock('react-native-gesture-handler', () => ({
-    Swipeable: 'Swipeable',
-    GestureDetector: (props: any) => React.createElement('GestureDetector', { gesture: props.gesture }, props.children),
+vi.mock('react-native-gesture-handler', async () => {
+    const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
+    return createGestureHandlerMock();
+});
+vi.mock('react-native-worklets', () => ({
+    scheduleOnRN: (fn: (...args: unknown[]) => void, ...args: unknown[]) => fn(...args),
 }));
 
 installSessionShellCommonModuleMocks({
@@ -173,5 +177,41 @@ describe('SessionItem desktop carry (E1)', () => {
 
         expect(screen.findAllByTestId('session-item-reorder-handle')).toHaveLength(0);
         expect(screen.findAllByTestId('session-item-drag-grip-sess_1')).toHaveLength(0);
+    });
+
+    it('lets nested row controls keep Space and Enter while the primary row can stage a move', async () => {
+        const { SessionListRow } = await import('./sessionListRow');
+        const { SessionListStagedMoveProvider } = await import('./keyboardMove/SessionListStagedMoveDock');
+        const session = createSessionFixture({ id: 'sess_keyboard', serverId: 'server_a' });
+        const handleRowKey = vi.fn(() => true);
+        const screen = await renderScreen(
+            <SessionListStagedMoveProvider handleRowKey={handleRowKey}>
+                <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
+                    selected={false} isFirst isLast variant="default" compact={false}
+                    sessionKey="sess_keyboard" treeRowId="sess_keyboard" groupKey="group" reorderEnabled organizeMode={false}
+                    onDragStart={vi.fn()} onDropResult={vi.fn()}
+                    resolveDropResult={() => ({ result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } }, geometry: { kind: 'none' } })}
+                    onTogglePinnedSessionKey={null} onSetTagsSessionKey={null} onNativeContextMenuOpenChangeSessionKey={null}
+                    isDragActive={false} isBeingDragged={false} dataIndex={0}
+                    overlayShared={{ overlayVisible: { value: 0 }, overlayKind: { value: 0 }, overlayTop: { value: 0 },
+                        overlayHeight: { value: 0 }, overlayLeft: { value: 0 }, overlayRight: { value: 0 }, overlayDepth: { value: 0 } }}
+                    onRegisterTreeRowBounds={vi.fn()} onUnregisterTreeRowBounds={vi.fn()} />
+            </SessionListStagedMoveProvider>,
+        );
+        const row = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onKeyDownCapture === 'function')[0]!;
+        // DOM boundary: closest identifies the focused control; the first primary action is the row surface.
+        const primary = {};
+        const secondary = {};
+        const currentTarget = { querySelector: () => primary };
+        for (const key of [' ', 'Enter']) {
+            const event = { key, target: { closest: () => secondary }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+            row.props.onKeyDownCapture(event);
+            expect(handleRowKey).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        }
+        const event = { key: ' ', target: { closest: () => primary }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+        row.props.onKeyDownCapture(event);
+        expect(handleRowKey).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'sess_keyboard', key: ' ' }));
+        expect(event.preventDefault).toHaveBeenCalled();
     });
 });

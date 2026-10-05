@@ -5,6 +5,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findGestureByKind, renderScreen } from '@/dev/testkit';
 
 import { SessionListHeaderItem } from './sessionListHeaderItem';
+import { SessionListOrganizeModeProvider, useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
+import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+
+const headerPlatform = vi.hoisted(() => ({ os: 'web' }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const module = await createReactNativeWebMock();
+    return { ...module, Platform: { ...module.Platform, get OS() { return headerPlatform.os; } } };
+});
+
+function EnterOrganize() {
+    const organize = useSessionListOrganizeMode();
+    React.useEffect(() => organize.enter(), [organize.enter]);
+    return null;
+}
 
 const spotlightTestState = vi.hoisted(() => ({
     active: false,
@@ -54,9 +69,44 @@ vi.mock('./sessionListChrome', async () => {
 
 describe('SessionListHeaderItem', () => {
     beforeEach(() => {
+        headerPlatform.os = 'web';
         spotlightTestState.active = false;
         spotlightTestState.mounts = 0;
         spotlightTestState.unmounts = 0;
+    });
+
+    it.each(['folder', 'project'] as const)('keeps %s header controls outside the touch Organize grip gesture', async (headerKind) => {
+        headerPlatform.os = 'android';
+        const item = {
+            type: 'header' as const, title: 'Planning', headerKind,
+            groupKey: `${headerKind}:planning`, folderId: 'planning', serverId: 'server_a',
+            workspaceKey: 'workspace_a',
+            workspace: { t: 'workspaceRef' as const, serverId: 'server_a', workspaceRefId: 'workspace_a' },
+            workspaceScopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/repo' },
+        };
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <SessionListOrganizeModeProvider>
+                <EnterOrganize />
+                <SessionListHeaderItem item={item} collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()}
+                    hasMultipleMachines={false} onOpenProject={vi.fn()} onCreateSessionFromWorkspaceScope={vi.fn()}
+                    onAddFolderToWorkspace={vi.fn()} onRenameWorkspace={vi.fn()} onResetWorkspaceName={vi.fn()}
+                    onToggleCollapse={onPress} onFocusFolder={onPress}
+                    overlayShared={{ overlayVisible: { value: 0 }, overlayKind: { value: 0 }, overlayTop: { value: 0 },
+                        overlayHeight: { value: 0 }, overlayLeft: { value: 0 }, overlayRight: { value: 0 }, overlayDepth: { value: 0 } }}
+                    resolveDropResult={() => ({ result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } }, geometry: { kind: 'none' } })}
+                    onFolderDropResult={vi.fn()} />
+            </SessionListOrganizeModeProvider>,
+        );
+        expect(screen.root.findAllByType(EntityDragGrip)).toHaveLength(1);
+        const header = screen.findByType(headerKind === 'folder' ? 'FolderGroupHeader' : 'ProjectGroupHeader');
+        for (let ancestor = header.parent; ancestor; ancestor = ancestor.parent) {
+            expect(String(ancestor.type)).not.toBe('GestureDetector');
+        }
+        const grip = screen.root.findByType(EntityDragGrip);
+        expect(grip.parent?.props.gesture).toBeTruthy();
+        await act(async () => header.props.onToggleCollapse());
+        expect(onPress).toHaveBeenCalled();
     });
 
     it('keeps the attention header mounted when its spotlight registration activates', async () => {
