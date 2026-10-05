@@ -150,6 +150,9 @@ describe('createClaudeStatuslineApplier', () => {
             modelId: 'claude-fable-5',
             effortLevel: 'medium',
         });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith(expect.objectContaining({
+            modelId: 'claude-fable-5', reasoningEffort: 'medium',
+        }));
     });
 
     it('logs a change-only runtime canary line', async () => {

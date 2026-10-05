@@ -21,7 +21,10 @@ export const MachineLiveStreamServerRoutedCapabilitiesSchema = z
     caps: MachineLiveStreamRelayCapsV1Schema.nullable().optional().default(null),
     disabledReason: MachineLiveStreamRelayDisabledReasonSchema.nullable().optional().default('relay_not_enabled'),
   })
-  .passthrough();
+  .passthrough()
+  // Optional relay diagnostics cannot invalidate Home identity or unrelated features.
+  // Drop malformed policy rather than treating it as an uncapped relay.
+  .catch({ caps: null, disabledReason: 'relay_caps_missing' });
 
 export type MachineLiveStreamServerRoutedCapabilities = z.infer<
   typeof MachineLiveStreamServerRoutedCapabilitiesSchema

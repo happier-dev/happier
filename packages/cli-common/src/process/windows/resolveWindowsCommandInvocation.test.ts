@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join, delimiter } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -27,23 +27,23 @@ describe('resolveWindowsCommandInvocation', () => {
     expect(isWindowsShellShimPath('C:\\bin\\claude.exe')).toBe(false);
   });
 
-  it('continues searching PATH when the caller rejects an existing command', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-filtered-path-'));
+  it('skips PATH candidates rejected by the owning caller', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-path-predicate-'));
     tempDirs.add(root);
-    const managedBin = join(root, 'managed');
-    const userBin = join(root, 'user');
-    mkdirSync(managedBin);
-    mkdirSync(userBin);
-    const managedCommand = join(managedBin, 'happier.exe');
-    const userCommand = join(userBin, 'happier.exe');
-    writeFileSync(managedCommand, '');
-    writeFileSync(userCommand, '');
-    const env = { PATH: [managedBin, userBin].join(delimiter), PATHEXT: '.EXE' };
+    const first = join(root, 'first');
+    const second = join(root, 'second');
+    mkdirSync(first);
+    mkdirSync(second);
+    const rejected = join(first, 'happier.cmd');
+    const accepted = join(second, 'happier.cmd');
+    writeFileSync(rejected, '@echo off');
+    writeFileSync(accepted, '@echo off');
+    const env = { PATH: [first, second].join(delimiter), PATHEXT: '.CMD' };
     const { resolveWindowsCommandOnPath } = await import('./resolveWindowsCommandInvocation.js');
 
-    expect(resolveWindowsCommandOnPath('happier', env, candidate => candidate !== managedCommand)).toBe(userCommand);
+    expect(resolveWindowsCommandOnPath('happier', env, candidate => candidate !== rejected)).toBe(accepted);
     expect(resolveWindowsCommandOnPath('happier', env, () => false)).toBeNull();
-    expect(resolveWindowsCommandOnPath('happier', env)).toBe(managedCommand);
+    expect(resolveWindowsCommandOnPath('happier', env)).toBe(rejected);
   });
 
   it('prefers PATHEXT-resolved commands over extensionless files when both exist on PATH', async () => {

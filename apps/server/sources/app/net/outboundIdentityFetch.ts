@@ -212,7 +212,7 @@ async function readBoundedBody(
     response: Awaited<ReturnType<typeof undiciFetch>>,
     maxBytes: number,
     endpoint: string,
-): Promise<Buffer | null> {
+): Promise<Buffer<ArrayBuffer> | null> {
     if (!response.body) return null;
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];

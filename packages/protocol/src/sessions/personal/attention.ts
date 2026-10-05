@@ -1,6 +1,23 @@
 import { z } from 'zod';
 
 import type { ViewerReadStateV1 } from './readState.js';
+import { isSessionActionConfirmationRequest } from '../metadata/sessionActionConfirmationsV1.js';
+
+export function resolvePendingRequestAttentionReasonV1(
+  request: Readonly<{ kind: 'permission' | 'user_action'; source?: string }>,
+): 'permission_required' | 'user_action_required' {
+  return request.kind === 'user_action' && !isSessionActionConfirmationRequest(request)
+    ? 'user_action_required' : 'permission_required';
+}
+
+/** The same grant policy serves summary attention, pending detail and settled landing. */
+export function isPendingRequestAnswerableV1(
+  request: Readonly<{ kind: 'permission' | 'user_action'; source?: string }>,
+  capabilities: Readonly<{ canSubmitAgentInput: boolean; canApprovePermissions: boolean }>,
+): boolean {
+  return resolvePendingRequestAttentionReasonV1(request) === 'user_action_required'
+    ? capabilities.canSubmitAgentInput : capabilities.canApprovePermissions;
+}
 
 /**
  * The closed set of personal attention facts (Lane 09B §4.4). Declaration order
@@ -116,8 +133,9 @@ export function resolveSessionPersonalAttentionV1(
 
   const reasons: SessionPersonalAttentionReasonV1[] = [];
   if (input.hasPrimarySessionFailure) reasons.push('failed');
-  if (count(input.pendingPermissionRequestCount) > 0 && canApprove) reasons.push('permission_required');
-  if (count(input.pendingUserActionRequestCount) > 0 && canAct) reasons.push('user_action_required');
+  const pendingCapabilities = { canSubmitAgentInput: canAct, canApprovePermissions: canApprove };
+  if (count(input.pendingPermissionRequestCount) > 0 && isPendingRequestAnswerableV1({ kind: 'permission' }, pendingCapabilities)) reasons.push('permission_required');
+  if (count(input.pendingUserActionRequestCount) > 0 && isPendingRequestAnswerableV1({ kind: 'user_action' }, pendingCapabilities)) reasons.push('user_action_required');
   if (count(input.pendingBlockedCount) > 0 && canAct) reasons.push('pending_blocked');
   if (input.discussion.hasMention) reasons.push('mentioned');
   if (input.externalSessionHasUnread ?? (cursor !== null && count(input.visibleSessionSeq) > cursor)) {

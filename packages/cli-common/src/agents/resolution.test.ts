@@ -95,6 +95,44 @@ describe('resolveAgentCliCommand', () => {
     process.chdir(originalCwd);
   });
 
+  it('finds the Pi vendor launcher outside the inherited PATH and preserves source policy', () => {
+    if (process.platform === 'win32') return;
+
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-vendor-launcher-'));
+    const homeDir = join(root, 'home');
+    const happyHomeDir = join(root, 'happier');
+    const defaultLauncher = join(homeDir, '.pi', 'agent', 'bin', 'pi');
+    const configuredLauncher = join(homeDir, 'configured-pi', 'bin', 'pi');
+    const pathLauncher = join(root, 'path-bin', 'pi');
+    const env = { HOME: homeDir, HAPPIER_HOME_DIR: happyHomeDir, PATH: '' };
+    const managedLauncher = resolveAgentCliManagedCommandPath('pi', { processEnv: env });
+    const writeLauncher = (path: string, executable = true) => {
+      mkdirSync(dirname(path), { recursive: true });
+      // The vendor launcher owns its pinned release and Node PATH, so the host executes the shell launcher itself.
+      writeFileSync(path, '#!/bin/sh\nexit 0\n', 'utf8');
+      chmodSync(path, executable ? 0o755 : 0o644);
+    };
+    try {
+      writeLauncher(defaultLauncher);
+      expect(resolveAgentCliCommand('pi', { processEnv: env })).toEqual({ source: 'system', command: defaultLauncher });
+      writeLauncher(configuredLauncher);
+      const configuredEnv = { ...env, PI_CODING_AGENT_DIR: '~/configured-pi' };
+      expect(resolveAgentCliCommand('pi', { processEnv: configuredEnv })).toEqual({ source: 'system', command: configuredLauncher });
+      expect(resolveAgentCliCommand('pi', { processEnv: { ...env, PI_CODING_AGENT_DIR: '~\\configured-pi' } })).toEqual({ source: 'system', command: configuredLauncher });
+      writeLauncher(pathLauncher);
+      expect(resolveAgentCliCommand('pi', { processEnv: { ...configuredEnv, PATH: dirname(pathLauncher) } })).toEqual({ source: 'system', command: pathLauncher });
+      expect(resolveAgentCliCommand('pi', { processEnv: { ...configuredEnv, HAPPIER_PI_PATH: join(root, 'missing-pi') } })).toBeNull();
+      writeLauncher(configuredLauncher, false);
+      expect(resolveAgentCliCommand('pi', { processEnv: configuredEnv })).toEqual({ source: 'system', command: defaultLauncher });
+      expect(resolveAgentCliCommand('pi', { processEnv: { ...env, PI_CODING_AGENT_DIR: join(root, 'missing-root') } })).toEqual({ source: 'system', command: defaultLauncher });
+      writeLauncher(managedLauncher);
+      expect(resolveAgentCliCommand('pi', { processEnv: { ...configuredEnv, HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON: JSON.stringify({ pi: 'managed-first' }) } })).toEqual({ source: 'managed', command: managedLauncher });
+      expect(resolveAgentCliCommand('pi', { processEnv: configuredEnv, sourcePolicy: 'managed_only' })).toEqual({ source: 'managed', command: managedLauncher });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('expands ~ and resolves agent CLI override shims on Windows', () => {
     if (!originalPlatformDescriptor) {
       throw new Error('Expected process.platform to be configurable for this test');
@@ -205,6 +243,30 @@ describe('resolveAgentCliCommand', () => {
       source: 'system',
       command: knownInstallPath,
     });
+  });
+
+  it('resolves a configured install root declared by an external Agent without a bundled catalog lookup', () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-agent-configured-bin-'));
+    const command = join(root, 'configured', 'bin', process.platform === 'win32' ? 'custom-agent.cmd' : 'custom-agent');
+    mkdirSync(dirname(command), { recursive: true });
+    writeFileSync(command, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(command, 0o755);
+    const runtimeSpec = {
+      id: 'customAgent', title: 'Custom Agent CLI', binaryName: 'custom-agent',
+      knownEnvironmentBinDirs: [{ envVar: 'CUSTOM_AGENT_DIR', relativeDir: 'bin' }],
+      sourcePreferenceDefault: 'system-first', managedInstall: null,
+      manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
+    } satisfies AgentCliRuntimeDescriptor;
+    try {
+      expect(resolveAgentCliCommandForRuntime(runtimeSpec, {
+        processEnv: { HOME: root, USERPROFILE: root, PATH: '', CUSTOM_AGENT_DIR: '~/configured' },
+      })).toEqual({ source: 'system', command });
+      expect(resolveAgentCliCommandForRuntime(runtimeSpec, {
+        processEnv: { HOME: root, USERPROFILE: root, PATH: '', CUSTOM_AGENT_DIR: '~/missing' },
+      })).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('honors agent-owned known-user-first system resolution without branching on the agent id', () => {

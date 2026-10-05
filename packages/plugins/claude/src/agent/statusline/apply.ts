@@ -74,6 +74,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
         modelId: string | null;
         displayName?: string | null | undefined;
         contextWindowTokens?: number | null | undefined;
+        reasoningEffort?: string | null | undefined;
     }>): Promise<void>;
 }> {
     let lastModelKey: string | null = null;
@@ -86,20 +87,23 @@ export function createClaudeStatuslineApplier(params: Readonly<{
         modelId: string | null;
         displayName?: string | null | undefined;
         contextWindowTokens?: number | null | undefined;
+        reasoningEffort?: string | null | undefined;
     }>): Promise<void> => {
         const modelId = readString(input.modelId);
         if (!modelId) return;
         const contextWindowTokens = readPositiveTokens(input.contextWindowTokens);
         const displayName = readString(input.displayName);
+        const reasoningEffort = readString(input.reasoningEffort);
 
         // Dedupe: identical payloads (~300ms debounce upstream, but state changes repeat the same
         // model/window) must not spam metadata writes.
-        const modelKey = `${modelId}|${contextWindowTokens ?? ''}`;
+        const modelKey = `${modelId}|${contextWindowTokens ?? ''}|${reasoningEffort ?? ''}`;
         if (modelKey === lastModelKey) return;
         params.onEffectiveModel?.({
             modelId,
             ...(displayName ? { displayName } : {}),
             ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
         });
         const previousModelId = lastObservedModelId;
         if (params.onModelChanged && previousModelId !== null && previousModelId !== modelId) {
@@ -154,6 +158,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 modelId: payload.model?.id ?? null,
                 displayName: payload.model?.display_name ?? null,
                 contextWindowTokens: payload.context_window?.context_window_size ?? null,
+                reasoningEffort: payload.effort?.level ?? null,
             });
             maybeFeedRuntimeTruth(payload);
             maybeLogRuntimeCanary(payload);

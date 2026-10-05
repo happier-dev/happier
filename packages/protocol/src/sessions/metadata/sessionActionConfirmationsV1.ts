@@ -13,6 +13,11 @@ import {
 const RequestIdSchema = SessionPermissionRequestIdV1Schema;
 const TimestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
+/** Host confirmations keep their native request kind but always need an approval decision. */
+export function isSessionActionConfirmationRequest(request: Readonly<{ source?: string }>): boolean {
+  return request.source === 'happier_action';
+}
+
 export const SessionActionConfirmationResponseTargetV1Schema = z.object({
   kind: z.literal('happier_action_confirmation_v1'),
   requestId: RequestIdSchema,

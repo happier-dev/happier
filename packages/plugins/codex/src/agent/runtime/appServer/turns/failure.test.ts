@@ -111,6 +111,23 @@ describe('createCodexAppServerTurnFailure', () => {
         expect(isCodexAppServerContextWindowExhaustedError(failure)).toBe(true);
     });
 
+    it('requires native structured context evidence when requested while preserving message compatibility', () => {
+        const proseFailure = createCodexAppServerTurnFailure({
+            value: { error: { message: 'Codex ran out of room in the context window.', codexErrorInfo: 'Other' } },
+        });
+        const structuredFailure = createCodexAppServerTurnFailure({
+            value: { error: { message: 'Input rejected.', codexErrorInfo: 'ContextWindowExceeded' } },
+        });
+
+        expect(isCodexAppServerContextWindowExhaustedError(proseFailure)).toBe(true);
+        expect(isCodexAppServerContextWindowExhaustedError(proseFailure, { structuredOnly: true })).toBe(false);
+        expect(isCodexAppServerContextWindowExhaustedError(structuredFailure, { structuredOnly: true })).toBe(true);
+        expect(isCodexAppServerContextWindowExhaustedError(
+            new Error('Codex ran out of room in the context window.'),
+            { structuredOnly: true },
+        )).toBe(false);
+    });
+
     it('marks selected-model capacity failures as temporary recoverable failures', () => {
         const failure = createCodexAppServerTurnFailure({
             value: {

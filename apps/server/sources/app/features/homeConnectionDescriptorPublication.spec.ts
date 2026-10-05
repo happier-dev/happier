@@ -135,9 +135,30 @@ describe("home connection descriptor publication owner", () => {
         expect(write).not.toHaveBeenCalled();
     });
 
-    it("rejects non-HTTPS ingress facts and invalid ingress URLs instead of publishing them", () => {
-        expect(composeHomeConnectionDescriptor(facts({ publicServerUrl: "http://127.0.0.1:3005" }))).toBeUndefined();
-        expect(composeHomeConnectionDescriptor(facts({ publicServerUrl: "not a url" }))).toBeUndefined();
+    it.each([
+        "http://localhost:3005",
+        "http://qa.localhost:3005",
+        "http://127.0.0.1:3005",
+        "http://127.0.0.2:3005",
+        "http://[::1]:3005",
+    ])("publishes explicit loopback HTTP ingress %s", (publicServerUrl) => {
+        const descriptor = composeHomeConnectionDescriptor(facts({ publicServerUrl }));
+        expect(descriptor?.endpoints).toEqual([{ kind: "https", url: publicServerUrl }]);
+        expect(resolvePublishedHomeConnectionDescriptor(facts({ publicServerUrl }))).toEqual(descriptor);
+    });
+
+    it.each([
+        "http://192.168.1.10:3005",
+        "http://home.example.test",
+        "http://0.0.0.0:3005",
+        "http://localhost.example.test:3005",
+        "http://localhost:3005?token=private",
+        "http://localhost:3005#fragment",
+        "http://user:password@localhost:3005",
+        "ftp://localhost:3005",
+        "not a url",
+    ])("rejects unsafe or invalid ingress %s instead of publishing it", (publicServerUrl) => {
+        expect(composeHomeConnectionDescriptor(facts({ publicServerUrl }))).toBeUndefined();
     });
 
     it("publishes an Iroh-only descriptor and allocates its outer revision locally", () => {
@@ -396,7 +417,7 @@ describe("home connection descriptor production read path", () => {
         await Promise.all(dataDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
     });
 
-    it("allocates the outer revision and keeps it across an explicit Iroh retirement", async () => {
+    it("allocates the outer revision and keeps it across retirement to loopback HTTP ingress", async () => {
         const active = await readHomeConnectionDescriptor({
             env,
             continuityStore: createFileHomeConnectionDescriptorContinuityStore(continuityPath()),
@@ -415,7 +436,7 @@ describe("home connection descriptor production read path", () => {
         // revision owner covers the full endpoint set, so retirement publishes
         // strictly past the Iroh revision.
         restart();
-        const retiredEnv = { ...env, HAPPIER_PUBLIC_SERVER_URL: "https://ingress.example.test" };
+        const retiredEnv = { ...env, HAPPIER_PUBLIC_SERVER_URL: "http://qa.localhost:3005" };
         const retired = await readHomeConnectionDescriptor({
             env: retiredEnv,
             continuityStore: createFileHomeConnectionDescriptorContinuityStore(continuityPath()),
@@ -427,8 +448,13 @@ describe("home connection descriptor production read path", () => {
             homeServerIdentityId: "srv_home",
             canonicalServerUrl: "https://home.example.test",
             revision: 2,
-            endpoints: [{ kind: "https", url: "https://ingress.example.test" }],
+            endpoints: [{ kind: "https", url: "http://qa.localhost:3005" }],
         });
+        expect(await readCommittedHomeConnectionDescriptor({
+            env: retiredEnv,
+            continuityStore: createFileHomeConnectionDescriptorContinuityStore(continuityPath()),
+            resolveIrohEndpointState: () => ({ status: "retired", snapshot: null, failureReason: null }),
+        })).toEqual(retired);
 
         // An unchanged later restart republishes the identical revision.
         restart();

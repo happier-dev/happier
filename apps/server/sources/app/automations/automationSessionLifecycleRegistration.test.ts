@@ -15,7 +15,7 @@ const input = {
 };
 
 function txFixture(params: {
-    sourceSession?: { latestTurnId: string | null } | null;
+    sourceSession?: { latestTurnId: string | null; createdAt?: Date } | null;
     sourceTurn?: { status: string } | null;
     terminalReceipt?: { id: string } | null;
 } = {}): Tx {
@@ -34,6 +34,36 @@ async function code(promise: Promise<unknown>) {
 }
 
 describe("Session lifecycle trigger registration", () => {
+    it("admits Session-start only with the exact newborn row's transaction context", async () => {
+        const createdAt = new Date("2026-10-05T00:00:00.000Z");
+        await expect(validateSessionLifecycleTriggerRegistrationTx({
+            tx: txFixture({ sourceSession: { latestTurnId: null, createdAt } }),
+            accountId: "account", automationTargetType: null,
+            newbornSession: { id: "source-session", accountId: "account", createdAt },
+            input: { kind: "sessionLifecycle", enabled: true, sourceSessionId: "source-session",
+                events: ["sessionStarted"], policy: { kind: "everyMatch" } },
+        })).resolves.toMatchObject({ sourceSessionId: "source-session", events: ["sessionStarted"] });
+    });
+
+    it("refuses a Session-start registration outside the birth transaction", async () => {
+        await expect(code(validateSessionLifecycleTriggerRegistrationTx({
+            tx: txFixture(), accountId: "account", automationTargetType: null,
+            input: { kind: "sessionLifecycle", enabled: true, sourceSessionId: "source-session",
+                events: ["sessionStarted"], policy: { kind: "everyMatch" } },
+        }))).resolves.toBe("session_already_started");
+    });
+
+    it("refuses a creation context that does not match the row in this transaction", async () => {
+        const createdAt = new Date("2026-10-05T00:00:00.000Z");
+        await expect(code(validateSessionLifecycleTriggerRegistrationTx({
+            tx: txFixture({ sourceSession: { latestTurnId: null, createdAt } }),
+            accountId: "account", automationTargetType: null,
+            newbornSession: { id: "source-session", accountId: "account", createdAt: new Date(createdAt.getTime() - 1) },
+            input: { kind: "sessionLifecycle", enabled: true, sourceSessionId: "source-session",
+                events: ["sessionStarted"], policy: { kind: "everyMatch" } },
+        }))).resolves.toBe("session_already_started");
+    });
+
     it("accepts only the same-Account exact current in-progress turn", async () => {
         await expect(validateSessionLifecycleTriggerRegistrationTx({
             tx: txFixture(),
