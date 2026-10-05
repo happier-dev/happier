@@ -36,8 +36,10 @@ import {
     resolveStatusPillVariantForState,
     StatusPill,
 } from '@/components/ui/status/StatusPill';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { findExternalSessionContentMatchRange } from '@happier-dev/protocol';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -175,6 +177,43 @@ function resolveBrowseCandidateMatchingLabel(candidate: ExternalSessionBrowseCan
     }).title;
 }
 
+/**
+ * Shared by the browser and Search: render decoded visible text, never source JSON. The searched words
+ * carry the Find tint every surface uses (Find lab H1/H2), located by the same owner that cut the snippet.
+ */
+export function ExternalSessionCandidateMatch(props: Readonly<{
+    candidate: ExternalSessionBrowseCandidate;
+    /** The query the snippet answers; its first literal occurrence is marked. */
+    query?: string;
+    /**
+     * `row` (default): a clamped secondary line under the hit. `preview`: the whole snippet as the
+     * message being previewed, its match drawn as the current one (Find lab H1r).
+     */
+    presentation?: 'row' | 'preview';
+    testID?: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles() as { theme: AppTheme };
+    const density = useResolvedItemDensity(undefined);
+    const snippet = props.candidate.match?.snippet;
+    const query = props.query?.trim() ?? '';
+    const range = snippet && query ? findExternalSessionContentMatchRange(snippet, query) : null;
+    const preview = props.presentation === 'preview';
+    return (
+        <Text
+            testID={props.testID ?? `external-session-candidate-match:${props.candidate.remoteSessionId}`}
+            style={preview
+                ? [Typography.default(), { fontSize: 14, lineHeight: 20, color: theme.colors.text.primary }]
+                : [Typography.default(), ITEM_SUBTITLE_TEXT_METRICS[density], { color: theme.colors.text.secondary }]}
+            numberOfLines={preview ? undefined : 3}
+            selectable={preview}
+        >
+            {snippet === undefined
+                ? t('externalSessions.browseContentNotSearchable')
+                : <FindHighlightedText text={snippet} ranges={range ? [{ ...range, current: preview }] : undefined} />}
+        </Text>
+    );
+}
+
 function resolveBrowseCandidateAccessibilityLabel(
     context: BrowseCandidatePresentationContext,
     candidate: ExternalSessionBrowseCandidate,
@@ -194,6 +233,7 @@ function resolveBrowseCandidateAccessibilityLabel(
         activityPresentation ? t(activityPresentation.labelKey) : null,
         candidate.linkedSessionId ? t('externalSessions.browseLinked') : null,
         candidate.imported ? t('externalSessions.browseImported') : null,
+        candidate.match?.snippet,
     ].filter((label): label is string => Boolean(label?.trim())))).join(', ');
 }
 
@@ -368,6 +408,8 @@ function buildCandidateVirtualizedSource(params: Readonly<{
         candidateDeleteSupported: boolean;
         offline: boolean;
         interaction: ExternalSessionsBrowseInteraction;
+        searchTarget: 'metadata' | 'content';
+        searchQuery: string;
     }>;
     theme: AppTheme;
     density: ReturnType<typeof useResolvedItemDensity>;
@@ -462,6 +504,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
             && interaction.linkingSessionId === null
             && candidateIndex >= 0
             && candidateIndex < params.candidates.length
+            && (interaction.searchTarget !== 'content' || getCandidate(candidateIndex).match !== undefined)
             && !isExternalSessionBrowseCandidateOfflineInert({
                 offline: interaction.offline,
                 interaction: interaction.interaction,
@@ -481,6 +524,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                 interaction.deletingCandidateKey ?? '',
                 interaction.offline ? 'offline' : 'online',
                 interaction.interaction,
+                interaction.searchTarget,
             ].join('\u0000');
         },
         getOption: (candidateIndex: number): SelectionListOption => {
@@ -518,14 +562,12 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                     />
                 ) : undefined,
                 subtitle: candidatePath ?? '',
-                subtitleContent: () => renderBrowseCandidateSubtitle(
-                    presentationContext,
-                    candidate,
-                    candidatePath,
-                ),
+                subtitleContent: () => interaction.searchTarget === 'content'
+                    ? <ExternalSessionCandidateMatch candidate={candidate} query={interaction.searchQuery} />
+                    : renderBrowseCandidateSubtitle(presentationContext, candidate, candidatePath),
                 rightAccessory: () => renderBrowseCandidateRightAccessory(
                     candidate,
-                    interaction.candidateDeleteSupported
+                    interaction.candidateDeleteSupported && (interaction.searchTarget !== 'content' || candidate.match !== undefined)
                         ? {
                             candidateKey,
                             candidateTitle: resolveBrowseCandidateMatchingLabel(candidate),
@@ -545,6 +587,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                 rightAccessoryOutsidePressable: interaction.candidateDeleteSupported,
                 onSelect: () => params.onSelectCandidate(candidate, params.selectionAuthorityGeneration),
                 disabled: interaction.candidateActionsDisabled
+                    || (interaction.searchTarget === 'content' && candidate.match === undefined)
                     || interaction.linkingSessionId !== null
                     || isExternalSessionBrowseCandidateOfflineInert({
                         offline: interaction.offline,
@@ -734,6 +777,12 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     candidateActionsDisabled?: boolean;
     interaction?: ExternalSessionsBrowseInteraction;
     searchQuery: string;
+    searchTarget?: 'metadata' | 'content';
+    contentSearchSupported?: boolean;
+    contentSearchExplicitlyUnsupported?: boolean;
+    contentSearchSubmitted?: boolean;
+    contentCoverage?: 'complete' | 'partial' | 'unsupported' | null;
+    onSearchSubmit?: (query: string) => void;
     onSearchQueryChange: (query: string) => void;
     selectionAuthorityGeneration: number;
     onSelectCandidate: (candidate: ExternalSessionBrowseCandidate, selectionAuthorityGeneration: number) => void;
@@ -788,6 +837,8 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         && props.onDeleteCandidate !== undefined;
     const offline = props.offline === true;
     const interaction: ExternalSessionsBrowseInteraction = props.interaction ?? 'openSession';
+    const searchTarget = props.searchTarget ?? 'metadata';
+    const isContentSearch = searchTarget === 'content';
     const interactionStateRef = React.useRef({
         candidateActionsDisabled,
         linkingSessionId: props.linkingSessionId,
@@ -795,6 +846,8 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         candidateDeleteSupported,
         offline,
         interaction,
+        searchTarget,
+        searchQuery: props.searchQuery,
     });
     interactionStateRef.current = {
         candidateActionsDisabled,
@@ -803,6 +856,8 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         candidateDeleteSupported,
         offline,
         interaction,
+        searchTarget,
+        searchQuery: props.searchQuery,
     };
     const getInteractionState = React.useCallback(() => interactionStateRef.current, []);
     const virtualizedOptionSource = React.useMemo(
@@ -847,15 +902,15 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             ],
             // Only reached while a cursor page is still continuing; a settled empty listing and a
             // search without matches are content states below.
-            emptyStateLabel: t(hasSearchQuery
+            emptyStateLabel: t(isContentSearch ? 'common.loading' : hasSearchQuery
                 ? 'externalSessions.browseNoSearchResults'
                 : 'externalSessions.browseNoCandidates'),
             sections: [],
             ...(virtualizedOptionSource === null ? {} : { virtualizedOptionSource }),
         };
-    }, [props.searchPlaceholder, props.searchQuery, virtualizedOptionSource]);
+    }, [isContentSearch, props.searchPlaceholder, props.searchQuery, virtualizedOptionSource]);
     const handleSelect = React.useCallback(() => undefined, []);
-    const searchIncompleteAnnouncement = props.searchIncomplete && props.candidates.length > 0
+    const searchIncompleteAnnouncement = !isContentSearch && props.searchIncomplete && props.candidates.length > 0
         ? t('externalSessions.browseSearchIncomplete', {
             count: props.candidates.length,
         })
@@ -866,7 +921,10 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     const annotationsIncompleteAnnouncement = showAnnotationsIncomplete
         ? t('externalSessions.browseAnnotationsIncomplete')
         : null;
-    const incompleteAnnouncement = [searchIncompleteAnnouncement, annotationsIncompleteAnnouncement]
+    const contentCoverageAnnouncement = isContentSearch && props.candidates.length > 0 && props.contentCoverage !== 'complete'
+        ? t('externalSessions.browseContentPartial')
+        : null;
+    const incompleteAnnouncement = [searchIncompleteAnnouncement, contentCoverageAnnouncement, annotationsIncompleteAnnouncement]
         .filter((announcement): announcement is string => announcement !== null)
         .join(' ') || null;
     useIosAccessibilityAnnouncement(incompleteAnnouncement);
@@ -899,7 +957,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
      * restarts the build.
      */
     const stoppedIndexNotice = props.preparationStopped === true && hasLoadedRows
-        ? t('externalSessions.browseIndexingCancelled')
+        ? t(isContentSearch ? 'externalSessions.browseContentStopped' : 'externalSessions.browseIndexingCancelled')
         : null;
     const presentationError = props.offline
         ? t('externalSessions.browseMachineOfflineBody')
@@ -1004,7 +1062,22 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             title={t('externalSessions.browseNothingToBrowseTitle', { machine: machineInSentence })}
             reason={t('externalSessions.browseNothingToBrowseBody')}
         />
-    ) : props.loading || props.loadingMore ? (
+    ) : isContentSearch && props.contentSearchSupported !== true ? (
+        <SurfaceStateCard
+            testID="direct-session-candidates:content-unsupported"
+            kind="unavailable"
+            iconName="magnifying-glass"
+            title={props.contentSearchExplicitlyUnsupported
+                ? t('externalSessions.browseContentNotSearchable')
+                : t('externalSessions.browseContentUpdateRequired', { machine: machineInSentence })}
+        />
+    ) : isContentSearch && props.contentSearchSubmitted !== true ? (
+        <EmptyState
+            layout="line"
+            testID="direct-session-candidates:content-unsearched"
+            title={t('externalSessions.browseContentSearchPrompt')}
+        />
+    ) : props.loading || props.loadingMore || props.preparation !== null ? (
         <BrowseLoadingState
             preparation={props.preparation}
             onCancelPreparation={props.onCancelPreparation}
@@ -1015,7 +1088,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             kind="unavailable"
             iconName="stop"
             accessibilitySemantics="status"
-            title={t('externalSessions.browseIndexingCancelled')}
+            title={t(isContentSearch ? 'externalSessions.browseContentStopped' : 'externalSessions.browseIndexingCancelled')}
             action={retry}
         />
     ) : props.error && props.nextCursor === null ? (
@@ -1026,6 +1099,12 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             title={t('externalSessions.browseErrorTitle')}
             reason={props.error}
             action={retry}
+        />
+    ) : isContentSearch && props.contentCoverage !== 'complete' && props.nextCursor === null ? (
+        <EmptyState
+            layout="line"
+            testID="direct-session-candidates:content-partial-empty"
+            title={t('externalSessions.browseContentPartial')}
         />
     ) : props.nextCursor !== null ? undefined : trimmedQuery ? (
         <EmptyState
@@ -1067,10 +1146,20 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
      * band, above the rows, so the band stays the top of the card as in Search / ⌘K.
      */
     const hasStatusRows = indexingBannerVisible
-        || (props.candidates.length > 0 && props.searchIncomplete === true)
+        || (isContentSearch && hasLoadedRows && props.contentCoverage !== 'complete')
+        || (!isContentSearch && props.candidates.length > 0 && props.searchIncomplete === true)
         || showAnnotationsIncomplete;
     const statusRows = hasStatusRows ? (
         <View testID="direct-session-candidates-status">
+            {isContentSearch && hasLoadedRows && props.contentCoverage !== 'complete' ? (
+                <Text
+                    testID="direct-session-candidates-content-partial"
+                    style={styles.searchIncomplete}
+                    accessibilityLiveRegion="polite"
+                >
+                    {t('externalSessions.browseContentPartial')}
+                </Text>
+            ) : null}
             {indexingBannerVisible ? (
                 <BrowseLoadingState
                     placement="banner"
@@ -1078,7 +1167,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                     onCancelPreparation={props.onCancelPreparation}
                 />
             ) : null}
-            {props.searchIncomplete && props.candidates.length > 0 ? (
+            {!isContentSearch && props.searchIncomplete && props.candidates.length > 0 ? (
                 <Text
                     testID="direct-session-candidates-search-incomplete"
                     style={styles.searchIncomplete}
@@ -1112,14 +1201,29 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             />
             <SelectionList
                 rootStep={rootStep}
+                inputMode={isContentSearch ? 'value' : 'search'}
+                onCommitInputValue={isContentSearch ? props.onSearchSubmit : undefined}
                 inputValue={props.searchQuery}
                 inputTestID="direct-session-candidates-search-input"
                 onChangeInputValue={props.onSearchQueryChange}
                 selectionMark="enter"
                 filters={props.filters}
                 inputAccessoryRow={statusRows}
-                inputSuffix={props.searchAugmenting || props.bandTrailing ? (
+                inputSuffix={isContentSearch || props.searchAugmenting || props.bandTrailing ? (
                     <View style={styles.searchSuffix}>
+                        {isContentSearch ? (
+                            <RoundButton
+                                testID="direct-session-candidates-content-submit"
+                                size="small"
+                                title={t(props.loading || props.loadingMore ? 'externalSessions.browseIndexingStop' : 'externalSessions.browseContentSubmit')}
+                                disabled={props.contentSearchSupported !== true
+                                    || (props.loading || props.loadingMore ? !props.onCancelPreparation : !props.onSearchSubmit || !props.searchQuery.trim())}
+                                onPress={() => {
+                                    if (props.loading || props.loadingMore) props.onCancelPreparation?.();
+                                    else props.onSearchSubmit?.(props.searchQuery);
+                                }}
+                            />
+                        ) : null}
                         {props.searchAugmenting ? (
                             <View
                                 testID="direct-session-candidates-search-augmenting"

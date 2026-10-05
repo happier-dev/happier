@@ -107,6 +107,29 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('does not dedupe Notify me after a push-token read failure', async () => {
+    const params = {
+      settings: accountSettingsParse({}),
+      pluginNotifications: null,
+      channels: ['builtin:expo_push'],
+      event: { topic: 'notify_me' as const, message: 'Digest ready', actionRequestId: 'token-read-failure-retry' },
+      nowMs: () => 50_000,
+    };
+    vi.mocked(axios.get).mockRejectedValueOnce(new Error('Home unavailable'));
+    expect(await dispatchActivityNotificationAsync({ ...params,
+      expoPushSender: new PushNotificationClient('account-token', 'https://owner-home.example.test'),
+    })).toEqual({ attemptedChannels: 1, deliveredChannels: 0 });
+    expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+
+    vi.mocked(axios.get)
+      .mockResolvedValueOnce({ data: { tokens: [{ id: 'device', token: 'ExponentPushToken[registered]' }] } })
+      .mockResolvedValueOnce({ data: { badgeCount: 0 } });
+    expect(await dispatchActivityNotificationAsync({ ...params,
+      expoPushSender: new PushNotificationClient('account-token', 'https://owner-home.example.test'),
+    })).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+    expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['ready', 'ready_without_settings', 'permission', 'user_action'] as const)('honors current owner Follow suppression for rich %s notifications', async (kind) => {
     let notificationLevel: 'none' | null = 'none';
     let sessionReadFails = false;

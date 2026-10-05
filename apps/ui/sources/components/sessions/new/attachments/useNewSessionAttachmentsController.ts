@@ -143,6 +143,12 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         replaceDrafts,
         getDraftsSnapshot,
     } = attachmentDraftManager;
+    const bindAttachmentPicker = params.composerDocument?.bindAttachmentPicker;
+    React.useEffect(() => bindAttachmentPicker?.(() => {
+        if (!attachmentsUploadsEnabled || params.isCreating || !filePickerRef.current) return false;
+        openAttachmentFilePickerFiles(filePickerRef.current);
+        return true;
+    }), [attachmentsUploadsEnabled, bindAttachmentPicker, filePickerRef, params.isCreating]);
     const discoverableReviewCommentsScope = React.useMemo<WorkspaceScopeBase | null>(() => {
         return resolveNewSessionReviewCommentsScope({
             targetServerId: params.targetServerId,

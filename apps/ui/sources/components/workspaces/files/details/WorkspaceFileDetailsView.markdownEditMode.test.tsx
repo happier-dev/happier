@@ -238,8 +238,8 @@ const workspaceSnapshot: ScmWorkingSnapshot = {
 };
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
         storage: {
             getState: () => ({
                 settings: openableContentViewerState.settings,
@@ -256,7 +256,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         useWorkspaceScmCommitSelectionPatches: () => [],
         useWorkspaceScmInFlightOperation: () => null,
         useWorkspaceReviewCommentsDrafts: () => [],
-        importOriginal,
     });
 });
 

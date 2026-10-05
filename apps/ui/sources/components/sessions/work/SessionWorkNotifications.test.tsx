@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor, createWorkflowTriggerActions, type ActionExecutorDeps, type AutomationDefinitionDetail, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationTriggerIdSchema, createActionExecutor, createWorkflowTriggerActions, type ActionExecutorDeps, type AutomationDefinitionDetail, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
 import type { SessionTriggersRead } from '@/components/workflows/triggers/useSessionTriggers';
@@ -27,7 +27,7 @@ function ownerFixture(options: Readonly<{ disconnected?: boolean; configured?: b
         // The authenticated Session, content codec and durable Automation operations are
         // the external boundaries. Real Action validation/projection/admission stays below the view.
         openContext: async (row) => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null,
-        sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion, workflow: { t: 'plain', v: context }, triggerEvidence: null }),
+        sealContext: async ({ templateVersion, context }) => AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion, workflow: { t: 'plain', v: context }, triggerEvidence: null }),
         automations: {
             list: async () => ({ automations: [...rows.values()].map(({ executionRecipe: _private, ...row }) => row), nextCursor: null }),
             get: async (automationId) => rows.get(automationId) ?? null,
@@ -62,9 +62,9 @@ function ownerFixture(options: Readonly<{ disconnected?: boolean; configured?: b
         },
     };
     const actions = createWorkflowTriggerActions(deps);
-    const read: SessionTriggersRead = { status: 'ready', sets: [], machineId: 'machine-one', lastRunAtByAutomationId: {}, retry: () => undefined,
+    const read: SessionTriggersRead = { status: 'ready', sets: [], pullRequestLinks: [], machineId: 'machine-one', lastRunAtByAutomationId: {}, retry: () => undefined,
         add: (request) => actions.sessionAdd({ ...request, sessionId: 'session-one' }),
-        remove: (triggerId) => actions.sessionRemove({ sessionId: 'session-one', triggerId }),
+        remove: (triggerId) => actions.sessionRemove({ sessionId: 'session-one', triggerId: AutomationTriggerIdSchema.parse(triggerId) }),
         update: (request) => actions.sessionUpdate({ ...request, sessionId: 'session-one' }),
     };
     const executor = createActionExecutor({
@@ -75,7 +75,7 @@ function ownerFixture(options: Readonly<{ disconnected?: boolean; configured?: b
         },
     } as unknown as ActionExecutorDeps);
     const runRead = { status: 'ready' as const, sets: [], add: actions.add,
-        remove: async (automationId: string, triggerId: string) => actions.remove({ automationId, triggerId }) };
+        remove: async (automationId: string, triggerId: string) => actions.remove({ automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId) }) };
     return { read, runRead, execute: executor.execute, acceptCreate, acceptRemove, rows, source: () => source, removedId: () => removedId };
 }
 

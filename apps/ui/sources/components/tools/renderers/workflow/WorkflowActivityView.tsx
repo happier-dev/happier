@@ -15,12 +15,14 @@ import type { WorkflowActivityRowViewModel } from '@/components/sessions/workSta
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
-import { WorkflowAgentRow } from '@/components/workflows/presentation/WorkflowAgentRow';
-import { WorkflowPhaseHeader } from '@/components/workflows/presentation/WorkflowPhaseHeader';
-import { WorkflowRunHeader } from '@/components/workflows/presentation/WorkflowRunHeader';
+import { WorkflowAgentRow, projectWorkflowAgentDisplayText } from '@/components/workflows/presentation/WorkflowAgentRow';
+import { WorkflowPhaseHeader, projectWorkflowPhaseDisplayText } from '@/components/workflows/presentation/WorkflowPhaseHeader';
+import { WorkflowRunHeader, projectWorkflowRunHeaderDisplayText } from '@/components/workflows/presentation/WorkflowRunHeader';
 import { formatWorkflowRunStatusLabel } from '@/components/workflows/presentation/workflowStatusLabel';
 
 import type { ToolViewProps } from '../core/_registry';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 /**
  * UIW4 — records-backed transcript workflow card.
@@ -108,7 +110,35 @@ function formatFooter(snapshot: SessionWorkflowRunSnapshotV1): string {
     return parts.join(' · ');
 }
 
-export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId, serverId, metadata }) => {
+function resolveWorkflowSummary(snapshot: SessionWorkflowRunSnapshotV1): string | undefined {
+    const phase = resolveActiveWorkflowPhasePosition(snapshot);
+    return phase ? t('tools.workflowActivityView.phaseSummary', {
+        index: phase.index, total: phase.total, complete: snapshot.completedAgents, agents: snapshot.totalAgents,
+    }) : undefined;
+}
+
+export const projectWorkflowActivityDisplayText: ToolDisplayTextProjector = (tool, _metadata, context) => {
+    const snapshot = context?.workflowRun;
+    if (!snapshot) return toolTextBlock('tool-workflow-title',
+        typeof tool.input?.name === 'string' && tool.input.name.trim() ? tool.input.name : t('tools.workflowActivityView.untitled'));
+    const rows = buildWorkflowActivityRows(snapshot);
+    return [
+        ...projectWorkflowRunHeaderDisplayText({
+            title: snapshot.title, status: snapshot.status,
+            statusLabel: formatWorkflowRunStatusLabel(snapshot.status, snapshot.statusReason),
+            completedAgents: snapshot.completedAgents, totalAgents: snapshot.totalAgents,
+            rollup: computeWorkflowRunRollup(snapshot), summaryLine: resolveWorkflowSummary(snapshot),
+        }),
+        ...rows.flatMap((row) => row.kind === 'phaseHeader'
+            ? projectWorkflowPhaseDisplayText(row, `tool-workflow-phase-${row.rowId}`)
+            : projectWorkflowAgentDisplayText(row.agent, `tool-workflow-agent-${row.agent.agentId}`)),
+        ...toolTextBlock('tool-workflow-footer', formatFooter(snapshot)),
+        ...(rows.length === 0 && !formatFooter(snapshot) ? toolTextBlock('tool-workflow-empty', t('tools.workflowActivityView.noDetail')) : []),
+    ];
+};
+
+export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, messageId, sessionId, serverId, metadata }) => {
+    const find = useToolFindState(messageId);
     const [visibleAgentLimit, setVisibleAgentLimit] = React.useState(INLINE_AGENT_INITIAL_LIMIT);
     const toolUseId = typeof tool.id === 'string' ? tool.id : null;
     const rowLayoutMutation = useTranscriptRowLayoutMutation();
@@ -145,7 +175,7 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
         return (
             <View style={styles.container}>
                 <View style={styles.shellHeader}>
-                    <Text style={styles.shellTitle} numberOfLines={1}>{title}</Text>
+                    <ToolFindText messageId={messageId} blockId="tool-workflow-title" text={title} style={styles.shellTitle} numberOfLines={1} />
                     <Text style={styles.shellStatus}>
                         {detail?.state === 'missing'
                             ? t('tools.workflowActivityView.unavailable')
@@ -158,22 +188,15 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
 
     const snapshot = detail.snapshot;
     const rollup = computeWorkflowRunRollup(snapshot);
-    const phase = resolveActiveWorkflowPhasePosition(snapshot);
-    const summaryLine = phase
-        ? t('tools.workflowActivityView.phaseSummary', {
-            index: phase.index,
-            total: phase.total,
-            complete: snapshot.completedAgents,
-            agents: snapshot.totalAgents,
-        })
-        : undefined;
-    const { rows, hiddenCount } = selectInlineRows(snapshot, visibleAgentLimit);
+    const summaryLine = resolveWorkflowSummary(snapshot);
+    const { rows, hiddenCount } = find.active ? { rows: buildWorkflowActivityRows(snapshot), hiddenCount: 0 } : selectInlineRows(snapshot, visibleAgentLimit);
     const footer = formatFooter(snapshot);
     const showNoDetail = rows.length === 0 && !footer;
 
     return (
         <View style={styles.container}>
             <WorkflowRunHeader
+                messageId={messageId}
                 title={snapshot.title}
                 status={snapshot.status}
                 statusLabel={formatWorkflowRunStatusLabel(snapshot.status, snapshot.statusReason)}
@@ -184,14 +207,16 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
             />
             <View style={styles.body}>
                 {showNoDetail ? (
-                    <Text style={styles.noDetail}>{t('tools.workflowActivityView.noDetail')}</Text>
+                    <ToolFindText messageId={messageId} blockId="tool-workflow-empty" text={t('tools.workflowActivityView.noDetail')} style={styles.noDetail} />
                 ) : (
                     rows.map((row) =>
                         row.kind === 'phaseHeader' ? (
-                            <WorkflowPhaseHeader key={row.rowId} title={row.title} fallback={row.fallback} rollup={row.rollup} />
+                            <WorkflowPhaseHeader key={row.rowId} title={row.title} fallback={row.fallback} rollup={row.rollup} messageId={messageId} findBlockPrefix={`tool-workflow-phase-${row.rowId}`} />
                         ) : (
                             <WorkflowAgentRow
                                 key={row.rowId}
+                                messageId={messageId}
+                                findBlockPrefix={`tool-workflow-agent-${row.agent.agentId}`}
                                 title={row.agent.title}
                                 status={row.agent.status}
                                 {...(row.agent.model ? { model: row.agent.model } : {})}
@@ -227,7 +252,7 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, sessionId
                 </Pressable>
             ) : null}
             {footer ? (
-                <Text style={styles.footer} numberOfLines={1}>{footer}</Text>
+                <ToolFindText messageId={messageId} blockId="tool-workflow-footer" text={footer} style={styles.footer} numberOfLines={1} />
             ) : null}
         </View>
     );

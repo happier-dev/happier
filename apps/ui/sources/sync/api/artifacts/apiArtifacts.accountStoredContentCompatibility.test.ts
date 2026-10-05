@@ -22,16 +22,18 @@ describe('Artifact HTTP authority projection', () => {
         const attempted: string[] = [];
         mocks.serverFetch.mockImplementation(async (path: string) => {
             attempted.push(path);
-            return path.endsWith('/content/binary')
+            return path.endsWith('/content/binary') || path === '/v1/artifacts/content/upload'
                 ? new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })
                 : new Response(JSON.stringify({ id: 'artifact', ...authority, success: true }));
         });
         const blob = { blobId: '00000000-0000-4000-8000-000000000001', content: { t: 'plain' as const, v: 'AA==' } };
-        await expect(createArtifact({ token: 't' }, { id: 'artifact', header: 'header', body: 'body', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, blob },
+        await expect(createArtifact({ token: 't' }, { id: '00000000-0000-4000-8000-000000000002', header: 'header', body: 'body', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, blob },
             { retry: 'none' })).rejects.toMatchObject({ status: 404 });
         await expect(updateArtifact({ token: 't' }, 'artifact', { body: 'body', expectedBodyVersion: 1, blob: { blobId: blob.blobId } },
             { retry: 'none' })).rejects.toMatchObject({ status: 404 });
-        expect(attempted).toEqual(['/v1/artifacts/content/binary', '/v1/artifacts/artifact/content/binary']);
+        await expect(updateArtifact({ token: 't' }, 'artifact', { body: 'text-body', expectedBodyVersion: 1, blob: null },
+            { retry: 'none' })).rejects.toMatchObject({ status: 404 });
+        expect(attempted).toEqual(['/v1/artifacts/content/upload', '/v1/artifacts/artifact/content/binary', '/v1/artifacts/artifact/content/binary']);
         await expect(createArtifact({ token: 't' }, { id: 'text', header: 'header', body: 'body', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER },
             { retry: 'none' })).resolves.toMatchObject({ id: 'artifact' });
         expect(attempted.at(-1)).toBe('/v1/artifacts');

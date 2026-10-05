@@ -46,7 +46,8 @@ describe('workflow definition Actions', () => {
     const caller = { surface: 'agent' as const, agentStartContext, sessionAgentSpawnPolicyV1: { v: 1 as const, allowModelOverride: false } };
     await expect(actions.create({ definitionId: 'definition-1', metadata: { title: 'Loop' }, definition }, undefined, caller))
       .resolves.toMatchObject({ definitionId: 'definition-1' });
-    expect(JSON.parse(stored!.body).definition.blocks[0].repetition.maxIterations).toEqual({ kind: 'input', name: 'rounds' });
+    if (typeof stored?.body !== 'string') throw new Error('expected a text Workflow definition');
+    expect(JSON.parse(stored.body).definition.blocks[0].repetition.maxIterations).toEqual({ kind: 'input', name: 'rounds' });
     const forbidden = { ...definition, blocks: [{ ...definition.blocks[0], body: [{ ...step, execution: { modelSelection: {
       v: 1, ref: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'other' }, updatedAt: 1,
     } } }] }] };
@@ -179,7 +180,9 @@ describe('workflow definition Actions', () => {
     await actions.create({ definitionId: 'definition-1', metadata: { title: 'Review' },
       definition: { version: 1, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } }, blocks: ['Review this'] } });
     expect(create).toHaveBeenCalledOnce();
-    const body = JSON.parse(create.mock.calls[0]![0].body);
+    const storedBody = create.mock.calls[0]![0].body;
+    if (typeof storedBody !== 'string') throw new Error('expected a text Workflow definition');
+    const body = JSON.parse(storedBody);
     expect(body.kind).toBe('workflow-definition.v1');
     expect(body.definition.blocks[0]).toMatchObject({ kind: 'step', id: 'wf--step-0' });
   });
@@ -222,6 +225,7 @@ describe('workflow definition Actions', () => {
 
   it('continues across sparse encrypted-header pages without dropping the next matching row', async () => {
     const workflowHeader = (id: string, updatedAt: number) => ({ artifactId: id, updatedAt, headerVersion: 1,
+      body: definitionBody, bodyVersion: 1,
       seq: updatedAt, createdAt: updatedAt, header: { kind: 'workflow-definition.v1', definitionId: id,
         revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: id } } });
     const definitionOne = '11111111-1111-4111-8111-111111111111';
@@ -229,11 +233,13 @@ describe('workflow definition Actions', () => {
     const list = vi.fn()
       .mockResolvedValueOnce({ items: [{ ...workflowHeader('other', 3), header: { kind: 'prompt_doc.v2' } }], nextCursor: 'page-2' })
       .mockResolvedValueOnce({ items: [workflowHeader(definitionOne, 2), workflowHeader(definitionTwo, 1)] });
-    const actions = createWorkflowDefinitionActions({ artifactStore: { list } as never });
+    const actions = createWorkflowDefinitionActions({ artifactStore: { list,
+      read: async () => { throw new Error('list_must_not_read_per_row'); },
+    } as never, readWorkflowTriggerSummaries: async () => new Map() });
     await expect(actions.list({ limit: 1 })).resolves.toMatchObject({
       definitions: [{ definitionId: definitionOne }], nextCursor: expect.any(String),
     });
-    expect(list).toHaveBeenNthCalledWith(2, { limit: 500, cursor: 'page-2' });
+    expect(list).toHaveBeenNthCalledWith(2, { limit: 500, cursor: 'page-2', includeBody: true });
   });
 
   it('fails closed when private header identity/currentness disagrees with the Artifact row', async () => {
@@ -268,6 +274,7 @@ describe('workflow definition Actions', () => {
     const definitionOne = '11111111-1111-4111-8111-111111111111';
     const definitionTwo = '22222222-2222-4222-8222-222222222222';
     const row = (id: string, updatedAt: number, description: string) => ({ artifactId: id, updatedAt, headerVersion: 1,
+      body: definitionBody, bodyVersion: 1,
       seq: updatedAt, createdAt: updatedAt, header: { kind: 'workflow-definition.v1', definitionId: id,
         revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: id, description } } });
     const partialBytes = (rows: ReadonlyArray<ReturnType<typeof row>>) => Buffer.byteLength(
@@ -281,7 +288,9 @@ describe('workflow definition Actions', () => {
     const list = vi.fn(async ({ cursor }: { cursor?: string }) => cursor === encodeAccountArtifactListCursor(rowOne)
       ? { items: [rowTwo] }
       : { items: [rowOne, rowTwo] });
-    const actions = createWorkflowDefinitionActions({ artifactStore: { list } as never });
+    const actions = createWorkflowDefinitionActions({ artifactStore: { list,
+      read: async () => { throw new Error('list_must_not_read_per_row'); },
+    } as never, readWorkflowTriggerSummaries: async () => new Map() });
 
     const firstPage = await actions.list({});
     expect(firstPage.definitions.map((definition) => definition.definitionId)).toEqual([definitionOne]);
@@ -289,8 +298,8 @@ describe('workflow definition Actions', () => {
     expect(isExternalActionResultWithinResponseEnvelopeLimitV1(firstPage)).toBe(true);
 
     const secondPage = await actions.list({ cursor: firstPage.nextCursor });
-    expect(secondPage).toEqual({ definitions: [rowTwo.header] });
-    expect(list).toHaveBeenLastCalledWith({ limit: 500, cursor: firstPage.nextCursor });
+    expect(secondPage).toMatchObject({ definitions: [{ ...rowTwo.header, stepCount: 1, triggers: [] }] });
+    expect(list).toHaveBeenLastCalledWith({ limit: 500, cursor: firstPage.nextCursor, includeBody: true });
   });
 
   describe('delete', () => {

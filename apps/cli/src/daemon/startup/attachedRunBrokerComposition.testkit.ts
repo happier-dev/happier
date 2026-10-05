@@ -298,6 +298,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
     });
 
     // --- The real daemon dispatcher. ---
+    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
     const daemon = await startDaemonSessionControlRuntime({
         machineId,
         serverId: 'server-attached-run-broker',
@@ -315,7 +316,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
         connectedServicesMaterializationBaseDir: join(happyHomeDir, 'connected-services'),
         getConnectedServiceRefreshCoordinator: () => null,
         getConnectedServiceQuotasCoordinator: () => null,
-        pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        pidToTrackedSession,
         pidToAwaiter: new Map(),
         pidToSpawnResultResolver: new Map(),
         pidToSpawnWebhookTimeout: new Map(),
@@ -384,6 +385,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
             retainedAgent: authority.document.retainedAgent,
             invocationContext: tracked.runnerAgentInvocationContext!,
             trackedSession: tracked,
+            isCurrent: () => pidToTrackedSession.get(tracked.pid) === tracked,
             signal: init?.signal ?? undefined,
         });
         return new Response(JSON.stringify(response), {

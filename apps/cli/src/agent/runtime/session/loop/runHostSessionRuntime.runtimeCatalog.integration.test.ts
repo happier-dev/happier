@@ -3383,7 +3383,7 @@ describe('runHostSessionRuntime', () => {
     });
     const bootstrapPushSender = {
       sendToAllDevices: vi.fn(() => undefined),
-      sendToAllDevicesAsync: vi.fn(async () => undefined),
+      sendToAllDevicesAsync: vi.fn(async () => true),
     };
     let currentPermissionMode: PermissionMode | undefined;
     let currentPermissionModeUpdatedAt = 0;
@@ -3521,7 +3521,7 @@ describe('runHostSessionRuntime', () => {
       create: async () => ({
         api: { push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }) },
         session: harness.session,
         machineId: 'machine-1',
@@ -3568,7 +3568,7 @@ describe('runHostSessionRuntime', () => {
       create: async () => ({
         api: { push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }) },
         session: deferredSession as unknown as ApiSessionClient,
         machineId: 'machine-1',
@@ -3612,7 +3612,7 @@ describe('runHostSessionRuntime', () => {
       create: async () => ({
         api: { push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }) },
         session: deferredSession as unknown as ApiSessionClient,
         machineId: 'machine-1',
@@ -3682,7 +3682,7 @@ describe('runHostSessionRuntime', () => {
       create: async () => ({
         api: { push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }) },
         session: deferredSession as unknown as ApiSessionClient,
         machineId: 'machine-1',
@@ -4868,7 +4868,7 @@ describe('runHostSessionRuntime', () => {
       create: async () => ({
         api: { push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }) },
         session: deferredSession as unknown as ApiSessionClient,
         machineId: 'machine-1',

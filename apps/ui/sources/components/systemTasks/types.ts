@@ -59,6 +59,8 @@ export type SystemTaskPromptContinuationRegistration = Readonly<{
     spec: SystemTaskSpec;
 }>;
 
+export type ActiveSetupTask = Readonly<{ taskId: string | null; spec: SystemTaskSpec }>;
+
 export type SystemTaskBridgeListenerSet = Readonly<{
     onEvent: (payload: unknown) => void;
     onResult: (payload: unknown) => void;
@@ -80,7 +82,14 @@ export type SystemTasksBridge = SystemTaskBridge;
 export type SystemTaskRunner = Readonly<{
     mode: SystemTaskRunnerMode;
     capabilities?: SystemTaskBridgeCapabilities;
-    start: (spec: SystemTaskSpec) => Promise<string>;
+    start: (
+        spec: SystemTaskSpec,
+        continuation?: SystemTaskPromptContinuation,
+        options?: Readonly<{ adoptExisting?: boolean }>,
+    ) => Promise<string>;
+    /** One admitted setup, published before native launch returns its task id. */
+    getActiveSetupTask: () => ActiveSetupTask | null;
+    subscribeActiveSetupTask: (listener: () => void) => () => void;
     cancel: (taskId: string) => Promise<void>;
     respond: (taskId: string, answer: unknown) => Promise<void>;
     /**

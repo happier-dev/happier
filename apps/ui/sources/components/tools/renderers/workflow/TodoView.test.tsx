@@ -5,6 +5,8 @@ import type { ToolCall } from "@happier-dev/session-core/messages";
 import { makeToolViewProps } from '@/dev/testkit';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
 import { renderScreen } from '@/dev/testkit';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,5 +71,22 @@ describe('TodoView', () => {
             makeCompletedTool('TodoRead', { todos: [{ content: 'FromInput', status: 'pending' }] }, {}),
         );
         expect(normalizedHostText(fromInput)).toContain('FromInput');
+    });
+
+    it('finds and decorates a todo beyond both summary and full-view limits without indexing metadata', async () => {
+        const module = await import('./TodoView');
+        const todos = makeTodoList(55);
+        const tool = makeCompletedTool('TodoRead', { hidden: 'private needle' }, { todos, hidden: 'private needle' });
+        const blocks = module.projectTodoDisplayText(tool);
+        expect(blocks).toHaveLength(55);
+        expect(blocks.at(-1)?.text).toBe('☐ Item 55');
+        expect(blocks.some((block) => block.text.includes('private'))).toBe(false);
+        const store = createTranscriptFindRowStore();
+        store.publish(new Map([['m1', { blocks: [{ id: 'tool-todo-54', sourceRanges: [{ start: 2, end: 9, current: true }] }] }]]));
+        const { tree } = await renderScreen(<TranscriptFindProvider store={store}>
+            <module.TodoView {...makeToolViewProps(tool, { messageId: 'm1' })} />
+        </TranscriptFindProvider>);
+        expect(normalizedHostText(tree)).toContain('Item 55');
+        expect(tree.findByTestId('find-match-current')?.props.children).toBe('Item 55');
     });
 });

@@ -1,9 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
 import { createLegacyVoiceOutputAdapter } from './legacyVoiceOutputAdapter';
-import type { VoiceAgentOutputEventV1 } from '@happier-dev/protocol';
+import { createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT, type VoiceAgentOutputEventV1 } from '@happier-dev/protocol';
 
 describe('createLegacyVoiceOutputAdapter', () => {
+  it.each([
+    { text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true },
+    { text: 'word '.repeat(9_000), actionCount: 230, incomplete: true },
+    { text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
+  ])('keeps predecessor speech, actions and final within the receiving Protocol budget ($actionCount actions)', ({ text, actionCount, incomplete }) => {
+    const adapter = createLegacyVoiceOutputAdapter({ streamId: 'stream-budget' });
+    const events = [
+      ...adapter.ingest(0, { t: 'delta', textDelta: text }),
+      ...adapter.ingest(1, {
+        t: 'done', assistantText: text,
+        actions: Array.from({ length: actionCount }, () => ({ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } })),
+      }),
+    ];
+    let state = createVoiceAgentOutputTurnV1('stream-budget');
+    for (const event of events) state = ingestVoiceAgentOutputEventV1(state, event).state;
+    const speech = events.filter((event) => event.kind === 'speech_segment').map((event) => event.text).join('');
+    const final = events.at(-1);
+    expect(state.terminal).toBe('final');
+    expect(final?.kind).toBe('turn_final');
+    if (final?.kind !== 'turn_final') throw new Error('missing final');
+    expect(final.text.startsWith(speech.trimEnd())).toBe(true);
+    expect(final.text.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(incomplete);
+    expect(speech.length).toBeGreaterThan(text.length / 4);
+    expect(text.startsWith(speech)).toBe(true);
+    if (!incomplete) expect(speech).toBe(text);
+  });
+
   it('uses the same early semantic first-sentence boundary as the daemon producer', () => {
     const adapter = createLegacyVoiceOutputAdapter({ streamId: 'stream-1' });
     expect(adapter.ingest(0, { t: 'delta', textDelta: 'Open index.' })).toEqual([]);

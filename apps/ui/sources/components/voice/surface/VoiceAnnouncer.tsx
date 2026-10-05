@@ -8,12 +8,10 @@ import {
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 
-import { resolveVoiceSurfaceStatusPresentation } from './resolveVoiceSurfaceStatusPresentation';
 import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
 import type { VoiceSurfaceTranscriptEntry } from './mergeVoiceSurfaceTranscriptEntries';
 
@@ -220,18 +218,16 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
 /**
  * The one automatic Voice announcer in the app (§5.4a).
  *
- * Horizon, the orb and the composer planet expose labels, states, hints and
+ * Containers, glance and composer expose labels, states, hints and
  * actions; none of them owns a live region. Two regions do not coalesce — two
  * `aria-live` nodes are two queues and two Android views are two events — and
- * Horizon and the orb are routinely mounted at the same time.
+ * Several Voice surfaces can be mounted at the same time.
  *
  * It consumes lifecycle changes and new transcript finals. Diagnostics recovery
  * remains a Voice Settings concern rather than an automatic Voice announcement.
  *
- * It reads the placement-free `useVoiceAttemptControl` projection, never the
- * Horizon model: `surfaceLocation`/`scopeDefault` are Horizon's placement policy
- * and an announcer that inherited them would go quiet whenever the user moved
- * the vessel.
+ * It reads the placement-free `useVoiceAttemptControl` projection. Idle start preference and
+ * container choice cannot suppress announcements for an admitted attempt.
  *
  * Mounted **outside** `AuthenticatedAppRuntimeMountsGate` — that gate returns
  * null while the onboarding journey is active, and the journey still renders a
@@ -278,7 +274,6 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
         control.sessionId ?? '',
     ].join('|'), [accountScope, control.sessionId]);
 
-    const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState);
     const stateAnnouncements = React.useMemo<readonly VoiceStateAnnouncement[]>(() => [
         {
             id: 'microphone',
@@ -302,8 +297,8 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
     return (
         <VoiceAnnouncerSurface
             announcementScopeKey={announcementScopeKey}
-            statusAnnouncement={t(statusPresentation.labelKey)}
-            statusTransitionKey={`voice-status:${control.surfaceState}`}
+            statusAnnouncement={control.statusLabel}
+            statusTransitionKey={`voice-status:${control.surfaceState}:${control.statusCell ?? 'none'}`}
             stateAnnouncements={stateAnnouncements}
             transcriptEntries={visibleTranscriptEntries}
         />

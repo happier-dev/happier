@@ -171,7 +171,7 @@ function createLifecycleParams(overrides?: Readonly<{
     api: {
       push: () => ({
         sendToAllDevices: vi.fn(),
-        sendToAllDevicesAsync: vi.fn(async () => undefined),
+        sendToAllDevicesAsync: vi.fn(async () => true),
       }),
     },
     session: session as unknown as SessionLoopLifecycleParams['session'],
@@ -383,7 +383,7 @@ describe('runSessionLoopLifecycle checkpoint controls', () => {
             sessionSyncClient: vi.fn(),
             push: () => ({
               sendToAllDevices: vi.fn(),
-              sendToAllDevicesAsync: vi.fn(async () => undefined),
+              sendToAllDevicesAsync: vi.fn(async () => true),
             }),
           } as unknown as ApiClient,
           machineId: 'machine-1',

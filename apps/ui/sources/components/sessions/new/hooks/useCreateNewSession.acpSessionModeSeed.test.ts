@@ -91,7 +91,7 @@ async function createHarness() {
     storage.setState({ artifacts: options.storageState.artifacts as ReturnType<typeof storage.getState>['artifacts'] });
   }
 
-  const { sync } = await import('@/sync/sync');
+  const { sync } = await import('@/sync/syncEngine');
   syncSingletonBridge.current = sync;
   const publishModeSpy = vi.spyOn(sync, 'publishSessionAcpSessionModeOverrideToMetadata');
   const sendMessageSpy = vi.spyOn(sync, 'sendMessage');
@@ -233,7 +233,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     const prepareTemporaryComputerLaunchDraft = vi.fn(async () => undefined);
     const draftId = 'temporary-computer-completion-draft';
     const { getSessionDraftSnapshot, writeNewSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     const ensureSessionVisibleForMessageRouteSpy = vi
       .spyOn(sync, 'ensureSessionVisibleForMessageRoute')
       .mockResolvedValue({ kind: 'available', sessionId: 'runner-session-1' });

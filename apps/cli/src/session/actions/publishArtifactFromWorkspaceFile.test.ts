@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ArtifactBlobWriteV1Schema, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { publishArtifactFromWorkspaceFile } from './publishArtifactFromWorkspaceFile';
 
 const http = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
@@ -18,10 +19,42 @@ describe('explicit Artifact publication from the caller workspace', () => {
     root = await mkdtemp(join(tmpdir(), 'artifact-publication-'));
     await mkdir(join(root, 'workspace'));
     http.post.mockReset();
-    http.post.mockImplementation(async (_url: string, body: { id: string }) => ({ status: 200,
-      data: { id: body.id, headerVersion: 1, bodyVersion: 1 } }));
+    http.get.mockReset();
+    http.post.mockImplementation(async (_url: string, wire: Record<string, unknown> | Buffer) => ({ status: 200,
+      data: { id: readCarrierMutation(wire).id, headerVersion: 1, bodyVersion: 1 } }));
   });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  it.each(['text/html', 'application/vnd.happier.html-bundle+json'])('publishes %s as exact html kind and preserves all source bytes', async (mime) => {
+    const text = mime === 'text/html' ? '<h1>HTML</h1>' : JSON.stringify({ v: 1, entrypoint: 'pages/index.html', files: {
+      'pages/index.html': { mime: 'text/html', contentBase64: Buffer.from('<img src="../assets/icon.svg">').toString('base64') },
+      'assets/icon.svg': { mime: 'image/svg+xml', contentBase64: Buffer.from('<svg/>').toString('base64') },
+    } });
+    await writeFile(join(root, 'workspace', 'document'), text);
+    http.get.mockImplementation(async (url: string) => ({ status: 200,
+      data: { url: `https://isolated.example/a/${url.split('/').at(-2)}` } }));
+    const result = await publishArtifactFromWorkspaceFile({ store: store(), caller: { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') }, input: { path: 'document', mime } });
+    expect(result).toMatchObject({ previewUrl: expect.stringContaining('#d=') });
+    const payload = readCarrierMutation(http.post.mock.calls[0]?.[1]);
+    expect(decodePlainArtifactStoredContent(String(payload.header))).toMatchObject({ kind: 'html', mime });
+    if (mime === 'text/html') expect(decodePlainArtifactStoredContent(String(payload.body))).toEqual({ body: text });
+    else expect(ArtifactBlobWriteV1Schema.parse(payload.blob).content).toEqual({ t: 'plain', v: Buffer.from(text).toString('base64') });
+  });
+
+  it('infers HTML filenames only without conflicting caller declarations', async () => {
+    await writeFile(join(root, 'workspace', 'document.HTML'), '<h1>HTML</h1>');
+    http.get.mockImplementation(async (url: string) => ({ status: 200,
+      data: { url: `https://isolated.example/a/${url.split('/').at(-2)}` } }));
+    const caller = { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') };
+    for (const input of [{ path: 'document.HTML' }, { path: 'document.HTML', kind: 'published.v1' },
+      { path: 'document.HTML', mime: 'text/plain' }, { path: 'document.HTML', mime: 'text/html; charset=utf-8' }]) {
+      const result = await publishArtifactFromWorkspaceFile({ store: store(), caller, input });
+      const header = decodePlainArtifactStoredContent(http.post.mock.calls.at(-1)?.[1].header);
+      const isHtml = !('kind' in input) && (!('mime' in input) || input.mime?.startsWith('text/html'));
+      expect(header).toMatchObject({ kind: isHtml ? 'html' : 'published.v1' });
+      expect(Reflect.has(result, 'previewUrl')).toBe(isHtml);
+    }
+  });
 
   it('publishes a completed multi-chunk text copy with host-owned provenance', async () => {
     const text = 'Published output\n'.repeat(40_000);
@@ -57,13 +90,14 @@ describe('explicit Artifact publication from the caller workspace', () => {
     await expect(publishArtifactFromWorkspaceFile({ store: store(), caller: {
       sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace'),
     }, input: { path: 'binary', mime } })).resolves.toMatchObject({ revision: { bodyVersion: 1 } });
-    const payload = http.post.mock.calls[0]?.[1];
-    expect(payload.blob.content).toEqual({ t: 'plain', v: bytes.toString('base64') });
-    expect(decodePlainArtifactStoredContent(payload.body)).toMatchObject({ body: {
-      blobId: payload.blob.blobId, mime, sizeBytes: bytes.length,
+    const payload = readCarrierMutation(http.post.mock.calls[0]?.[1]);
+    const blob = ArtifactBlobWriteV1Schema.parse(payload.blob);
+    expect(blob.content).toEqual({ t: 'plain', v: bytes.toString('base64') });
+    expect(decodePlainArtifactStoredContent(String(payload.body))).toMatchObject({ body: {
+      blobId: blob.blobId, mime, sizeBytes: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'),
     } });
-    expect(decodePlainArtifactStoredContent(payload.header)).toMatchObject({ source: { path: 'binary', sessionId: 'session' } });
+    expect(decodePlainArtifactStoredContent(String(payload.header))).toMatchObject({ source: { path: 'binary', sessionId: 'session' } });
   });
 
   it('does not create an Artifact when transfer fails or cancellation precedes it', async () => {

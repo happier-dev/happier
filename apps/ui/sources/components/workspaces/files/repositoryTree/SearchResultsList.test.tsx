@@ -99,6 +99,17 @@ const searchResultsTheme = {
 };
 
 describe('SearchResultsList', () => {
+    it('reports failed or incomplete searches instead of claiming there are no matches', async () => {
+        const { SearchResultsList } = await import('./SearchResultsList');
+        const props = { theme: searchResultsTheme, searchQuery: 'needle', searchResults: [], isSearching: false, onFilePress: vi.fn() };
+        const screen = await renderScreen(<SearchResultsList {...props} searchError onRetry={vi.fn()} />);
+        expect(screen.findByTestId('files-search-error')).toBeTruthy();
+        expect(screen.findByTestId('files-search-no-results')).toBeFalsy();
+        await screen.update(<SearchResultsList {...props} hasMore />);
+        expect(screen.findByTestId('files-search-incomplete')).toBeTruthy();
+        expect(screen.findByTestId('files-search-no-results')).toBeFalsy();
+    });
+
     it('keeps the mounted result list and rows while a refined query is searching', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');
         const file = { fileType: 'file' as const, fileName: 'a.ts', filePath: 'src/', fullPath: 'src/a.ts' };

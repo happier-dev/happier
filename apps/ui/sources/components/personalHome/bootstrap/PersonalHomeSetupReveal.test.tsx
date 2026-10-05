@@ -90,13 +90,17 @@ async function renderBootstrapThroughHomeReady() {
     // Automatic startup owns only Home content; the normal shell remains reachable.
     expect(ensureHomeReady).toHaveBeenCalled();
     expect(screen.findByTestId('personal-home-setup-surface')).not.toBeNull();
-    expect(screen.findByTestId('ready-home-content')).toBeNull();
+    expect(screen.findByTestId('ready-home-content')).not.toBeNull();
+    expect(screen.findByTestId('personal-home-bootstrap-backdrop')?.props.pointerEvents).toBe('none');
     expect(screen.findByTestId('normal-shell')).not.toBeNull();
     expect(screen.findByTestId('boot-starting')).not.toBeNull();
+    const retainedHomeContent = screen.findByTestId('ready-home-content');
 
     releaseHome();
     await flushHookEffects({ cycles: 6, turns: 3 });
     expect(screen.findByTestId('boot-ready')).not.toBeNull();
+    expect(screen.findByTestId('ready-home-content')).toBe(retainedHomeContent);
+    expect(screen.findByTestId('personal-home-bootstrap-backdrop')?.props.pointerEvents).toBe('auto');
     return screen;
 }
 

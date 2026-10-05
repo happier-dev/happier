@@ -149,6 +149,11 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     temporaryComputers?: readonly TemporaryComputerSelection[];
     favoriteGroupPlacement?: MachineSelectionFavoriteGroupPlacement;
     testIdPrefix?: string;
+    disableOfflineMachines?: boolean;
+    includeSelectedUnavailableMachineId?: string | null;
+    searchPlaceholder?: string;
+    emptyStateLabel?: string;
+    sectionTitles?: Readonly<Partial<Record<'recent' | 'favorites' | 'all', string>>>;
 }>;
 
 
@@ -389,7 +394,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
 
     return React.useMemo(() => {
         const inputPlaceholder = params.showSearch
-            ? t('newSession.machinePicker.searchPlaceholder')
+            ? params.searchPlaceholder ?? t('newSession.machinePicker.searchPlaceholder')
             : undefined;
 
         /**
@@ -715,7 +720,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 rootStep: {
                     id: 'machine-root',
                     inputPlaceholder,
-                    emptyStateLabel: t('newSession.noMachinesFound'),
+                    emptyStateLabel: params.emptyStateLabel ?? t('newSession.noMachinesFound'),
                     sections: temporaryComputerSection ? [temporaryComputerSection] : [],
                 },
             };
@@ -730,14 +735,15 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 favoriteMachines: params.favoriteMachines,
                 showFavorites: params.showFavorites,
                 showRecent: params.showRecent,
-                disableOfflineMachines: true,
+                disableOfflineMachines: params.disableOfflineMachines ?? true,
                 favoriteGroupPlacement: params.favoriteGroupPlacement,
+                includeSelectedUnavailableMachineId: params.includeSelectedUnavailableMachineId,
             });
 
             const sections: SelectionListSectionDescriptor[] = bucketModel.buckets.map((bucket) => ({
                 kind: 'static',
                 id: bucket.id,
-                title: bucketTitle(bucket.id),
+                title: params.sectionTitles?.[bucket.id] ?? bucketTitle(bucket.id),
                 options: bucket.machines.map((machine) => {
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability);
                     const presentation = params.resolveMachinePresentation?.(machine);
@@ -797,7 +803,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 rootStep: {
                     id: 'machine-root',
                     inputPlaceholder,
-                    emptyStateLabel: t('newSession.noMachinesFound'),
+                    emptyStateLabel: params.emptyStateLabel ?? t('newSession.noMachinesFound'),
                     sections,
                 },
             };
@@ -891,7 +897,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             rootStep: {
                 id: 'machine-root',
                 inputPlaceholder,
-                emptyStateLabel: t('newSession.noMachinesFound'),
+                emptyStateLabel: params.emptyStateLabel ?? t('newSession.noMachinesFound'),
                 sections,
             },
         };
@@ -926,6 +932,11 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         params.showRecent,
         params.showSearch,
         params.testIdPrefix,
+        params.disableOfflineMachines,
+        params.includeSelectedUnavailableMachineId,
+        params.searchPlaceholder,
+        params.emptyStateLabel,
+        params.sectionTitles,
         params.temporaryComputers,
         pendingExpiry,
         theme.colors.text.secondary,

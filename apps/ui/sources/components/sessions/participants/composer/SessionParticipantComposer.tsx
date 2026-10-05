@@ -91,6 +91,8 @@ import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pe
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 
 export type ParticipantComposerPreparedSubmission = Readonly<{
@@ -211,6 +213,9 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         instanceId: composerInstanceId,
     }), [composerInstanceId, props.sessionId]);
     const composerRefRef = React.useRef<ComposerRefV1>(composerRef);
+    const layoutPresented = useLayoutPresentationActive();
+    const layoutPresentedRef = React.useRef(layoutPresented);
+    layoutPresentedRef.current = layoutPresented;
     composerRefRef.current = composerRef;
     const canSendMessagesRef = React.useRef(props.canSendMessages);
     canSendMessagesRef.current = props.canSendMessages;
@@ -323,6 +328,13 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         participantServerId,
     ]);
     participantComposerReferenceHostRef.current = participantComposerReferenceHost;
+    const participantComposerDropHost = React.useMemo<ComposerReferenceSearchHost | null>(() => (
+        participantComposerReferenceHost ? {
+            ...participantComposerReferenceHost,
+            isCurrent: () => participantComposerReferenceHostRef.current === participantComposerReferenceHost
+                && isParticipantComposerCurrent() && layoutPresentedRef.current,
+        } : null
+    ), [isParticipantComposerCurrent, layoutPresented, participantComposerReferenceHost]);
     const participantComposerPresentation = useComposerScopePluginPresentation({
         composer: composerRef,
         physicalTarget: { kind: 'session', sessionId: props.sessionId },
@@ -495,6 +507,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     }, [composerRef, participantComposerDocumentOwner]);
 
     const composerTarget = useStableComposerPresentationTarget(composerRef, {
+        readScope: () => composerAccountLifetime?.scope ?? null,
         readRevision: () => participantComposerDocumentOwner.read().revision,
         replace: (text, expectedRevision) => {
             if (participantComposerDocumentOwner.read().revision !== expectedRevision) return participantComposerDocumentOwner.read().revision;
@@ -504,8 +517,14 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
             }, true);
         },
         readSnapshot: readParticipantComposerSnapshot,
+        isPresented: () => layoutPresented,
         commitDocument: commitParticipantComposerDocument,
         createAttachmentInstanceId: randomUUID,
+        openAttachmentPicker: () => {
+            if (!attachmentsUploadsEnabled || isUploadingAttachments || !transferDraftManager.filePickerRef.current) return false;
+            openAttachmentFilePickerFiles(transferDraftManager.filePickerRef.current);
+            return true;
+        },
         setComposerDecorations: composerInputEffects.setComposerDecorations,
         acquireComposerInputLock: composerInputEffects.acquireComposerInputLock,
         isCurrent: () => (
@@ -860,6 +879,9 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         <PluginContextualResourceStoreProvider>
             {participantComposerPresentation.beforeComposer}
             <AgentInput
+                composerRef={composerRef}
+                composerReferenceHost={participantComposerDropHost}
+                composerFileScope={resolveWorkspaceTargetForSession(participantSessionAddress ?? props.sessionId)}
                 placeholder={props.canSendMessages ? props.placeholder ?? t('session.inputPlaceholder') : t('session.sharing.viewOnlyMode')}
                 {...(props.engine ? {
                     agentType: props.engine.agentType,

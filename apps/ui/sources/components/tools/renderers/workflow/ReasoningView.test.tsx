@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 import {
     installWorkflowRendererCommonModuleMocks,
 } from './workflowRendererTestHelpers';
@@ -81,5 +83,22 @@ describe('ReasoningView', () => {
         markdownViewSpy.mockReset();
         await renderView(makeTool({ content: 123 }));
         expect(markdownViewSpy).not.toHaveBeenCalled();
+    });
+
+    it('projects only rendered reasoning and reveals a match beyond the summary clamp', async () => {
+        const module = await import('./ReasoningView');
+        const markdown = 'x'.repeat(1200) + '**needle**';
+        const tool = makeTool({ content: markdown, hiddenMetadata: 'private needle' });
+        expect(module.projectReasoningDisplayText(tool)).toEqual([
+            { id: 'tool-reasoning', text: markdown, format: 'markdown', kind: 'toolBody' },
+        ]);
+        const store = createTranscriptFindRowStore();
+        const ranges = [{ start: 1202, end: 1208, current: true }];
+        store.publish(new Map([['m1', { blocks: [{ id: 'tool-reasoning', sourceRanges: ranges }] }]]));
+        markdownViewSpy.mockReset();
+        await renderScreen(<TranscriptFindProvider store={store}>
+            <module.ReasoningView {...makeToolViewProps(tool, { messageId: 'm1' })} />
+        </TranscriptFindProvider>);
+        expect(markdownViewSpy.mock.calls.at(-1)?.[0]).toMatchObject({ markdown, findSourceRanges: ranges });
     });
 });

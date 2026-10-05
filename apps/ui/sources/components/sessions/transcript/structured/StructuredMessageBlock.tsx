@@ -3,7 +3,7 @@ import React from 'react';
 import type { MessageStructuredPresentationV1 } from '@happier-dev/protocol';
 
 import type { Message } from "@happier-dev/session-core/messages";
-import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
+import { PluginSurfaceFallback, projectPluginSurfaceFallbackFindText } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { PluginUiBoundary } from '@/components/plugins/reactNative/PluginUiBoundary';
 import { openPluginContributedActionReference } from '@/components/plugins/actions/openPluginContributedAction';
 import {
@@ -27,6 +27,9 @@ import type { StructuredMessageRendererParams } from './structuredMessageRegistr
 import {
     findBuiltInStructuredMessageEntry,
 } from './descriptorRegistry';
+import { StructuredFindMessageProvider, useStructuredFindState, type StructuredFindTextContext, type StructuredFindTextBlock } from './structuredFindText';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { projectDeclarativeStructuredFindText } from '@/components/plugins/shared/declarativeNodes';
 
 const NON_STRUCTURED_HAPPIER_META_KINDS = new Set([
     'attachments.v1',
@@ -55,6 +58,53 @@ function isUnavailableStructuredTranscriptRecord(
     const kind = readUnsupportedContentMeta(message.meta);
     return kind === 'unsupported-transcript-record'
         && resolveUnsupportedContentPresentation({ kind, debugInformationEnabled }) === 'label';
+}
+
+/** One admission/selection owner for both the rendered card and pre-mount Find. */
+function resolveStructuredMessagePresentation(message: Message, debugInformationEnabled = false) {
+    if (hasStructuredPresentation(message)) return { kind: 'persisted' as const, message };
+    if (isUnavailableStructuredTranscriptRecord(message, debugInformationEnabled)) return { kind: 'unavailable' as const };
+    const envelope = parseHappierMetaEnvelope(message.meta);
+    if (!envelope || NON_STRUCTURED_HAPPIER_META_KINDS.has(envelope.kind)) return null;
+    const entry = findBuiltInStructuredMessageEntry(envelope.kind);
+    if (!entry) return { kind: 'unavailable' as const };
+    const parsed = entry.schema.safeParse(envelope.payload);
+    return parsed.success ? { kind: 'builtin' as const, entry, payload: parsed.data } : { kind: 'unavailable' as const };
+}
+
+function StructuredUnavailableMessage() {
+    const find = useStructuredFindState();
+    return <PluginSurfaceFallback testID="structured-message-unavailable" renderText={(field, text) => {
+        const ranges = find.ranges(`structured-unavailable-${field}`);
+        return ranges?.length ? <FindHighlightedText text={text} ranges={ranges} /> : text;
+    }} />;
+}
+
+/** null follows the incumbent ordinary-Markdown fallback; [] is a replacing card with no text. */
+export function projectStructuredMessageFindText(message: Message, context: StructuredFindTextContext = {}): readonly StructuredFindTextBlock[] | null {
+    const presentation = resolveStructuredMessagePresentation(message, context.debugInformationEnabled);
+    if (!presentation) return null;
+    if (presentation.kind === 'persisted') return projectDeclarativeStructuredFindText(presentation.message.structuredPresentation.snapshot);
+    if (presentation.kind === 'unavailable') return projectPluginSurfaceFallbackFindText();
+    return presentation.entry.projectFindText(presentation.payload, { ...context, message });
+}
+
+/** Full-mode review cards use only these validated descriptor-owned comment targets. */
+export function collectStructuredMessageReviewRunIds(messages: readonly Message[], context: Pick<StructuredFindTextContext, 'canNavigate' | 'debugInformationEnabled'> = {}): readonly string[] {
+    if (context.canNavigate !== false) return [];
+    const runIds = new Set<string>();
+    for (const message of messages) {
+        const presentation = resolveStructuredMessagePresentation(message, context.debugInformationEnabled);
+        if (presentation?.kind !== 'builtin') continue;
+        for (const runId of presentation.entry.reviewRunIds?.(presentation.payload) ?? []) runIds.add(runId);
+    }
+    return [...runIds];
+}
+
+/** Only review-findings descriptors derive displayed rows from later transcript follow-ups. */
+export function structuredMessageFindUsesSessionMessages(message: Message, debugInformationEnabled = false): boolean {
+    const presentation = resolveStructuredMessagePresentation(message, debugInformationEnabled);
+    return presentation?.kind === 'builtin' && presentation.entry.usesSessionMessages === true;
 }
 
 function PersistedPluginStructuredMessage(props: Readonly<{
@@ -102,7 +152,7 @@ function PersistedPluginStructuredMessage(props: Readonly<{
         <PluginUiBoundary
             surfaceId={`persisted-structured-message:${structuredPresentation.owner.pluginId}/${structuredPresentation.owner.contributionLocalId}`}
             resetKey={props.message.id}
-            fallback={<PluginSurfaceFallback testID="structured-message-unavailable" />}
+            fallback={<StructuredUnavailableMessage />}
         >
             <DeclarativeStructuredMessageRenderer
                 root={structuredPresentation.snapshot}
@@ -123,43 +173,14 @@ export function renderStructuredMessage(params: {
     onJumpToAnchor: StructuredMessageRendererParams['onJumpToAnchor'];
     debugInformationEnabled?: boolean;
 }): React.ReactElement | null {
-    if (hasStructuredPresentation(params.message)) {
-        return (
-            <PersistedPluginStructuredMessage
-                message={params.message}
-                interaction={params.interaction}
-            />
-        );
-    }
-    // A normalized unavailable historical record may still carry a legacy
-    // `happier` envelope from an older writer. Its marked fallback is a
-    // terminal reader result, not permission to resolve present plugin code.
-    if (isUnavailableStructuredTranscriptRecord(params.message, params.debugInformationEnabled ?? false)) {
-        return <PluginSurfaceFallback testID="structured-message-unavailable" />;
-    }
-    const envelope = parseHappierMetaEnvelope(params.message.meta);
-    if (!envelope) return null;
-    if (NON_STRUCTURED_HAPPIER_META_KINDS.has(envelope.kind)) return null;
-
-    const builtIn = findBuiltInStructuredMessageEntry(envelope.kind);
-    if (builtIn) {
-        const parsed = builtIn.schema.safeParse(envelope.payload);
-        return parsed.success
-            ? builtIn.render(parsed.data, {
-                sessionId: params.sessionId,
-                serverId: params.serverId,
-                message: params.message,
-                interaction: params.interaction,
-                onJumpToAnchor: params.onJumpToAnchor,
-            })
-            : <PluginSurfaceFallback testID="structured-message-unavailable" />;
-    }
-
-    // Generic plugin envelopes are only renderable after the current CLI
-    // admission path has turned them into an immutable `structuredPresentation`.
-    // A replay must never resolve present daemon/plugin state to reinterpret an
-    // unpersisted payload from history.
-    return <PluginSurfaceFallback testID="structured-message-unavailable" />;
+    const presentation = resolveStructuredMessagePresentation(params.message, params.debugInformationEnabled);
+    if (!presentation) return null;
+    const rendered = presentation.kind === 'persisted'
+        ? <PersistedPluginStructuredMessage message={presentation.message} interaction={params.interaction} />
+        : presentation.kind === 'unavailable'
+            ? <StructuredUnavailableMessage />
+            : presentation.entry.render(presentation.payload, params);
+    return rendered ? <StructuredFindMessageProvider messageId={params.message.id}>{rendered}</StructuredFindMessageProvider> : null;
 }
 
 export const StructuredMessageBlock = React.memo(function StructuredMessageBlock(props: {

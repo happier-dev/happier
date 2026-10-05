@@ -217,7 +217,7 @@ describe('ExitPlanToolView', () => {
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(1);
-        expect(sessionDeny.mock.calls[0]?.[5]).toBe('Please change step 2');
+        expect(sessionDeny).toHaveBeenCalledWith({ id: 'perm1', approved: false, reason: 'Please change step 2' });
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 

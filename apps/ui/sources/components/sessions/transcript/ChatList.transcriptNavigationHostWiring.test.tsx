@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
+import { createTestSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
+import { SessionTranscriptSourceProvider } from './source/SessionTranscriptSourceContext';
 import {
     chatListHarnessState,
     renderChatListHarnessSession,
@@ -26,18 +28,6 @@ const loadNewerMessagesMock = vi.hoisted(() => vi.fn());
 const loadTargetWindowMessagesMock = vi.hoisted(() => vi.fn());
 const fetchUserMessageHistoryPageMock = vi.hoisted(() => vi.fn());
 const prefetchForkedTranscriptContextMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
-const jumpToTranscriptSeqMock = vi.hoisted(() => vi.fn(async (params: {
-    targetSeq: number;
-    getIndex: () => number | null;
-    scrollToIndex: (index: number) => void;
-}) => {
-    const index = params.getIndex();
-    if (index !== null) {
-        params.scrollToIndex(index);
-        return { status: 'scrolled' as const };
-    }
-    return { status: 'not_found' as const };
-}));
 const performTranscriptViewportCommandMock = vi.hoisted(() => vi.fn((_command: TranscriptViewportCommand) => true));
 
 let capturedNavigationRailProps: Array<{
@@ -159,10 +149,6 @@ vi.mock('@/components/sessions/transcript/navigation/TranscriptNavigationRail', 
             )),
         );
     },
-}));
-
-vi.mock('@/utils/sessions/jumpToTranscriptSeq', () => ({
-    jumpToTranscriptSeq: jumpToTranscriptSeqMock,
 }));
 
 vi.mock('./viewport/performTranscriptViewportCommand', () => ({
@@ -318,6 +304,24 @@ function seedTranscriptMessages() {
     };
 }
 
+async function renderNavigationChatList() {
+    const { sync } = await import('@/sync/sync');
+    const source = createTestSessionTranscriptSource({
+        sessionId: 'session-1',
+        serverId: activeScope.serverId,
+        messages: chatListHarnessState.sessionMessagesState.messages,
+        metadata: chatListHarnessState.sessionState.metadata,
+        authorship: { viewerScope: activeScope, hasOtherNamedCollaborator: false },
+        history: {
+            loadOlder: (options) => sync.loadOlderMessages('session-1', options),
+            loadTargetWindow: (target, options) => sync.loadTargetWindowMessages('session-1', target, options),
+        },
+    });
+    return renderChatListHarnessSession({
+        wrapper: ({ children }) => <SessionTranscriptSourceProvider source={source}>{children}</SessionTranscriptSourceProvider>,
+    });
+}
+
 describe('ChatList transcript navigation host wiring', () => {
     beforeEach(() => {
         persistedStorage.clear();
@@ -332,7 +336,6 @@ describe('ChatList transcript navigation host wiring', () => {
             nextBeforeSeq: null,
         });
         prefetchForkedTranscriptContextMock.mockClear();
-        jumpToTranscriptSeqMock.mockClear();
         performTranscriptViewportCommandMock.mockClear();
         capturedNavigationRailProps = [];
         buildChatListItemsMock.mockClear();
@@ -364,7 +367,7 @@ describe('ChatList transcript navigation host wiring', () => {
         savePersistedSessionMessagePins('session-1', [assistantPin], activeScope);
         seedTranscriptMessages();
 
-        const screen = await renderChatListHarnessSession();
+        const screen = await renderNavigationChatList();
 
         const latestRailProps = capturedNavigationRailProps.at(-1);
         expect(latestRailProps?.entries.map((entry) => ({
@@ -421,11 +424,9 @@ describe('ChatList transcript navigation host wiring', () => {
         ))).toBe(true);
 
         performTranscriptViewportCommandMock.mockClear();
-        jumpToTranscriptSeqMock.mockClear();
 
         screen.pressByTestId('mounted-nav-entry:pinned-assistant:7');
 
-        expect(jumpToTranscriptSeqMock).not.toHaveBeenCalled();
         expect(performTranscriptViewportCommandMock.mock.calls.some(([command]) => (
             command.kind === 'jump-to-seq' &&
             command.seq === 7 &&
@@ -464,7 +465,7 @@ describe('ChatList transcript navigation host wiring', () => {
             hasMoreNewer: true,
         });
 
-        const screen = await renderChatListHarnessSession();
+        const screen = await renderNavigationChatList();
         screen.pressByTestId('mounted-nav-entry:pinned-assistant:500');
 
         await act(async () => {
@@ -521,7 +522,7 @@ describe('ChatList transcript navigation host wiring', () => {
             hasMoreNewer: true,
         });
 
-        const screen = await renderChatListHarnessSession();
+        const screen = await renderNavigationChatList();
         const latestRailProps = capturedNavigationRailProps.at(-1);
         expect(latestRailProps).toBeDefined();
         const entry: TranscriptNavigationEntry = {
@@ -542,7 +543,7 @@ describe('ChatList transcript navigation host wiring', () => {
         };
 
         await act(async () => {
-            await (latestRailProps!.onJumpToEntry(entry, {
+            latestRailProps!.onJumpToEntry(entry, {
                 align: 'top',
                 scope: { kind: 'main', sessionId: 'session-1' },
                 source: 'rail',
@@ -553,7 +554,7 @@ describe('ChatList transcript navigation host wiring', () => {
                     transcriptBlockIndex: 0,
                     role: 'user',
                 },
-            }) as unknown as Promise<unknown>);
+            });
             await Promise.resolve();
             await Promise.resolve();
         });
@@ -599,7 +600,7 @@ describe('ChatList transcript navigation host wiring', () => {
             hasMoreNewer: true,
         });
 
-        const screen = await renderChatListHarnessSession();
+        const screen = await renderNavigationChatList();
         await act(async () => {
             await Promise.resolve();
             await Promise.resolve();

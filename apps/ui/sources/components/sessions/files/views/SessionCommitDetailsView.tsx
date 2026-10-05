@@ -352,7 +352,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                 runningOperation={inFlightScmOperation?.operation ?? null}
                 actions={(
                     <>
-                        {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                        {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton presentation="segmented" /> : null}
                         <WrapLinesToggleButton />
                     </>
                 )}

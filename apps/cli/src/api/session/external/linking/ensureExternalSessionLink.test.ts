@@ -88,6 +88,8 @@ function sha256Hex(value: string): string {
 const unavailableManagedEndpointRead =
   createUnavailableAgentExternalSessionsManagedEndpointRead();
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+// Packaged process execution is outside these transcript-only fixtures.
+const unavailableInvocationRipgrep = { run: async () => { throw new Error('Packaged ripgrep unavailable in transcript fixture'); } };
 
 function bindExternalSessionsFixture(
   contribution: AgentExternalSessionsContribution,
@@ -1849,6 +1851,7 @@ describe('ensureExternalSessionLink', () => {
       maxSerializedBytes: 262_144,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;
@@ -1929,6 +1932,7 @@ describe('ensureExternalSessionLink', () => {
       maxSerializedBytes: 262_144,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;
@@ -2361,6 +2365,7 @@ describe('ensureExternalSessionLink', () => {
       maxSerializedBytes: 262_144,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;
@@ -2416,6 +2421,7 @@ describe('ensureExternalSessionLink', () => {
       maxSerializedBytes: 262_144,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;
@@ -2473,6 +2479,7 @@ describe('ensureExternalSessionLink', () => {
       maxSerializedBytes: 262_144,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     if (!resolvedIdentity.ok) throw new Error('Expected Codex identity resolution');
     const source = resolvedIdentity.value.source;

@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, makeToolCall } from '@/dev/testkit';
+import type { ToolCallMessage } from '@happier-dev/session-core/messages';
+import { setPendingNavigationLanding, markSessionPendingAnswer } from '@/activity/source/pendingNavigationRuntime';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 const platformEnvironment = vi.hoisted(() => ({
@@ -53,6 +56,59 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('PermissionPromptCard interactive targets', () => {
+    it('shows the settled landing after the request disappears without stale answer controls', async () => {
+        setPendingNavigationLanding({ serverId: 'home-a', sessionId: 'session-1' }, 'answered-request', 'settled');
+        const { SessionPendingPromptCards } = await import('./SessionPendingPromptCards');
+        const source = createTestSessionTranscriptSource({ sessionId: 'session-1', serverId: 'home-a' });
+        const screen = await renderBoundScreen(<SessionPendingPromptCards testID="pending-cards"
+            sessionId="session-1" serverId="home-a" session={createSessionFixture({ active: true })}
+            permissions={[]} userActions={[]} />, source);
+        expect(screen.findHostByTestId('pending-navigation-settled')).toBeTruthy();
+        expect(screen.findByTestId('permission-footer.allow')).toBeNull();
+    });
+
+    it('shows a disappeared request until this client accepts an answer for that exact request', async () => {
+        const address = { serverId: 'home-a', sessionId: 'session-1' };
+        const { SessionPendingPromptCards } = await import('./SessionPendingPromptCards');
+        const source = createTestSessionTranscriptSource({ ...address, agentState: { requests: {
+            p1: { tool: 'Read', arguments: {}, createdAt: 1 },
+        } } });
+        const card = <SessionPendingPromptCards testID="pending-cards" {...address}
+            session={createSessionFixture({ active: true })} permissions={[]} userActions={[]} />;
+        setPendingNavigationLanding(address, 'p1');
+        const screen = await renderBoundScreen(card, source);
+        expect(screen.findHostByTestId('pending-navigation-settled')).toBeNull();
+        await React.act(async () => {
+            source.update({ messages: [], reducerState: null, metadata: null, agentState: { requests: {} } });
+        });
+        await screen.update(card);
+        expect(screen.findHostByTestId('pending-navigation-settled')).toBeTruthy();
+        await React.act(async () => { markSessionPendingAnswer(address, 'p2'); });
+        await screen.update(card);
+        expect(screen.findHostByTestId('pending-navigation-settled')).toBeTruthy();
+        await React.act(async () => { markSessionPendingAnswer(address, 'p1'); });
+        await screen.update(card);
+        expect(Boolean(screen.findHostByTestId('pending-navigation-settled'))).toBe(false);
+        await React.act(async () => { markSessionPendingAnswer(address, 'p2'); });
+        await screen.update(card);
+        expect(Boolean(screen.findHostByTestId('pending-navigation-settled'))).toBe(false);
+    });
+
+    it('opens the pending card at its transcript location in the exact Home', async () => {
+        const navigate = vi.fn();
+        const { SessionPendingPromptCards } = await import('./SessionPendingPromptCards');
+        const message: ToolCallMessage = { kind: 'tool-call', id: 'message-1', localId: null, createdAt: 1,
+            tool: makeToolCall({ id: 'tool-1', name: 'Read', permission: { id: 'permission-1', status: 'pending' } }),
+            children: [], seq: 4,
+        };
+        const source = createTestSessionTranscriptSource({ sessionId: 'session-1', serverId: 'home-a', messages: [message], navigate });
+        const screen = await renderBoundScreen(<SessionPendingPromptCards testID="pending-cards"
+            sessionId="session-1" serverId="home-a" session={createSessionFixture({ active: true })}
+            permissions={[{ id: 'permission-1', kind: 'permission', tool: 'Read', arguments: {}, createdAt: 1 }]} userActions={[]} />, source);
+        await screen.pressByTestIdAsync('permission-prompt-view-tool');
+        expect(navigate).toHaveBeenCalledWith('/session/session-1?jumpSeq=4&serverId=home-a');
+    });
+
     beforeEach(() => {
         platformEnvironment.platform = 'web';
         standardCleanup();

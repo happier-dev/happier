@@ -931,6 +931,7 @@ export async function buildCliBinaryArtifactSupportPayload({
   expectedWorkspaceRuntimeIdentity,
   supportArtifactFingerprint,
   goVersion,
+  workspaceSourceFingerprint,
   preserveCompilePayloadAssets = false,
   includeIrohNativeReleaseEvidence = false,
 }: {
@@ -944,6 +945,7 @@ export async function buildCliBinaryArtifactSupportPayload({
   expectedWorkspaceRuntimeIdentity?: string;
   supportArtifactFingerprint?: string;
   goVersion?: string;
+  workspaceSourceFingerprint?: string;
   preserveCompilePayloadAssets?: boolean;
   includeIrohNativeReleaseEvidence?: boolean;
 }): Promise<Readonly<{
@@ -962,6 +964,7 @@ export async function buildCliBinaryArtifactSupportPayload({
     expectedWorkspaceRuntimeIdentity,
     supportArtifactFingerprint,
     goVersion,
+    workspaceSourceFingerprint,
     preserveCompilePayloadAssets,
     includeIrohNativeReleaseEvidence,
   }), {

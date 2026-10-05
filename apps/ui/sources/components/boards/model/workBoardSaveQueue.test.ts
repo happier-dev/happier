@@ -16,6 +16,51 @@ function boundary() {
 }
 
 describe('WorkBoard Account Artifact save queue', () => {
+    it('keeps an acknowledged add renderable while its pending intent is still being retired', async () => {
+        const b = boundary(); await b.store.refresh();
+        const surface = { serverId: 'home-a', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
+        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
+        const observed: number[] = [];
+        const release = b.store.subscribe(() => {
+            observed.push(projectDisplayedWorkBoards(b.store.getBoards(), b.store.queue.getState().pending).boards[0]?.widgets?.length ?? 0);
+        });
+        try {
+            expect(await b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref: { surface, instanceId: instance.id }, instance })).toMatchObject({ status: 'applied' });
+            expect(observed).toContain(1);
+            expect(b.store.queue.getState().failure).toBeNull();
+        } finally { release(); }
+    });
+    it('projects configured widgets, rolls back a failed input edit, retries and reloads without losing work', async () => {
+        const b = boundary();
+        await b.store.refresh();
+        const surface = { serverId: 'home-a', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
+        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
+        const ref = { surface, instanceId: instance.id };
+        const release = b.hold();
+        const saving = b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref, instance, width: 2 });
+        expect(projectDisplayedWorkBoards(b.store.getBoards(), b.store.queue.getState().pending).boards[0]?.widgets).toMatchObject([{ instance, width: 2 }]);
+        release(); expect(await saving).toMatchObject({ status: 'applied' });
+        b.offline(true);
+        expect(await b.store.queue.dispatch({ kind: 'widget_inputs', boardId: 'b1', ref, bindings: { session: { kind: 'value', value: 's2' } } })).toMatchObject({ status: 'unknown' });
+        expect(b.store.getBoards().boards[0]?.widgets?.[0]?.instance.bindings).toEqual({});
+        b.offline(false); await b.store.queue.retry();
+        const loaded = createWorkBoardAccountStore(b.transport, () => true);
+        await loaded.refresh();
+        expect(loaded.getBoards().boards[0]?.widgets).toMatchObject([{ instance: { id: 'copy', bindings: { session: { kind: 'value', value: 's2' } } }, width: 2 }]);
+        expect(loaded.getBoards().boards[0]?.source.picked).toEqual(base.boards[0]?.source.picked);
+        expect(await b.store.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref, instance })).toMatchObject({ status: 'refused', code: 'widget_instance_already_exists' });
+    });
+    it('returns the acknowledged outcome instead of reporting a refused or unknown write as applied', async () => {
+        const b = boundary();
+        expect(await b.store.queue.dispatch({ kind: 'update', boardId: 'b1', patch: { name: 'Acknowledged' } }))
+            .toMatchObject({ status: 'applied' });
+        expect(await b.store.queue.dispatch({ kind: 'add_items', boardId: 'gone', refs: [session('s2')] }))
+            .toMatchObject({ status: 'refused', code: 'board_not_found' });
+        b.offline(true);
+        expect(await b.store.queue.dispatch({ kind: 'update', boardId: 'b1', patch: { name: 'Uncertain' } }))
+            .toMatchObject({ status: 'unknown' });
+        expect(b.acknowledged().boards[0]!.name).toBe('Acknowledged');
+    });
     it('settles an admitted edit after the last Board view detaches', async () => {
         const b = boundary();
         const releaseView = b.store.retainView(() => () => {});
@@ -36,15 +81,31 @@ describe('WorkBoard Account Artifact save queue', () => {
         expect(b.store.getReadState()).toMatchObject({ status: 'ready', hasSnapshot: true });
     });
 
-    it('does not render a malformed stored record as an empty collection', async () => {
+    it('withdraws a malformed Board without overwriting its bytes and recovers when its content becomes readable', async () => {
         const b = boundary();
         await b.store.refresh(); const original = b.rows.get('b1')!;
         b.rows.set('b1', { ...original, body: 'invalid-json' });
         await b.store.refresh();
-        expect(b.store.getReadState()).toMatchObject({ status: 'error', hasSnapshot: true, errorCode: 'invalid_board_record' });
-        expect(b.store.getBoards()).toEqual(base);
+        expect(b.store.getReadState()).toMatchObject({ status: 'ready', hasSnapshot: true });
+        expect(b.store.getBoards().boards).toEqual([]);
+        expect(b.rows.get('b1')?.body).toBe('invalid-json');
         b.rows.set('b1', original); await b.store.refresh();
         expect(b.store.getReadState()).toMatchObject({ status: 'ready', hasSnapshot: true });
+    });
+
+    it('publishes an initially demanded readable neighbor when one Board has malformed JSON', async () => {
+        const persistence = createWorkBoardArtifactBoundary(WorkBoardsV1Schema.parse({ v: 1, boards: [...base.boards, createWorkBoardV1({ id: 'b2', name: 'Other' })] }));
+        const broken = { ...persistence.rows.get('b1')!, body: '{ invalid-json' };
+        persistence.rows.set('b1', broken);
+        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        const release = store.retainView(() => () => {}, 'all');
+        try {
+            await store.refresh();
+            expect(store.getReadState()).toMatchObject({ status: 'ready', hasSnapshot: true });
+            expect(store.getBoards().boards.map(board => board.id)).toEqual(['b2']);
+            expect(store.getSummaries().map(board => board.id)).toEqual(['b1', 'b2']);
+            expect(persistence.rows.get('b1')).toBe(broken);
+        } finally { release(); }
     });
 
     it('withdraws an unreadable Board projection without rewriting it or hiding readable neighbors', async () => {

@@ -16,6 +16,7 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
     terminalKey: string;
     terminalMode: SessionTerminalMode;
     terminalTarget?: SessionTerminalTargetV1;
+    available?: boolean;
     terminalRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
 }>) {
     const machineTarget = useSessionMachineTarget(params.sessionId, params.serverId);
@@ -35,7 +36,7 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
 
     return useMachineTerminalSession({
         serverId: params.serverId,
-        machineId: explicitMachineId ?? machineTarget?.machineId ?? null,
+        machineId: params.available === false ? null : explicitMachineId ?? machineTarget?.machineId ?? null,
         cwd: target?.kind === 'machine_shell' || target?.kind === 'terminal_view' ? target.cwd : kind === 'workspace_shell' ? machineTarget?.basePath ?? null : null,
         launch,
         initialCommand: target?.kind === 'workspace_shell' || target?.kind === 'machine_shell' ? target.initialCommand : undefined,

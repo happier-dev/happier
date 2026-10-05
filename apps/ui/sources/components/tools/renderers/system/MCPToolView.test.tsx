@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,6 +18,18 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 }));
 
 describe('MCPToolView', () => {
+    it('indexes its decoded preview and exact full JSON, and reveals a preview match beyond the summary clamp', async () => {
+        const { MCPToolView, projectMCPDisplayText } = await import('./MCPToolView');
+        const text = 'x'.repeat(850) + 'needle\nnext line';
+        const tool = makeMcpTool({ result: { text, nested: { value: 'visible in full JSON' } } });
+        const blocks = projectMCPDisplayText(tool);
+        expect(blocks.find((block) => block.id === 'tool-output-preview')?.text).toBe(text);
+        expect(blocks.find((block) => block.id === 'tool-output')?.text).toBe(JSON.stringify(tool.result, null, 2));
+        const store = createTranscriptFindRowStore();
+        store.publish(new Map([['find-mcp', { blocks: [{ id: 'tool-output-preview', sourceRanges: [{ start: 850, end: 856, current: true }] }], reveal: { blockId: 'tool-output-preview', requestId: 1 } }]]));
+        const screen = await renderScreen(<TranscriptFindProvider store={store}><MCPToolView {...makeToolViewProps(tool, { detailLevel: 'summary', messageId: 'find-mcp' })} /></TranscriptFindProvider>);
+        expect(screen.getTextContent()).toContain(text);
+    });
     function makeMcpTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'mcp__linear__create_issue',

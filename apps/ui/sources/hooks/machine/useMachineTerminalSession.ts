@@ -359,18 +359,18 @@ export function useMachineTerminalSession(params: Readonly<{
 
             const terminalSize = latestTerminalSizeRef.current ?? initialTerminalSize;
 
-            const request = buildMachineTerminalSessionRequest({
-                terminalKey: params.terminalKey, cwd: params.cwd, cols: terminalSize?.cols, rows: terminalSize?.rows,
-                launch: params.launch, initialCommand: params.initialCommand ?? undefined,
-            });
+            const request = {
+                ...buildMachineTerminalSessionRequest({
+                    terminalKey: params.terminalKey, cwd: params.cwd, cols: terminalSize?.cols, rows: terminalSize?.rows,
+                    launch: params.launch, initialCommand: params.initialCommand ?? undefined,
+                }),
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+            };
             const ensured = params.attachedTerminalId
                 ? { ok: true as const, terminalId: params.attachedTerminalId, reused: true }
                 : restartRequestedRef.current
                 ? await machineTerminalRestart(params.machineId, request, { serverId: params.serverId })
-                : await machineTerminalEnsure(params.machineId, {
-                    ...request,
-                    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-                }, { serverId: params.serverId });
+                : await machineTerminalEnsure(params.machineId, request, { serverId: params.serverId });
             restartRequestedRef.current = false;
 
             if (canceled) {
@@ -852,6 +852,7 @@ export function useMachineTerminalSession(params: Readonly<{
 
     return {
         status,
+        terminalId: terminalIdRef.current,
         error,
         detectedUrl,
         onInput,

@@ -28,6 +28,7 @@ import {
 import type { PromptResponseOrigin } from './executionRunPromptResponseTarget';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
+import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from './usePendingPromptPrimaryFocus';
 
 
 type PermissionFooterProps = PromptResponseOrigin & {
@@ -44,6 +45,7 @@ type PermissionFooterProps = PromptResponseOrigin & {
         decisionActor?: SessionPermissionDecisionActorV1;
     };
     serverId?: string;
+    messageId?: string;
     toolName: string;
     toolInput?: any;
     metadata?: any;
@@ -221,6 +223,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     sessionId: sessionIdProp,
     executionRun,
     serverId,
+    messageId,
     toolName,
     toolInput,
     metadata,
@@ -283,6 +286,9 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         : null;
     /** An answer the Execution Run's caller already holds keeps both decisions withdrawn. */
     const executionRunAnswerPending = executionRun?.pendingRequestIds.has(permission.id) === true;
+    const primaryAnswerRef = usePendingPromptPrimaryFocus(permission.id,
+        executionRun === undefined && canApprovePermissions && permission.status === 'pending' && !disabledReason
+        && !isCurrentRequestLoading, messageId);
 
     React.useEffect(() => {
         isMounted.current = true;
@@ -402,6 +408,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         setLoading(true);
         try {
             await operation();
+            if (executionRun === undefined) markTranscriptPromptAnswered(source, permission.id);
         } catch (error) {
             if (isMounted.current && permissionActionInFlight.current?.token === token) {
                 setStoredActionFailure((previousDisplay) => ({
@@ -817,6 +824,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 <View style={styles.buttonContainer}>
                     <TouchableOpacity
                         testID="permission-footer.deny"
+                        ref={primaryAnswerRef}
                         accessibilityRole="button"
                         accessibilityState={{
                             disabled: actionsDisabled,
@@ -870,6 +878,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {/* Decision protocol: Yes button */}
                     <TouchableOpacity
                         testID="permission-footer.allow"
+                        ref={primaryAnswerRef}
                         accessibilityRole="button"
                         accessibilityState={{
                             disabled: actionsDisabled,
@@ -1087,6 +1096,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             <View style={styles.buttonContainer}>
                 <TouchableOpacity
                     testID="permission-footer.allow"
+                    ref={primaryAnswerRef}
                     accessibilityRole="button"
                     accessibilityState={{
                         disabled: primaryActionsDisabled,

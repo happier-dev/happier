@@ -243,7 +243,7 @@ export function createDaemonStreamingSttController(
                     return;
                 }
             }
-            const { packId, language } = resolveLocalNeuralSttCaptureSettings(getSettings());
+            const { packId, language } = resolveLocalNeuralSttCaptureSettings(getSettings(), capturePurpose);
             if (!packId) {
                 sink.onError(createVoiceMachineError({
                     kind: 'provider_error',

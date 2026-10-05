@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-    MachineLiveStreamFrameV1,
-    MachineLiveStreamReceiptV1,
-    MachineLiveStreamRelayEnvelopeV1,
-    MachineLiveStreamStartRequestV1,
+import {
+    MachineLiveStreamReceiptV1Schema,
+    type MachineLiveStreamFrameV1,
+    type MachineLiveStreamReceiptV1,
+    type MachineLiveStreamRelayEnvelopeV1,
+    type MachineLiveStreamStartRequestV1,
 } from '@happier-dev/protocol';
 
 import type { MachineLiveStreamCaptureAdapter, MachineLiveStreamCaptureStartInput, MachineLiveStreamCaptureStartResult } from './captureAdapter';
@@ -117,7 +118,8 @@ describe('createMachineLiveStreamRelayTerminator', () => {
         expect(stopped).toBe(true);
         const activeInput = captureInput as MachineLiveStreamCaptureStartInput | null;
         expect(activeInput?.offerFrame(keyframe())).toMatchObject({ ok: false });
-        expect(emitted.some(envelope => envelope.message.kind === 'receipt' && envelope.message.receipt.terminal === true)).toBe(true);
+        expect(emitted.some(envelope => envelope.message.kind === 'receipt'
+            && MachineLiveStreamReceiptV1Schema.parse(envelope.message.receipt).terminal === true)).toBe(true);
         await terminator.dispose();
     });
     it('refuses a signed renewal that changes the exact capture source', async () => {

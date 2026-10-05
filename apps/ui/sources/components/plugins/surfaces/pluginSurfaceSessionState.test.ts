@@ -113,7 +113,9 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
 
         expect(state).toMatchObject({
             sessionId: 'linked-1',
+            serverId: CURRENT_ACCOUNT_LIFETIME.scope.serverId,
             operational: 'permission_required',
+            workStatus: { bucket: 'needs_you', tone: 'attention', word: expect.any(String) },
             workspace: { path: '/work/repo' },
             pendingPermissions: [{
                 requestId: 'req-1',
@@ -122,6 +124,30 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
                 createdAtMs: NOW - 1_000,
                 answers: ['allowOnce', 'allowForSession', 'deny'],
             }],
+        });
+        mounted.dispose();
+    });
+
+    it('projects the shared Work classification, including outstanding reports and offline settlement', async () => {
+        storage.getState().applySessions([
+            waitingSession({ id: 'working', agentState: null, thinking: true, thinkingAt: NOW, latestTurnStatus: 'in_progress' }),
+            waitingSession({ id: 'finished', agentState: null, latestTurnStatus: 'completed' }),
+            waitingSession({ id: 'lead', agentState: null, latestTurnStatus: 'completed', reports: { total: 1, working: 1, needsYou: 0, stalled: 0 } }),
+            waitingSession({ id: 'offline', agentState: null, active: false, activeAt: 1, presence: 1, latestTurnStatus: 'completed' }),
+        ]);
+        const mounted = mountSurface();
+
+        await expect(mounted.api.readSession('working')).resolves.toMatchObject({
+            workStatus: { bucket: 'working', tone: 'neutral', word: expect.any(String) },
+        });
+        await expect(mounted.api.readSession('finished')).resolves.toMatchObject({
+            workStatus: { bucket: 'finished', tone: 'neutral' },
+        });
+        await expect(mounted.api.readSession('lead')).resolves.toMatchObject({
+            workStatus: { bucket: 'idle', tone: 'neutral' },
+        });
+        await expect(mounted.api.readSession('offline')).resolves.toMatchObject({
+            workStatus: { bucket: 'offline', tone: 'attention' },
         });
         mounted.dispose();
     });
@@ -200,6 +226,28 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         storage.getState().applySessions([waitingSession({ updatedAt: NOW + 3 })]);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(events).toHaveLength(1);
+        mounted.dispose();
+    });
+
+    it('invalidates when outstanding reports change the Work presentation without changing awareness', async () => {
+        storage.getState().applySessions([waitingSession({
+            agentState: null, latestTurnStatus: 'completed',
+            reports: { total: 1, working: 1, needsYou: 0, stalled: 0 },
+        })]);
+        const mounted = mountSurface();
+        const events: ResourceSubscriptionEvent[] = [];
+        const subscription = await mounted.api.watchSession('linked-1', (event) => { events.push(event); });
+
+        storage.getState().applySessions([waitingSession({
+            agentState: null, latestTurnStatus: 'completed', updatedAt: NOW + 2,
+            reports: { total: 1, working: 0, needsYou: 0, stalled: 0 },
+        })]);
+
+        await vi.waitFor(() => expect(events).toHaveLength(1));
+        await expect(mounted.api.readSession('linked-1')).resolves.toMatchObject({
+            operational: 'ready', workStatus: { bucket: 'finished', tone: 'neutral' },
+        });
+        subscription.dispose();
         mounted.dispose();
     });
 

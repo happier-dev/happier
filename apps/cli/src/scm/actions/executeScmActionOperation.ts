@@ -47,7 +47,7 @@ import {
     ScmOperationOutcomeSchema,
 } from '@happier-dev/protocol/scm';
 import type * as scm from '@happier-dev/protocol/scm';
-import { projectScmLegacyRpcResponse } from './scmRpcCompatibility';
+import { parseScmRepositoryCloneRpcRequest, projectScmLegacyRpcResponse } from './scmRpcCompatibility';
 
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
@@ -852,7 +852,9 @@ export async function executeScmActionOperation(
     params: ExecuteScmActionOperationParams,
 ): Promise<unknown> {
     const spec = getActionSpec(params.actionId);
-    const parsed = spec.inputSchema.safeParse(params.input);
+    const parsed = params.rpcCompatibility && params.actionId === 'scm.repository.clone'
+        ? parseScmRepositoryCloneRpcRequest(params.input)
+        : spec.inputSchema.safeParse(params.input);
     if (!parsed.success) {
         if (params.rpcCompatibility) return projectScmLegacyRpcResponse({
             actionId: params.actionId, request: params.input,
@@ -892,6 +894,6 @@ export async function executeScmActionOperation(
         }
     }
     return params.rpcCompatibility && !params.actionId.startsWith('scm.diffSummary.')
-        ? projectScmLegacyRpcResponse({ actionId: params.actionId, request, response: settled })
+        ? projectScmLegacyRpcResponse({ actionId: params.actionId, request: params.input, response: settled })
         : settled;
 }

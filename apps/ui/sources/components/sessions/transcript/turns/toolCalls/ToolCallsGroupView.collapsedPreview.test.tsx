@@ -231,6 +231,13 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             transcriptStreamingSettleDelayMs: 0,
             transcriptStreamingSmoothingEnabled: true,
             transcriptMessageSelectionEnabled: true,
+            transcriptMessageCopyActionEnabled: true,
+            transcriptMessageForkActionEnabled: true,
+            transcriptMessageRollbackActionEnabled: true,
+            transcriptMessagePinActionEnabled: true,
+            transcriptMessageSavePromptActionEnabled: true,
+            transcriptMessageMakeRepeatableActionEnabled: true,
+            transcriptMessagePluginActionsEnabled: true,
             transcriptMessageSendToSessionEnabled: false,
             debugInformationEnabled: false,
             workspacePath: null,
@@ -293,12 +300,14 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         const previewIds = previews.map((p) => (p.props as any).children?.props?.messageId).filter(Boolean);
         expect(previewIds).toEqual(['m2', 'm3']);
 
-        const moreRows = screen.findAllByTestId('transcript-tool-calls-preview-more');
+        const moreRows = screen.findAllHostsByTestId('transcript-tool-calls-preview-more');
         expect(moreRows).toHaveLength(1);
 
         const order = screen.findAll((node) =>
-            (node.props as any).testID === 'transcript-tool-calls-preview-more' ||
-            (node.props as any).testID === 'transcript-tool-calls-preview-row',
+            typeof node.type === 'string' && (
+                node.props.testID === 'transcript-tool-calls-preview-more' ||
+                node.props.testID === 'transcript-tool-calls-preview-row'
+            ),
         )
             .map((n) => (n.props as any).testID);
         expect(order).toEqual([
@@ -348,7 +357,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             .filter(Boolean);
 
         expect(previewIds).toEqual(['m2', 'm3', 'm4']);
-        expect(screen.findAllByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
     });
 
     it('updates collapsed previews to the newest tools when a tool is appended', async () => {
@@ -396,7 +405,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             .map((p) => (p.props as any).children?.props?.messageId)
             .filter(Boolean);
         expect(previewIds).toEqual(['m2', 'm3']);
-        expect(screen.findAllByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
     });
 
     it('renders no previews when count is 0', async () => {
@@ -415,7 +424,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         const previews = screen.findAllByTestId('transcript-tool-calls-preview-row');
         expect(previews).toHaveLength(0);
 
-        const moreRows = screen.findAllByTestId('transcript-tool-calls-preview-more');
+        const moreRows = screen.findAllHostsByTestId('transcript-tool-calls-preview-more');
         expect(moreRows).toHaveLength(1);
     });
 

@@ -26,6 +26,7 @@ import {
   waitForSessionWebhook,
 } from '../spawn/waitForSessionWebhook';
 import { hashProcessCommand } from '../sessionRegistry';
+import { readProcessIdentityByPid } from '../processIdentity';
 import { serializeWindowsCommandLine } from '../platform/windows/windowsCommandLine';
 
 function createMetadata(pid: number, startedBy: 'daemon' | 'terminal', rootPath = '/tmp'): Metadata {
@@ -55,7 +56,11 @@ describe('createOnHappySessionWebhook', () => {
     const census = new Promise<void>((resolve) => { releaseCensus = resolve; });
     let censusEntered = false;
     const report = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: new Map(),
-      findHappyProcessByPidFn: async (reportedPid) => { if (reportedPid === pid) { censusEntered = true; await census; } return null; } });
+      readProcessIdentityByPidFn: async (reportedPid) => {
+        if (reportedPid === pid) { censusEntered = true; await census; }
+        return readProcessIdentityByPid(reportedPid);
+      },
+      findHappyProcessByPidFn: async () => null });
     const exit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
       sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
     try {
@@ -144,8 +149,8 @@ describe('createOnHappySessionWebhook', () => {
     let written = false;
     const report = createOnHappySessionWebhook({
       pidToTrackedSession: sessions, pidToAwaiter: new Map(),
-      readProcessIdentityByPidFn: async () => null,
-      findHappyProcessByPidFn: async () => { censusEntered = true; await census; return null; },
+      readProcessIdentityByPidFn: async () => { censusEntered = true; await census; return null; },
+      findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (...args) => { await writeSessionMarker(...args); written = true; },
     });
     const exit = createOnChildExited({ pidToTrackedSession: sessions,
@@ -2566,7 +2571,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(pidToAwaiter.has(wrapperPid)).toBe(false);
   });
 
-  it('falls back to daemon child spawn arguments when process discovery cannot resolve command identity', async () => {
+  it('keeps birth-only webhook identity without hashing daemon child spawn arguments', async () => {
     const sessionPid = 777;
     const spawnArgs = [
       '/usr/bin/node',
@@ -2610,12 +2615,11 @@ describe('createOnHappySessionWebhook', () => {
     onWebhook('session-daemon-777', createMetadata(sessionPid, 'daemon', '/tmp/workspace'));
     await markerWritten;
 
-    const expectedCommand = spawnArgs.join(' ');
-    expect(markerArgs.processCommand).toBe(expectedCommand);
-    expect(markerArgs.processCommandHash).toBeDefined();
+    expect(markerArgs.processCommand).toBeUndefined();
+    expect(markerArgs.processCommandHash).toBeUndefined();
     expect(markerArgs.processStartTimeMs).toBe(1_717_171_717_000);
-    expect(pidToTrackedSession.get(sessionPid)?.processCommand).toBe(expectedCommand);
-    expect(pidToTrackedSession.get(sessionPid)?.processCommandHash).toBe(markerArgs.processCommandHash);
+    expect(pidToTrackedSession.get(sessionPid)?.processCommand).toBeUndefined();
+    expect(pidToTrackedSession.get(sessionPid)?.processCommandHash).toBeUndefined();
     expect(pidToTrackedSession.get(sessionPid)?.processStartTimeMs).toBe(1_717_171_717_000);
   });
 });

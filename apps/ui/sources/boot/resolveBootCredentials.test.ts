@@ -119,7 +119,7 @@ describe('resolveBootCredentials', () => {
         expect(getDeviceDefaultServerId()).toBe(deviceDefaultBefore);
     });
 
-    it('leaves an unknown web Home address for the mounted connect flow', async () => {
+    it('leaves an unknown web Home address pending without restoring the retained Home credentials', async () => {
         stubWebRuntime('https://app.example.test/?server=https%3A%2F%2Fnew.example.test');
         getCredentialsMock.mockResolvedValue({ token: 'retained-token' });
 
@@ -128,17 +128,19 @@ describe('resolveBootCredentials', () => {
         setServerUrl('https://retained.example.test');
 
         const { resolveBootCredentials } = await import('./resolveBootCredentials');
-        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'retained-token' });
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
         expect(getServerUrl()).toBe('https://retained.example.test');
         expect(listServerProfiles().some((profile) => profile.serverUrl === 'https://new.example.test')).toBe(false);
         expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
     });
 
-    it('keeps the current server and credentials when active custody blocks a web server override', async () => {
+    it('preserves current custody without restoring another Home while a web override is pending', async () => {
         stubWebRuntime('http://happier.example.test/?server=http%3A%2F%2Flocalhost%3A24731');
 
         const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
         setServerUrl('https://retained.example.test');
+        await upsertServerProfile({ serverUrl: 'http://localhost:24731', source: 'manual' });
         getCredentialsMock.mockResolvedValue({ token: 'retained-token' });
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'target-token' });
         readPendingExternalAuthStateMock.mockResolvedValue({
@@ -151,9 +153,7 @@ describe('resolveBootCredentials', () => {
         });
 
         const { resolveBootCredentials } = await import('./resolveBootCredentials');
-        await expect(resolveBootCredentials('web')).resolves.toEqual({
-            token: 'retained-token',
-        });
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
         expect(getServerUrl()).toBe('https://retained.example.test');
         expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
         expect(setCredentialsMock).not.toHaveBeenCalled();

@@ -4,11 +4,16 @@ import { Pressable, View } from 'react-native';
 import type { ScmLogEntry } from '@happier-dev/protocol';
 
 import { Text } from '@/components/ui/text/Text';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 
 import {
     formatScmHistoryTimestampAccessibilityLabel,
+    formatScmHistoryTimestamp,
     formatScmTimelineTime,
     formatScmTimelineWhen,
 } from '@/scm/history/historyPresentation';
@@ -26,7 +31,9 @@ type SourceControlOperationsHistoryTimelineRowProps = Readonly<{
     /** The rail below this commit is still incoming (dashed). */
     dashedTrailingLine?: boolean;
     /** Inside day groups the gutter shows the time of day only. */
-    whenFormat?: 'relative' | 'time';
+    whenFormat?: 'relative' | 'time' | 'elapsed';
+    /** The same commit presentation inside a finished summary, without a timeline's time/rail gutter. */
+    layout?: 'timeline' | 'summary';
     /** The point just became filled: its fill rises in after this delay (Git lab SX). */
     fillDelayMs?: number;
     /** The landed point's ring waits this long. */
@@ -36,12 +43,15 @@ type SourceControlOperationsHistoryTimelineRowProps = Readonly<{
 }>;
 
 export const SourceControlOperationsHistoryTimelineRow = React.memo((props: SourceControlOperationsHistoryTimelineRowProps) => {
+    // Only the finished summary row ticks; normal timeline rows never subscribe to a clock.
+    useElapsedTime(props.whenFormat === 'elapsed' ? props.entry.timestamp : null);
     const indicatorColor = props.isHead
         ? props.theme.colors.text.link
         : props.theme.colors.text.secondary;
     const pressedBackground = props.theme.colors.surface.inset ?? props.theme.colors.input.background;
     const metaAccessibilityLabel = formatScmHistoryTimestampAccessibilityLabel(props.entry.timestamp);
     const authorText = props.entry.authorName?.trim() || props.entry.authorEmail?.trim() || '';
+    const mergedPullRequest = /^Merge pull request #(\d+)\b/i.exec(props.entry.subject)?.[1] ?? null;
     const accessibilityLabel = [
         props.entry.subject?.trim(),
         authorText,
@@ -62,15 +72,15 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
             } : undefined}
             style={(state) => ({
                 flexDirection: 'row',
-                minHeight: 46,
+                minHeight: props.layout === 'summary' ? Math.max(36, resolveTouchTargetFloorPx() ?? 0) : 46,
                 paddingRight: 4,
                 borderRadius: 14,
                 backgroundColor: state.pressed ? pressedBackground : 'transparent',
             })}
         >
-            <ScmTimelineGutter
+            {props.layout === 'summary' ? <View style={{ justifyContent: 'center', paddingRight: 8 }}><Icon name="git-commit" size={ICON_SIZE.sm} color={props.theme.colors.text.secondary} /></View> : <ScmTimelineGutter
                 testID={`scm-commit-entry-${props.entry.sha}-when`}
-                when={props.whenFormat === 'time' ? formatScmTimelineTime(props.entry.timestamp) : formatScmTimelineWhen(props.entry.timestamp)}
+                when={props.whenFormat === 'time' ? formatScmTimelineTime(props.entry.timestamp) : props.whenFormat === 'elapsed' ? formatScmHistoryTimestamp(props.entry.timestamp) : formatScmTimelineWhen(props.entry.timestamp)}
                 pointTopPx={11}
                 tone={props.tag === 'just-now'
                     ? 'landed'
@@ -80,10 +90,11 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                 dashedTrailingLine={props.dashedTrailingLine}
                 fillDelayMs={props.fillDelayMs}
                 ringDelayMs={props.ringDelayMs}
-            />
+            />}
 
-            <View style={{ flex: 1, paddingTop: 6, paddingBottom: 8, justifyContent: 'center' }}>
+            <View style={{ flex: 1, paddingTop: props.layout === 'summary' ? 2 : 6, paddingBottom: props.layout === 'summary' ? 2 : 8, justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                    {mergedPullRequest ? <View testID={`scm-commit-entry-${props.entry.sha}-pr-${mergedPullRequest}`} style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: props.theme.colors.state?.success?.background }}><Text style={{ fontSize: 11, color: props.theme.colors.state?.success?.foreground ?? props.theme.colors.text.secondary, ...Typography.default('medium') }}>#{mergedPullRequest}</Text></View> : null}
                     <Text
                         style={{ flex: 1, color: props.theme.colors.text.primary, fontSize: 13, ...Typography.default('semiBold') }}
                         numberOfLines={1}
@@ -92,6 +103,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                     </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {authorText.length > 0 ? <Avatar id={props.entry.authorEmail?.trim() || authorText} size={14} /> : null}
                     {authorText.length > 0 ? (
                         <Text
                             style={{ flexShrink: 1, color: props.theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}
@@ -106,6 +118,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                     <Text style={{ color: props.theme.colors.text.tertiary ?? props.theme.colors.text.secondary, fontSize: 11, ...Typography.mono() }}>
                         {props.entry.shortSha}
                     </Text>
+                    {props.layout === 'summary' ? <Text testID={`scm-commit-entry-${props.entry.sha}-when`} style={{ color: props.theme.colors.text.tertiary ?? props.theme.colors.text.secondary, fontSize: 11, ...Typography.default() }}>· {formatScmHistoryTimestamp(props.entry.timestamp)}</Text> : null}
                     {props.tag ? (
                         <View
                             testID={`scm-commit-entry-${props.entry.sha}-tag-${props.tag}`}

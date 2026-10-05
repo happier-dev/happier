@@ -14,6 +14,8 @@ import { Typography } from '@/constants/Typography';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
+import { ChangedFilesReviewFindCount } from './ChangedFilesReviewFind';
+import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 
 
 /**
@@ -24,6 +26,7 @@ import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
  */
 export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewIndex(props: Readonly<{
     files: readonly ScmFileStatus[];
+    findModel?: ChangedFilesReviewFindModel;
     activePath: string | null;
     commentCountByPath: ReadonlyMap<string, number>;
     onFocusPath: (path: string) => void;
@@ -64,6 +67,7 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
                         onPress={() => props.onFocusPath(file.fullPath)}
                         leadingElement={props.renderCommitToggle ? props.renderCommitToggle(file) : null}
                         trailingElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <ChangedFilesReviewFindCount model={props.findModel} path={file.fullPath} />
                             {comments > 0 ? (
                             <View style={styles.comments} accessibilityLabel={t('detailsSurface.review.comments', { count: comments })}>
                                 <Icon name="chat-circle" size={12} color={theme.colors.state.active.foreground} />
@@ -91,6 +95,7 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
     return (
         <ChangedFilesReviewRail
             files={props.files}
+            findModel={props.findModel}
             rows={rows}
             inline={props.placement === 'comparisonStream'}
             onLayout={props.onLayout}
@@ -104,6 +109,7 @@ export const ChangedFilesReviewIndex = React.memo(function ChangedFilesReviewInd
 /** The rail reads the list | tree preference only where the switch is drawn. */
 const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props: Readonly<{
     files: readonly ScmFileStatus[];
+    findModel?: ChangedFilesReviewFindModel;
     rows: React.ReactNode;
     /** In the stream (narrow): rows in place, no scroll of its own, no switch in the caption. */
     inline: boolean;
@@ -124,6 +130,7 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
                 {display.changesLayout === 'tree' ? (
                     <ChangedFilesReviewRailTree
                         files={props.files}
+                        findModel={props.findModel}
                         rootPath={props.rootPath}
                         activeReviewFileKey={props.activeReviewFileKey}
                         onFocusPath={props.onFocusPath}
@@ -144,6 +151,7 @@ const ChangedFilesReviewRail = React.memo(function ChangedFilesReviewRail(props:
             {display.changesLayout === 'tree' ? (
                 <ChangedFilesReviewRailTree
                     files={props.files}
+                    findModel={props.findModel}
                     rootPath={props.rootPath}
                     activeReviewFileKey={props.activeReviewFileKey}
                     onFocusPath={props.onFocusPath}
@@ -167,6 +175,7 @@ const noop = () => {};
 
 const ChangedFilesReviewRailTree = React.memo(function ChangedFilesReviewRailTree(props: Readonly<{
     files: readonly ScmFileStatus[];
+    findModel?: ChangedFilesReviewFindModel;
     rootPath: string | null;
     activeReviewFileKey: string | null;
     onFocusPath: (path: string) => void;
@@ -179,6 +188,9 @@ const ChangedFilesReviewRailTree = React.memo(function ChangedFilesReviewRailTre
         [props.files, props.rootPath],
     );
     const scope = React.useMemo(() => ({ serverId: '', machineId: '', rootPath: props.rootPath ?? '' }), [props.rootPath]);
+    const renderFindCount = React.useCallback((node: Parameters<NonNullable<React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowMetadata']>>[0]) => (
+        node.type === 'file' ? <ChangedFilesReviewFindCount model={props.findModel} path={node.path} /> : null
+    ), [props.findModel]);
     return (
         <View style={props.inline ? null : stylesheet.railScroll}>
             <WorkspaceRepositoryTreeList
@@ -192,6 +204,7 @@ const ChangedFilesReviewRailTree = React.memo(function ChangedFilesReviewRailTre
                 expandedPaths={NO_EXPANDED_PATHS}
                 onExpandedPathsChange={noop}
                 selectedPath={activePath}
+                renderRowMetadata={renderFindCount}
                 onOpenFile={props.onFocusPath}
             />
         </View>

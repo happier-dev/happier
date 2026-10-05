@@ -170,8 +170,8 @@ describe('daemonServiceInventory', () => {
 
     it('uses the canonical parsed service home when matching a quoted systemd definition', async () => {
         await withTempDir('happier-daemon-service-inventory-systemd-home-', async (homeDir) => {
-            const currentCliHomeDir = join(homeDir, 'current-cli-home');
-            const serviceCliHomeDir = join(homeDir, 'service cli home');
+            const currentCliHomeDir = join(homeDir, 'service cli home');
+            const serviceCliHomeDir = currentCliHomeDir;
             const userHomeDir = join(homeDir, 'user-home');
 
             envScope.patch({
@@ -286,10 +286,10 @@ describe('daemonServiceInventory', () => {
         });
     });
 
-    it('treats a default-following launch agent as belonging to the current relay when the service home settings target it', async () => {
+    it('treats a default-following launch agent as belonging to the current relay when the same-home settings target it', async () => {
         await withTempDir('happier-daemon-service-inventory-matching-home-', async (homeDir) => {
             const currentCliHomeDir = join(homeDir, 'current-cli-home');
-            const serviceCliHomeDir = join(homeDir, 'service-cli-home');
+            const serviceCliHomeDir = currentCliHomeDir;
             const userHomeDir = join(homeDir, 'user-home');
 
             envScope.patch({
@@ -665,7 +665,7 @@ describe('daemonServiceInventory', () => {
                         serverId: 'default',
                         name: 'Default automatic startup',
                         relayUrl: null,
-                        installed: true,
+                        verification: 'verified' as const, installed: true,
                         path: foreignServicePath,
                         platform: 'win32',
                         releaseChannel: 'preview',
@@ -723,7 +723,7 @@ describe('daemonServiceInventory', () => {
                         serverId: 'default',
                         name: 'Default automatic startup',
                         relayUrl: null,
-                        installed: true,
+                        verification: 'verified' as const, installed: true,
                         path: foreignServicePath,
                         platform: 'win32',
                         releaseChannel: 'preview',
@@ -781,7 +781,7 @@ describe('daemonServiceInventory', () => {
                         serverId: 'default',
                         name: 'Default automatic startup',
                         relayUrl: null,
-                        installed: true,
+                        verification: 'verified' as const, installed: true,
                         path: foreignServicePath,
                         platform: 'win32',
                         happierHomeDir: serviceHomeDir,

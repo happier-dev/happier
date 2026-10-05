@@ -17,6 +17,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';

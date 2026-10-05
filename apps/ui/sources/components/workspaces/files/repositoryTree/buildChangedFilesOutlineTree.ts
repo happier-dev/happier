@@ -103,6 +103,7 @@ export function buildChangedFilesOutlineTree(files: readonly Pick<ScmFileStatus,
 export function buildChangedOnlyTreeNodes(
     files: readonly Pick<ScmFileStatus, 'fullPath'>[],
     closedPaths: ReadonlySet<string>,
+    preferredPaths?: ReadonlySet<string>,
 ): LazyDirectoryTreeNode[] {
     const rows: LazyDirectoryTreeNode[] = [];
     const emit = (nodes: readonly ChangedFilesOutlineNode[], depth: number, parentDirectoryPath: string) => {
@@ -122,9 +123,16 @@ export function buildChangedOnlyTreeNodes(
             if (isExpanded) emit(folder.children, depth + 1, folder.fullPath);
         }
     };
-    emit(buildChangedFilesOutlineTree(files), 0, '');
+    const roots = buildChangedFilesOutlineTree(files);
+    if (preferredPaths?.size) {
+        const preferredRoots = new Set(Array.from(preferredPaths, (path) => path.replace(/\\/g, '/').split('/')[0]));
+        // Stable partition: only roots containing this session's work move; descendants retain their order.
+        roots.sort((a, b) => Number(preferredRoots.has(b.name)) - Number(preferredRoots.has(a.name)));
+    }
+    emit(roots, 0, '');
     return rows;
 }
+
 type MergedChangedFolder = Readonly<{ path: string; childRows: number; childFolders: readonly MergedChangedFolder[] }>;
 
 /** The folders as Changed only draws them: a single-child folder chain is one row standing for its deepest folder. */

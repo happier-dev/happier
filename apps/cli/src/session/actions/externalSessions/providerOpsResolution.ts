@@ -132,7 +132,7 @@ export async function resolveExternalSessionSourceSurface(
             ok: true,
             source: materialized.source,
             declaration: materialized.declaration,
-            providerOps,
+            providerOps: Object.freeze({ ...providerOps, contentSearch: materialized.declaration.contentSearch === true }),
             currentAgent,
             agentSourceCustody: runtimeLease.sourceCustody,
             candidateLifecycle:

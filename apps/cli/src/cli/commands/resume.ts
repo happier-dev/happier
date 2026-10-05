@@ -289,6 +289,7 @@ export async function handleResumeCommand(
   if ((rowModel.active === true || openRestorationCandidate) && !resumeInInheritedHerdrPane) {
     await handleAttachCommand([rawSession.id], {
       ...deps?.attachDeps,
+      terminalRuntime: deps?.terminalRuntime,
       readCredentialsFn: async () => credentials,
       fetchSessionByIdFn: async () => rawSession,
       getAccountEncryptionCurrentnessFn: async () => accountEncryptionCurrentness,

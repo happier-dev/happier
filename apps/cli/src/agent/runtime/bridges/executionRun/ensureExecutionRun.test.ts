@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderBoundModelRefSchema, readBackendTargetRefV2, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
+import { AccountSettingsSchema, ProviderBoundModelRefSchema, readBackendTargetRefV2, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import type { AgentRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
@@ -69,7 +69,11 @@ describe('Voice execution-run resume launch custody', () => {
                     return createNativeAgentSessionInteractionHostRuntime({
                         runtime,
                         lease: { pluginId: 'acme.voice', pluginVersion: '1.0.0', agentId: 'acme.voice/agents/default', localAgentId: 'default', occurrenceId: options.controllerOccurrenceId, isCurrent: () => true },
-                        options: { ...options, cwd: options.start?.cwd ?? '/repo', runId: run.runId, scope: 'session_owned' },
+                        options: {
+                            ...options,
+                            accountSettings: options.accountSettings ? AccountSettingsSchema.parse(options.accountSettings) : options.accountSettings,
+                            cwd: options.start?.cwd ?? '/repo', runId: run.runId, scope: 'session_owned',
+                        },
                         sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
                         createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
                     });

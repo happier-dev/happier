@@ -15,6 +15,7 @@ import {
   OpenAiRealtimeSettingsV1Schema,
 } from '../../../../../../packages/plugins/openai/src/protocol/voice/settings';
 import { installVoiceSettingsPanelCommonModuleMocks } from './voiceSettingsPanelTestHelpers';
+import { ELEVENLABS_SETTINGS_SECTION } from '../../../../../../packages/plugins/elevenlabs/src/voiceSettingsPresentation';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,6 +58,7 @@ installVoiceSettingsPanelCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         const snapshot = () => ({
             settingsVersion: canonicalAccountSettings.version,
+            settingsScope: { serverId: 'voice-settings-test-home', accountId: 'voice-settings-test-account' },
             settings: {
                 voice: canonicalAccountSettings.voice,
             },
@@ -76,6 +78,12 @@ installVoiceSettingsPanelCommonModuleMocks({
     },
 });
 
+// Both public storage ports represent the same persisted Account boundary.
+vi.mock('@/sync/domains/state/storageStore', async () => {
+  const { storage } = await import('@/sync/domains/state/storage');
+  return { storage, getStorage: () => storage };
+});
+
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
   getSyncSingleton: () => ({
     prepareAccountSettingsForDaemonSpawn: async () => ({
@@ -91,7 +99,7 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-  ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
+  ItemGroup: ({ children, ...props }: any) => React.createElement('ItemGroup', props, children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -132,26 +140,7 @@ vi.mock('@/voice/credentials/bundledConversationClient', () => ({
     };
     if (providerId !== 'happier.voice.elevenlabs/realtime-elevenlabs') return null;
     const contribution = {
-    settingsDescriptor: {
-      kind: 'voice.provider-settings.v1',
-      modes: ['happier', 'byo'],
-      titleKey: 'settingsVoice.byo.title',
-      footerKey: 'settingsVoice.byo.provisioningGroupFooter',
-      credential: {
-        kind: 'api_key', catalog: 'voices',
-        credentialPurpose: 'voice.client-auth.signed-url',
-        titleKey: 'settingsVoice.byo.apiKeyTitle',
-        promptTitleKey: 'settingsVoice.byo.apiKeyTitle',
-        promptBodyKey: 'settingsVoice.byo.apiKeyDescription',
-      },
-      links: {},
-      fields: [
-        { kind: 'welcome', path: 'welcome', titleKey: 'settingsVoice.byo.realtime.call.welcome.title', subtitleKey: 'settingsVoice.byo.realtime.call.welcome.subtitle' },
-        { kind: 'text', path: 'agentId', titleKey: 'settingsVoice.byo.agentIdTitle', subtitleKey: 'settingsVoice.byo.agentIdDescription' },
-        { kind: 'remote_voice', path: 'tts.voiceId', catalog: 'voices', titleKey: 'settingsVoice.byo.realtime.voicePicker.title', subtitleKey: 'settingsVoice.byo.realtime.voicePicker.subtitle', searchPlaceholderKey: 'settingsVoice.byo.voiceSearchPlaceholder' },
-        { kind: 'select', path: 'tts.modelId', titleKey: 'settingsVoice.byo.realtime.modelPicker.title', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.subtitle', options: [{ id: '', title: 'Auto' }] },
-      ],
-    },
+    settingsDescriptor: ELEVENLABS_SETTINGS_SECTION,
     settingsOwner: {
       currentSchemaVersion: 2,
       // Mirrors the real contribution: the shipped default comes from the
@@ -221,7 +210,30 @@ vi.mock('./realtime/VoiceCredentialSourceField', () => ({
   VoiceCredentialSourceField: (props: any) => React.createElement('VoiceCredentialSourceField', props),
 }));
 
+// Resolve the actual owner graph during collection, outside individual behavior budgets.
+await import('./BundledConversationSettingsSection');
+
 describe('BundledConversationSettingsSection', () => {
+  it('places credentials and provisioning, output voice, and greeting in their contributed groups', async () => {
+    const { BundledConversationSettingsSection } = await import('./BundledConversationSettingsSection');
+    const screen = await renderScreen(React.createElement(BundledConversationSettingsSection, {
+      voice: voiceSettingsParse({ providerId: 'happier.voice.elevenlabs/realtime-elevenlabs', providers: {
+        'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: { ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS, billingMode: 'byo' } },
+      } }),
+      setVoice: vi.fn(),
+    }));
+    const groups = screen.tree.findAllByType('ItemGroup' as any);
+    const account = groups.find((group) => group.findAllByType('VoiceCredentialItem' as any).length > 0);
+    const voice = groups.find((group) => group.findAllByType('DropdownMenu' as any).some((row) => row.props.testID === 'voice-realtime-field-tts-voiceId'));
+    const isGreeting = (row: any) => row.props?.testIDPrefix === 'settings.voice.greeting' && Array.isArray(row.props?.options);
+    const conversation = groups.find((group) => group.findAll(isGreeting).length > 0);
+    expect(account?.findAllByType('VoiceCredentialItem' as any)).toHaveLength(1);
+    expect(account?.findAllByType('Item' as any).some((row) => row.props.testID === 'voice-settings-action-create-agent')).toBe(true);
+    expect(voice?.findAllByType('DropdownMenu' as any).some((row) => row.props.testID === 'voice-realtime-field-tts-voiceId')).toBe(true);
+    expect(voice?.findAllByType('VoiceCredentialItem' as any)).toHaveLength(0);
+    expect(conversation?.findAll(isGreeting).length).toBeGreaterThan(0);
+    expect(account?.findAll(isGreeting)).toHaveLength(0);
+  });
   beforeEach(() => {
     credentialState.exists = false;
     credentialState.reviewRequired = false;
@@ -612,7 +624,7 @@ describe('BundledConversationSettingsSection', () => {
     expect(accountCredentialSlot).toBeTruthy();
     expect(credential.props).toMatchObject({
       credentialSlotId: 'api_key',
-      credentialSourcePurpose: 'voice.client-auth.signed-url',
+      credentialSourcePurpose: ELEVENLABS_SETTINGS_SECTION.credential.credentialPurpose,
       recipientContract: accountCredentialSlot?.recipientContract,
       recipientContractDigest: accountCredentialSlot?.recipientContractDigest,
       disclosePlainStorage: true,
@@ -644,12 +656,11 @@ describe('BundledConversationSettingsSection', () => {
     let tree: ReturnType<typeof renderer.create> | undefined;
     tree = (await renderScreen(React.createElement(BundledConversationSettingsSection, { voice, setVoice }))).tree;
 
-    const dropdowns = tree!.findAllByType('DropdownMenu' as any);
-    const welcomeDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'on_first_turn'));
-    expect(welcomeDropdown).toBeTruthy();
+    const greeting = (tree as any).findAll((row: any) => row.props?.testIDPrefix === 'settings.voice.greeting' && Array.isArray(row.props?.options))[0];
+    expect(greeting).toBeTruthy();
 
     act(() => {
-      welcomeDropdown!.props.onSelect?.('off');
+      greeting!.props.onChange?.('off');
     });
 
     expect(setVoice).toHaveBeenCalledWith(

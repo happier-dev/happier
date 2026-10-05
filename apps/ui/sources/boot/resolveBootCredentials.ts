@@ -186,10 +186,10 @@ export async function resolveBootCredentials(platformOs: string): Promise<AuthCr
         if (!savedBootServer) {
             // The URL remains intact for the mounted Home connect flow. Boot has no
             // modal owner with which to confirm and prove a new address before saving.
-            return await readRetainedBootCredentials();
+            return webServerOverride ? null : await readRetainedBootCredentials();
         }
         if (!await canAdoptBootServerCredentials(bootServerUrl)) {
-            return await readRetainedBootCredentials();
+            return webServerOverride ? null : await readRetainedBootCredentials();
         }
         if (webServerOverride) {
             await bootstrapActiveServerFromWebLocation({

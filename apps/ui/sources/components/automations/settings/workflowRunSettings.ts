@@ -15,6 +15,7 @@ export const WORKFLOW_RUN_SETTINGS = defineSettingsPage({
                 maxActiveRunsPerMachine: {
                     titleKey: 'automations.settings.maxActiveRunsPerMachine',
                     descriptionKey: 'automations.settings.maxActiveRunsPerMachineSubtitle',
+                    storage: { scope: 'account', kind: 'automationSettings', field: 'maxActiveRunsPerMachine', access: 'read_write' },
                 },
             },
         },
@@ -25,6 +26,7 @@ export const WORKFLOW_RUN_SETTINGS = defineSettingsPage({
                 runRetention: {
                     titleKey: 'automations.settings.runRetention',
                     descriptionKey: 'automations.settings.runRetentionSubtitle',
+                    storage: { scope: 'account', kind: 'automationSettings', field: 'runRetention', access: 'read_write' },
                 },
             },
         },

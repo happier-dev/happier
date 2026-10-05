@@ -134,7 +134,6 @@ function canAdoptDaemonStartedHashDriftMarker(params: Readonly<{
 export function hasAuthorityRestorationMarker(marker: DaemonSessionMarker): boolean {
   return marker.startedBy === 'daemon'
     && marker.processStartTimeMs !== undefined
-    && !!marker.processCommandHash
     && !!marker.respawn
     && !!marker.agentRuntimeDaemonServiceAuthorityFilePath;
 }
@@ -145,12 +144,14 @@ export function adoptSessionsFromMarkers(params: {
   pidToTrackedSession: Map<number, TrackedSession>;
   credentials?: StoredCredentials | null;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
-  processIdentityByPid?: ReadonlyMap<number, LocalServiceProcessFact>;
+  processIdentityByPid: ReadonlyMap<number, LocalServiceProcessFact>;
   readProcessInstanceFingerprintFn?: (pid: number, expected: string) => string | null;
 }): { adopted: number; eligible: number } {
   const happyPidToType = new Map(params.happyProcesses.map((p) => [p.pid, p.type] as const));
   const happyPidToProcess = new Map(params.happyProcesses.map((p) => [p.pid, p] as const));
-  const happyPidToCommandHash = new Map(params.happyProcesses.map((p) => [p.pid, hashProcessCommand(p.command)] as const));
+  const happyPidToCommandHash = new Map([...params.processIdentityByPid.values()]
+    .filter((identity) => Boolean(identity.command))
+    .map((identity) => [identity.pid, hashProcessCommand(identity.command)] as const));
   const happyPidToCommand = new Map(params.happyProcesses.map((p) => [p.pid, p.command] as const));
   const encryptionMaterial = params.credentials?.encryption ?? undefined;
 
@@ -296,7 +297,7 @@ export function adoptSessionsFromMarkers(params: {
       ...(observedProcessStartTimeMs !== undefined
         ? { processStartTimeMs: observedProcessStartTimeMs }
         : {}),
-      processCommand: currentCommand,
+      processCommand: processIdentity?.command || undefined,
       reattachedFromDiskMarker: true,
     }));
     adoptedSessionIds.add(marker.happySessionId);
@@ -336,13 +337,13 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
     )(proc.pid);
     if (
       processIdentity?.processStartTimeMs === undefined
-      || hashProcessCommand(processIdentity.command) !== hashProcessCommand(proc.command)
+      || !isOwnedLiveDaemonSessionProcessCommand(processIdentity.command)
     ) {
       continue;
     }
 
     const happySessionId = `PID-${proc.pid}`;
-    const processCommandHash = hashProcessCommand(proc.command);
+    const processCommandHash = hashProcessCommand(processIdentity.command);
     const processStartTimeMs = processIdentity.processStartTimeMs;
     params.pidToTrackedSession.set(proc.pid, {
       startedBy: 'daemon',
@@ -359,7 +360,7 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
       startedBy: 'daemon',
       processCommandHash,
       processStartTimeMs,
-      processCommand: proc.command,
+      processCommand: processIdentity.command,
     }).catch((e) => {
       // Best-effort healing only; keep the recovered live session tracked in memory even if
       // the placeholder marker could not be written.

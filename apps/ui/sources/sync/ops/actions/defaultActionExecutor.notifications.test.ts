@@ -20,6 +20,11 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 let machineState: Pick<StorageState, 'machines' | 'machineListByServerId'>;
 
+// Boundary installation above must run before loading the real Action graph;
+// module preparation belongs to collection rather than the first hook timeout.
+await import('@/sync/domains/state/storage');
+await import('./defaultActionExecutor');
+
 async function addHome() {
     const serverId = await harness.addHome({
         name: 'Notification Home',
@@ -73,7 +78,7 @@ describe('default Action notification daemon transport', () => {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const options = [{ value: 'plugin/channel', label: 'Plugin channel', disabled: true }];
         const result = {
-            optionsSourceId: 'notifications.channels.available', options,
+            actionId: null, fieldPath: null, optionsSourceId: 'notifications.channels.available', options,
         };
         rpc.machine.mockResolvedValue(result);
 
@@ -85,7 +90,7 @@ describe('default Action notification daemon transport', () => {
             accountId: 'account-a',
             machineId: 'notification-relay',
             method: 'action.options.resolve',
-            payload: { optionsSourceId: 'notifications.channels.available' },
+            payload: { actionId: 'notifications.notify_me', fieldPath: 'channels' },
         }));
     });
 

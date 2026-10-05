@@ -23,6 +23,8 @@ import {
     type TranscriptRequestStatesCache,
 } from '@happier-dev/session-core/pending';
 
+export { isSessionActionConfirmationRequest } from '@happier-dev/protocol';
+
 export {
     collectTranscriptRequestStates,
     mergeTranscriptRequestState,

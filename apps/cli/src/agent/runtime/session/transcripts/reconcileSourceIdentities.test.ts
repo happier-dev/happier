@@ -48,7 +48,7 @@ describe('native cold history reconciliation at the admitted Session scope', () 
       { id: sourceId(group, 'assistant'), type: 'assistant', sessionID: nativeSessionId, parentID: sourceId(group, 'user'),
         content: [{ id: `part:${group}`, type: 'text', text: `${group} answer` }], time: { created: index * 10 + 2, completed: index * 10 + 3 }, finish: 'stop' },
     ]);
-    let stream: ServerResponse | null = null;
+    const stream: { current: ServerResponse | null } = { current: null };
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1');
       const path = url.pathname;
@@ -65,7 +65,7 @@ describe('native cold history reconciliation at the admitted Session scope', () 
         return;
       }
       if (path === '/api/event') {
-        stream = response;
+        stream.current = response;
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.write('data: {"type":"server.connected","data":{}}\n\n');
         return;
@@ -97,7 +97,7 @@ describe('native cold history reconciliation at the admitted Session scope', () 
     const ctx = { ...fixture, sessions: { ...fixture.sessions, current: { ...fixture.sessions.current,
       transcripts: { reconcileSourceIdentities,
         publishSessionEvent: (event: Parameters<typeof publishRuntimeSessionEvent>[0]['event']) => publishRuntimeSessionEvent({
-          agentId: 'opencode', event, session: { enqueueAgentMessageCommitted: async (_provider, body) => {
+          agentId: 'opencode', event, session: { sessionId: 'happy_old', enqueueAgentMessageCommitted: async (_provider, body) => {
             // The durable commit transport acknowledgement is the external boundary.
             notifications.push(body); return { persisted: true, delivered: true };
           } },
@@ -115,7 +115,16 @@ describe('native cold history reconciliation at the admitted Session scope', () 
     const runtime = createOpenCodeSessionRuntime({ operations,
       request: { kind: 'resume', sessionId: 'happy_old', cwd: '/repo', providerSessionId: nativeSessionId },
       disposeOperations: async () => { await operations.resetOrDisposeRuntime(); },
-      runtimeCapabilities: { sessionCapabilities: {}, tools: { delivery: 'native_mcp', support: 'supported' } } });
+      runtimeCapabilities: {
+        sessionCapabilities: {
+          sessionListing: 'supported',
+          sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
+          sessionRollback: { conversation: 'unsupported' },
+          usageLimitRecovery: { checkNow: 'unsupported' },
+          compaction: { manual: 'supported' },
+        },
+        tools: { delivery: 'native_mcp', support: 'supported' },
+      } });
     const events: AgentSessionRuntimeEvent[] = [];
     runtime.watch((event) => events.push(event));
     try {
@@ -124,13 +133,13 @@ describe('native cold history reconciliation at the admitted Session scope', () 
         await expect.poll(() => vi.mocked(fixture.logger.warn).mock.calls.length > 0).toBe(true);
         expect(events.filter((event) => event.kind === 'transcript-message-committed')).toEqual([]);
         malformedNative = false;
-        stream?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
+        stream.current?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
       }
       if (kind === 'failed-read') {
         await expect.poll(() => vi.mocked(fixture.logger.warn).mock.calls).toContainEqual(['opencode_history_reconciliation_incomplete', { phase: 'baseline_read' }]);
         expect(events.filter((event) => event.kind === 'transcript-message-committed')).toEqual([]);
         unavailable = false;
-        stream?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
+        stream.current?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
       }
       if (kind === 'legacy-incomplete') {
         await expect.poll(() => notifications).toHaveLength(1);
@@ -138,7 +147,7 @@ describe('native cold history reconciliation at the admitted Session scope', () 
         messages.push({ id: 'future-user', type: 'user', sessionID: nativeSessionId, text: 'future prompt', time: { created: 101 } });
         messages.push({ id: 'future-assistant', type: 'assistant', sessionID: nativeSessionId, parentID: 'future-user',
           content: [{ id: 'future-part', type: 'text', text: 'future answer' }], time: { created: 102, completed: 103 }, finish: 'stop' });
-        stream?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
+        stream.current?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
         await expect.poll(() => events.filter((event) => event.kind === 'transcript-message-committed')).toEqual([
           expect.objectContaining({ role: 'user', text: 'future prompt' }),
           expect.objectContaining({ role: 'assistant', text: 'future answer' }),
@@ -149,7 +158,7 @@ describe('native cold history reconciliation at the admitted Session scope', () 
         expect.objectContaining({ role: 'user', text: 'missing prompt', messageId: `opencode:${encodeURIComponent(nativeSessionId)}:${encodeURIComponent(sourceId('missing', 'user'))}` }),
         expect.objectContaining({ role: 'assistant', text: 'missing answer', messageId: `opencode:${encodeURIComponent(nativeSessionId)}:${encodeURIComponent(sourceId('missing', 'assistant'))}` }),
       ]);
-      stream?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
+      stream.current?.write(`data: ${JSON.stringify({ type: 'session.execution.succeeded', location: { directory: '/repo' }, data: { sessionID: nativeSessionId } })}\n\n`);
       expect(events.filter((event) => event.kind === 'transcript-message-committed')).toHaveLength(2);
       expect(baselineReads).toBeGreaterThan(1);
     } finally {

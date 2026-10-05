@@ -21,7 +21,8 @@ import type { ProbedAgentModelsResult } from '@/capabilities/probes/agentModelsP
 import type { ProbedAgentModesResult } from '@/capabilities/probes/agentModesProbe';
 import type { ProbedAgentConfigOptionsResult } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { createCliBoundSessionMetadataReader } from '../resolveCliActionCallerSession';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { listServerProfiles } from '@/server/serverProfiles';
 import { projectProfilesListForActions } from '@/settings/profiles/profileListProjection';
@@ -30,14 +31,11 @@ import { resolveSpawnConnectedServicesDefaults } from '@/session/services/spawnC
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import {
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import {
   normalizeLimit,
-  readSessionMetadata,
   readSessionModelsState,
   readSessionModesState,
 } from './sessionStateReaders';
@@ -413,10 +411,13 @@ export function createCliActionInventoryDeps(params: Readonly<{
   sessionId: string;
   rawSession?: Readonly<{
     metadata?: unknown;
+    metadataLayoutVersion?: unknown;
     path?: unknown;
     host?: unknown;
     machineId?: unknown;
   }> | null;
+  readCurrentSessionMetadata?: () => Promise<Record<string, unknown> | null>;
+  resolveTransportForSession?: Parameters<typeof createCliBoundSessionMetadataReader>[0]['resolveTransportForSession'];
   accountProfile?: AccountProfile | null;
   probeDeps?: AgentProbeInventoryDeps;
   mcpPreviewDeps?: SpawnMcpPreviewInventoryDeps;
@@ -443,50 +444,27 @@ export function createCliActionInventoryDeps(params: Readonly<{
   | 'spawnConnectedServicesList'
   | 'spawnMcpServersPreview'
 > {
-  const metadataCache = new Map<string, Record<string, unknown> | null>();
+  const metadataReaders = new Map<string, () => Promise<Record<string, unknown> | null>>();
   let accountProfilePromise: Promise<AccountProfile | null> | null = null;
-  const seededMetadata = readSessionMetadata({
-    ...params,
-    rawSession: params.rawSession,
-  });
-  metadataCache.set(params.sessionId, seededMetadata);
+  if (params.readCurrentSessionMetadata) metadataReaders.set(params.sessionId, params.readCurrentSessionMetadata);
 
   const readSessionMetadataForId = async (sessionId: string): Promise<Record<string, unknown> | null> => {
     const normalizedSessionId = String(sessionId ?? '').trim();
     if (!normalizedSessionId) return null;
 
-    if (metadataCache.has(normalizedSessionId)) {
-      return metadataCache.get(normalizedSessionId) ?? null;
+    let read = metadataReaders.get(normalizedSessionId);
+    if (!read) {
+      read = createCliBoundSessionMetadataReader({
+        ...(normalizedSessionId === params.sessionId ? params : {
+          token: params.token, credentials: params.credentials, mode: 'plain' as const, ctx: null,
+        }),
+        sessionId: normalizedSessionId,
+        resolveTransportForSession: params.resolveTransportForSession ?? (async (id) => params.credentials
+          ? resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: id }) : { ok: false }),
+      });
+      metadataReaders.set(normalizedSessionId, read);
     }
-
-    try {
-      const rawSession = await fetchSessionById({ token: params.token, sessionId: normalizedSessionId });
-      const mode =
-        normalizedSessionId === params.sessionId
-          ? params.mode
-          : resolveSessionStoredContentEncryptionMode(rawSession ?? undefined);
-      const rawMetadata = (rawSession as any)?.metadata;
-      const metadataRequiresDecryption = typeof rawMetadata === 'string' && rawMetadata.trim().length > 0;
-      const ctx =
-        metadataRequiresDecryption && normalizedSessionId !== params.sessionId && params.credentials
-          ? resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession ?? undefined)
-          : params.ctx;
-      if (mode === 'plain') {
-        const metadata = readSessionMetadata({ rawSession, mode, ctx: null });
-        metadataCache.set(normalizedSessionId, metadata);
-        return metadata;
-      }
-      if (!ctx) {
-        metadataCache.set(normalizedSessionId, null);
-        return null;
-      }
-      const metadata = readSessionMetadata({ rawSession, mode, ctx });
-      metadataCache.set(normalizedSessionId, metadata);
-      return metadata;
-    } catch {
-      metadataCache.set(normalizedSessionId, null);
-      return null;
-    }
+    return await read();
   };
 
   const readAccountSettings = async (): Promise<import('@happier-dev/protocol').AccountSettings | null> => {
@@ -524,7 +502,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
   };
 
   const readCurrentSessionValue = async (key: 'path' | 'host' | 'machineId'): Promise<string | null> => {
-    const rawValue = params.rawSession?.[key];
+    const rawValue = params.rawSession?.metadataLayoutVersion === undefined || params.rawSession?.metadataLayoutVersion === 0
+      ? params.rawSession?.[key] : undefined;
     if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
       return rawValue.trim();
     }
@@ -534,6 +513,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
       ? metadataValue.trim()
       : null;
   };
+
+  const readCurrentSessionWorkspace = async () => ({
+    path: await readCurrentSessionValue('path'),
+    host: await readCurrentSessionValue('host'),
+    machineId: await readCurrentSessionValue('machineId'),
+  });
 
   return {
     pathsListRecent: async (args) => {
@@ -635,7 +620,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         args,
         agentId: normalizedAgentId,
         backendTarget,
-        rawSession: params.rawSession,
+        rawSession: await readCurrentSessionWorkspace(),
         accountSettings: await readAccountSettings(),
         credentials: params.credentials ?? null,
         probeDeps: params.probeDeps,
@@ -686,7 +671,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         args,
         agentId: normalizedAgentId,
         backendTarget,
-        rawSession: params.rawSession,
+        rawSession: await readCurrentSessionWorkspace(),
         accountSettings: await readAccountSettings(),
         credentials: params.credentials ?? null,
         probeDeps: params.probeDeps,
@@ -706,7 +691,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         args,
         agentId: normalizedAgentId,
         backendTarget,
-        rawSession: params.rawSession,
+        rawSession: await readCurrentSessionWorkspace(),
         accountSettings: await readAccountSettings(),
         credentials: params.credentials ?? null,
         probeDeps: params.probeDeps,

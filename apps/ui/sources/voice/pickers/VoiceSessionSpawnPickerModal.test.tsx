@@ -57,8 +57,8 @@ installVoicePickerCommonModuleMocks({
             importOriginal,
             useAllMachines: () => machinesState,
             useAllSessionListRenderables: () => [],
+            useAuthoringMemoryField: (key: string) => key === 'recentMachinePaths' ? recentMachinePathsState : null,
             useSetting: (key: string) => {
-                if (key === 'recentMachinePaths') return recentMachinePathsState;
                 if (key === 'useMachinePickerSearch') return false;
                 if (key === 'usePathPickerSearch') return false;
                 return null;

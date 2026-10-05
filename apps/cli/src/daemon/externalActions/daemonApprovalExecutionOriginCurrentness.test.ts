@@ -72,7 +72,7 @@ describe('daemon approval execution-origin currentness', () => {
         machineId: 'machine-1', serverId: 'home-1', isSessionCallerCurrent: () => true });
       expect(check).toBeDefined();
       const sessionOrigin: ApprovalExecutionOriginV1 = { v: 1, authority: 'account_automation', surface: 'agent',
-        caller: { kind: 'session', sessionId }, serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
+        caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
         actionId: 'workflow.trigger.add', requestId: 'private-permission-request', callerPermissionMode: 'default' };
       await expect(check!({ origin: sessionOrigin })).resolves.toBe(true);
       const target = { kind: 'session' as const, sessionId };
@@ -91,7 +91,7 @@ describe('daemon approval execution-origin currentness', () => {
   });
   it('requires the Session caller owner to prove currentness independently of its effect target', async () => {
     const sessionOrigin = { ...origin, surface: 'agent' as const,
-      caller: { kind: 'session' as const, sessionId: 'caller-session' },
+      caller: { kind: 'session' as const, sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 },
       accountId: 'account-1', principalId: undefined, credentialId: undefined,
       callerPermissionMode: 'default' as const,
     };
@@ -108,7 +108,7 @@ describe('daemon approval execution-origin currentness', () => {
     let callerIsCurrent = true;
     const isCurrent = createDaemonApprovalExecutionOriginCurrentness({ ...shared,
       isSessionCallerCurrent: async ({ caller }: { caller: { kind: 'session'; sessionId: string } }) => {
-        expect(caller).toEqual({ kind: 'session', sessionId: 'caller-session' });
+        expect(caller).toEqual({ kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 });
         return callerIsCurrent;
       },
     });

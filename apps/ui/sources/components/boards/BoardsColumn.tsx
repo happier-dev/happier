@@ -6,13 +6,12 @@ import type { WorkBoardV1 } from '@happier-dev/protocol';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionList, CollectionNavigationRow, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE, createBoardRoute, readOpenBoardId } from './boardsRoutes';
-import { describeBoardColumnLine } from './model/boardCards';
+import { describeBoardColumnLine, hasWorkBoardContent } from './model/boardCards';
 import { useBoardLiveCards } from './model/useBoardContent';
 import { useDispatchWorkBoardIntent, useWorkBoardSaveState, useWorkBoards } from './model/useWorkBoards';
 import { resolveCollectionSaveFailure } from './model/boardSaveFailure';
@@ -21,20 +20,16 @@ import { BoardReadState } from './BoardReadState';
 
 /**
  * The Boards destination's column (lab `boards-B1`): your boards, the open one selected, with one live
- * line each — who needs you and how many items it holds ("3 need you · 9 items"); "+" and the last row
- * make a new board. Only the open destination's column is mounted. A board with no source reads
+ * line each — who needs you and how many items it holds ("3 need you · 9 items"); search finds a board
+ * by name, and the last row makes a new board. Only the open destination's column is mounted. A board with no source reads
  * nothing; the others read their own live cards, sharing one Inbox model only while one of them shows
  * Needs you.
  */
 
-function hasBoardSource(board: WorkBoardV1): boolean {
-    return (board.source.sections?.length ?? 0) > 0 || board.source.filter !== undefined || board.source.picked.length > 0;
-}
-
 /** A board's row while it has a source: its live line, with the collection's trouble dot while it needs you. */
 const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: WorkBoardV1; selected: boolean; onPress: () => void }>) {
-    const { cards } = useBoardLiveCards(props.board);
-    const line = describeBoardColumnLine(cards);
+    const { cards, widgets } = useBoardLiveCards(props.board);
+    const line = describeBoardColumnLine(cards, widgets.length);
     return (
         <CollectionNavigationRow
             testID={`boards-column:board:${props.board.id}`}
@@ -55,7 +50,7 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ board: WorkBoard
     const router = useRouter();
     const { board } = props;
     const onPress = React.useCallback(() => router.push(createBoardRoute(board.id) as never), [board.id, router]);
-    if (hasBoardSource(board)) return <LiveBoardRow board={board} selected={props.selected} onPress={onPress} />;
+    if (hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} onPress={onPress} />;
     return (
         <CollectionNavigationRow
             testID={`boards-column:board:${board.id}`}
@@ -86,6 +81,9 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
 }>) {
     const pathname = usePathname();
     const boards = useWorkBoards().boards;
+    const [query, setQuery] = React.useState('');
+    const needle = query.trim().toLowerCase();
+    const matchingBoards = needle ? boards.filter(board => board.name.toLowerCase().includes(needle)) : boards;
     const createBoard = useCreateBoard();
     const openId = readOpenBoardId(pathname) ?? (pathname === BOARDS_ROUTE ? boards[0]?.id ?? null : null);
     // A refused save for a board that is not open (a delete the person was sent back from) is said here;
@@ -102,21 +100,12 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
                 testID="boards-column:list"
                 surface={props.surface ?? 'plane'}
                 title={t('boards.title')}
-                headerAction={(
-                    <IconButton
-                        testID="boards-column:new"
-                        iconName="plus"
-                        variant="plain"
-                        accessibilityLabel={t('boards.newBoard')}
-                        tooltip={t('boards.newBoard')}
-                        onPress={createBoard}
-                    />
-                )}
+                search={{ value: query, onChangeText: setQuery, placeholder: t('common.search'), testID: 'boards-column:search' }}
             >
                 <BoardReadState size="line" retained={boards.length > 0} />
                 {/* The board rows' live lines share one Inbox model; the list itself never remounts for it. */}
-                <BoardsInboxBoundary boards={boards}>
-                    {boards.map((board) => <BoardRow key={board.id} board={board} selected={openId === board.id} />)}
+                <BoardsInboxBoundary boards={matchingBoards}>
+                    {matchingBoards.map((board) => <BoardRow key={board.id} board={board} selected={openId === board.id} />)}
                 </BoardsInboxBoundary>
                 <CollectionNavigationRow
                     testID="boards-column:new-row"

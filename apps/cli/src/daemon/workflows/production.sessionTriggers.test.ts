@@ -62,7 +62,7 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
         ledSubtreeSessionIds: [], roles: {}, workDepthLimit: 4, callerPermissionCeiling: facts.permissionCeiling,
       }),
     }),
-    storage: { execute: async (operation) => {
+    storage: { observeChanges: () => ({ dispose: async () => {} }), execute: async (operation) => {
       if (operation.operation === 'run-key.census') return createPlainWorkflowRunKeyCensusFixture({ runId: previousRunId, accountId });
       effects.push(operation.operation);
       if (operation.operation !== 'accepted-snapshot.resolve') throw new Error('Unexpected storage effect');

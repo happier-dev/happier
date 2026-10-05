@@ -45,13 +45,13 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution?: PluginActionExecutionRequestOwner;
   /** Exact caller bound by the host, never inferred from a requested target or surface. */
-  initiatingActionCaller?: ActionCaller;
+  getInitiatingActionCaller?: () => ActionCaller | null;
 }>): PluginActionExecutor {
   return createPluginActionExecutor({
     base: params.base,
     requestPluginActionExecution: params.requestPluginActionExecution
       ?? requestDaemonPluginActionExecution,
-    ...(params.initiatingActionCaller ? { initiatingActionCaller: params.initiatingActionCaller } : {}),
+    ...(params.getInitiatingActionCaller ? { getInitiatingActionCaller: params.getInitiatingActionCaller } : {}),
   });
 }
 
@@ -70,14 +70,18 @@ export type PluginActionExecutionRequestOwner = (request: Readonly<{
 export function createPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution: PluginActionExecutionRequestOwner;
-  initiatingActionCaller?: ActionCaller;
+  getInitiatingActionCaller?: () => ActionCaller | null;
 }>): PluginActionExecutor {
   const requestContributed = async (
     actionId: string, input: unknown, context?: OccurrenceBoundActionExecutorContext,
   ) => {
     const surface: 'cli' | 'mcp' | 'agent' = context?.surface === 'mcp'
       ? 'mcp' : context?.surface === 'agent' ? 'agent' : 'cli';
-    const admittingCaller = context?.actionCaller ?? params.initiatingActionCaller;
+    const admittingCaller = context?.actionCaller ?? params.getInitiatingActionCaller?.();
+    if (params.getInitiatingActionCaller && !admittingCaller) return {
+      matched: true as const,
+      result: { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' },
+    };
     const request = {
       actionId, input, surface,
       ...(context?.requiredContributedActionDangerLevel ? { requiredDangerLevel: context.requiredContributedActionDangerLevel } : {}),

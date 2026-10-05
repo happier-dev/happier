@@ -2,6 +2,7 @@ import type {
   ExecutionRunUserTranscriptDirective,
   ExecutionRunReplaySeedRequest,
   ExecutionRunResumeHandle,
+  ExecutionRunVoiceAgentIntentInputV1,
   AcpConfigOptionOverridesV1,
   ProviderBoundModelRef,
   VoiceAgentOutputEffectV1,
@@ -46,6 +47,7 @@ export type VoiceAgentStartParams = Readonly<{
   permissionIntent: PermissionIntent;
   idleTtlSeconds: number;
   initialContext: string;
+  voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
   /**
    * Daemon-only: controls whether initial context is injected during bootstrap or deferred until
    * the first real user turn.
@@ -138,6 +140,7 @@ export function readVoiceAgentActionEffectId(action: unknown): string | null {
 }
 
 export type VoiceAgentHandle = Readonly<{
+  voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
   accountLifetime: ServerAccountScopeLifetime;
   metadataSessionId: string | null;
   client: VoiceAgentClient;
@@ -173,6 +176,7 @@ export interface VoiceAgentClient {
       voiceAgentId: string;
       userText: string;
       displayUserText?: string;
+      speechSegmentTargetChars?: number;
       resume?: boolean;
       userTranscript?: ExecutionRunUserTranscriptDirective;
     }>,

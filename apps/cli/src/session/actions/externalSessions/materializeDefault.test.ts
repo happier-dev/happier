@@ -102,6 +102,8 @@ const unavailableManagedEndpointRead: AgentExternalSessionsManagedEndpointRead =
     throw new Error('Managed endpoint read is unavailable in this file-backed fixture');
   };
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+// Packaged process execution is outside these transcript-only fixtures.
+const unavailableInvocationRipgrep = { run: async () => { throw new Error('Packaged ripgrep unavailable in transcript fixture'); } };
 
 function createLoopbackManagedEndpointRead(baseUrl: string) {
   const requestedPaths: string[] = [];
@@ -157,6 +159,7 @@ function createRealContributionProviderOps(input: Readonly<{
     maxSerializedBytes,
     managedEndpointRead: input.managedEndpointRead ?? unavailableManagedEndpointRead,
     exec: unavailableInvocationExec,
+    ripgrep: unavailableInvocationRipgrep,
   });
   const pageTranscript = vi.fn(async (request: Readonly<{
     cursor?: string;
@@ -456,6 +459,7 @@ describe('default external session materialize capture', () => {
       maxSerializedBytes: 512 * 1024,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     const pageTranscript = vi.fn(async (request: Readonly<{
       cursor?: string;
@@ -695,6 +699,7 @@ describe('default external session materialize capture', () => {
       maxSerializedBytes: 512 * 1024,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     const pageTranscript = vi.fn(async (request: Readonly<{
       cursor?: string;
@@ -940,6 +945,7 @@ describe('default external session materialize capture', () => {
       maxSerializedBytes: 512 * 1024,
       managedEndpointRead: unavailableManagedEndpointRead,
       exec: unavailableInvocationExec,
+      ripgrep: unavailableInvocationRipgrep,
     });
     const pageTranscript = vi.fn(async (request: Readonly<{
       cursor?: string;

@@ -79,7 +79,9 @@ import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
 import { resolveSessionItemTagCollections } from './sessionTagUtils';
 import { planSessionTagDisplay } from './sessionTagPlacement';
 import { useSessionSplitCanvasRowActionsForScope } from '@/components/sessions/canvas/useSessionSplitCanvasRowActions';
-import { SessionSplitCanvasDragHandle } from '@/components/sessions/canvas/SessionSplitCanvasDragHandle';
+import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { resolveSessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
 import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
@@ -134,6 +136,8 @@ import { resolveMachineTargetForSessionFromState } from '@/sync/ops/sessionMachi
 import { selectSessionViewShellSessionForRouteState } from './sessionViewStableSession';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { SessionForkReplaySettingsSource } from '@/sync/domains/sessionFork/resolveSessionForkReplayOptions';
+
+const SESSION_ROW_ORGANIZE_LIST_MENU_ITEM_ID = 'session.organizeList';
 
 const CONTEXT_MENU_PRESS_IN_OPEN_DELAY_MS = 350;
 const CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS = 600;
@@ -213,9 +217,13 @@ export type SessionItemBaseProps = Readonly<{
     onMoveUp?: () => void;
     onMoveDown?: () => void;
     onDeleteDraft?: () => void | Promise<void>;
-    reorderHandleGesture?: GestureType | ComposedGesture;
+    /** Phone Organize mode: the grip's drag gesture (K1). Desktop rows carry the whole row instead. */
+    dragGripGesture?: GestureType | ComposedGesture;
     isBeingDragged?: boolean;
-    nativeInlineDragEnabled?: boolean;
+    /** The row can be carried at all (the list's organization and order rules allow it). */
+    dragEnabled?: boolean;
+    /** The phone list is in its Organize mode, so the row shows its grip instead of swipe/long-press. */
+    organizeMode?: boolean;
     nativeContextMenuOpen?: boolean;
     onNativeContextMenuOpenChange?: (next: boolean) => void;
     rowAttentionAnimationEnabled?: boolean;
@@ -683,9 +691,10 @@ const SessionItemContent = React.memo(
         onMoveUp,
         onMoveDown,
         onDeleteDraft,
-        reorderHandleGesture,
+        dragGripGesture,
         isBeingDragged,
-        nativeInlineDragEnabled,
+        dragEnabled = false,
+        organizeMode = false,
         nativeContextMenuOpen,
         onNativeContextMenuOpenChange,
         agentSwitchingEnabled = false,
@@ -857,7 +866,6 @@ const SessionItemContent = React.memo(
             });
         }, [onTogglePinned, pinned, sessionActionTarget]);
         const showTagAction = supportsTag && showRowActions;
-        const showSplitCanvasDragHandle = splitCanvasRowActions.mode === 'open' && showRowActions;
         const { activeTags, knownTags } = React.useMemo(() => resolveSessionItemTagCollections({
             tags,
             allKnownTags,
@@ -896,10 +904,11 @@ const SessionItemContent = React.memo(
             const wasBeingDragged = isBeingDraggedRef.current;
             const isReorderDragActive = isBeingDragged === true;
             isBeingDraggedRef.current = isReorderDragActive;
-            if (Platform.OS === 'web' && reorderHandleGesture && (isReorderDragActive || wasBeingDragged)) {
+            // The whole desktop row is the drag source: the press that ends a carry must not also open it.
+            if (Platform.OS === 'web' && dragEnabled && (isReorderDragActive || wasBeingDragged)) {
                 suppressNextPressForPointerGesture();
             }
-        }, [isBeingDragged, reorderHandleGesture, suppressNextPressForPointerGesture]);
+        }, [dragEnabled, isBeingDragged, suppressNextPressForPointerGesture]);
         const showForkAction = forkActionContext != null && canForkConversation({
             session: resolvedSession,
             replayEnabled: forkActionContext.replayEnabled,
@@ -1058,9 +1067,19 @@ const SessionItemContent = React.memo(
                 icon: <Icon name="git-branch" size={16} color={rowActionIconColor} />,
             }];
         }, [rowActionIconColor, showForkAction]);
+        // K1: on a phone the long-press menu is how a list enters Organize mode; it never lifts the row.
+        const organize = useSessionListOrganizeMode();
+        const organizeMenuItems = React.useMemo((): DropdownMenuItem[] => {
+            if (!organize.available || organize.active || !dragEnabled) return [];
+            return [{
+                id: SESSION_ROW_ORGANIZE_LIST_MENU_ITEM_ID,
+                title: t('entityDragDrop.organize.enter'),
+                icon: <Icon name="dots-six-vertical" size={16} color={rowActionIconColor} />,
+            }];
+        }, [dragEnabled, organize.active, organize.available, rowActionIconColor]);
         const leadingMenuItems = React.useMemo(
-            () => [...workspaceOpen.items, ...draftMenuItems, ...copyDebugMenuItems, ...forkMenuItems, ...splitCanvasMenuItems],
-            [copyDebugMenuItems, draftMenuItems, forkMenuItems, splitCanvasMenuItems, workspaceOpen.items],
+            () => [...workspaceOpen.items, ...draftMenuItems, ...copyDebugMenuItems, ...forkMenuItems, ...splitCanvasMenuItems, ...organizeMenuItems],
+            [copyDebugMenuItems, draftMenuItems, forkMenuItems, organizeMenuItems, splitCanvasMenuItems, workspaceOpen.items],
         );
 
         const handleSelectSplitCanvasMenuItem = React.useCallback((itemId: string): boolean => {
@@ -1080,6 +1099,10 @@ const SessionItemContent = React.memo(
         }, [splitCanvasRowActions]);
         const handleSelectLeadingMenuItem = React.useCallback(async (itemId: string): Promise<boolean> => {
             if (workspaceOpen.select(itemId)) return true;
+            if (itemId === SESSION_ROW_ORGANIZE_LIST_MENU_ITEM_ID) {
+                organize.enter();
+                return true;
+            }
             if (itemId === SESSION_DELETE_DRAFT_MENU_ITEM_ID) {
                 await confirmDeleteDraft();
                 return true;
@@ -1096,7 +1119,7 @@ const SessionItemContent = React.memo(
                 return true;
             }
             return handleSelectSplitCanvasMenuItem(itemId);
-        }, [confirmDeleteDraft, copyFeedback, handleSelectSplitCanvasMenuItem, openForkFlow, resolvedSession.id, resolveSessionDebugInformation, workspaceOpen]);
+        }, [confirmDeleteDraft, copyFeedback, handleSelectSplitCanvasMenuItem, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, workspaceOpen]);
 
         const handleSelectFolderMoveMenuItem = React.useCallback(async (itemId: string) => {
             if (itemId === 'session-folder-move-root') {
@@ -1255,27 +1278,28 @@ const SessionItemContent = React.memo(
 
         const {
             swipeEnabled,
-            showReorderHandle,
+            showDragGrip,
             enableLongPressContextMenu,
             suppressNextPressOnNativeContextMenuOpen,
         } = React.useMemo(() => resolveSessionRowInteractionPolicy({
             platformOs: Platform.OS,
+            touchPrimaryPointer: isTouchPrimaryPointer(),
             isActiveSession,
             canStopSession,
             canArchiveSession,
             contextMenuItemCount: contextMenuItems.length,
             contextMenuOpen,
             contextMenuWasOpen: contextMenuWasOpenRef.current,
-            nativeInlineDragEnabled: nativeInlineDragEnabled === true,
-            hasReorderHandle: Boolean(reorderHandleGesture),
+            dragEnabled,
+            organizeMode,
         }), [
             canArchiveSession,
             canStopSession,
             contextMenuItems.length,
             contextMenuOpen,
+            dragEnabled,
             isActiveSession,
-            nativeInlineDragEnabled,
-            reorderHandleGesture,
+            organizeMode,
         ]);
 
         React.useEffect(() => {
@@ -1513,7 +1537,8 @@ const SessionItemContent = React.memo(
                 separator={Boolean(embedded && !embeddedIsLast)}
                 onLayout={sourceTagChips.length > 0 ? handleRowLayout : undefined}
                 renderContainer={(content, rowStyle) => (
-                    <WorkspaceDestinationRow existingMenu href={buildScopedSessionRouteHref({
+                    // When the list carries this row itself, that is its one drag (it reaches panes too).
+                    <WorkspaceDestinationRow existingMenu dragSource={!dragEnabled} href={buildScopedSessionRouteHref({
                         sessionId: resolvedSession.id, serverId: serverId ?? null,
                     })}>
                     <Pressable
@@ -1741,27 +1766,6 @@ const SessionItemContent = React.memo(
                     />
                     {showRowActions ? (
                         <View style={styles.rowActionsRow}>
-                            {showSplitCanvasDragHandle ? (
-                                <SessionSplitCanvasDragHandle
-                                    sessionId={resolvedSession.id}
-                                    onOpenInSplitRight={splitCanvasRowActions.openInSplitRight}
-                                    testID={`session-item-split-drag-handle-${resolvedSession.id}`}
-                                    style={styles.rowActionButton}
-                                />
-                            ) : null}
-                            {showReorderHandle && reorderHandleGesture ? (
-                                <GestureDetector gesture={reorderHandleGesture}>
-                                    <View
-                                        testID="session-item-reorder-handle"
-                                        style={styles.rowActionButton}
-                                        onPointerDown={isWeb ? suppressNextPressForPointerGesture : undefined}
-                                        onPointerUp={isWeb ? suppressNextPressForPointerGesture : undefined}
-                                        onPointerCancel={isWeb ? suppressNextPressForPointerGesture : undefined}
-                                    >
-                                        <Icon name="list" size={16} color={rowActionIconColor} />
-                                    </View>
-                                </GestureDetector>
-                            ) : null}
                             {showTagAction ? (
                                 tagMenuEverOpened || Platform.OS === 'web' ? (
                                     <DropdownMenu
@@ -1903,6 +1907,16 @@ const SessionItemContent = React.memo(
                                 </Text>
                             ) : null}
                         </View>
+                    ) : null}
+                    {showDragGrip && dragGripGesture ? (
+                        <GestureDetector gesture={dragGripGesture}>
+                            <EntityDragGrip
+                                density="touch"
+                                active={isBeingDragged === true}
+                                accessibilityLabel={t('entityDragDrop.organize.grip', { item: sessionNameResolved })}
+                                testID={`session-item-drag-grip-${resolvedSession.id}`}
+                            />
+                        </GestureDetector>
                     ) : null}
                 </>}
             />

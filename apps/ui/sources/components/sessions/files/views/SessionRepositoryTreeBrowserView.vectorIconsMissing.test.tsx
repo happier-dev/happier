@@ -93,11 +93,6 @@ vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
     WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' }),
 }));
 
-vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
-    searchWorkspaceFiles: vi.fn(async () => []),
-    workspaceFileSearchCache: { clearCache: vi.fn() },
-}));
-
 describe('SessionRepositoryTreeBrowserView (vector icons missing)', () => {
     it('does not crash when Ionicons resolves to undefined', async () => {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');

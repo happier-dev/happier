@@ -19,6 +19,15 @@ const harness = vi.hoisted(() => ({
     credentialReadGate: null as Promise<void> | null,
 }));
 const captureExceptionIfEnabled = vi.hoisted(() => vi.fn());
+const filenameTransport = vi.hoisted(() => ({ list: vi.fn(), directory: vi.fn() }));
+// The applied network connection is an environment boundary; both lifetime owners stay real.
+vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
+    getAppliedActiveServerSnapshot: () => ({ serverId: 'home-a', serverUrl: 'https://home-a.example.test', generation: 1 }),
+    isAppliedActiveServerRuntimeAvailable: () => true,
+}));
+vi.mock('@/sync/ops/machineWorkspaceFileList', () => ({ machineWorkspaceFileList: filenameTransport.list }));
+vi.mock('@/sync/ops/machineFileBrowser', () => ({ machineFilesystemListDirectory: filenameTransport.directory }));
 
 vi.mock('@/utils/system/sentry', async (importOriginal) => ({
     ...(await (importOriginal as () => Promise<typeof import('@/utils/system/sentry')>)()),
@@ -94,9 +103,42 @@ afterEach(() => {
     harness.credentialReadGate = null;
     standardCleanup();
     storage.setState(storage.getInitialState(), true);
+    filenameTransport.list.mockReset();
+    filenameTransport.directory.mockReset();
 });
 
 describe('useServerCredentialAccountScopeResolutions', () => {
+    it.each(['account-b', 'account-a'])('binds addressed filename search and cancellation to Home B with Account %s', async (accountB) => {
+        saveProfile('home-a');
+        saveProfile('home-b');
+        harness.tokenByServerId.set('home-a', 'account-a');
+        harness.tokenByServerId.set('home-b', accountB);
+        storage.setState({ profileScope: { serverId: 'home-a', accountId: 'account-a' } });
+        filenameTransport.list.mockResolvedValueOnce({ ok: true, paths: ['needle.ts'], truncated: false });
+        filenameTransport.list.mockImplementationOnce(() => new Promise(() => {}));
+        const { useWorkspaceFileQuery } = await import('../workspaces/files/useWorkspaceFileQuery');
+        const hook = await renderHook((query: string) => useWorkspaceFileQuery({
+            scope: { serverId: 'home-b', machineId: 'machine', rootPath: '/repo' }, query, mode: 'glob',
+        }), { initialProps: 'needle' });
+        await vi.waitFor(() => expect(hook.getCurrent().items.map((item) => item.fullPath)).toEqual(['needle.ts']));
+        expect(filenameTransport.list.mock.calls[0]?.[2]).toMatchObject({ serverId: 'home-b', accountId: accountB });
+        // Retiring A must not clear B even when both Homes have the same Account id.
+        harness.tokenByServerId.delete('home-a');
+        emitCredentialMutation({ kind: 'credentials_removed', serverId: 'home-a', serverUrl: 'https://home-a.example.test' });
+        expect(hook.getCurrent().items).toHaveLength(1);
+        await hook.rerender('second');
+        await vi.waitFor(() => expect(filenameTransport.list).toHaveBeenCalledTimes(2));
+        const signal: AbortSignal = filenameTransport.list.mock.calls[1]?.[2].signal;
+        harness.tokenByServerId.delete('home-b');
+        emitCredentialMutation({ kind: 'credentials_removed', serverId: 'home-b', serverUrl: 'https://home-b.example.test' });
+        expect(signal.aborted).toBe(true);
+        await vi.waitFor(() => {
+            expect(hook.getCurrent().items).toHaveLength(0);
+            expect(hook.getCurrent().coverage).toBe('unavailable');
+            expect(hook.getCurrent().isSearching).toBe(false);
+        });
+        expect(filenameTransport.list).toHaveBeenCalledTimes(2);
+    });
     it('binds each Home to the Account held by that Home own credential', async () => {
         saveProfile('home-a');
         saveProfile('home-b');

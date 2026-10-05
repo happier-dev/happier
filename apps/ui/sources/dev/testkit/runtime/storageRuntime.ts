@@ -253,6 +253,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         storage: store,
         getStorage: () => store,
         useSettings: () => defaultSettings,
+        useSettingsSelector: <T>(selector: (settings: Settings) => T): T => selector(defaultSettings),
         useSetting,
         useSettingMutable,
         useCurrentSecretBindingsByProfileIdMutable,

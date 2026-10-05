@@ -13,6 +13,7 @@ import {
     getActiveServerSnapshot,
     listServerProfiles,
     resetServerProfilesRuntimeForTests,
+    resolveSavedServerProfileByUrl,
 } from '@/sync/domains/server/serverProfiles';
 
 import { resolveHomeDisplayNameForRelayUrl as readHomeNameForRelay } from '@/components/settings/server/homeDisplayName';
@@ -60,9 +61,10 @@ describe('openHomeFromTrayRow (D11-3, A13-05)', () => {
     it('picks nothing and names nothing when two saved Homes share that address', async () => {
         seedSavedHomes({
             home: home('home', 'https://home.example.test'),
-            first: home('first', 'https://shared.example.test', { serverIdentityId: 'srv_first' }),
-            second: home('second', 'https://shared.example.test', { serverIdentityId: 'srv_second' }),
+            first: home('first', 'https://shared.example.test', { serverIdentityId: 'srv_first', canonicalServerUrl: 'https://shared.example.test' }),
+            second: home('second', 'https://shared.example.test', { serverIdentityId: 'srv_second', canonicalServerUrl: 'https://shared.example.test' }),
         }, 'home');
+        expect(resolveSavedServerProfileByUrl('https://shared.example.test').kind).toBe('ambiguous');
 
         await expect(openHomeFromTrayRow('https://shared.example.test', refreshAuth)).resolves.toBe('ambiguous');
 

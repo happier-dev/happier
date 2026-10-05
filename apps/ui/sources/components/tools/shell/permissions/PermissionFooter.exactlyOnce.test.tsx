@@ -37,7 +37,9 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-
+// Collect the real component after the canonical platform mocks are installed;
+// module transformation is setup, not elapsed permission-decision behavior.
+const { PermissionFooter } = await import('./PermissionFooter');
 
 describe('PermissionFooter exactly-once actions', () => {
     beforeEach(() => {
@@ -53,7 +55,6 @@ describe('PermissionFooter exactly-once actions', () => {
     });
 
     it('admits only the first same-turn approve, deny, or session-approve action', async () => {
-        const { PermissionFooter } = await import('./PermissionFooter');
         const cases = [
             {
                 firstTestID: 'permission-footer.allow',
@@ -118,7 +119,6 @@ describe('PermissionFooter exactly-once actions', () => {
         ops.approve.mockReturnValueOnce(oldApproval.promise);
         ops.deny.mockReturnValueOnce(currentDenial.promise);
 
-        const { PermissionFooter } = await import('./PermissionFooter');
         const renderFooter = (permissionId: string) => (
             <PermissionFooter
                 permission={{ id: permissionId, status: 'pending' }}

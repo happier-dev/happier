@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { createDeferred } from '@/dev/testkit';
+import { resolveListReorderFailure } from '@/sync/ops/actions/listReorderFailure';
+
 import { storage } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { DiscardedPendingMessage } from '@/sync/domains/state/storageTypes';
@@ -21,6 +24,7 @@ import {
     restoreDiscardedPendingMessageV2 as restoreDiscardedPendingMessageV2Impl,
     serializePendingEnqueueBodyForServerWire,
     updatePendingMessageV2 as updatePendingMessageV2Impl,
+    updatePendingRequestedActionV2,
 } from './pendingQueueV2';
 import { buildSession, createPendingQueueEncryption, resetPendingQueueState } from './pendingQueueV2.testHelpers';
 
@@ -31,6 +35,7 @@ const enqueuePendingMessageV2 = (
 const retryPendingOutboxOperationV2 = (
     params: Omit<Parameters<typeof retryPendingOutboxOperationV2Impl>[0], 'serverWireMode'>,
 ) => retryPendingOutboxOperationV2Impl({ ...params, serverWireMode: 'pending_input_v1' });
+const isCurrentPendingScope = () => true;
 const fetchAndApplyPendingMessagesV2 = (
     params: Omit<Parameters<typeof fetchAndApplyPendingMessagesV2Impl>[0], 'outboxScope'>,
 ) => fetchAndApplyPendingMessagesV2Impl({
@@ -94,6 +99,8 @@ function insertEditablePendingMessage(sessionId: string): void {
 
 describe('pendingQueueV2 error handling', () => {
     beforeEach(async () => {
+        // The app entry normally loads the real implementation before a Home is applied.
+        await import('@/sync/syncEngine');
         await resetPendingQueueState(outboxScope);
     });
 
@@ -163,6 +170,114 @@ describe('pendingQueueV2 error handling', () => {
             ...acknowledgement,
             pending: { ...acknowledgement.pending, extra: true },
         }, 'local-old-ack')).toBe(false);
+    });
+
+    it.each([
+        { name: 'discard', mutate: discardPendingMessageV2, recipient: undefined },
+        { name: 'handled delivery', mutate: markPendingDeliveryHandledV2, recipient: undefined },
+        { name: 'Run discard', mutate: discardPendingMessageV2, recipient: { kind: 'execution_run' as const, runId: 'run-a' } },
+    ])('does not restore a row from a held pre-write snapshot after successful $name', async ({ mutate, recipient }) => {
+        const sessionId = 's_pending_retirement_snapshot';
+        const localId = 'retired-local-id';
+        const freshLocalId = 'new-server-row-after-write';
+        const rawRecord = { role: 'user' as const, content: { type: 'text' as const, text: 'retire this row' }, meta: {} };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain', pendingVersion: 1 } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId, localId, recipient, createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', pendingDeliveryStatus: 'server_queued',
+            text: rawRecord.content.text, rawRecord,
+        });
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        const readStarted = createDeferred<void>();
+        const oldRead = createDeferred<Response>();
+        const writeAccepted = createDeferred<void>();
+        let firstRead = true;
+        const request = async (_path: string, init?: RequestInit): Promise<Response> => {
+            if (init?.method === 'POST') {
+                const response = Response.json({ ok: true });
+                // The successful response is observed while the earlier snapshot is still held.
+                Object.defineProperty(response, 'ok', { get: () => { writeAccepted.resolve(); return true; } });
+                return response;
+            }
+            if (firstRead) {
+                firstRead = false;
+                readStarted.resolve();
+                return oldRead.promise;
+            }
+            return Response.json({ pending: [{
+                localId: freshLocalId, recipient, content: { t: 'plain', v: rawRecord }, requestedAction: { v: 1, kind: 'enqueue' },
+                status: 'queued', position: 0, createdAt: 2, updatedAt: 2,
+            }] });
+        };
+        const refresh = fetchAndApplyPendingMessagesV2({ sessionId, recipient, encryption, request });
+        await readStarted.promise;
+        const mutation = mutate({ sessionId, pendingId: localId, encryption, request, isOutboxScopeCurrent: isCurrentPendingScope });
+        try {
+            await writeAccepted.promise;
+            oldRead.resolve(Response.json({ pending: [{
+                localId, recipient, content: { t: 'plain', v: rawRecord }, requestedAction: { v: 1, kind: 'enqueue' },
+                status: 'queued', position: 0, createdAt: 1, updatedAt: 1,
+            }] }));
+            await Promise.all([refresh, mutation]);
+            expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([
+                expect.objectContaining({ localId: freshLocalId }),
+            ]);
+        } finally {
+            oldRead.resolve(Response.json({ pending: [] }));
+        }
+    });
+
+    it('invalidates a pre-write snapshot as soon as requested-action PATCH succeeds while its body is still pending', async () => {
+        const sessionId = 's_pending_action_response_body';
+        const localId = 'action-local-id';
+        const rawRecord = { role: 'user' as const, content: { type: 'text' as const, text: 'send this row now' }, meta: {} };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain', pendingVersion: 1 } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId, localId, createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', pendingDeliveryStatus: 'server_queued',
+            pendingRequestedAction: { v: 1, kind: 'enqueue' }, text: rawRecord.content.text, rawRecord,
+        });
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        const readStarted = createDeferred<void>();
+        const oldRead = createDeferred<Response>();
+        const bodyStarted = createDeferred<void>();
+        const body = createDeferred<{ didUpdate: boolean }>();
+        const successfulPatch = Response.json({ didUpdate: true });
+        successfulPatch.json = async () => {
+            bodyStarted.resolve();
+            return body.promise;
+        };
+        const snapshot = (kind: 'enqueue' | 'send_now') => Response.json({ pending: [{
+            localId, content: { t: 'plain', v: rawRecord }, requestedAction: { v: 1, kind },
+            status: 'queued', position: 0, createdAt: 1, updatedAt: 1,
+        }] });
+        let firstRead = true;
+        const request = async (_path: string, init?: RequestInit): Promise<Response> => {
+            if (init?.method === 'PATCH') return successfulPatch;
+            if (firstRead) {
+                firstRead = false;
+                readStarted.resolve();
+                return oldRead.promise;
+            }
+            return snapshot('send_now');
+        };
+        const refresh = fetchAndApplyPendingMessagesV2({ sessionId, encryption, request });
+        await readStarted.promise;
+        const mutation = updatePendingRequestedActionV2({
+            sessionId, localId, requestedAction: { v: 1, kind: 'send_now' }, request, outboxScope,
+        });
+        await bodyStarted.promise;
+        try {
+            const freshRefresh = fetchAndApplyPendingMessagesV2({ sessionId, encryption, request });
+            oldRead.resolve(snapshot('enqueue'));
+            await Promise.all([refresh, freshRefresh]);
+            expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+                expect.objectContaining({ localId, pendingRequestedAction: { v: 1, kind: 'send_now' } }),
+            ]);
+        } finally {
+            body.resolve({ didUpdate: true });
+            await mutation;
+        }
     });
 
     it('clears discarded messages when the pending fetch fails', async () => {
@@ -442,6 +557,51 @@ describe('pendingQueueV2 error handling', () => {
         for (const runMutation of mutations) {
             await expectNotAuthenticated(runMutation(), status);
         }
+    });
+
+    it.each([400, 404] as const)('distinguishes acknowledged reorder rejection %s from an unknown transport outcome', async status => {
+        const sessionId = 's_test_reorder_rejected';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 8 });
+        insertEditablePendingMessage(sessionId);
+        const prior = storage.getState().sessionPending[sessionId];
+        // The server rejects stale membership with HTTP 400 before changing queue positions.
+        const rejection: unknown = await reorderPendingMessagesV2({ sessionId, orderedLocalIds: ['p1'], encryption,
+            request: async () => new Response(JSON.stringify({ error: status === 400 ? 'invalid-params' : 'session-not-found' }), { status }),
+        }).catch((error: unknown) => error);
+        expect(rejection).toMatchObject({ kind: 'server', status, code: 'pending_reorder_rejected' });
+        expect(resolveListReorderFailure(rejection, true)).toEqual({ status: 'refused', reason: 'pending_reorder_rejected' });
+        expect(storage.getState().sessionPending[sessionId]).toBe(prior);
+
+        const transportFailure = new Error('Connection lost after dispatch');
+        const unknownOutcome: unknown = await reorderPendingMessagesV2({ sessionId, orderedLocalIds: ['p1'], encryption,
+            request: async () => { throw transportFailure; },
+        }).catch((error: unknown) => error);
+        expect(unknownOutcome).toBe(transportFailure);
+        expect(resolveListReorderFailure(unknownOutcome, true)).toEqual({ status: 'unknown', reason: 'reorder_failed' });
+        expect(storage.getState().sessionPending[sessionId]).toBe(prior);
+
+        // A 5xx can be emitted after a successful mutation, so it is not a definitive refusal.
+        const serverFailure: unknown = await reorderPendingMessagesV2({ sessionId, orderedLocalIds: ['p1'], encryption,
+            request: async () => new Response(null, { status: 500 }),
+        }).catch((error: unknown) => error);
+        expect(resolveListReorderFailure(serverFailure, true)).toEqual({ status: 'unknown', reason: 'reorder_failed' });
+        expect(storage.getState().sessionPending[sessionId]).toBe(prior);
+    });
+
+    it.each([
+        { status: 403, code: 'session_access_authentication_required' },
+        { status: 503, code: 'session_access_authentication_unavailable' },
+    ] as const)('reports explicit reorder Team continuation $code as refused before admission', async ({ status, code }) => {
+        const sessionId = 's_test_reorder_team_continuation';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 8 });
+        insertEditablePendingMessage(sessionId);
+        const prior = storage.getState().sessionPending[sessionId];
+        const rejection: unknown = await reorderPendingMessagesV2({ sessionId, orderedLocalIds: ['p1'], encryption,
+            request: async () => Response.json({ error: code }, { status }),
+        }).catch((error: unknown) => error);
+        expect(rejection).toMatchObject({ name: 'HappyError', status, code });
+        expect(resolveListReorderFailure(rejection, true)).toEqual({ status: 'refused', reason: code });
+        expect(storage.getState().sessionPending[sessionId]).toBe(prior);
     });
 
     it('keeps an external handoff visible when its fail-closed server DELETE is acknowledged', async () => {

@@ -7,7 +7,7 @@ import {
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { encodeBase64 } from '@/encryption/base64';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
@@ -19,6 +19,7 @@ import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { Encryption } from '@/sync/encryption/encryption';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';

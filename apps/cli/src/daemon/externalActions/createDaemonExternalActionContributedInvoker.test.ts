@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
@@ -281,6 +282,7 @@ function createExternalActionRuntime(
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: async () => { activationOnly?.(); return []; },
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => [],
     retireConsumers: () => {},
     retainPluginActivationComponent: () => null,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AccountProfileSchema,
   createRecipientContractDigestV1,
   normalizeRecipientContractV1,
   resolveRequiredRecipientContractApprovalDigestV1,
@@ -9,6 +10,13 @@ import {
   captureActiveServerAccountScopeLifetime,
   retireActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { storage } from '@/sync/domains/state/storage';
+import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import {
   applySavedSecretCatalogPage,
@@ -129,21 +137,20 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: { getState: () => mocks.state },
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-  getActiveServerSnapshot: () => ({ serverId: mocks.activeServerId }),
-}));
-
-vi.mock('@/sync/domains/state/storageStateReaderBridge', () => ({
-  readRegisteredStorageState: () => ({ profileScope: mocks.activeProfileScope }),
-}));
-
-vi.mock('@/sync/sync', () => ({
-  sync: { decryptSecretValue: () => 'account-secret' },
-}));
+// Fixture assignments update the real store so credential readers, scope
+// lifetime and settings normalization share the same canonical state.
+Object.defineProperty(mocks, 'state', {
+  get: () => storage.getState(),
+  set: (next: typeof mocks.state) => {
+    storage.setState((current) => ({
+      ...current,
+      settingsScope: next.settingsScope,
+      settings: settingsParse(next.settings),
+      profile: AccountProfileSchema.parse({ ...current.profile, ...next.profile }),
+      profileScope: mocks.activeProfileScope,
+    }));
+  },
+});
 
 // The Home's authorized Saved Secret catalog read is the network boundary; the
 // catalog engine, snapshot store and resolver below it stay real.
@@ -152,7 +159,9 @@ vi.mock('@/sync/api/account/apiSavedSecretCatalog', () => ({
   readSavedSecretCatalog: catalogBoundary.readSavedSecretCatalog,
 }));
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-  getSyncSingleton: () => ({ encryption: null }),
+  // Adapt its dynamic CommonJS TypeScript loader to Vitest's ESM loader while
+  // returning the real Sync owner, including its actual encryption state.
+  getSyncSingleton: () => sync,
 }));
 
 function createSettings(
@@ -453,30 +462,43 @@ function requestClientAuth(service: ReturnType<typeof createAccountVoiceOperatio
 
 function retireAndReenterSameAccount(): void {
   mocks.activeProfileScope = null;
+  storage.setState({ profileScope: null });
   retireActiveServerAccountScopeLifetime();
-  mocks.activeProfileScope = Object.freeze({ serverId: 'server-1', accountId: 'account-1' });
+  mocks.activeProfileScope = Object.freeze({ serverId: mocks.activeServerId, accountId: 'account-1' });
+  storage.setState({ profileScope: mocks.activeProfileScope });
   captureActiveServerAccountScopeLifetime();
 }
 
 describe('account Voice operation service', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetSavedSecretCatalogSnapshotsForTests();
     retireActiveServerAccountScopeLifetime();
-    mocks.activeServerId = 'server-1';
-    mocks.activeProfileScope = Object.freeze({ serverId: 'server-1', accountId: 'account-1' });
+    const profile = await upsertServerProfile({ serverUrl: 'https://voice-credentials.example.test' });
+    await setActiveServerId(profile.id);
+    mocks.activeServerId = profile.id;
+    // Apply the real connection owner without credentials or a network session.
+    // Account lifetime capture must observe an applied Home, not only selection.
+    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null);
+    try {
+      await switchConnectionToActiveServer();
+    } finally {
+      credentials.mockRestore();
+    }
+    mocks.activeProfileScope = Object.freeze({ serverId: profile.id, accountId: 'account-1' });
     mocks.state = {
-      settingsScope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }),
+      settingsScope: Object.freeze({ serverId: profile.id, accountId: 'account-1' }),
       settings: createSettings('secret-1', 1),
       profile: {
         connectedServicesV2: [],
         connectedServiceCredentialRevisionsV1: [],
       },
     };
+    registerStorageStateReader(() => storage.getState());
   });
 
   it('uses a shared-only catalog ref and fails closed once that scoped material is stale', async () => {
     const ref = 'happier:shared-secret:v1:resource-voice';
-    const scope = { serverId: 'server-1', accountId: 'account-1' } as const;
+    const scope = { serverId: mocks.activeServerId, accountId: 'account-1' } as const;
     applySavedSecretCatalogPage({
       scope,
       entries: [{
@@ -543,7 +565,7 @@ describe('account Voice operation service', () => {
 
   it('re-reads the Home before a new request spends a shared secret whose revocation hint was missed', async () => {
     const ref = 'happier:shared-secret:v1:resource-voice-revoked';
-    const scope = { serverId: 'server-1', accountId: 'account-1' } as const;
+    const scope = { serverId: mocks.activeServerId, accountId: 'account-1' } as const;
     applySavedSecretCatalogPage({
       scope,
       entries: [{
@@ -1420,7 +1442,7 @@ describe('account Voice operation service', () => {
 
   it('does not decrypt after the selected credential source switches between authorization and materialization', async () => {
     const fetch = vi.fn();
-    const decryptSecretValue = vi.spyOn(sync, 'decryptSecretValue');
+    const materializeSecret = vi.fn(async () => 'account-secret');
     let currentnessChecks = 0;
     const service = createAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
@@ -1449,16 +1471,13 @@ describe('account Voice operation service', () => {
         }
         return true;
       },
+      materializeSecret,
       fetch,
     });
 
-    try {
-      await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
-      expect(decryptSecretValue).not.toHaveBeenCalled();
-      expect(fetch).not.toHaveBeenCalled();
-    } finally {
-      decryptSecretValue.mockRestore();
-    }
+    await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
+    expect(materializeSecret).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('withdraws authority when the account credential binding rotates while reading the response', async () => {

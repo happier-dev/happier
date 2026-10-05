@@ -31,6 +31,7 @@ export function createBrowserAutomationReverseDispatcher(input: Readonly<{
     if (!request.success) return unavailable;
     const actionKind = BrowserAutomationActionKindV1Schema.safeParse(record.actionKind);
     const effectBearing = args.actionId === 'browser.automation.cancelActive'
+      || args.actionId === 'browser.control.takeControl' || args.actionId === 'browser.control.handBack'
       || (actionKind.success && isBrowserAutomationMutatingActionKind(actionKind.data));
     let issued = false;
     const interrupted = () => UiBrowserAutomationDispatchResultV1Schema.parse({

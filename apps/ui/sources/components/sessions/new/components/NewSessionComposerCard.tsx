@@ -16,9 +16,12 @@ import { NewSessionProviderLaunchError } from '@/components/sessions/new/compone
 import { useNewSessionPromptValue } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { useNewSessionWorkflowStart } from '../hooks/useNewSessionWorkflowStart';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
 
 /** Home's one-row bar (lab I1): where, what with, how much latitude, and everything else behind +. */
-const EMBEDDED_BAR_CONTROL_IDS = ['workflow', 'machine', 'path', 'engine', 'permission', 'actionMenu'] as const;
+const EMBEDDED_BAR_CONTROL_IDS = ['machine', 'path', 'engine', 'permission', 'actionMenu'] as const;
+const EMBEDDED_PHONE_BAR_CONTROL_IDS = ['machine', 'engine', 'actionMenu'] as const;
 
 /**
  * The New Session composer card: the real `AgentInput` in new-session mode with its attachments,
@@ -34,6 +37,8 @@ export function NewSessionComposerCard(input: Readonly<{
     attachments?: boolean;
     /** `none` mounts no voice affordance (an embedded presentation). Default `auto`. */
     voiceAffordance?: 'auto' | 'none';
+    /** The host already resolved whether this card floats or sits in the working sheet. */
+    surfaceGroup?: GlassSurfaceGroup;
 }>): React.ReactElement {
     const props = input.panelProps;
     const embedded = input.layout === 'embedded';
@@ -87,8 +92,10 @@ export function NewSessionComposerCard(input: Readonly<{
     // Subscribed here, at the leaf that renders the input: a keystroke re-renders this
     // composer and nothing above it — not the panel, and not the screen model.
     const sessionPrompt = useNewSessionPromptValue(props.promptStore);
-    const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: sessionPrompt });
-    const { height: windowHeight } = useWindowDimensions();
+    const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: sessionPrompt, surfaceGroup: input.surfaceGroup });
+    const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+    const embeddedBarControlIds = isMobileLayoutWidth(windowWidth)
+        ? EMBEDDED_PHONE_BAR_CONTROL_IDS : EMBEDDED_BAR_CONTROL_IDS;
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const initialAvailablePanelHeight = React.useMemo(() => {
         if (
@@ -130,12 +137,17 @@ export function NewSessionComposerCard(input: Readonly<{
                         {props.composerDocument?.beforeComposer}
                         {props.composerTopContent}
                         {workflowStart.composer ?? <AgentInput
+                        surfaceGroup={input.surfaceGroup}
                         value={sessionPrompt}
                         onChangeText={props.setSessionPrompt}
                         structuredInputMentions={props.composerDocument?.structuredInputMentions}
                         onStructuredInputMentionsChange={props.composerDocument?.onStructuredInputMentionsChange}
                         onComposerFocusChange={props.composerDocument?.onComposerFocusChange}
                         onComposerFocusRequestChange={props.composerDocument?.onComposerFocusRequestChange}
+                        onPromptPickerOpenRequestChange={props.composerDocument?.onPromptPickerOpenRequestChange}
+                        composerRef={props.composerDocument?.ref}
+                        composerReferenceHost={props.composerReferenceHost}
+                        composerFileScope={props.composerFileScope}
                         onComposerInputFlushRequestChange={props.composerDocument?.onComposerInputFlushRequestChange}
                         onComposerActionBarLayoutChange={props.composerDocument?.onComposerActionBarLayoutChange}
                         inputPersistence={props.composerDocument?.inputPersistence}
@@ -190,7 +202,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         // that cannot start a session still says so above the card.
                         connectionStatus={embedded && props.connectionStatus?.healthy ? undefined : props.connectionStatus}
                         autoActionBarLayout={embedded ? 'collapsed' : undefined}
-                        barControlIds={embedded ? EMBEDDED_BAR_CONTROL_IDS : undefined}
+                        barControlIds={embedded ? embeddedBarControlIds : undefined}
                         collapseEmptyStatusRow={embedded}
                         statusBadges={props.statusBadges}
                         statusTrailingActions={props.statusTrailingActions}

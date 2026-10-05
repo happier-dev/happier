@@ -14,8 +14,17 @@ import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGen
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createApiTokenSettingsController } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { showApiTokenCreateModal } from '@/components/settings/apiTokens/showApiTokenCreateModal';
+import { HappyError } from '@/utils/errors/errors';
+import { t } from '@/text';
 
 export { resolveApprovalReplayRoute };
+
+/** Shared recovery copy for the detail page and transcript approval card. */
+export function getApprovalDecisionErrorMessage(error: unknown): string {
+    return error instanceof HappyError && error.code === 'present_user_required'
+        ? t('approvals.decisionAuthorityError')
+        : t('approvals.decisionError');
+}
 
 type ApprovalDecisionArtifact = Pick<DecryptedArtifact, 'id' | 'header'>;
 
@@ -110,7 +119,7 @@ export function useApprovalDecisionHandler(
                     ...(serverId ? { serverId } : {}),
                     ...(account ? { expectedAccountId: account.accountId } : {}) },
             );
-            if (!result.ok) return false;
+            if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
             if (!revealsCreatedToken || !account) return true;
             account.assertCurrent();
             const outcome = result.result;

@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,6 +56,7 @@ function createPinnedSpawnAgentRegistry(): ResolvedExecutablePluginRuntimeRegist
     contributes: createResolvedContributionRegistry({ agents, activationTargets: [] }),
     hookHandlersByHookId: new Map(), agentRuntimesByAgentId: new Map(), scmHostingProvidersById: new Map(),
     pluginDiagnosticsByPluginId: {}, activatedPluginIds: new Set<string>(),
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     activateContributionsOnDemand: async () => [], resolvePromptAssetBlocks: async () => [],
     createAgentInvocationServices: async () => { throw new Error('No plugin invocation in this spawn fixture'); },
     retireConsumers: () => {}, dispose: async () => {},

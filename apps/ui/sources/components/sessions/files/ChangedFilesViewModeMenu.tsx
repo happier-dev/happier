@@ -29,6 +29,7 @@ type ChangedFilesViewModeMenuProps = Readonly<{
     triggerTextStyle?: StyleProp<TextStyle>;
     accessibilityLabel?: string;
     popoverAnchorAlign?: 'start' | 'center' | 'end';
+    presentation?: 'button' | 'text';
 }>;
 
 function getModeIcon(mode: ChangedFilesViewMode): IconName {
@@ -126,10 +127,11 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
                             gap: 6,
                         },
                         props.triggerStyle,
+                        props.presentation === 'text' ? { borderWidth: 0, backgroundColor: 'transparent', paddingHorizontal: 0 } : null,
                         { opacity: pressed ? motionTokens.press.opacity : 1 },
                     ]}
                 >
-                    <Icon name={getModeIcon(selectedMode)} size={14} color={props.theme.colors.text.secondary} />
+                    {props.presentation === 'text' ? null : <Icon name={getModeIcon(selectedMode)} size={14} color={props.theme.colors.text.secondary} />}
                     <Text
                         numberOfLines={1}
                         style={[

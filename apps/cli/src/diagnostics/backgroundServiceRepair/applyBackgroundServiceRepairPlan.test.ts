@@ -203,7 +203,7 @@ describe('applyBackgroundServiceRepairPlan', () => {
         {
           serverId: 'default',
           name: 'happier-daemon.preview.default.service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           path: '/home/tester/.config/systemd/user/happier-daemon.preview.default.service',
           platform: 'linux',
           mode: 'user',
@@ -245,7 +245,7 @@ describe('applyBackgroundServiceRepairPlan', () => {
         {
           serverId: 'default',
           name: 'happier-daemon.default.service',
-          installed: true,
+          verification: 'verified' as const, installed: true,
           installedDefinitionMatchesExpected: false,
           path: '/home/tester/.config/systemd/user/happier-daemon.default.service',
           platform: 'linux',

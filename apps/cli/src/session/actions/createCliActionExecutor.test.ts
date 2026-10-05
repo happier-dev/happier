@@ -1752,6 +1752,16 @@ describe('createCliActionExecutor', () => {
     });
   });
 
+  it('refuses an unavailable initial-trigger target before Session birth', async () => {
+    const executor = createPlainExecutor();
+    const result = await executor.execute('session.spawn_new', createSessionSpawnInput({
+      initialTriggers: [{ target: { kind: 'workflow', ref: 'builtin:missing-workflow' },
+        trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
+    }), { surface: 'cli', defaultSessionId: 'sess-1' });
+    expect(result).toEqual({ ok: true, result: { type: 'error', code: 'target_unavailable', retryable: false } });
+    expect(spawnMachineSession).not.toHaveBeenCalled();
+  });
+
   it('enforces the live Account Agent spawn policy before daemon Session creation', async () => {
     setActiveAccountSettingsSnapshot({
       source: 'network',

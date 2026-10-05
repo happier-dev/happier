@@ -72,6 +72,7 @@ export const ScmTimelineGutter = React.memo(function ScmTimelineGutter(props: Re
                 >
                     {filled ? <PointFill color={pointColor} delayMs={props.fillDelayMs} /> : null}
                 </View>}
+                {(tone === 'now' || tone === 'landed') && !props.hidePoint ? <View pointerEvents="none" style={{ position: 'absolute', top: props.pointTopPx - 3, width: POINT_PX + 6, height: POINT_PX + 6, borderRadius: (POINT_PX + 6) / 2, borderWidth: 2, borderColor: pointColor, opacity: 0.25 }} /> : null}
                 {tone === 'landed' && !props.hidePoint ? <LandedRing topPx={props.pointTopPx} color={pointColor} delayMs={props.ringDelayMs ?? 0} /> : null}
                 {props.showTrailingLine ? (
                     <View style={[styles.line, props.dashedTrailingLine ? styles.lineDashed : null, { top: props.hidePoint ? props.pointTopPx : props.pointTopPx + POINT_PX, bottom: 0 }]} />

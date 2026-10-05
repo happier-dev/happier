@@ -14,11 +14,15 @@ export function setSessionReportsTo(input: Readonly<{
     leadSessionId: string | null;
     expectedLeadSessionId: string | null;
     serverId: string | null;
+    signal?: AbortSignal;
+    expectedAccountId?: string;
 }>): Promise<ActionExecuteResult> {
     execute ??= createFrontDoorActionExecute();
     return execute('session.reports_to.set', {
         sessionId: input.sessionId,
         leadSessionId: input.leadSessionId,
         expectedLeadSessionId: input.expectedLeadSessionId,
-    }, { surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}) });
+    }, { surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}) });
 }

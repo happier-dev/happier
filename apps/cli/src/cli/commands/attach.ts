@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 
 import {
   getAgentLocalControlCapability,
+  resolveAgentNativeResumeIdentityFromSessionMetadata,
   resolveAgentIdFromSessionMetadata,
   type AttachSessionMetadataV1,
 } from '@happier-dev/agents';
@@ -19,13 +20,19 @@ import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView, resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol';
+import { createSessionOwnerMetadataV1, SessionTerminalMetadataSchema, type SessionProviderCliAttachPrepareRequestV1 } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isHostProviderCliAttachSurface, attachObservedNativeClient } from '@/session/attach/providerCliAttach';
+import { resolveInheritedHerdrRuntime } from '@/terminal/runtime/inheritedHerdrRuntime';
+import { buildAttachSessionMetadata } from '@/session/attach/evaluateCliSessionAttachEligibility';
+import { resolveCliSessionAttachBackendId } from '@/session/attach/resolveCliSessionAttachBackendId';
 import {
   fetchAccountEncryptionCurrentness,
 } from '@/api/client/connectedServiceCredentialApi';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import {
   readTerminalAttachmentInfo,
+  readTerminalHostAttachmentState,
   type TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
@@ -36,6 +43,8 @@ import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleA
 import { runHerdrAttach } from '@/terminal/attachment/herdrAttach';
 import { runZellijAttach } from '@/terminal/attachment/zellijAttach';
 import { runTerminalHostAttach } from '@/terminal/attachment/runTerminalHostAttach';
+import { buildTerminalMetadataFromHostHandle } from '@/terminal/runtime/terminalMetadata';
+import { windowsHostedAttachmentMatchesRunner } from '@/daemon/platform/windows/windowsHostedSessionRuntime';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
 import { buildAttachSelectionModel, formatAttachIneligibilityFooter } from './attachInteractiveSelection';
@@ -64,6 +73,7 @@ function spawnTmux(params: {
 type SpawnTmuxFn = typeof spawnTmux;
 
 type AttachCommandDeps = Readonly<{
+  terminalRuntime?: CommandContext['terminalRuntime'];
   readCredentialsFn?: () => Promise<StoredCredentials | null>;
   readSettingsFn?: () => Promise<Settings>;
   fetchSessionByIdFn?: (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
@@ -99,6 +109,11 @@ type AttachCommandDeps = Readonly<{
     backendId: string;
     sessionId: string;
     metadata: AttachSessionMetadataV1;
+    managedObservation?: Readonly<{
+      providerSessionId: string;
+      herdr: NonNullable<SessionProviderCliAttachPrepareRequestV1['terminalClient']>['herdr'];
+      observe: (request: SessionProviderCliAttachPrepareRequestV1) => Promise<unknown>;
+    }>;
   }) => Promise<number | false>;
   getAccountEncryptionCurrentnessFn?: (
     credentials: StoredCredentials,
@@ -361,10 +376,14 @@ export async function handleAttachCommand(
   const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
   const runHerdrAttachFn = deps.runHerdrAttachFn ?? runHerdrAttach;
   const runZellijAttachFn = deps.runZellijAttachFn ?? runZellijAttach;
-  const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ backendId, sessionId, metadata }) => {
+  const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ backendId, sessionId, metadata, managedObservation }) => {
     const providerAttachSurface = (await getSessionHostBridge().resolveExecutionSurfaces(backendId)).attach;
     if (!providerAttachSurface) return 1;
-    const result = await providerAttachSurface.attach({ sessionId, metadata });
+    const result = managedObservation
+      ? isHostProviderCliAttachSurface(providerAttachSurface)
+        ? await attachObservedNativeClient({ surface: providerAttachSurface, request: { sessionId, metadata }, ...managedObservation })
+        : { ok: false as const }
+      : await providerAttachSurface.attach({ sessionId, metadata });
     return result.ok && typeof result.value.exitCode === 'number'
       ? result.value.exitCode
       : 1;
@@ -491,6 +510,60 @@ export async function handleAttachCommand(
       process.exit(1);
     }
 
+    const currentOwnerMetadata = createSessionOwnerMetadataV1({ metadata: context.metadata });
+    const currentLocalControl = currentOwnerMetadata.ok
+      ? currentOwnerMetadata.ownerMetadata.runtime?.agentRuntimeCapabilitiesV1?.localControl : null;
+    const recordedTerminal = SessionTerminalMetadataSchema.safeParse(context.metadata?.terminal);
+    const recorded = recordedTerminal.success && recordedTerminal.data.mode === 'herdr' ? recordedTerminal.data.herdr : null;
+    const sharedProviderLocal = currentLocalControl?.supported === true && currentLocalControl.topology === 'shared'
+      && currentLocalControl.attachStrategy === 'provider_attach' && eligibility.attachScope === 'local';
+    const runnerPresence = sharedProviderLocal
+      ? await probeSessionRunnerPresence({ sessionId: resolvedSessionId, trackedSessions: [] }) : null;
+    // Opening the recorded pane is restoration intent, not controller custody.
+    // A positively absent controller cannot service the managed Switch below.
+    if (recordedTerminal.success && recordedTerminal.data.mode === 'herdr'
+      && recorded?.paneId?.trim() && runnerPresence?.state === 'runner_absent') {
+      const exitCode = await runTerminalHostAttach({ sessionId: resolvedSessionId, terminal: recordedTerminal.data,
+        refreshRemoteControl: shouldRefreshRemoteControlOnAttach(context.metadata) },
+      { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn });
+      if (exitCode === null) throw new Error('The recorded restoration terminal is not attachable.');
+      if (exitCode !== 0) process.exit(exitCode);
+      return;
+    }
+    if (sharedProviderLocal && recorded?.paneId && runnerPresence?.state === 'runner_present') {
+      const local = await readTerminalHostAttachmentState({ happyHomeDir: configuration.happyHomeDir, sessionId: resolvedSessionId });
+      const retired = recordedTerminal.success ? recordedTerminal.data.controlServiceabilityV1 : null;
+      const inherited = deps.terminalRuntime?.mode === 'herdr' && deps.terminalRuntime.herdrTerminalId
+        ? deps.terminalRuntime
+        : process.env.HERDR_ENV === '1'
+          ? await resolveInheritedHerdrRuntime({ terminalRuntime: { mode: 'herdr', herdrSessionName: recorded.sessionName }, env: { ...process.env } }) : null;
+      const retiredCandidate = local.status === 'absent' && retired?.retired === true
+        && retired.reason === 'attachment_retired' && Boolean(retired.attachmentId?.trim());
+      if ((local.status === 'present' && local.info.version !== 1 || retiredCandidate)
+        && inherited?.herdrTerminalId && inherited.herdrSocketPath === recorded.socketPath
+        && inherited.herdrPaneId === recorded.paneId
+        && (inherited.herdrTerminalId !== recorded.terminalId || retiredCandidate)) {
+        const agentId = eligibility.agentId ?? context.agentId;
+        const identity = agentId ? resolveAgentNativeResumeIdentityFromSessionMetadata(agentId, context.metadata) : null;
+        const backendId = eligibility.attachStrategy === 'provider_attach' ? eligibility.backendId : resolveCliSessionAttachBackendId(context.metadata);
+        if (!identity || !agentId || !backendId) throw new Error('The current native conversation is unavailable for managed attachment.');
+        const mode = resolveSessionStoredContentEncryptionMode(context.rawSession);
+        const ctx = resolveSessionEncryptionContextFromCredentials(context.credentials, context.rawSession);
+        if (mode === 'e2ee' && !ctx) throw new Error('Session encryption context is unavailable for terminal restoration.');
+        if (!context.metadata) throw new Error('The current Session metadata is unavailable for managed attachment.');
+        const code = await runProviderAttachFn({ agentId, backendId, sessionId: resolvedSessionId,
+          metadata: buildAttachSessionMetadata(context.metadata), managedObservation: { providerSessionId: identity.vendorResumeId,
+            herdr: { ...recorded, paneId: recorded.paneId, terminalId: inherited.herdrTerminalId },
+            observe: request => callSessionRpc({ token: context.credentials.token, sessionId: resolvedSessionId,
+              method: SESSION_RPC_METHODS.SESSION_PROVIDER_CLI_ATTACH_PREPARE, request,
+              ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx: ctx! }),
+            }),
+          } });
+        if (!isAttachSuccess(code)) process.exit(typeof code === 'number' ? code : 1);
+        return;
+      }
+    }
+
     if (eligibility.attachStrategy === 'provider_attach') {
       // Independent native clients do not own the runner's managed terminal custody.
       const exitCode = await runProviderAttachFn({
@@ -503,49 +576,65 @@ export async function handleAttachCommand(
       return;
     }
 
+    const restoreManagedTerminal = async (expectedTerminal?: NonNullable<TerminalAttachmentInfo['terminal']>) => {
+      const mode = resolveSessionStoredContentEncryptionMode(context.rawSession);
+      const ctx = resolveSessionEncryptionContextFromCredentials(context.credentials, context.rawSession);
+      if (mode === 'e2ee' && !ctx) throw new Error('Session encryption context is unavailable for terminal restoration.');
+      const restored = await callSessionRpc({ token: context.credentials.token, sessionId: resolvedSessionId,
+        method: 'switch', request: { to: 'local' },
+        ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx: ctx! }),
+      });
+      if (restored !== true) throw new Error('The managed terminal could not be restored.');
+      const current = await readTerminalHostAttachmentState({ happyHomeDir: configuration.happyHomeDir, sessionId: resolvedSessionId });
+      if (current.status === 'present' && current.info.version !== 1
+        && current.info.handle.attachmentId === current.info.attachmentId) {
+        return buildTerminalMetadataFromHostHandle(current.info.handle);
+      }
+      // The Windows display owner commits its canonical regular v1 record, not
+      // a PTY host descriptor. Preserve that existing identity contract.
+      if (current.status === 'absent' && expectedTerminal) {
+        const display = await readTerminalAttachmentInfoFn({ happyHomeDir: configuration.happyHomeDir, sessionId: resolvedSessionId });
+        if (display && windowsHostedAttachmentMatchesRunner({ expected: expectedTerminal, actual: display.terminal,
+          runnerPid: expectedTerminal.windows?.pid ?? 0 })) return display.terminal;
+      }
+      throw new Error('The restored managed terminal has no exact attachment.');
+    };
+    if (eligibility.attachStrategy === 'managed_provider_attach') {
+      const terminal = await restoreManagedTerminal();
+      const exitCode = await runTerminalHostAttach({ sessionId: resolvedSessionId, terminal, refreshRemoteControl: true },
+        { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn });
+      if (exitCode === null) throw new Error('The restored managed terminal is not attachable.');
+      if (exitCode !== 0) process.exit(exitCode);
+      return;
+    }
+
     const ownerMetadata = createSessionOwnerMetadataV1({ metadata: eligibility.metadata });
     const localControl = ownerMetadata.ok
       ? ownerMetadata.ownerMetadata.runtime?.agentRuntimeCapabilitiesV1?.localControl
       : null;
-    const canOpenRestorationCandidate = eligibility.terminal.mode === 'herdr'
-      && Boolean(eligibility.terminal.herdr?.paneId?.trim())
-      && (await probeSessionRunnerPresence({ sessionId: resolvedSessionId, trackedSessions: [] })).state === 'runner_absent';
-    if (localControl?.supported === true && localControl.topology === 'shared' && localControl.attachStrategy === 'provider_attach'
-      && !canOpenRestorationCandidate) {
-      const mode = resolveSessionStoredContentEncryptionMode(context.rawSession);
-      const ctx = resolveSessionEncryptionContextFromCredentials(context.credentials, context.rawSession);
-      if (mode === 'e2ee' && !ctx) throw new Error('Session encryption context is unavailable for terminal restoration.');
-      const restored = await callSessionRpc({
-        token: context.credentials.token,
-        sessionId: resolvedSessionId,
-        method: 'switch',
-        request: { to: 'local' },
-        ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx: ctx! }),
-      });
-      if (restored !== true) {
-        console.error(chalk.red('Error:'), 'The managed terminal could not be restored.');
-        process.exit(1);
-      }
+    let terminal = eligibility.terminal;
+    if (localControl?.supported === true && localControl.topology === 'shared' && localControl.attachStrategy === 'provider_attach') {
+      terminal = await restoreManagedTerminal(terminal);
     }
 
     const hostExitCode = await runTerminalHostAttach({
       sessionId: resolvedSessionId,
-      terminal: eligibility.terminal,
+      terminal,
       refreshRemoteControl: shouldRefreshRemoteControlOnAttach(eligibility.metadata),
     }, { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn });
     let exitCode = hostExitCode ?? 0;
     if (hostExitCode === null) {
-      switch (eligibility.plan.type) {
-        case 'windows_terminal_host':
+      switch (terminal.mode) {
+        case 'windows_terminal':
           exitCode = await runWindowsTerminalAttachFn({
             sessionId: resolvedSessionId,
-            terminal: eligibility.terminal,
+            terminal,
           });
           break;
-        case 'windows_console_host':
+        case 'windows_console':
           exitCode = await runWindowsConsoleAttachFn({
             sessionId: resolvedSessionId,
-            terminal: eligibility.terminal,
+            terminal,
           });
           break;
         default:
@@ -583,7 +672,7 @@ export async function handleAttachCommand(
 
 export async function handleAttachCliCommand(context: CommandContext): Promise<void> {
   try {
-    await handleAttachCommand(context.args.slice(1));
+    await handleAttachCommand(context.args.slice(1), { terminalRuntime: context.terminalRuntime });
   } catch (error) {
     console.error(fail(error instanceof Error ? error.message : 'Unknown error'));
     if (process.env.DEBUG) {

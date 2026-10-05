@@ -40,6 +40,7 @@ import {
     loadUsageSummaryWarmCache,
     resolveWarmCacheAccountScope,
     saveMachineDisplayWarmCacheEntries,
+    scheduleMachineDisplayWarmCacheEntriesSave,
     saveSessionListWarmCacheEntries,
     saveUsageSummaryWarmCache,
     setWarmCacheAccountScope,

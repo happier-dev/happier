@@ -12,6 +12,7 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import '@/sync/syncEngine';
 import { sync, type SyncMessageTransport } from '@/sync/sync';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { buildChatListItems } from '@/components/sessions/chatListItems';

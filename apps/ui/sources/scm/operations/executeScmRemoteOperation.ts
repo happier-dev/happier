@@ -77,6 +77,10 @@ export async function executeScmRemoteOperation(input: Readonly<{
     skipConfirmation?: boolean;
     retrySkipConfirmation?: boolean;
     policy?: ScmRemotePolicy;
+    /** The person explicitly chose pull-then-push; a confirmed pull and refresh must finish first. */
+    pushAfterPull?: boolean;
+    /** Read the canonical refreshed project snapshot before admitting a following push. */
+    readSnapshotAfterSuccess?: () => ScmWorkingSnapshot | null;
     /**
      * Where a failure is shown. `outcomeLine`: the surface renders the operation log's terminal result inline
      * (the session Git pane), so no modal is raised and a rejected push is not followed by a fetch prompt (the
@@ -120,6 +124,7 @@ export async function executeScmRemoteOperation(input: Readonly<{
 
     const remoteTarget = leaseTarget ?? inferRemoteTargetFromSnapshot(input.scmSnapshot);
     let shouldOfferFetchAfterPushReject = false;
+    let pullRefreshed = false;
     const isPullOrPush = input.kind === 'pull' || input.kind === 'push';
     const shouldConfirmRemote = input.skipConfirmation === true
         ? false
@@ -198,11 +203,11 @@ export async function executeScmRemoteOperation(input: Readonly<{
                 return;
             }
 
-            appliedOutcome = outcome;
+            appliedOutcome = { ...outcome, effect: outcome.effect ?? { kind: 'remote', remote: remoteTarget.remote, ...(remoteTarget.branch ? { branch: remoteTarget.branch } : {}) } };
             input.reportOperation({
                 operation: input.kind,
                 status: 'success',
-                outcome,
+                outcome: appliedOutcome,
                 detail: buildRemoteOperationSuccessDetail(
                     input.kind,
                     remoteTarget,
@@ -212,6 +217,7 @@ export async function executeScmRemoteOperation(input: Readonly<{
             });
             input.setScmOperationStatus('Refreshing repository status…');
             await input.refreshAfterSuccess(input.kind);
+            pullRefreshed = input.kind === 'pull';
         } catch (error) {
             const outcome: ScmOperationOutcome = appliedOutcome ? {
                 v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED,
@@ -236,6 +242,21 @@ export async function executeScmRemoteOperation(input: Readonly<{
             tracking: input.tracking,
         });
         Modal.alert(t('common.error'), lockResult.message);
+        return;
+    }
+
+    if (input.pushAfterPull && input.kind === 'pull' && pullRefreshed && input.shouldContinue?.() !== false) {
+        // Pull's dirty/reconciliation choice does not become a push policy. This is still an ordinary
+        // push, never force, and it takes the same canonical lock/preflight/RPC/report path.
+        const snapshot = input.readSnapshotAfterSuccess?.() ?? null;
+        const refreshedTarget = inferRemoteTargetFromSnapshot(snapshot);
+        if (snapshot && (snapshot.branch.head !== input.scmSnapshot?.branch.head || refreshedTarget.remote !== remoteTarget.remote || refreshedTarget.branch !== remoteTarget.branch)) {
+            input.reportOperation({ operation: 'push', status: 'failed', detail: t('sessionGitPane.fidelity.branchChanged'), outcome: {
+                v: 1, kind: 'needs_input', errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, nextActions: [{ kind: 'refresh' }],
+            } });
+            return;
+        }
+        await executeScmRemoteOperation({ ...input, scmSnapshot: snapshot, kind: 'push', policy: undefined, pushAfterPull: false, skipConfirmation: true });
         return;
     }
 

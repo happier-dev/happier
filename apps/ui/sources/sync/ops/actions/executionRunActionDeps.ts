@@ -1,5 +1,5 @@
-import { type ActionExecutorDeps } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExecutionRunGetRequestSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { machineCapabilitiesDetect } from '@/sync/ops/capabilities';
@@ -26,6 +26,7 @@ type UiExecutionRunActionDeps = Pick<
     | 'executionRunStop'
     | 'executionRunCancelTurn'
     | 'executionRunAction'
+    | 'executionRunPermissionRespond'
     | 'executionRunWait'
 >;
 
@@ -72,11 +73,16 @@ async function callDetachedExecutionRunRpc(
     const machineId = resolveExactExecutionRunMachineId(null, opts);
     if (!machineId) return executionRunFailure('execution_run_target_not_selected');
     try {
+        const getRequest = method === SESSION_RPC_METHODS.EXECUTION_RUN_GET
+            ? ExecutionRunGetRequestSchema.safeParse(request)
+            : null;
         return await machineRpcWithServerScope<unknown, unknown>({
             machineId,
             method,
             payload: request,
             serverId: opts?.serverId,
+            ...(getRequest?.success && (getRequest.data.waitForInputId || getRequest.data.waitForOutput)
+                ? { operationTimeoutMs: null } : {}),
             ...(opts?.signal ? { signal: opts.signal } : {}),
         });
     } catch (error) {
@@ -142,7 +148,8 @@ export function createUiExecutionRunActionDeps(): UiExecutionRunActionDeps {
             : await sessionExecutionRunList(sessionId, request, { serverId: opts?.serverId }),
         executionRunGet: async (sessionId, request, opts) => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_GET, request, opts)
-            : await sessionExecutionRunGet(sessionId, request, { serverId: opts?.serverId }),
+            : await sessionExecutionRunGet(sessionId, request, { serverId: opts?.serverId,
+                ...(opts?.signal ? { signal: opts.signal } : {}) }),
         detachedExecutionRunSend: async (_sessionId, request, opts) =>
             await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, request, opts),
         executionRunStop: async (sessionId, request, opts) => sessionId === null
@@ -154,6 +161,24 @@ export function createUiExecutionRunActionDeps(): UiExecutionRunActionDeps {
         executionRunAction: async (sessionId, request, opts) => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, request, opts)
             : await sessionExecutionRunAction(sessionId, request, { serverId: opts?.serverId }),
+        executionRunPermissionRespond: async (request, context) => {
+            const machineId = resolveExactExecutionRunMachineId(null, {
+                targetMachineId: context.executionRunTargetMachineId,
+                originSessionId: context.defaultSessionId,
+                serverId: context.serverId,
+            });
+            if (!machineId) return executionRunFailure('execution_run_target_not_selected');
+            return await machineRpcWithServerScope({
+                machineId,
+                method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
+                payload: request,
+                serverId: context.serverId,
+                accountId: context.runtimeAccountId,
+                preferScoped: true,
+                signal: context.signal,
+                onIssued: context.onTransportIssued,
+            });
+        },
         executionRunWait: async (sessionId, request, opts) => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, request, opts)
             : await sessionExecutionRunWait(sessionId, request, {

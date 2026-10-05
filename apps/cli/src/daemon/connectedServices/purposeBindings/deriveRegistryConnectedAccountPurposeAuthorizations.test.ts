@@ -182,6 +182,25 @@ function backgroundServiceManifest() {
   return parsed;
 }
 
+describe('Widget Resource purpose consumer admission', () => {
+  it('projects the exact Resource consumer so a widget read materializes its declared purpose', () => {
+    const basis = actionAndHookManifest();
+    const registry: RegistryConnectedAccountPurposeAuthorizationProjection = {
+      agents: [], activationTargets: [{ pluginId: basis.id, manifest: {
+        ...basis, contributes: { ...basis.contributes, actions: [], hooks: [], resources: [{
+          id: 'metrics', kind: 'config', source: 'dynamic', contentType: 'application/json', scope: 'global', hostAccess: ['action-account'],
+        }] },
+      } }],
+    };
+    expect(deriveRegistryConnectedAccountPurposeAuthorizations(registry)).toEqual([{
+      consumer: { pluginId: basis.id, localId: 'metrics' }, authorizedPurposes: [{
+        purpose: { consumer: { pluginId: basis.id, localId: 'metrics' }, purpose: 'action-account' },
+        serviceRefs: [{ pluginId: basis.id, localId: 'account' }],
+      }],
+    }]);
+  });
+});
+
 function optionalActionManifest(input: Readonly<{
   operations: readonly ('select' | 'use')[];
   includeSecondSelect?: boolean;

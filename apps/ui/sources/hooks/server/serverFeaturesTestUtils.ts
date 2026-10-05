@@ -316,10 +316,10 @@ export async function stubServerFeaturesFetch(overrides: FixtureOverrides = {}):
     const response = buildServerFeaturesResponse(overrides);
     vi.stubGlobal(
         'fetch',
-        vi.fn(async () => ({
-            ok: true,
-            json: async () => response,
-        })) as any,
+        vi.fn(async () => new Response(JSON.stringify(response), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        })),
     );
 }
 
@@ -337,14 +337,14 @@ export async function stubServerFeaturesFetchFailure(): Promise<void> {
     vi.stubGlobal(
         'fetch',
         vi.fn(async (input: RequestInfo | URL) => {
-            const url = typeof input === 'string' ? input : String((input as any)?.url ?? input);
+            const url = input instanceof Request ? input.url : String(input);
             if (url.endsWith('/health')) {
-                return { ok: true, status: 200 } as any;
+                return new Response(null, { status: 200 });
             }
             if (url.endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200 } as any;
+                return new Response(null, { status: 200 });
             }
             throw new Error('network down');
-        }) as any,
+        }),
     );
 }

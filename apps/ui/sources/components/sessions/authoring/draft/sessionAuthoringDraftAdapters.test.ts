@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     SessionModelSelectionV1Schema,
+    SessionInitialTriggerV1Schema,
     SessionServerStartSpawnDraftV1Schema,
     type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
@@ -83,6 +84,33 @@ function intervalAutomationDraft(params: Readonly<{
 }
 
 describe('sessionAuthoringDraftAdapters', () => {
+    it('round-trips initial triggers with the draft and includes them in the atomic spawn input', () => {
+        const initialTriggers = SessionInitialTriggerV1Schema.array().parse([{
+            trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'everyMatch' } },
+            target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
+            executionTarget: { kind: 'session' },
+            inputs: { maxRounds: 3 },
+        }]);
+        const draft = buildNewSessionAuthoringDraftFromTempData({
+            prompt: 'Start here', directory: '/workspace/project',
+            executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            initialTriggers,
+        });
+        expect(draft.initialTriggers).toEqual(initialTriggers);
+        const temp = buildNewSessionTempDataFromAuthoringDraft({ draft, machineId: 'machine-1' });
+        expect(buildNewSessionAuthoringDraftFromTempData(temp).initialTriggers).toEqual(initialTriggers);
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft, machineId: 'machine-1', updatedAt: 1,
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: {}, backendNewSessionOptionStateByTargetKey: {},
+        });
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persisted).initialTriggers).toEqual(initialTriggers);
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft, creationKey: 'initial-trigger-creation', permissionMode: 'default', configurationUpdatedAtMs: 1,
+            initialMessage: 'Start here',
+        })).toMatchObject({ initialInput: { text: 'Start here' }, initialTriggers });
+    });
     it('keeps execution, organization, and Agent selection in the canonical authoring draft', () => {
         const draft = buildNewSessionAuthoringDraft({
             executionTarget: { kind: 'machine', target: { serverId: ' server-1 ', machineId: ' machine-1 ' } },
@@ -154,7 +182,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         const spawn = SessionServerStartSpawnDraftV1Schema.parse({
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             placementOrigin,
-            directory: '/workspace/project',
+            directory: { kind: 'path', path: '/workspace/project' },
             organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
             agentTarget: {
                 kind: 'agent',
@@ -276,7 +304,7 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('fails closed instead of selecting a fallback Agent when the strict target is absent from the current catalog', () => {
         const spawn = SessionServerStartSpawnDraftV1Schema.parse({
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            directory: '/workspace/project',
+            directory: { kind: 'path', path: '/workspace/project' },
             agentTarget: {
                 kind: 'agent',
                 identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },
@@ -310,7 +338,7 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('rejects a server-start configuration that cannot be represented without changing its target-bound model', () => {
         const spawn = SessionServerStartSpawnDraftV1Schema.parse({
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            directory: '/workspace/project',
+            directory: { kind: 'path', path: '/workspace/project' },
             agentTarget: {
                 kind: 'agent',
                 identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },

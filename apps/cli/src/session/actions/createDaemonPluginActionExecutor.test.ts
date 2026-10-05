@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor, type ActionCaller, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 describe('createDaemonPluginActionExecutor', () => {
   it('retains the host read-only constraint across the private daemon transport', async () => {
@@ -16,6 +16,22 @@ describe('createDaemonPluginActionExecutor', () => {
     await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.source', localId: 'read' }, input: {} }, {
       surface: 'api', requiredContributedActionDangerLevel: 'safe',
     })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_read_only_required' });
+  });
+  it('reads the host caller per invocation and refuses unavailable provenance', async () => {
+    let caller: ActionCaller | null = { kind: 'session', sessionId: 'host-session', starterDepth: 2, turnDepth: 3 };
+    const executor = createDaemonPluginActionExecutor({
+      base: { execute: async () => { throw new Error('Unexpected fallback'); } },
+      getInitiatingActionCaller: () => caller,
+      requestPluginActionExecution: async (request) => ({ matched: true,
+        result: { ok: true, result: { startedBy: request.startedBy ?? null } } }),
+    });
+    expect(await executor.execute('action.spec.get', {}, { surface: 'mcp' })).toMatchObject({
+      ok: true, result: { startedBy: 'agent' },
+    });
+    caller = null;
+    expect(await executor.execute('action.spec.get', {}, { surface: 'mcp' })).toMatchObject({
+      ok: false, errorCode: 'target_unavailable',
+    });
   });
   it('exposes nested wait invocation without falling back recursively for an unavailable plugin', async () => {
     const transport = createDaemonPluginActionExecutor({

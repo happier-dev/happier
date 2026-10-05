@@ -5,6 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { DocumentTabStrip, type DocumentTabItem } from '@/components/ui/navigation/DocumentTabStrip';
 import { resolvePointerMenuAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -23,9 +25,9 @@ import {
     useSessionTerminalTabDescriptors,
 } from '@/components/sessions/terminal/presentation/useSessionTerminalPresentation';
 import { renderSessionTerminalMark, SESSION_TERMINAL_STATUS_TONE } from '@/components/sessions/terminal/strip/sessionTerminalMenus';
-import { SessionTerminalLeafHandlesContext } from '@/components/sessions/terminal/strip/sessionTerminalLeafHandles';
 import { useSessionTerminalTabMenu } from '@/components/sessions/terminal/strip/useSessionTerminalTabMenu';
 import { useSessionTerminalWorkspace } from '@/components/sessions/terminal/useSessionTerminalWorkspace';
+import { useOpenTerminalJump } from '@/components/sessions/terminal/jump/useOpenTerminalJump';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -55,7 +57,8 @@ export const SessionTerminalPage = React.memo(function SessionTerminalPage(props
     const onAction = React.useCallback((actionId: SessionTerminalAction, input: Readonly<Record<string, unknown>>) => {
         void execute(actionId, input);
     }, [execute]);
-    // A chip's long press opens the same tab menu as the desktop strip (terminal lab M).
+    const openJump = useOpenTerminalJump();
+    const onOpenJump = React.useMemo(() => openJump ? () => openJump({ sessionId: props.sessionId, serverId, scopeId: props.scopeId }) : undefined, [openJump, props.scopeId, props.sessionId, serverId]);
     const run = React.useCallback((actionId: Parameters<typeof execute>[0], input?: Readonly<Record<string, unknown>>) => execute(actionId, input), [execute]);
     const tabMenu = useSessionTerminalTabMenu({ scopeId: props.scopeId, workspace, tabs, run });
     const renderTerminal = React.useCallback((member: SessionTerminalMemberV1, descriptor: SessionTerminalDescriptor) => (
@@ -73,17 +76,16 @@ export const SessionTerminalPage = React.memo(function SessionTerminalPage(props
         />
     ), [context.sessionMachineName, props.scopeId, props.sessionId, props.testIdPrefix]);
     return (
-        <SessionTerminalLeafHandlesContext.Provider value={tabMenu.leafHandles}>
-            <SessionTerminalPageView
-                workspace={workspace}
-                tabs={tabs}
-                context={context}
-                onAction={onAction}
-                tabMenu={tabMenu}
-                renderTerminal={renderTerminal}
-                testIdPrefix={props.testIdPrefix}
-            />
-        </SessionTerminalLeafHandlesContext.Provider>
+        <SessionTerminalPageView
+            workspace={workspace}
+            tabs={tabs}
+            context={context}
+            onAction={onAction}
+            tabMenu={tabMenu}
+            onOpenJump={onOpenJump}
+            renderTerminal={renderTerminal}
+            testIdPrefix={props.testIdPrefix}
+        />
     );
 });
 
@@ -94,12 +96,15 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
     context: SessionTerminalDescribeContext;
     onAction: (actionId: SessionTerminalAction, input: Readonly<Record<string, unknown>>) => void;
     tabMenu?: Readonly<{ items: (tabId: string) => readonly DropdownMenuItem[]; select: (tabId: string, itemId: string) => void }> | null;
+    onOpenJump?: () => void;
     renderTerminal: (member: SessionTerminalMemberV1, descriptor: SessionTerminalDescriptor) => React.ReactNode;
     testIdPrefix?: string | null;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { workspace, tabs, context, onAction } = props;
+    const touchTarget = resolveTouchTargetFloorPx() ?? 32;
+    const actionGap = Math.max(0, touchTarget - 32);
     const testId = (suffix: string) => (props.testIdPrefix ? `${props.testIdPrefix}-${suffix}` : undefined);
     const [menu, setMenu] = React.useState<Readonly<{ tabId: string; anchor: PopoverAnchor | undefined }> | null>(null);
 
@@ -194,7 +199,7 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
                     onPin={() => undefined}
                     onUnpin={() => undefined}
                     onClose={closeChip}
-                    onTabMenu={props.tabMenu ? (tabId, event) => setMenu({ tabId, anchor: resolvePointerMenuAnchor(event) }) : undefined}
+                    onTabMenu={props.onOpenJump ?? (props.tabMenu ? (tabId, event) => setMenu({ tabId, anchor: resolvePointerMenuAnchor(event) }) : undefined)}
                     renderLeadingIcon={(tab, active) => renderSessionTerminalMark(tab.descriptor.mark, ICON_SIZE.sm, active ? theme.colors.text.primary : theme.colors.text.secondary)}
                     resolveTabPresentation={(tab) => (tab.descriptor.status ? {
                         status: { tone: SESSION_TERMINAL_STATUS_TONE[tab.descriptor.status], label: describeSessionTerminalStatus(tab.descriptor.status) },
@@ -207,16 +212,28 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
                         tabStatus: (key) => testId(`chip-status-${key}`),
                     }}
                     railTrailing={(
-                        <Pressable
-                            testID={testId('new-shell')}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('terminalWorkspace.actions.newShell')}
-                            onPress={openShell}
-                            hitSlop={6}
-                            style={({ pressed }) => [styles.addChip, pressed ? styles.addChipPressed : null]}
-                        >
-                            <Icon name="plus" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                        </Pressable>
+                        <View style={{ flexDirection: 'row', gap: actionGap }}>
+                            {props.tabMenu && activeTab ? (
+                                <IconButton
+                                    testID={testId('tab-menu')}
+                                    accessibilityLabel={t('terminalWorkspace.actions.more')}
+                                    onPress={(event) => setMenu({ tabId: activeTab.id, anchor: resolvePointerMenuAnchor(event) })}
+                                    iconName="dots-three"
+                                    size={32}
+                                    minimumInteractiveTargetSize={touchTarget}
+                                    interactiveTargetGapPx={actionGap}
+                                />
+                            ) : null}
+                            <IconButton
+                                testID={testId('new-shell')}
+                                accessibilityLabel={t('terminalWorkspace.actions.newShell')}
+                                onPress={openShell}
+                                iconName="plus"
+                                size={32}
+                                minimumInteractiveTargetSize={touchTarget}
+                                interactiveTargetGapPx={actionGap}
+                            />
+                        </View>
                     )}
                 />
             </View>
@@ -280,18 +297,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     chips: {
         paddingTop: 4,
         paddingBottom: 8,
-    },
-    addChip: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-    },
-    addChipPressed: {
-        backgroundColor: theme.colors.surface.selected,
     },
     meta: {
         flexDirection: 'row',

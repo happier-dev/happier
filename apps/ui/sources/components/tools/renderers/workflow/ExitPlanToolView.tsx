@@ -13,6 +13,18 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
+import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from '@/components/tools/shell/permissions/usePendingPromptPrimaryFocus';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { useToolFindState } from '../core/ToolFindText';
+import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
+
+function resolvePlan(tool: ToolViewProps['tool']): string {
+    const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
+    const plan = parsed.success ? parsed.data.plan : null;
+    return typeof plan === 'string' && plan.trim().length > 0 ? plan : t('tools.exitPlanMode.planMissing');
+}
+
+export const projectExitPlanDisplayText: ToolDisplayTextProjector = (tool) => toolTextBlock('tool-plan', resolvePlan(tool), 'markdown');
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -127,7 +139,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
+export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, messageId, interaction }) => {
+    const find = useToolFindState(messageId);
+    const findActive = useTranscriptFindActive();
     const source = useSessionTranscriptSource();
     const sourceInteraction = source.useInteraction();
     const actions = source.actions;
@@ -140,14 +154,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
     const [changeRequestText, setChangeRequestText] = React.useState('');
     const isSendingChangeRequest = isRequestingChanges && isRejecting;
 
-    let plan = t('tools.exitPlanMode.planMissing');
-    const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
-    if (parsed.success) {
-        const planText = parsed.data.plan;
-        if (typeof planText === 'string' && planText.trim().length > 0) {
-            plan = planText;
-        }
-    }
+    const plan = resolvePlan(tool);
 
     const isRunning = tool.state === 'running';
     const canApprovePermissions = actions !== null && sourceInteraction.canApprovePermissions && interaction?.canApprovePermissions !== false;
@@ -155,6 +162,8 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
     const disabledMessage =
         resolvePermissionDisabledMessage(interaction?.permissionDisabledReason ?? sourceInteraction.permissionDisabledReason);
     const permissionRequestId = resolvePermissionRequestId(tool);
+    const primaryAnswerRef = usePendingPromptPrimaryFocus(permissionRequestId,
+        Boolean(canInteract) && !isApproving && !isRejecting && !isRequestingChanges, messageId);
     const handleApprove = React.useCallback(async (mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', opts?: { updatedPermissions?: unknown }) => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
         const permissionId = permissionRequestId;
@@ -171,13 +180,14 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                 ...(mode !== undefined ? { mode } : {}),
                 ...(opts?.updatedPermissions !== undefined ? { updatedPermissions: opts.updatedPermissions } : {}),
             });
+            markTranscriptPromptAnswered(source, permissionId);
             setIsResponded(true);
         } catch (error) {
             console.error('Failed to approve plan:', error);
         } finally {
             setIsApproving(false);
         }
-    }, [actions, sessionId, permissionRequestId, canInteract, isApproving, isRejecting]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, isApproving, isRejecting]);
 
     const handleApproveOptions = React.useCallback(() => {
         if (!canInteract || isApproving || isRejecting) return;
@@ -257,13 +267,14 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         try {
             if (!actions) return;
             await actions.respondToPermission({ id: permissionId, approved: false });
+            markTranscriptPromptAnswered(source, permissionId);
             setIsResponded(true);
         } catch (error) {
             console.error('Failed to reject plan:', error);
         } finally {
             setIsRejecting(false);
         }
-    }, [actions, sessionId, permissionRequestId, canInteract, isApproving, isRejecting]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, isApproving, isRejecting]);
 
     const handleRequestChanges = React.useCallback(() => {
         if (!canInteract || isApproving || isRejecting) return;
@@ -294,6 +305,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         try {
             if (!actions) return;
             await actions.respondToPermission({ id: permissionId, approved: false, reason: trimmed });
+            markTranscriptPromptAnswered(source, permissionId);
             setIsResponded(true);
         } catch (error) {
             console.error('Failed to request plan changes:', error);
@@ -301,13 +313,13 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         } finally {
             setIsRejecting(false);
         }
-    }, [actions, sessionId, permissionRequestId, canInteract, isApproving, isRejecting, changeRequestText]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, isApproving, isRejecting, changeRequestText]);
 
     return (
         <ToolSectionView>
             <View style={styles.container}>
                 <View style={styles.planContainer}>
-                    <MarkdownView markdown={plan} agentTexMath />
+                    <MarkdownView markdown={plan} findActive={findActive} findSourceRanges={find.ranges('tool-plan')} agentTexMath />
                 </View>
 
                 {isResponded || tool.state === 'completed' ? (
@@ -409,6 +421,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                 </TouchableOpacity>
                                   <TouchableOpacity
                                       testID="exit-plan-approve"
+                                      ref={primaryAnswerRef}
                                       style={[
                                           styles.approveButton,
                                           (isApproving || isRejecting) && styles.buttonDisabled,

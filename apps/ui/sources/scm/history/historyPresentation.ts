@@ -34,7 +34,7 @@ const WEEK_MS = 6 * 24 * 60 * 60 * 1000;
 /** The time of day only (the timeline's day groups already say which day). */
 export function formatScmTimelineTime(timestampMs: number): string {
     if (!Number.isFinite(timestampMs) || timestampMs <= 0) return '';
-    return new Date(timestampMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return new Date(timestampMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function formatScmTimelineWhen(timestampMs: number, nowMs: number = Date.now()): string {
@@ -44,7 +44,7 @@ export function formatScmTimelineWhen(timestampMs: number, nowMs: number = Date.
     const sameDay = at.getFullYear() === now.getFullYear()
         && at.getMonth() === now.getMonth()
         && at.getDate() === now.getDate();
-    if (sameDay) return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (sameDay) return formatScmTimelineTime(timestampMs);
     if (nowMs - timestampMs < WEEK_MS && nowMs > timestampMs) return at.toLocaleDateString([], { weekday: 'short' });
     return at.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }

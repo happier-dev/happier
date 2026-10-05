@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 import { Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -17,7 +19,7 @@ import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets'
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
-import { speakKokoroText } from '@/voice/output/KokoroTtsController';
+import { previewLocalNeuralTts } from './providers/localNeural/previewLocalNeuralTts';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -29,6 +31,7 @@ import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voicePro
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
 import { resolveDaemonTtsVoiceSelection } from './resolveDaemonTtsVoiceSelection';
+import { LocalNeuralTtsSpeedItem } from './LocalNeuralTtsSpeedItem';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { useDaemonVoiceModelCatalogController } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
@@ -114,11 +117,9 @@ export function LocalNeuralTtsSettings(props: {
       setPreviewingVoiceId(voiceId);
 
       try {
-        await speakKokoroText({
-          text: t('settingsVoice.local.testTtsSample'),
-          assetSetId: effectiveAssetSetId,
-          voiceId,
-          speed: effectiveSpeed,
+        await previewLocalNeuralTts({
+          sample: t('settingsVoice.local.testTtsSample'),
+          config: { ...props.cfgKokoro, assetId: effectiveAssetSetId, voiceId, speed: effectiveSpeed },
           timeoutMs: Math.max(60000, props.networkTimeoutMs),
           registerPlaybackStopper: previewController.registerStopper,
         });
@@ -127,7 +128,7 @@ export function LocalNeuralTtsSettings(props: {
         setPreviewingVoiceId(null);
       }
     },
-    [effectiveAssetSetId, effectiveSpeed, previewController.registerStopper, previewingVoiceId, props.networkTimeoutMs, stopPreview],
+    [effectiveAssetSetId, effectiveSpeed, previewController.registerStopper, previewingVoiceId, props.cfgKokoro, props.networkTimeoutMs, stopPreview],
   );
 
   const buildLabel = formatModelPackBuildLabel((installSummary as any)?.manifest);
@@ -154,12 +155,14 @@ export function LocalNeuralTtsSettings(props: {
 
   return (
     <>
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsExecution}>
       <DaemonVoiceInferenceExecutionDropdown
         execution={executionPolicy.selectableExecution}
         setExecution={(execution) => props.setKokoro({ ...props.cfgKokoro, execution })}
         popoverBoundaryRef={props.popoverBoundaryRef}
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
+      </SettingAnchor>
 
       {!runtimeSupported ? (
         <Item
@@ -181,6 +184,7 @@ export function LocalNeuralTtsSettings(props: {
         showChevron={false}
       />
 
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId}>
       <DropdownMenu
         open={openMenu === 'assetSet'}
         onOpenChange={(next) => setOpenMenu(next ? 'assetSet' : null)}
@@ -209,14 +213,17 @@ export function LocalNeuralTtsSettings(props: {
           stopPreview();
         }}
       />
+      </SettingAnchor>
 
       {usesDaemonExecution ? (
         <SelectedDaemonModelPackRow
           packId={effectiveAssetSetId}
           kind="tts_sherpa"
+          setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsPrepareModel}
         />
       ) : (
         <>
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsPrepareModel}>
           <Item
             title={t('settingsVoice.local.kokoro.model.title')}
             subtitle={t('settingsVoice.local.kokoro.model.subtitleNative')}
@@ -262,7 +269,9 @@ export function LocalNeuralTtsSettings(props: {
             showChevron={false}
             selected={false}
           />
+          </SettingAnchor>
 
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsRemoveModel}>
           <Item
             title={t('settingsVoice.local.kokoro.removeAssets.title')}
             subtitle={t('settingsVoice.local.kokoro.removeAssets.subtitle')}
@@ -271,7 +280,9 @@ export function LocalNeuralTtsSettings(props: {
             showChevron={false}
             selected={false}
           />
+          </SettingAnchor>
 
+          <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsUpdateModel}>
           <Item
             title={t('settingsVoice.local.kokoro.updates.title')}
             subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
@@ -280,9 +291,14 @@ export function LocalNeuralTtsSettings(props: {
             showChevron={false}
             selected={false}
           />
+          </SettingAnchor>
         </>
       )}
 
+      <SettingAnchor {...(usesDaemonExecution
+        ? { settings: [VOICE_CONVERSATIONS_SETTINGS.settings.ttsPreview] }
+        : { setting: VOICE_CONVERSATIONS_SETTINGS.settings.ttsPreview })}>
+      <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsVoiceId}>
       <DropdownMenu
         open={openMenu === 'voiceId'}
         onOpenChange={(next) => setOpenMenu(next ? 'voiceId' : null)}
@@ -329,6 +345,15 @@ export function LocalNeuralTtsSettings(props: {
           props.setKokoro({ ...props.cfgKokoro, voiceId: id || null });
           setOpenMenu(null);
         }}
+      />
+      </SettingAnchor>
+      </SettingAnchor>
+      <LocalNeuralTtsSpeedItem
+        speed={effectiveSpeed}
+        open={openMenu === 'speed'}
+        onOpenChange={(next) => setOpenMenu(next ? 'speed' : null)}
+        onSelect={(speed) => props.setKokoro({ ...props.cfgKokoro, speed })}
+        popoverBoundaryRef={props.popoverBoundaryRef}
       />
     </>
   );

@@ -39,7 +39,7 @@ function useDesktopPetOverlayMainWindowRequests(): void {
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
             openSession: (sessionId, options) => {
-                router.push(createActivitySurfaceSessionRoute(sessionId, options?.serverId) as never);
+                router.push(createActivitySurfaceSessionRoute(sessionId, options?.serverId, options?.query) as never);
             },
         }),
         [router],

@@ -268,8 +268,10 @@ function createOpaqueMention(reference: ComposerMentionRef): ComposerUnknownMent
 export function placePositionlessComposerReferences(input: Readonly<{
     text: string;
     references: readonly MentionRefV1[];
+    /** Migration reserves already exact current occurrences instead of rebinding them. */
+    occupied?: readonly Readonly<{ start: number; end: number }>[];
 }>): readonly ComposerMentionRef[] {
-    const occupied: Array<Readonly<{ start: number; end: number }>> = [];
+    const occupied: Array<Readonly<{ start: number; end: number }>> = [...(input.occupied ?? [])];
     const placed: ComposerMentionRef[] = [];
     for (const reference of input.references) {
         if (reference.token.length === 0) continue;

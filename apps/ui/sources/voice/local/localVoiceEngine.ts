@@ -772,18 +772,20 @@ async function runVoiceTurnWithSendFailureHandling(
   settings: any,
   runner: (signal: AbortSignal) => Promise<void>,
 ): Promise<void> {
+  const admission = readCaptureAdmission(sessionId);
+  const captureAttempt = admission?.captureAttempt;
+  let startsPlaybackCapture = false;
   try {
-    const admission = readCaptureAdmission(sessionId);
     const ttsSettings = admission
       ? parseLocalVoiceTtsSettings(resolveLocalVoiceAdapterSettings(admission.captureAttempt.settings).config?.tts)
       : null;
-    const startsPlaybackCapture = !!admission && isEndpointDrivenCaptureProvider(admission.captureAttempt.provider)
+    startsPlaybackCapture = !!admission && isEndpointDrivenCaptureProvider(admission.captureAttempt.provider)
       && isVoiceBargeInEnabled(admission.captureAttempt.settings)
       && ttsSettings?.autoSpeakReplies !== false
       && !localVoiceCaptureOwner.isCaptureActive(sessionId);
-    if (admission && startsPlaybackCapture) {
-      await startCaptureForAdmission(admission, admission.captureAttempt, admission.captureAbortController.signal);
-      if (!isCaptureAdmissionCurrent(admission)) return;
+    if (admission && captureAttempt && startsPlaybackCapture) {
+      await startCaptureForAdmission(admission, captureAttempt, admission.captureAbortController.signal);
+      if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
     }
     await runAbortableVoiceTurn(sessionId, runner);
     beginAutomaticCurrentUiContextUpdates(sessionId);
@@ -796,6 +798,12 @@ async function runVoiceTurnWithSendFailureHandling(
   } catch (error) {
     if (isAbortedVoiceTurnError(error)) {
       return;
+    }
+    if (admission && captureAttempt && startsPlaybackCapture
+      && isCaptureAttemptCurrent(admission, captureAttempt)
+      && localVoiceCaptureOwner.isCaptureActive(sessionId)) {
+      await localVoiceCaptureOwner.stopCapture({ provider: captureAttempt.provider, sessionId });
+      resetInputLevel();
     }
     transitionVoiceRuntimeToIdle({
       controlSessionId: sessionId,

@@ -1,6 +1,7 @@
 import type { InboxSessionAttentionEntry } from '@/activity/presentation/buildInboxSessionPresentation';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
+import { comparePendingRequestsByAge, selectOldestPendingRequest } from '@happier-dev/session-core/pending';
 
 /**
  * FIN's session↔PR link read projection (`sessionPullRequestLink`, FIN PLAN U10 / 08 §5A), as this
@@ -180,9 +181,25 @@ export function buildInboxWorkGroups(input: InboxWorkGroupsInput): readonly Inbo
 }
 
 function sortByRank(items: InboxWorkItem[]): readonly InboxWorkItem[] {
-    // Stable: needs-you items keep the owners' order (and a step stays right under its run).
-    return items
+    const ranked = items
         .map((item, index) => ({ item, index }))
         .sort((a, b) => (ITEM_RANK[a.item.kind] - ITEM_RANK[b.item.kind]) || (a.index - b.index))
         .map(({ item }) => item);
+    // Sort only pending-session slots with the same classification and run parent.
+    // Failures, workflow rows and the broader work-group order retain their positions.
+    const slots = new Map<string, Array<{ index: number; item: InboxWorkItem; request: NonNullable<ReturnType<typeof selectOldestPendingRequest>> }>>();
+    ranked.forEach((item, index) => {
+        if (item.kind !== 'session') return;
+        const request = selectOldestPendingRequest([...item.entry.pendingPermissions, ...item.entry.pendingUserActions]);
+        if (!request) return;
+        const classification = `${item.entry.candidate.attentionState}:${item.foldedUnderRunId ?? ''}`;
+        const group = slots.get(classification) ?? [];
+        group.push({ index, item, request });
+        slots.set(classification, group);
+    });
+    for (const group of slots.values()) {
+        const sorted = [...group].sort((a, b) => comparePendingRequestsByAge(a.request, b.request) || a.item.key.localeCompare(b.item.key));
+        group.forEach(({ index }, position) => { ranked[index] = sorted[position]!.item; });
+    }
+    return ranked;
 }

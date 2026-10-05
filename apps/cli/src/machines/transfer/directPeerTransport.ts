@@ -17,7 +17,7 @@ import {
   createTransferManifestHash,
   parseTransferRecipientPublicKeyBase64,
   resolveEncryptedTransferChunkJsonBodyMaxBytes,
-} from './transferChunkEncryption';
+} from '@happier-dev/transfers/node';
 import {
   resolveDirectPeerAdvertisedHosts,
   resolveDirectPeerTransferBindHost,
@@ -36,7 +36,7 @@ import {
   type TransferPayloadSource,
 } from './transferPayloadSource';
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
-import { clampTransferChunkBytes } from './transferChunkSizeLimit';
+import { clampTransferChunkBytes } from '@happier-dev/transfers/node';
 import {
   decodeDirectPeerTransferPathKey,
   DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS,
@@ -63,7 +63,7 @@ import { DirectTransferImportOpenRequestSchema } from './directTransferImportOpe
 import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/resolveComposerMediaStageUploadTarget';
 import type { TransferUploadInitAttachmentDeps } from '@/transfers/targets/resolveTransferUploadInitTarget';
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
-import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@/transfers/targets/uploadTransferTarget';
+import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@happier-dev/transfers/node';
 
 // Direct-peer transfers are used for session handoff and finite workspace transfers, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default

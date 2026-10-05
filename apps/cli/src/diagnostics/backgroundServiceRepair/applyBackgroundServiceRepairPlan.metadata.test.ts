@@ -9,6 +9,7 @@ const boundary = vi.hoisted(() => ({
   enabled: true,
   running: false,
   stateReadFailure: false,
+  activityReadFailure: false,
 }));
 // Only filesystem failure and OS service commands are replaced; planner and installer stay real.
 vi.mock('node:fs/promises', async (original) => {
@@ -28,7 +29,9 @@ vi.mock('node:child_process', async (original) => ({
     if (boundary.stateReadFailure) return { status: 1, stdout: '', stderr: 'Service manager unavailable' };
     if (command === 'systemctl' && args.includes('show')) return { status: 0, stdout: `UnitFileState=${boundary.enabled ? 'enabled' : 'disabled'}\nActiveState=${boundary.running ? 'active' : 'inactive'}\n`, stderr: '' };
     if (command === 'launchctl' && args[0] === 'print-disabled') return { status: 0, stdout: `disabled services = {\n "com.happier.cli.daemon.default" => ${!boundary.enabled}\n "com.happier.cli.daemon.preview.default" => ${!boundary.enabled}\n}`, stderr: '' };
-    if (command === 'launchctl' && args[0] === 'print') return { status: boundary.running ? 0 : 1, stdout: boundary.running ? 'state = running' : '', stderr: '' };
+    if (command === 'launchctl' && args[0] === 'print') return boundary.activityReadFailure
+      ? { status: 1, stdout: '', stderr: 'Operation not permitted' }
+      : { status: boundary.running ? 0 : 113, stdout: boundary.running ? 'state = running' : '', stderr: boundary.running ? '' : `Could not find service "${args[1]?.split('/').at(-1)}" in domain for user gui: 501` };
     if (command === 'powershell.exe' && args.join(' ').includes('Get-ScheduledTask')) return { status: 0, stdout: JSON.stringify({ exists: true, enabled: boundary.enabled, active: boundary.running, autostart: true }), stderr: '' };
     return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
   },
@@ -39,7 +42,7 @@ import { readInstalledDaemonServiceInstallOptions, readInstalledDaemonServiceMan
 import { buildBackgroundServiceRepairPlan } from './buildBackgroundServiceRepairPlan';
 import { applyBackgroundServiceRepairPlan } from './applyBackgroundServiceRepairPlan';
 
-afterEach(() => { vi.unstubAllEnvs(); boundary.failWritePath = null; boundary.commands.length = 0; boundary.enabled = true; boundary.running = false; boundary.stateReadFailure = false; });
+afterEach(() => { vi.unstubAllEnvs(); boundary.failWritePath = null; boundary.commands.length = 0; boundary.enabled = true; boundary.running = false; boundary.stateReadFailure = false; boundary.activityReadFailure = false; });
 
 it.each([false, true])('preserves the prior login trigger, bundle attribution and ownership through repair (rollback=%s)', async (rollback) => {
   const home = await mkdtemp(join(tmpdir(), 'repair-definition-metadata-'));
@@ -66,7 +69,7 @@ it.each([false, true])('preserves the prior login trigger, bundle attribution an
     const plan = buildBackgroundServiceRepairPlan({
       currentReleaseChannel: 'preview', currentHappierHomeDir: happierHomeDir, currentServerId: 'company', preferredMode: 'user',
       services: [{
-        serverId: 'default', name: 'Legacy default', installed: true, path: legacyPath, platform: 'linux', mode: 'user',
+        serverId: 'default', name: 'Legacy default', verification: 'verified' as const, installed: true, path: legacyPath, platform: 'linux', mode: 'user',
         happierHomeDir, releaseChannel: 'preview', label: 'happier-daemon.preview.default', targetMode: 'default-following',
         installedDefinitionMatchesExpected: false,
       }],
@@ -87,7 +90,12 @@ it.each([false, true])('preserves the prior login trigger, bundle attribution an
   }
 });
 
-it.each(['linux', 'darwin', 'win32'] as const)('refuses repair before writes when %s OS enablement cannot be observed', async (platform) => {
+it.each([
+  { platform: 'linux', activityOnly: false },
+  { platform: 'darwin', activityOnly: false },
+  { platform: 'win32', activityOnly: false },
+  { platform: 'darwin', activityOnly: true },
+] as const)('refuses repair before writes when $platform state is unavailable (activityOnly=$activityOnly)', async ({ platform, activityOnly }) => {
   const home = await mkdtemp(join(tmpdir(), 'repair-unknown-enablement-'));
   try {
     const happierHomeDir = join(home, '.happier');
@@ -95,9 +103,11 @@ it.each(['linux', 'darwin', 'win32'] as const)('refuses repair before writes whe
     const file = prior.files[0]!;
     await mkdir(dirname(file.path), { recursive: true });
     await writeFile(file.path, file.content);
-    boundary.stateReadFailure = true;
+    boundary.stateReadFailure = !activityOnly;
+    boundary.activityReadFailure = activityOnly;
+    boundary.enabled = !activityOnly;
     const label = platform === 'darwin' ? 'com.happier.cli.daemon.default' : `${platform === 'win32' ? 'Happier\\' : ''}happier-daemon.default`;
-    expect(() => buildBackgroundServiceRepairPlan({ currentReleaseChannel: 'preview', currentHappierHomeDir: happierHomeDir, currentServerId: 'company', preferredMode: 'user', services: [{ serverId: 'default', name: 'Default', installed: true, path: file.path, platform, mode: 'user', happierHomeDir, releaseChannel: 'preview', label, targetMode: 'default-following', installedDefinitionMatchesExpected: false }] }))
+    expect(() => buildBackgroundServiceRepairPlan({ currentReleaseChannel: 'preview', currentHappierHomeDir: happierHomeDir, currentServerId: 'company', preferredMode: 'user', services: [{ serverId: 'default', name: 'Default', verification: 'verified' as const, installed: true, path: file.path, platform, mode: 'user', happierHomeDir, releaseChannel: 'preview', label, targetMode: 'default-following', installedDefinitionMatchesExpected: false }] }))
       .toThrow(expect.objectContaining({ code: 'service_inventory_unavailable', message: expect.stringContaining(label) }));
     expect(await readFile(file.path, 'utf8')).toBe(file.content);
   } finally { await rm(home, { recursive: true, force: true }); }
@@ -128,7 +138,7 @@ it.each(['linux', 'darwin', 'win32'] as const)('preserves actual OS disablement 
       await mkdir(dirname(legacyPath), { recursive: true });
       await writeFile(legacyPath, canonical.content.replaceAll(`${stem}.default`, `${stem}.preview.default`));
       const label = `${platform === 'win32' ? 'Happier\\' : ''}${stem}.preview.default`;
-      const plan = buildBackgroundServiceRepairPlan({ currentReleaseChannel: 'preview', currentHappierHomeDir: happierHomeDir, currentServerId: 'company', preferredMode: 'user', services: [{ serverId: 'default', name: 'Legacy default', installed: true, path: legacyPath, platform, mode: 'user', happierHomeDir, releaseChannel: 'preview', label, targetMode: 'default-following', installedDefinitionMatchesExpected: false }] });
+      const plan = buildBackgroundServiceRepairPlan({ currentReleaseChannel: 'preview', currentHappierHomeDir: happierHomeDir, currentServerId: 'company', preferredMode: 'user', services: [{ serverId: 'default', name: 'Legacy default', verification: 'verified' as const, installed: true, path: legacyPath, platform, mode: 'user', happierHomeDir, releaseChannel: 'preview', label, targetMode: 'default-following', installedDefinitionMatchesExpected: false }] });
       boundary.commands.length = 0;
       if (rollback) boundary.failWritePath = canonical.path;
       const repair = applyBackgroundServiceRepairPlan(plan, runtime);

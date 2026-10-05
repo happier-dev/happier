@@ -3,6 +3,8 @@ import { backoff } from '@/utils/timing/time';
 import { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactUpdateResponse } from '@/sync/domains/artifacts/artifactTypes';
 import { HappyError } from '@/utils/errors/errors';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1,
+    type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
 import {
     ArtifactAccessErrorCodeV1Schema,
     ArtifactAccessGrantsListResponseV1Schema,
@@ -15,12 +17,45 @@ import {
     ArtifactRevisionV1Schema,
     ArtifactStorageUsageV1Schema,
     ArtifactBlobReadResponseV1Schema,
+    ArtifactHtmlPreviewResponseV1Schema,
+    ArtifactBlobAccountEncryptionStageV1Schema,
+    type ArtifactBlobStoredContentV1,
+    type ArtifactBlobAccountEncryptionStageV1,
     type ArtifactRevisionV1,
     type ArtifactAccessGrantsListInputV1,
     type ArtifactAccessGrantSetInputV1,
     type ArtifactAccessGrantRemoveInputV1,
     type ArtifactRecipientKeyEnvelopeCommitInputV1,
 } from '@happier-dev/protocol';
+
+async function uploadArtifactContent(credentials: AuthCredentials, destination: ArtifactUploadDestinationV1,
+    content: ArtifactBlobStoredContentV1, opts: Pick<ArtifactApiOptions, 'request' | 'signal'>): Promise<Response> {
+    opts.signal?.throwIfAborted();
+    const frame = encodeArtifactUploadFrameV1(destination, content);
+    return (opts.request ?? serverFetch)(ARTIFACT_UPLOAD_PATH_V1, {
+        method: 'POST', body: frame.buffer,
+        headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
+        ...(opts.signal ? { signal: opts.signal } : {}),
+    }, { includeAuth: false, retry: 'none' });
+}
+
+export async function stageArtifactBlobAccountEncryptionConversion(credentials: AuthCredentials,
+    artifactId: string, blobId: string, content: ArtifactBlobStoredContentV1,
+    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<ArtifactBlobAccountEncryptionStageV1> {
+    const response = await uploadArtifactContent(credentials, { kind: 'encryption-conversion', artifactId, blobId }, content, opts);
+    if (!response.ok) throw await readWriteRefusal(response, 'Artifact conversion upload failed');
+    const stage = ArtifactBlobAccountEncryptionStageV1Schema.safeParse(await response.json());
+    if (!stage.success) throw new HappyError('Artifact conversion upload is unavailable', false, { code: 'artifact_content_unavailable' });
+    return stage.data;
+}
+
+export async function cancelArtifactBlobAccountEncryptionConversion(credentials: AuthCredentials, uploadId: string,
+    opts: Pick<ArtifactApiOptions, 'request'> = {}): Promise<void> {
+    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/content/uploads/${encodeURIComponent(uploadId)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${credentials.token}` },
+    }, { includeAuth: false, retry: 'none' });
+    if (!response.ok) throw await readWriteRefusal(response, 'Artifact conversion cancellation failed');
+}
 
 /** A write the server refused for an operator storage budget (`quota_exceeded`), naming the budget and its sizes. */
 export class ArtifactQuotaExceededError extends HappyError {
@@ -65,6 +100,7 @@ function readArtifactResponse(value: unknown): Artifact {
 }
 
 export type ArtifactApiOptions = Readonly<{
+    includeBody?: boolean;
     retry?: 'default' | 'none';
     request?: ServerFetch;
     limit?: number;
@@ -73,6 +109,23 @@ export type ArtifactApiOptions = Readonly<{
     /** Inventory selection only; the server remains the access authority. */
     ownerAccountId?: string;
 }>;
+
+/** The Home supplies only the isolated shell location, never opened HTML or a public grant. */
+export async function fetchArtifactHtmlPreviewLocation(credentials: AuthCredentials, artifactId: string,
+    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<string> {
+    opts.signal?.throwIfAborted();
+    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(artifactId)}/html-preview`, {
+        headers: { Authorization: `Bearer ${credentials.token}` }, ...(opts.signal ? { signal: opts.signal } : {}),
+    }, { includeAuth: false, retry: 'none' });
+    opts.signal?.throwIfAborted();
+    if (!response.ok) throw new HappyError('HTML preview is unavailable', false,
+        { status: response.status, code: 'artifact_html_preview_unavailable' });
+    const parsed = ArtifactHtmlPreviewResponseV1Schema.safeParse(await response.json());
+    opts.signal?.throwIfAborted();
+    if (!parsed.success || new URL(parsed.data.url).pathname !== `/a/${encodeURIComponent(artifactId)}`)
+        throw new HappyError('HTML preview is unavailable', false, { code: 'artifact_html_preview_unavailable' });
+    return parsed.data.url;
+}
 
 /** Authenticated bytes only: verify the requested identity and owner mode before opening. */
 export async function fetchArtifactBlob(credentials: AuthCredentials, artifactId: string, blobId: string,
@@ -204,6 +257,7 @@ export async function fetchArtifacts(
         const query = new URLSearchParams();
         if (opts.limit !== undefined) query.set('limit', String(opts.limit));
         if (opts.cursor !== undefined) query.set('cursor', opts.cursor);
+        if (opts.includeBody) query.set('includeBody', 'true');
         const search = query.toString();
         const response = await (opts.request ?? serverFetch)(`/v1/artifacts${search ? `?${search}` : ''}`, {
             headers: {
@@ -298,7 +352,10 @@ export async function createArtifact(
 ): Promise<Artifact> {
     const run = async () => {
         const path = request.blob ? '/v1/artifacts/content/binary' : '/v1/artifacts';
-        const response = await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
+        const response = request.blob?.content
+            ? await uploadArtifactContent(credentials, { kind: 'create', artifactId: request.id, blobId: request.blob.blobId,
+                header: request.header, body: request.body, dataEncryptionKey: request.dataEncryptionKey }, request.blob.content, opts)
+            : await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
             method: 'POST',
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {
@@ -338,8 +395,15 @@ export async function updateArtifact(
     opts: ArtifactApiOptions = {},
 ): Promise<ArtifactUpdateResponse> {
     const run = async () => {
-        const path = `/v1/artifacts/${encodeURIComponent(artifactId)}${request.blob ? '/content/binary' : ''}`;
-        const response = await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
+        const path = `/v1/artifacts/${encodeURIComponent(artifactId)}${request.blob !== undefined ? '/content/binary' : ''}`;
+        if (request.blob?.content && (request.body === undefined || request.expectedBodyVersion === undefined)) {
+            throw new HappyError('Artifact binary update requires its body revision', false, { status: 400 });
+        }
+        const response = request.blob?.content && request.body !== undefined && request.expectedBodyVersion !== undefined
+            ? await uploadArtifactContent(credentials, { kind: 'update', artifactId, blobId: request.blob.blobId,
+                header: request.header, expectedHeaderVersion: request.expectedHeaderVersion,
+                body: request.body, expectedBodyVersion: request.expectedBodyVersion }, request.blob.content, opts)
+            : await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
             method: 'POST',
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {

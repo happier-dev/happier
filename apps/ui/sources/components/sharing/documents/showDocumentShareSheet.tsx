@@ -26,11 +26,12 @@ export function showDocumentShareSheet(params: Omit<DocumentShareSheetProps, 'on
         props: sheet,
         chrome: {
             kind: 'card',
+            phonePresentation: 'sheet',
             testID: 'document-share-modal',
             title: t('shareSheet.documents.shareTitle', { name }),
             ...(subtitle ? { subtitle } : {}),
-            // The sheet's list owns its scrolling, like every other list hosted in a card.
-            scrollHost: 'body',
+            // Content-sized card chrome; the sheet's SelectionList owns its rows, not a body ScrollView.
+            scrollHost: 'overlay',
             bodyScroll: 'none',
             dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' },
         },

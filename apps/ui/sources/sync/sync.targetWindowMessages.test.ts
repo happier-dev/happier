@@ -144,7 +144,7 @@ function plainMessage(id: string, seq: number) {
 }
 
 async function seedSession(): Promise<SyncTargetWindowTestAccess> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     const syncForTest = sync as unknown as SyncTargetWindowTestAccess;
     sync.disconnectServer();
 
@@ -211,7 +211,7 @@ describe('sync target-window message adapter', () => {
             { status: 200, headers: { 'Content-Type': 'application/json' } },
         ));
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const result = await sync.loadTargetWindowMessages(SESSION_ID, { kind: 'seq', seq: 331 }, { limit: 3 });
 
         const url = readRequestUrl();

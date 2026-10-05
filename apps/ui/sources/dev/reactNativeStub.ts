@@ -92,7 +92,12 @@ function flattenStyle(style: any): any {
     if (typeof style === 'object') return style;
     return {};
 }
-export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle, hairlineWidth: 1 } as const;
+// Match RN-web's callable external boundary; DOM integration tests use the real
+// resolver, while host-renderer fixtures retain their uncompiled style values.
+export const StyleSheet = Object.assign(
+    (style: unknown) => ['', flattenStyle(style)] as const,
+    { create: (styles: any) => styles, flatten: flattenStyle, hairlineWidth: 1 } as const,
+);
 // Many components spread this object into style definitions.
 (StyleSheet as any).absoluteFillObject = {};
 export const NativeModules = {} as const;
@@ -122,6 +127,10 @@ export function useAnimatedValue(initialValue: number): AnimatedValue {
 
 export const Animated = {
     Value: AnimatedValue as any,
+    multiply: (left: number | Readonly<{ __getValue(): number }>, right: number | Readonly<{ __getValue(): number }>) => ({
+        __getValue: () => (typeof left === 'number' ? left : left.__getValue())
+            * (typeof right === 'number' ? right : right.__getValue()),
+    }),
     createAnimatedComponent: (component: any) => component,
     timing: (_value: any, _config: any) => ({
         start: (cb?: any) => {

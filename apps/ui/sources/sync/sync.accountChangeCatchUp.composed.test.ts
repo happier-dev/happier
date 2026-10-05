@@ -250,7 +250,7 @@ function currentAccountStoredContentCompatibilityFeaturesResponse(): Response {
 async function prepareAccountChangeWakeSchedulingHarness(): Promise<SyncAccountChangeWakeSchedulingHarness> {
     const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { storage } = await import('./domains/state/storage');
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
 
     await upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
     const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
@@ -320,7 +320,7 @@ describe('sync AccountChange catch-up projection', () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const storedCredentialRead = vi.spyOn(TokenStorage, 'getCredentials');
         const scopedCredentialRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const paths: string[] = [];
         const changesAfter: string[] = [];
         let expectedToken = 'hap_v1_child';

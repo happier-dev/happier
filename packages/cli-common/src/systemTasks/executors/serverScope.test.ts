@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { discoverHappierServices } from '../../happierRuntime/services/discoverHappierServices.js';
 import type { HappierService } from '../../happierRuntime/types.js';
 import { renderSystemdServiceUnit } from '../../service/systemd.js';
+import { renderWindowsScheduledTaskWrapperPs1 } from '../../service/windows.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import type { HappierJsonExecutor } from './happierJsonExecutor.js';
 import {
@@ -268,6 +269,21 @@ describe('server scope for an explicit Home', () => {
 });
 
 describe('converging this home\'s services onto the chosen CLI (R12, one CLI per home and ring)', () => {
+  it.each(['unavailable', 'candidate'] as const)('reports %s service observations from real discovery without issuing writes', async (observation) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-converge-unavailable-'));
+    try {
+      const label = 'happier-daemon.company';
+      await writeFile(join(root, `${label}.service`), renderSystemdServiceUnit({ description: 'Happier daemon', execStart: observation === 'candidate' ? ['happier', 'serve'] : ['happier', 'daemon', 'start-sync'], env: { HAPPIER_HOME_DIR: HOME_DIR }, wantedBy: 'default.target' }));
+      const { services } = await discoverHappierServices({ platform: 'linux', deep: true, roots: [{ path: root, scope: 'user' }], commands: { run: () => ({ stdout: 'ActiveState=active\nUnitFileState=enabled\n', stderr: observation === 'candidate' ? '' : 'Query denied', status: observation === 'candidate' ? 0 : 1 }) } });
+      const world = createServiceWorld(services);
+      const result = await convergeHappierHomeServicesOntoCli({ executor: world.executorFor('/managed/happier'), services, happierHomeDir: HOME_DIR, releaseRing: 'stable', exclude: null });
+      expect(result).toEqual({ converged: [], failed: [{ label, message: expect.stringContaining(label) }] });
+      expect(world.calls).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   /**
    * The service manager as the 0.3 CLI drives it (the process boundary): `service install` by CLI X
    * rewrites the addressed service's launcher to X, writes the one autostart mode 0.3 defines (at
@@ -399,6 +415,35 @@ describe('disconnecting this computer from a removed Home (R15)', () => {
     };
     return { executor, calls, envs };
   }
+
+  it.each(['before', 'after'] as const)('refuses a wrapperless registered pin %s uninstall without claiming absence', async (phase) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-disconnect-wrapperless-'));
+    try {
+      const label = 'happier-daemon.company.profile';
+      const path = join(root, 'services', `${label}.ps1`);
+      if (phase === 'after') {
+        await mkdir(join(root, 'services'));
+        await writeFile(path, renderWindowsScheduledTaskWrapperPs1({ workingDirectory: root, programArgs: ['happier.exe', 'daemon', 'start-sync'], env: { HAPPIER_HOME_DIR: root, HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable', HAPPIER_ACTIVE_SERVER_ID: 'company.profile', HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned', HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service', HAPPIER_DAEMON_SERVICE_MANAGED_BY: 'desktop' }, stdoutPath: join(root, 'out.log'), stderrPath: join(root, 'err.log') }));
+      }
+      const readServices = async () => (await discoverHappierServices({ platform: 'win32', roots: [{ path: join(root, 'services'), scope: 'user' }], commands: { run: ({ args }) => {
+        if (args.includes('CSV')) return `"\\Happier\\${label}","N/A"\r\n`;
+        if (args.includes('/XML')) return `<Task><Arguments>-File "${path}"</Arguments></Task>`;
+        return `TaskName: \\Happier\\${label}\r\nStatus: Ready\r\n`;
+      } } })).services;
+      const { executor, calls } = createExecutor(serverList('cloud', [{ id: 'company.profile', serverUrl: target.serverUrl }]));
+      const run = executor.runHappierJson;
+      await expect(disconnectHappierHomeService({
+        executor: { ...executor, runHappierJson: async (args, options) => {
+          if (args.includes('uninstall')) await rm(path);
+          return await run(args, options);
+        } }, target, releaseRing: 'stable', happierHomeDir: root, readServices,
+      })).rejects.toMatchObject({ code: phase === 'before' ? 'service_inventory_unavailable' : 'service_uninstall_failed', message: expect.stringContaining(label) });
+      if (phase === 'before') expect(calls.some((args) => args.includes('uninstall'))).toBe(false);
+      else expect(calls).toContainEqual(['--server', 'company.profile', 'service', 'uninstall', '--json']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it('uninstalls the Home\'s desktop-managed pinned service through the CLI and proves it is gone', async () => {
     const { executor, calls, envs } = createExecutor();

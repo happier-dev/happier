@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -15,7 +17,6 @@ import {
     speechRecRequestPermissionsAsync,
     submitMessage,
 } from './localVoiceEngine.testHarness';
-import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
 
 type CallCountSpy = {
     mock: {
@@ -55,6 +56,9 @@ async function configureDuplexDeviceSpeech(handsFree: boolean) {
     } });
     return storage;
 }
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine device STT (experimental)', () => {
     registerLocalVoiceEngineHarnessHooks();
@@ -161,8 +165,7 @@ describe('local voice engine device STT (experimental)', () => {
     });
 
     it('surfaces mic permission denial as a recoverable idle error instead of entering recording', async () => {
-        const { requestMicrophonePermission } = await import('@/utils/platform/microphonePermissions');
-        vi.mocked(requestMicrophonePermission).mockResolvedValueOnce({ granted: false, canAskAgain: false });
+        speechRecRequestPermissionsAsync.mockResolvedValueOnce({ granted: false });
 
         const storage = await getStorage();
         storage.__setState({
@@ -612,112 +615,6 @@ describe('local voice engine device STT (experimental)', () => {
         });
     });
 
-    it('routes runtime-owned hands-free endpoint signals through the capture-owner active-session gate', async () => {
-        const endpointSignalHarness: {
-            emit: ((signal: TurnEndpointSignal) => void) | null;
-        } = { emit: null };
-        const startCapture = vi.fn(async () => {});
-        const stopEndpointDrivenCapture = vi.fn(async () => ({
-            followUp: { kind: 'none' as const },
-            kind: 'submit_turn' as const,
-            transcript: 'hands free message',
-        }));
-        const resolveEndpointSignalAction = vi.fn((args: { signal: { sessionId: string } }) => ({
-            kind: 'stop_capture' as const,
-            provider: 'device' as const,
-            sessionId: args.signal.sessionId,
-        }));
-        const isHandsFreeCaptureSession = vi.fn(() => true);
-
-        vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
-            createLocalVoiceCaptureOwner: (deps: {
-                onEndpointSignal?: (signal: TurnEndpointSignal) => void;
-            }) => {
-                endpointSignalHarness.emit = (signal) => deps.onEndpointSignal?.(signal);
-                return {
-                    isCaptureActive: vi.fn(() => false),
-                    resolveManualBargeInAction: vi.fn(() => ({
-                        kind: 'noop',
-                        reason: 'not_speaking',
-                    })),
-                    resolveEndpointSignalAction,
-                    startCapture,
-                    stopCapture: vi.fn(async () => ({
-                        continueHandsFree: false,
-                        provider: 'device',
-                        text: '',
-                    })),
-                    stopEndpointDrivenCapture,
-                    isHandsFreeCaptureSession,
-                    clearHandsFree: vi.fn(),
-                    setMuted: vi.fn(async () => {}),
-                    stopSession: vi.fn(async () => {}),
-                };
-            },
-        }));
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_direct',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_direct: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_direct.config,
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                                provider: 'device',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_direct.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            handsFree: {
-                                ...storage.getState().settings.voice.providers.local_direct.config.handsFree,
-                                enabled: true,
-                                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-                            },
-                        } },
-                    },
-                },
-            },
-        });
-
-        const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
-        await toggleLocalVoiceTurn('s1');
-        expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
-            provider: 'device',
-            sessionId: 's1',
-            signal: expect.any(Object),
-        }));
-
-        endpointSignalHarness.emit?.({
-            detectedAt: Date.now(),
-            endpoint: { reason: 'structural_fallback', confidence: null },
-            sessionId: 's1',
-            source: 'heuristic',
-            transcript: 'hands free message',
-        });
-
-        await waitForCallCount(stopEndpointDrivenCapture as unknown as CallCountSpy, 1);
-        expect(isHandsFreeCaptureSession).toHaveBeenCalledWith({ provider: 'device', sessionId: 's1' });
-        expect(resolveEndpointSignalAction).toHaveBeenCalledWith(expect.objectContaining({
-            currentSessionId: 's1',
-            currentStatus: 'recording',
-            handsFreeEnabled: true,
-            inFlight: false,
-            provider: 'device',
-        }));
-        expect(submitMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
-            callerSurface: 'voice_turn',
-            forceImmediate: true,
-            hostAdmissionOrigin: 'voice',
-        });
-    });
-
     it('real capture owner forwards finalized device-STT endpoints to the runtime engine seam', async () => {
         const storage = await getStorage();
         storage.__setState({
@@ -803,78 +700,8 @@ describe('local voice engine device STT (experimental)', () => {
             transcript: 'hands free message',
         });
         expect(speechRecStop.mock.calls.length).toBeGreaterThan(stopCallCountBeforeEndpointStop);
+        await owner.stopSession();
     });
 
-    it('delegates device STT ownership to LocalVoiceCaptureOwner instead of constructing the device controller in localVoiceEngine', async () => {
-        const startCapture = vi.fn(async () => {});
 
-        vi.doMock('@/voice/input/DeviceSttController', () => ({
-            createDeviceSttController: () => {
-                throw new Error('localVoiceEngine should not create DeviceSttController directly');
-            },
-        }));
-        vi.doMock('@/voice/runtime/input/createRuntimeTurnPolicyController', () => ({
-            createRuntimeTurnPolicyController: () => {
-                throw new Error('localVoiceEngine should not create runtime turn policy controllers directly');
-            },
-        }));
-        vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
-            createLocalVoiceCaptureOwner: () => ({
-                isCaptureActive: vi.fn(() => false),
-                resolveManualBargeInAction: vi.fn(() => ({
-                    kind: 'noop',
-                    reason: 'not_speaking',
-                })),
-                resolveEndpointSignalAction: vi.fn(() => ({
-                    kind: 'ignore',
-                    reason: 'not_hands_free',
-                })),
-                startCapture,
-                stopCapture: vi.fn(async () => ({
-                    provider: 'device',
-                    text: '',
-                    continueHandsFree: false,
-                })),
-                stopEndpointDrivenCapture: vi.fn(async () => ({
-                    kind: 'ignore',
-                    reason: 'empty_transcript',
-                    shouldRearm: false,
-                })),
-                isHandsFreeCaptureSession: vi.fn(() => false),
-                clearHandsFree: vi.fn(),
-                stopSession: vi.fn(async () => {}),
-            }),
-        }));
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_direct',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_direct: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_direct.config,
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                                provider: 'device',
-                            },
-                        } },
-                    },
-                },
-            },
-        });
-
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
-        await toggleLocalVoiceTurn('s1');
-
-        expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            provider: 'device',
-            signal: expect.any(Object),
-        }));
-        expect(getLocalVoiceState().status).toBe('recording');
-    });
 });

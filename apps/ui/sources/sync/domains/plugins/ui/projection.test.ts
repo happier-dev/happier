@@ -63,6 +63,11 @@ function placementEntryWithPlatforms(input: Readonly<{
         descriptorId: input.descriptorId,
         binding: parsed,
         target: parsed.target,
+        ...(parsed.kind === 'inline' && parsed.role === 'widget' && parsed.targetKind === 'session' ? {
+            inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
+            inputSchema: { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false },
+            sessionInputPath: 'session',
+        } : {}),
         renderer: { kind: 'declarative', contributionId: 'preview-placeholder' },
         display: { titleKey: 'title' },
         availability: { state: 'available', reason: 'available', diagnostics: [] },

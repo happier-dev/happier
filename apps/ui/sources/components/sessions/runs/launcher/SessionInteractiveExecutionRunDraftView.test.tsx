@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIBackendProfileSchema, buildBackendTargetKeyV2, DaemonContributionRegistryProjectionDescribeResponseSchema, ExecutionRunPublicStateSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PersistedBackendTargetRefV2Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
@@ -18,6 +19,10 @@ import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalo
 import { invalidateRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { t } from '@/text';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
+import { StartReviewDialog } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { restoreConnectionToActiveServer, disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 
 // Platform, credentials, local persistence, HTTP and RPC are the boundaries. The composer,
 // capture/coordinator, draft repository, launcher options, role catalog, capability/feature
@@ -149,7 +154,8 @@ async function send(text = 'Inspect this', waitForCompletion = true) {
 }
 async function selectEngine(id: string) { await act(async () => composer().engine?.onSelect(id)); }
 async function renderChipContent(key: string) {
-    return renderScreen(<>{chip(key).collapsedContentPopover?.renderContent({ requestClose: vi.fn() })}</>);
+    const renderContent = chip(key).collapsedContentPopover?.renderContent;
+    return renderScreen(<>{typeof renderContent === 'function' ? renderContent({ requestClose: vi.fn(), maxHeight: Dimensions.get('window').height }) : renderContent}</>);
 }
 async function renderChip(key: string) {
     return renderScreen(<>{chip(key).render({ chipStyle: () => ({}), showLabel: true, iconColor: '#000', textStyle: {}, countTextStyle: {}, popoverAnchorRef: React.createRef() })}</>);
@@ -203,6 +209,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 emittedStarts.push(record(request.payload));
                 return await (startResults.shift() ?? started());
             }
+            if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
+                // A successful, ready daemon resume publishes the host's active Session fact.
+                getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, active: true } } }));
+                return { type: 'success', sessionId: 'session_1' };
+            }
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return await (listResult ?? { runs: listedRuns });
             if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE && pluginProjection) return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
                 protocolVersion: 1,
@@ -232,8 +243,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     return Response.json({ didWrite: true, recipient, requestedAction: body.requestedAction,
                         pending: { ...body, recipient, status: 'queued', position: 1, createdAt: 1, updatedAt: 1 }, pendingVersion: 1, pendingCount: 1 });
                 }
-                if (request.path === '/v1/artifacts') return Response.json({ artifacts: [] });
-                return undefined;
+                if (request.path === '/v1/artifacts') return Response.json([]);
+                return Response.json({ error: 'not_found' }, { status: 404 });
             },
         });
         serverId = home.homes.home!.id;
@@ -245,7 +256,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             settingsScope: { serverId, accountId: 'account_1' }, profileScope: { serverId, accountId: 'account_1' } });
         await ensureSessionDraftRepositoryHydrated({ serverId, accountId: 'account_1' });
     });
-    afterEach(async () => { await standardCleanup(); home?.dispose(); });
+    afterEach(async () => { await disconnectActiveServerConnection(); await standardCleanup(); home?.dispose(); });
 
     it('creates nothing until rendered Send, then admits captured text to the exact new Run', async () => {
         const opened = vi.fn();
@@ -511,7 +522,12 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const rail = composer().engine!.options[0]!;
         expect(rail.id).toBe('roles');
         const choices = await renderScreen(<>{rail.renderDetailContent?.({ onRequestClose: vi.fn() })}</>);
-        await settle();
+        // A real popover receives the composer's current controlled props when
+        // the asynchronous catalog arrives. Keep this separately mounted leaf current too.
+        await vi.waitFor(async () => {
+            await choices.update(<>{composer().engine!.options[0]!.renderDetailContent?.({ onRequestClose: vi.fn() })}</>);
+            expect(choices.findByTestId(`roles-rail-option:${roleId}`), JSON.stringify({ text: choices.getTextContent(), http: home.requests.map((request) => request.path) })).not.toBeNull();
+        });
         await choices.pressByTestIdAsync(`roles-rail-option:${roleId}`);
         await settle();
     }
@@ -522,9 +538,14 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts[0]).toMatchObject({ intent: 'plan', roleId: 'planner' });
     });
     it('moves the selected Agent when the chosen role names another Agent', async () => {
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
+        if (!credentials) throw new Error('Fixture credentials unavailable');
+        await restoreConnectionToActiveServer(credentials);
+        const roles = await createDefaultActionExecutor().execute('roles.list', {}, { serverId, expectedAccountId: 'account_1' });
+        expect(roles, JSON.stringify(roles)).toMatchObject({ ok: true });
         await mount({ intent: 'delegate' });
         const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
-        setSettings({ rolesV1: { overrides: { scout: { engine: { agentTargetKey: codex.id } } } } });
+        setSettings({ rolesV1: { overrides: { scout: { roleId: 'scout', engine: { agentTargetKey: codex.id } } } } });
         invalidateRoleCatalog();
         await settle();
         await chooseRole('scout');
@@ -563,6 +584,43 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: 'personal-secret' }));
         await settle();
     }
+    it('admits a comparison dialog review through the same Saved Secret target checks as the launcher', async () => {
+        protocolSupported = false;
+        const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', envVarRequirements: [{ name: 'ANTHROPIC_API_KEY', required: true, kind: 'secret' }] });
+        setSettings({ profiles: [profile], secrets: [{ id: 'personal-secret', name: 'Personal secret', kind: 'token', encryptedValue: { _isSecretValue: true, value: 'sealed-secret' }, createdAt: 1, updatedAt: 1 }] });
+        getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, metadata: { ...state.sessions.session_1!.metadata!, profileId: 'work' } } } }));
+        screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
+            comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
+            defaultWalkthrough={false} onClose={vi.fn()} onStarted={vi.fn()} />);
+        await settle();
+        await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
+        const onResolve = record(record(modal.show.mock.calls.at(-1)?.[0]).props).onResolve as (value: unknown) => void;
+        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: 'personal-secret' }));
+        await settle();
+        await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('start-review-start');
+        await settle();
+        expect(emittedStarts).toEqual([]);
+        expect(screen.getTextContent()).toContain(t('sessionDrafts.executionRunStart.secretReferenceOverlayUpdateRequired'));
+    });
+    it('resumes the stopped host on its exact Home before the comparison dialog starts a review', async () => {
+        getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, active: false,
+            metadata: { ...state.sessions.session_1!.metadata!, claudeSessionId: 'native-session-1' } } } }));
+        screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
+            comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
+            defaultWalkthrough={false} onClose={vi.fn()} onStarted={vi.fn()} />);
+        await settle();
+        await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('start-review-start');
+        await waitFor(() => expect(emittedStarts, JSON.stringify({ text: screen.getTextContent(), rpc: transport.call.mock.calls.map(([request]) => request), http: home.requests.map((request) => request.path) })).toHaveLength(1));
+        const resume = transport.call.mock.calls.findIndex(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
+        const review = transport.call.mock.calls.findIndex(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START);
+        expect(resume).toBeGreaterThanOrEqual(0);
+        expect(resume).toBeLessThan(review);
+        expect(transport.call.mock.calls[resume]?.[0]).toMatchObject({ machineId: 'machine_1', serverId,
+            payload: { sessionId: 'session_1', spawnNonce: expect.stringMatching(/^execution-run-host-/) } });
+        expect(emittedStarts[0]).toMatchObject({ intent: 'review', intentInput: { comparisonId: 'captured-1' } });
+    });
     it('preflights a selected Saved Secret and creates no Run when the daemon lacks support', async () => {
         protocolSupported = false;
         await configureSecret();

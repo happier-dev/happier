@@ -6,6 +6,7 @@ import type { Metadata } from '@/api/types';
 import type { TerminalHostHandle } from '@happier-dev/agents';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import type { BorrowedTerminalProcessIdentity } from '@/terminal/host/borrowedTerminalProcess';
 
 const TERMINAL_HOST_DESCRIPTOR_LOCK_TIMEOUT_MS = 5_000;
 const TERMINAL_HOST_DESCRIPTOR_LOCK_STALE_AFTER_MS = 30_000;
@@ -39,6 +40,7 @@ export type BoundTerminalHostAttachmentInfo = Readonly<{
 export type BorrowedTerminalHostAttachmentInfo = Readonly<{
   version: 3;
   lifecycle: 'borrowed';
+  nativeClientProcess?: BorrowedTerminalProcessIdentity;
   attachmentId: TerminalAttachmentId;
   sessionId: string;
   handle: TerminalHostHandle & Readonly<{ attachmentId: TerminalAttachmentId }>;
@@ -178,6 +180,14 @@ function terminalHostHandlesEqual(left: TerminalHostHandle, right: TerminalHostH
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function parseNativeClientProcess(value: unknown): BorrowedTerminalProcessIdentity | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.pid === 'number' && Number.isInteger(record.pid) && record.pid > 0
+    && typeof record.processInstanceFingerprint === 'string' && record.processInstanceFingerprint.trim()
+    ? { pid: record.pid, processInstanceFingerprint: record.processInstanceFingerprint } : null;
+}
+
 export function terminalMetadataMatchesHostHandle(
   terminal: NonNullable<Metadata['terminal']>,
   handle: TerminalHostHandle,
@@ -232,6 +242,8 @@ function parseRemoteDevExactTerminalAttachmentInfo(
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   if ((parsed.version !== 2 && parsed.version !== 3) || parsed.sessionId !== sessionId) return null;
   if (parsed.version === 3 && parsed.lifecycle !== 'borrowed') return null;
+  const nativeClientProcess = parsed.nativeClientProcess === undefined ? undefined : parseNativeClientProcess(parsed.nativeClientProcess);
+  if (parsed.nativeClientProcess !== undefined && (parsed.version !== 3 || !nativeClientProcess)) return null;
   if (typeof parsed.attachmentId !== 'string' || !parsed.attachmentId.trim()) return null;
   if (typeof parsed.updatedAt !== 'number' || !Number.isFinite(parsed.updatedAt)) return null;
   if (!parsed.terminal || typeof parsed.terminal !== 'object' || Array.isArray(parsed.terminal)) return null;
@@ -246,7 +258,7 @@ function parseRemoteDevExactTerminalAttachmentInfo(
     updatedAt: parsed.updatedAt,
   };
   return parsed.version === 3
-    ? { version: 3, lifecycle: 'borrowed', ...exactBase }
+    ? { version: 3, lifecycle: 'borrowed', ...exactBase, ...(nativeClientProcess ? { nativeClientProcess } : {}) }
     : { version: 2, ...exactBase };
 }
 
@@ -287,9 +299,14 @@ export async function writeTerminalHostAttachmentInfo(params: Readonly<{
   sessionId: string;
   handle: TerminalHostHandle;
   lifecycle?: 'owned' | 'borrowed';
+  nativeClientProcess?: BorrowedTerminalProcessIdentity;
 }>): Promise<ExactTerminalHostAttachmentInfo> {
   const handle = parseTerminalHostHandle(params.handle);
   if (!handle) throw new Error('Invalid terminal host handle');
+  const nativeClientProcess = params.nativeClientProcess === undefined ? undefined : parseNativeClientProcess(params.nativeClientProcess);
+  if (params.nativeClientProcess !== undefined && (params.lifecycle !== 'borrowed' || !nativeClientProcess)) {
+    throw new Error('Invalid borrowed terminal client custody');
+  }
   const attachmentId = handle.attachmentId ?? createTerminalAttachmentId();
   const boundHandle = { ...handle, attachmentId };
   const dir = sessionsDir(params.happyHomeDir);
@@ -299,6 +316,7 @@ export async function writeTerminalHostAttachmentInfo(params: Readonly<{
     ? {
         version: 3,
         lifecycle: 'borrowed',
+        ...(nativeClientProcess ? { nativeClientProcess } : {}),
         attachmentId,
         sessionId: params.sessionId,
         handle: boundHandle,
@@ -346,6 +364,10 @@ export async function readTerminalHostAttachmentState(params: Readonly<{
       if (parsed.version === 3 && parsed.lifecycle !== 'borrowed') {
         return { status: 'unreadable', reason: 'invalid' };
       }
+      const nativeClientProcess = parsed.nativeClientProcess === undefined ? undefined : parseNativeClientProcess(parsed.nativeClientProcess);
+      if (parsed.nativeClientProcess !== undefined && (parsed.version !== 3 || !nativeClientProcess)) {
+        return { status: 'unreadable', reason: 'invalid' };
+      }
       if (handle.attachmentId !== parsed.attachmentId) {
         return { status: 'unreadable', reason: 'invalid' };
       }
@@ -356,7 +378,7 @@ export async function readTerminalHostAttachmentState(params: Readonly<{
           updatedAt: parsed.updatedAt,
       };
       return parsed.version === 3
-        ? { status: 'present', info: { version: 3, lifecycle: 'borrowed', ...exactBase } }
+        ? { status: 'present', info: { version: 3, lifecycle: 'borrowed', ...exactBase, ...(nativeClientProcess ? { nativeClientProcess } : {}) } }
         : { status: 'present', info: { version: 2, ...exactBase } };
     }
     return { status: 'present', info: {

@@ -9,6 +9,7 @@ import type {
     PeerLoopbackEndpointCandidateV1,
 } from '@happier-dev/protocol';
 import { getDefaultModelPackId, listModelPackCatalogEntries } from '@happier-dev/protocol';
+import { parseAuthCredentials } from '@/auth/storage/tokenStorage';
 
 import { resolveVoiceProviderAvailability } from './resolveVoiceProviderAvailability';
 import {
@@ -314,7 +315,10 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         });
     });
 
-    it('prefers a passive direct daemon route over relay-disabled server policy when machine-RPC prerequisites are present', () => {
+    it.each([
+        { token: 'token-1', secret: 'secret-1' },
+        { token: 'data-key-token', encryption: { publicKey: 'public-key', machineKey: 'machine-key' } },
+    ])('prefers a passive ephemeral-v2 direct daemon route with current Account credentials over relay-disabled server policy', (credentials) => {
         const serverFeatures = createFeatures({
             serverRoutedEnabled: false,
             caps: null,
@@ -326,7 +330,7 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         const directRoute = resolveVoiceDaemonDirectRouteAvailability({
             serverFeatures,
             endpoint: directEndpoint,
-            credentials: { token: 'token-1', secret: 'secret-1' },
+            credentials: parseAuthCredentials(credentials),
         });
 
         const localAvailability = resolveVoiceProviderLocalAvailability({
@@ -406,17 +410,6 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         {
             label: 'credentials are missing',
             credentials: null,
-            endpoint: directEndpoint,
-        },
-        {
-            label: 'data-key credentials have no intersecting proof capability',
-            credentials: {
-                token: 'data-key-token',
-                encryption: {
-                    publicKey: 'public-key',
-                    machineKey: 'machine-key',
-                },
-            },
             endpoint: directEndpoint,
         },
         {

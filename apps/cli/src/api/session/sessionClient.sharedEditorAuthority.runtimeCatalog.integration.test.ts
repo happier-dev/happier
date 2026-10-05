@@ -92,6 +92,71 @@ describe('ApiSessionClient shared-editor metadata authority', () => {
         return client;
     }
 
+    it('publishes cold layout-1 pending requests and their settlement through the owner tuple', async () => {
+        const session = createPlainSessionFixture({
+            id: 'session-cold-layout-1',
+            metadataLayoutVersion: 1,
+            metadataVersion: 4,
+            agentStateVersion: 2,
+        });
+        let rawSession = {
+            ...session,
+            metadata: JSON.stringify({ v: 1 }),
+            ownerMetadata: { t: 'plain' as const, v: { v: 1 as const } },
+            agentState: null as string | null,
+            dataEncryptionKey: null,
+        };
+        fetchSessionByIdCompatMock.mockImplementation(async () => rawSession);
+        // HTTP persistence is the boundary; tuple preparation and request classification remain real.
+        patchSessionMetadataEnvelopeTupleMock.mockImplementation(async ({ patch }) => {
+            rawSession = {
+                ...rawSession,
+                metadata: patch.sharedMetadata.ciphertext,
+                metadataVersion: patch.sharedMetadata.expectedVersion + 1,
+                ownerMetadata: patch.ownerMetadata,
+                agentState: patch.agentState.ciphertext,
+                agentStateVersion: patch.agentState.expectedVersion + 1,
+            };
+            return {
+                success: true,
+                metadataLayoutVersion: 1,
+                sharedMetadata: { version: rawSession.metadataVersion },
+                agentState: { version: rawSession.agentStateVersion },
+            };
+        });
+        const client = createTestApiSessionClient(ApiSessionClient, 'owner-token', session, {
+            metadataAuthority: { kind: 'owner', credentials: { token: 'owner-token', encryption: null } },
+            getAccountEncryptionCurrentness: async () => createAccountEncryptionCurrentnessFixture(),
+        });
+        clients.add(client);
+
+        await client.updateAgentState((state) => ({
+            ...state,
+            requests: {
+                permission: { tool: 'Write', kind: 'permission', arguments: {}, createdAt: 100 },
+                question: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 250 },
+            },
+        }));
+        expect(patchSessionMetadataEnvelopeTupleMock.mock.calls.at(-1)?.[0].patch).toMatchObject({
+            mode: 'owner',
+            activitySummaryV1: {
+                pendingPermissionRequestCount: 1,
+                pendingUserActionRequestCount: 1,
+                pendingRequestNewestCreatedAt: 250,
+            },
+        });
+
+        await client.updateAgentState((state) => ({ ...state, requests: {} }));
+        expect(patchSessionMetadataEnvelopeTupleMock.mock.calls.at(-1)?.[0].patch).toMatchObject({
+            mode: 'owner',
+            activitySummaryV1: {
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                pendingRequestNewestCreatedAt: null,
+            },
+        });
+    });
+
     it('retires recovered Action confirmations at owner Session startup without a new Action', async () => {
         const debug = vi.spyOn(logger, 'debug');
         const session = createPlainSessionFixture({

@@ -67,6 +67,8 @@ export type ComposerSessionSuggestionState = Readonly<
 export type ComposerSessionSuggestionScope = Readonly<{
     serverId: string | null;
     currentSessionId: string | null;
+    /** A carried Session needs one live row, not a sorted picker catalog per pointer frame. */
+    candidateSessionId?: string;
 }>;
 
 /** How many id characters the display token carries to disambiguate duplicate titles. */
@@ -126,9 +128,13 @@ export function projectComposerSessionSuggestionItems(
 
     const seen = new Set<string>();
     const projected: ComposerSessionSuggestionItem[] = [];
-    for (const session of Object.values(rows)) {
+    const candidateSessionId = normalizeTrimmed(scope.candidateSessionId);
+    const candidates = candidateSessionId ? [rows[candidateSessionId]] : Object.values(rows);
+    for (const session of candidates) {
+        if (!session) continue;
         const id = normalizeTrimmed(session?.id);
         if (!id || id === currentSessionId || seen.has(id)) continue;
+        if (candidateSessionId && id !== candidateSessionId) continue;
         if (session.archivedAt != null || !isUserFacingSession(session)) continue;
         seen.add(id);
         projected.push(projectSession(session, serverId));

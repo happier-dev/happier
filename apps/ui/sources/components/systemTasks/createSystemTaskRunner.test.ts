@@ -56,6 +56,38 @@ function createManualBridge() {
 }
 
 describe('createSystemTaskRunner', () => {
+    it('admits one scoped setup before native start returns and permits a new run after settlement or launch failure', async () => {
+        const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
+        const manual = createManualBridge();
+        let finishStart!: (taskId: string) => void;
+        const start = vi.fn<(spec: SystemTaskSpec) => Promise<string>>()
+            .mockImplementationOnce(() => new Promise<string>((resolve) => { finishStart = resolve; }))
+            .mockResolvedValue('task_other');
+        const runner = createSystemTaskRunner({ bridge: { ...manual.bridge, start } });
+        const spec = createSpec({ params: {
+            activeRelayUrl: 'https://runner-setup.example', activeServerIdentityId: 'home-a', activeAccountId: 'account-a',
+        } });
+        const first = runner.start(spec);
+        const adopted = runner.start({ ...spec, kind: 'setup.repairThisComputer.v1' });
+        await expect(runner.start(spec, undefined, { adoptExisting: false })).rejects.toMatchObject({
+            code: 'system_task_setup_in_progress',
+        });
+        if (!spec.params || typeof spec.params !== 'object' || Array.isArray(spec.params)) throw new Error('Expected setup parameter object');
+        await expect(runner.start({ ...spec, params: { ...spec.params, activeAccountId: 'account-b' } })).rejects.toMatchObject({
+            code: 'system_task_setup_in_progress',
+        });
+        expect(start).toHaveBeenCalledTimes(1);
+        finishStart('task_setup');
+        expect(await first).toBe('task_setup');
+        expect(await adopted).toBe('task_setup');
+        expect(await runner.start(spec)).toBe('task_setup');
+        manual.emitResult('task_setup', { protocolVersion: 1, taskId: 'task_setup', ok: false,
+            error: { code: 'cancelled', message: 'Stopped' } } satisfies SystemTaskResult);
+        start.mockRejectedValueOnce(new Error('native launch failed')).mockResolvedValue('task_next');
+        await expect(runner.start(spec)).rejects.toThrow('native launch failed');
+        expect(await runner.start(spec)).toBe('task_next');
+    });
+
     it('retires the bridge subscription when registration delivers an already-completed result', async () => {
         const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
         const manual = createManualBridge();
@@ -70,8 +102,12 @@ describe('createSystemTaskRunner', () => {
                 return () => { activeSubscriptions -= 1; };
             },
         } });
-        const taskId = await runner.start(createSpec());
+        const spec = createSpec({ params: { activeRelayUrl: 'https://already-completed.example', activeAccountId: 'account-a' } });
+        const taskId = await runner.start(spec);
         expect(runner.getSnapshot(taskId)?.result).toMatchObject({ ok: true, data: { completed: true } });
+        expect(activeSubscriptions).toBe(0);
+        expect(runner.getActiveSetupTask()).toBeNull();
+        await runner.start({ ...spec, params: { activeRelayUrl: 'https://already-completed.example', activeAccountId: 'account-b' } });
         expect(activeSubscriptions).toBe(0);
     });
 

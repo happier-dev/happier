@@ -135,7 +135,7 @@ describe('createDeferredStartupBootstrap', () => {
       api: {
         push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }),
       } as unknown as ApiClient,
       machineId: 'machine-1',
@@ -209,7 +209,7 @@ describe('createDeferredStartupBootstrap', () => {
           api: {
             push: () => ({
               sendToAllDevices: vi.fn(),
-              sendToAllDevicesAsync: vi.fn(async () => undefined),
+              sendToAllDevicesAsync: vi.fn(async () => true),
             }),
           } as unknown as ApiClient,
           machineId: 'machine-1',
@@ -243,7 +243,7 @@ describe('createDeferredStartupBootstrap', () => {
     const order: string[] = [];
     const pushSender = {
       sendToAllDevices: vi.fn(),
-      sendToAllDevicesAsync: vi.fn(async () => undefined),
+      sendToAllDevicesAsync: vi.fn(async () => true),
     };
     const attachedSession = {
       sessionId: 'session-live',
@@ -426,7 +426,7 @@ describe('createDeferredStartupBootstrap', () => {
           api: {
             push: () => ({
               sendToAllDevices: vi.fn(),
-              sendToAllDevicesAsync: vi.fn(async () => undefined),
+              sendToAllDevicesAsync: vi.fn(async () => true),
             }),
           } as unknown as ApiClient,
           machineId: 'machine-rotated',
@@ -504,7 +504,7 @@ describe('createDeferredStartupBootstrap', () => {
           api: {
             push: () => ({
               sendToAllDevices: vi.fn(),
-              sendToAllDevicesAsync: vi.fn(async () => undefined),
+              sendToAllDevicesAsync: vi.fn(async () => true),
             }),
           } as unknown as ApiClient,
           machineId: 'machine-1',
@@ -569,7 +569,7 @@ describe('createDeferredStartupBootstrap', () => {
           api: {
             push: () => ({
               sendToAllDevices: vi.fn(),
-              sendToAllDevicesAsync: vi.fn(async () => undefined),
+              sendToAllDevicesAsync: vi.fn(async () => true),
             }),
           } as unknown as ApiClient,
           machineId: 'machine-1',

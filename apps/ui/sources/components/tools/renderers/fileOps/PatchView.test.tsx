@@ -159,9 +159,9 @@ describe('PatchView', () => {
         );
 
         expect(getUniqueCodeLinesViews()).toHaveLength(0);
-        expect(collectHostText(screen.tree).join(' ')).toContain('src/app.ts');
+        expect(collectHostText(screen.tree).join('')).toContain('src/app.ts');
 
-        const fileRow = findPressableByText(screen.tree, 'src/app.ts', ['Pressable']);
+        const fileRow = findPressableByText(screen.tree, 'app.ts', ['Pressable']);
         expect(fileRow).toBeTruthy();
 
         await pressTestInstanceAsync(fileRow!, 'patch file row');

@@ -1,7 +1,8 @@
 import type {
     AgentSessionHostServices,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginTerminalHostError } from './errors';
+export { PluginTerminalHostError, type PluginTerminalHostErrorCode } from './errors';
 import type {
     TerminalHostHandle,
     TerminalHostPreference,
@@ -87,26 +88,6 @@ export function installAgentChildLaunchEnvironmentTransformerForTerminalHost(
             }
         },
     });
-}
-
-export type PluginTerminalHostErrorCode =
-    | 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED'
-    | 'PLUGIN_TERMINAL_HOST_SCOPE_RETIRED'
-    | 'PLUGIN_TERMINAL_HOST_UNAVAILABLE'
-    | 'PLUGIN_TERMINAL_HOST_UNRESOLVED_LAUNCH'
-    | 'PLUGIN_TERMINAL_HOST_HANDLE_NOT_ACTIVE'
-    | 'PLUGIN_TERMINAL_HOST_HANDLE_KIND_MISMATCH'
-    | 'PLUGIN_TERMINAL_HOST_UNSUPPORTED_LAUNCH';
-
-/**
- * Terminal-host failures reach plugin authors through the Agent session host
- * services, so they ARE canonical PluginErrors. Never assign `name` here -
- * `isPluginError` recognizes the contract by name+data, not by class identity.
- */
-export class PluginTerminalHostError extends PluginError {
-    constructor(code: PluginTerminalHostErrorCode, message: string) {
-        super({ code, message });
-    }
 }
 
 export type CreatePluginTerminalHostServiceParams = Readonly<{

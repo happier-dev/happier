@@ -10,6 +10,7 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { buildAppUpdateItem, type AppUpdateItemModel } from './items/buildAppUpdateItem';
 import { useWebUiDeploymentFreshness } from './useWebUiDeploymentFreshness';
+import { registerAppUpdateActionOwner } from './appUpdateActionRuntime';
 
 export type AppUpdateStatus = Readonly<{
     model: AppUpdateItemModel;
@@ -91,11 +92,15 @@ export function useAppUpdateStatus(): AppUpdateStatus {
 
     const skippable = model.channel === 'desktop' && model.item.state === 'available' && !model.item.skipped;
     const checkedAt = model.channel === 'ota' ? otaCheckedAt : desktop.checkedAt;
-    return React.useMemo(() => ({
+    const status = React.useMemo(() => ({
         model,
         checkedAt,
         run,
         checkNow,
         skipVersion: skippable ? desktopUpdater.skipVersion : null,
     }), [checkNow, checkedAt, model, run, skippable]);
+    const statusRef = React.useRef(status);
+    statusRef.current = status;
+    React.useEffect(() => registerAppUpdateActionOwner(() => statusRef.current), []);
+    return status;
 }

@@ -234,68 +234,56 @@ export function SplitStageLayout(props: SplitStageLayoutProps): React.ReactEleme
     const skipTop = safeAreaInsets.top + 20;
     const skipRight = safeAreaInsets.right + 28;
 
-    const narrationPane = (
-        <View
-            key="narration"
-            testID={`${testID}-narration-pane`}
-            style={[
-                styles.narrationPane,
-                orientation === 'narration-left'
-                    ? styles.narrationPaneLeft
-                    : styles.narrationPaneRight,
-            ]}
-        >
-            <ProgressHairline
-                progress={props.progress}
-                accentHue={accentHue}
-                testID={`${testID}-progress-hairline`}
+    const narration = (
+        <>
+            <NarrationColumn
+                beat={beat}
+                direction={props.direction}
+                reducedMotion={props.reducedMotion}
+                testID={`${testID}-narration`}
             />
-            <ScrollView
-                testID={`${testID}-narration-scroll`}
-                style={styles.scrollFill}
-                contentContainerStyle={styles.scrollContent}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-            >
-                <NarrationColumn
-                    beat={beat}
-                    direction={props.direction}
-                    reducedMotion={props.reducedMotion}
-                    testID={`${testID}-narration`}
-                />
-                <JourneyConfigSlot
-                    controller={columnController}
-                    layout="flow"
-                    testID={`${testID}-config`}
-                />
-            </ScrollView>
-        </View>
+            <JourneyConfigSlot
+                controller={columnController}
+                layout="flow"
+                testID={`${testID}-config`}
+            />
+        </>
     );
 
-    const stagePane = (
-        <View key="stage" testID={`${testID}-stage-host`} style={styles.stageHost}>
-            <StagePane
-                mode={paneState.mode}
-                accentHue={beat.accentHue}
-                planetOpacity={paneState.planetOpacity}
-                planetScale={paneState.planetScale}
-                reducedMotion={props.reducedMotion}
-                testID={`${testID}-stage-pane`}
-            >
-                {paneState.stageContentVisible ? props.stage : null}
-            </StagePane>
-        </View>
+    const stage = (
+        <StagePane
+            mode={paneState.mode}
+            accentHue={beat.accentHue}
+            planetOpacity={paneState.planetOpacity}
+            planetScale={paneState.planetScale}
+            reducedMotion={props.reducedMotion}
+            testID={`${testID}-stage-pane`}
+        >
+            {paneState.stageContentVisible ? props.stage : null}
+        </StagePane>
     );
 
     return (
-        <View testID={testID} style={styles.root}>
-            <View
-                pointerEvents="none"
-                testID={`${testID}-current-beat:${beat.id}`}
-                style={styles.beatMarker}
-            />
-            {orientation === 'narration-left' ? narrationPane : stagePane}
-            {orientation === 'narration-left' ? stagePane : narrationPane}
+        <SplitStageFrame
+            testID={testID}
+            orientation={orientation}
+            narration={narration}
+            narrationOverlay={(
+                <ProgressHairline
+                    progress={props.progress}
+                    accentHue={accentHue}
+                    testID={`${testID}-progress-hairline`}
+                />
+            )}
+            stage={stage}
+            leading={(
+                <View
+                    pointerEvents="none"
+                    testID={`${testID}-current-beat:${beat.id}`}
+                    style={styles.beatMarker}
+                />
+            )}
+        >
             <View
                 testID={`${testID}-brand-logo`}
                 pointerEvents="none"
@@ -316,6 +304,63 @@ export function SplitStageLayout(props: SplitStageLayoutProps): React.ReactEleme
                     reducedMotion={props.reducedMotion}
                 />
             ) : null}
+        </SplitStageFrame>
+    );
+}
+
+/**
+ * The split stage's frame: one narration column (a single vertical scroll holding the step's words
+ * and its config slot) beside one stage. The tour plays it over the planet; Personalize Happier puts
+ * its live workspace preview on the stage. Overlays (the brand mark, the skip pill) are children.
+ */
+export function SplitStageFrame(props: Readonly<{
+    testID: string;
+    orientation: SplitStageLayoutOrientation;
+    narration: React.ReactNode;
+    /** Pinned over the top of the narration column (the tour's progress hairline). */
+    narrationOverlay?: React.ReactNode;
+    stage: React.ReactNode;
+    /** Rendered before the panes (a zero-size marker). */
+    leading?: React.ReactNode;
+    /** Rendered over the panes (the brand mark, the skip pill). */
+    children?: React.ReactNode;
+}>): React.ReactElement {
+    const styles = stylesheet;
+    useUnistyles();
+    const narrationPane = (
+        <View
+            key="narration"
+            testID={`${props.testID}-narration-pane`}
+            style={[
+                styles.narrationPane,
+                props.orientation === 'narration-left'
+                    ? styles.narrationPaneLeft
+                    : styles.narrationPaneRight,
+            ]}
+        >
+            {props.narrationOverlay}
+            <ScrollView
+                testID={`${props.testID}-narration-scroll`}
+                style={styles.scrollFill}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+            >
+                {props.narration}
+            </ScrollView>
+        </View>
+    );
+    const stagePane = (
+        <View key="stage" testID={`${props.testID}-stage-host`} style={styles.stageHost}>
+            {props.stage}
+        </View>
+    );
+    return (
+        <View testID={props.testID} style={styles.root}>
+            {props.leading}
+            {props.orientation === 'narration-left' ? narrationPane : stagePane}
+            {props.orientation === 'narration-left' ? stagePane : narrationPane}
+            {props.children}
         </View>
     );
 }

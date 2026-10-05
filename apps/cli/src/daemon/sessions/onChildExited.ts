@@ -5,7 +5,6 @@ import { writeSessionExitReport } from '@/session/diagnostics/sessionExitReport'
 
 import type { TrackedSession } from '../types';
 import {
-  hashProcessCommand,
   promoteSessionMarkerPid,
   removeSessionMarker,
   removeSessionMarkerIfOwned,
@@ -35,30 +34,13 @@ function resolveTrackedMarkerOwnership(tracked: TrackedSession): Readonly<{
   processStartTimeMs?: number;
 }> {
   const happySessionId = normalizeSessionId(tracked.happySessionId) || `PID-${tracked.pid}`;
-  if (tracked.processCommandHash) {
-    return {
-      happySessionId,
-      processCommandHash: tracked.processCommandHash,
-      ...(tracked.processStartTimeMs !== undefined
-        ? { processStartTimeMs: tracked.processStartTimeMs }
-        : {}),
-    };
-  }
-  const processCommand = normalizeSessionId(tracked.processCommand)
-    || tracked.childProcess?.spawnargs
-      ?.filter((arg): arg is string => typeof arg === 'string' && arg.trim().length > 0)
-      .join(' ')
-      .trim()
-    || '';
-  return processCommand
-    ? {
-        happySessionId,
-        processCommandHash: hashProcessCommand(processCommand),
-        ...(tracked.processStartTimeMs !== undefined
-          ? { processStartTimeMs: tracked.processStartTimeMs }
-          : {}),
-      }
-    : { happySessionId };
+  // Exit retirement compares the captured OS evidence with the persisted record;
+  // rereading a departed/reused PID or hashing launch arguments cannot supply it.
+  return {
+    happySessionId,
+    ...(tracked.processCommandHash ? { processCommandHash: tracked.processCommandHash } : {}),
+    ...(tracked.processStartTimeMs !== undefined ? { processStartTimeMs: tracked.processStartTimeMs } : {}),
+  };
 }
 
 function isTrackedSessionAlive(tracked: TrackedSession): boolean {

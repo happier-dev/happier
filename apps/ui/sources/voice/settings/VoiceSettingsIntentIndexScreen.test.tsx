@@ -2,39 +2,44 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { VOICE_SETTINGS_INTENTS } from '@/voice/settings/voiceSettingsIntents';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { AuthProvider } from '@/auth/context/AuthContext';
+
+const routerMock = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
 vi.mock('expo-router', async () => {
   // The page header (SettingsPageHeader) reads the navigation chrome, so the full router boundary is needed.
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  return createExpoRouterMock({ pathname: () => '/settings/voice' }).module;
+  const mock = createExpoRouterMock({ pathname: () => '/settings/voice' });
+  return { ...mock.module, useRouter: () => routerMock };
 });
 
-vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-  ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-  ItemList: (props: any) => React.createElement('ItemList', props, props.children),
-}));
-
 vi.mock('@/utils/navigation/useNavigationFocusReturn', () => ({
-  useNavigationFocusReturn: () => (navigate: () => void) => navigate,
+  useNavigationFocusReturn: () => (navigate: () => void) => navigate(),
 }));
 
 describe('VoiceSettingsIntentIndexScreen', () => {
-  it('renders every landing description without a subtitle line limit', async () => {
+  it('shows both modes as pipelines and opens every Voice destination', async () => {
     const { VoiceSettingsIntentIndexScreen } = await import('./VoiceSettingsIntentIndexScreen');
-    const screen = await renderScreen(React.createElement(VoiceSettingsIntentIndexScreen));
+    // Signed-in credentials are the real auth boundary the hub's passive readiness reads.
+    const screen = await renderScreen(
+      <AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+        <VoiceSettingsIntentIndexScreen />
+      </AuthProvider>,
+    );
 
-    const rows = VOICE_SETTINGS_INTENTS.map((intent) => (
-      screen.findByTestId(`settings.voice.intent.${intent.id}`)
-    ));
-    expect(rows.every(Boolean)).toBe(true);
-    expect(rows.map((row) => row?.props.subtitleLines)).toEqual([0, 0, 0, 0]);
+    expect(screen.findByTestId('settings.voice.intent.dictation')).toBeTruthy();
+    expect(screen.findByTestId('settings.voice.intent.conversations')).toBeTruthy();
+
+    const destinations = [
+      ['settings.voice.intent.privacy', SETTINGS_ROUTES.voicePrivacy],
+      ['settings.voice.intent.advanced', SETTINGS_ROUTES.voiceAdvanced],
+      ['settings.voice.intent.history', SETTINGS_ROUTES.voiceHistory],
+    ] as const;
+    for (const [testID, route] of destinations) {
+      routerMock.push.mockClear();
+      screen.pressByTestId(testID);
+      expect(routerMock.push).toHaveBeenCalledWith(route);
+    }
   });
 });

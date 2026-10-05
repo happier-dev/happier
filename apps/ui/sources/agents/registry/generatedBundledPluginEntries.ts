@@ -1059,6 +1059,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-auggie",
   "@happier-dev/plugins-channel-discord",
   "@happier-dev/plugins-channel-telegram",
+  "@happier-dev/plugins-channels",
   "@happier-dev/plugins-claude",
   "@happier-dev/plugins-cliproxyapi",
   "@happier-dev/plugins-codex",

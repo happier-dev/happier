@@ -2414,6 +2414,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     params: Readonly<{
       message: string;
       displayMessage?: string;
+      speechSegmentTargetChars?: number;
       resume?: boolean;
       userTranscript?: ExecutionRunUserTranscriptDirective;
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
@@ -2433,6 +2434,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runId,
       params: {
         message: params.message,
+        ...(params.speechSegmentTargetChars !== undefined
+          ? { speechSegmentTargetChars: params.speechSegmentTargetChars }
+          : {}),
         ...(typeof params.displayMessage === 'string' ? { displayMessage: params.displayMessage } : {}),
         ...(params.userTranscript ? { userTranscript: params.userTranscript } : {}),
         ...(params.causalPermissionAuthority

@@ -1471,7 +1471,8 @@ describe('registerMachineRpcHandlers', () => {
       },
     });
 
-    expect(registered.has(RPC_METHODS.SESSION_LOG_TAIL)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_SESSION_LOG_TAIL)).toBe(true);
+    expect(registered.has(RPC_METHODS.SESSION_LOG_TAIL)).toBe(false);
   });
 
   it('reads session log tails from paths under happyHomeDir', async () => {
@@ -1496,7 +1497,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     });
 
-    const handler = registered.get(RPC_METHODS.SESSION_LOG_TAIL);
+    const handler = registered.get(RPC_METHODS.DAEMON_SESSION_LOG_TAIL);
     expect(handler).toBeDefined();
     const result = await handler!({ path: logPath, maxBytes: 128 });
     expect(result).toMatchObject({ success: true });
@@ -1524,7 +1525,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     });
 
-    const handler = registered.get(RPC_METHODS.SESSION_LOG_TAIL);
+    const handler = registered.get(RPC_METHODS.DAEMON_SESSION_LOG_TAIL);
     expect(handler).toBeDefined();
     const result = await handler!({ path: outsideLogPath, maxBytes: 2048 });
     expect(result).toMatchObject({ success: false });

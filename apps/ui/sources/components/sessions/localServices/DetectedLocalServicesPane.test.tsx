@@ -465,6 +465,7 @@ describe('DetectedLocalServicesPane', () => {
         const happierTarget = {
             ...openableTarget,
             id: 'inventory:happier-ui',
+            kind: 'happier' as const,
             title: 'Happier (internal dev)',
             browserTarget: { ...openableTarget.browserTarget, targetId: 'inventory-loopback:happier-ui' },
         };

@@ -30,7 +30,12 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 
 async function loadRegisterSessionHandlers() {
   const module = await import('./registerSessionHandlers');
-  return module.registerSessionHandlers;
+  // This harness represents a Session client; machine registration has its own scope contract test.
+  return (...[registrar, workingDirectory, options]: Parameters<typeof module.registerSessionHandlers>) =>
+    module.registerSessionHandlers(registrar, workingDirectory, {
+      ...options,
+      sessionId: options?.sessionId ?? 'session-1',
+    });
 }
 
 function createRegistrar(): { handlers: Map<string, RpcHandler>; registrar: RpcHandlerRegistrar } {

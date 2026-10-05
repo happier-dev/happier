@@ -186,7 +186,8 @@ describe('buildDemoWorld', () => {
         expect(world.artifacts).toHaveLength(3);
         for (const artifact of world.artifacts) {
             expect(artifact.header?.kind).toBe('role.v1');
-            const role = RoleArtifactV1Schema.parse(JSON.parse(artifact.body ?? 'null'));
+            if (typeof artifact.body !== 'string') throw new Error('Expected role text');
+            const role = RoleArtifactV1Schema.parse(JSON.parse(artifact.body));
             expect(role.enabled).toBe(true);
             expect(role.engine?.agentTargetKey).toBeTruthy();
             expect(parseBackendTargetKeyV2(role.engine!.agentTargetKey)).not.toBeNull();

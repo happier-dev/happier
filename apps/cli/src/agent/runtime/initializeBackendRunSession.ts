@@ -28,7 +28,11 @@ import { bindHerdrAgentIfNeeded } from '@/integrations/herdr/bindManagedSession'
 import { readSessionCreateOriginFromEnv } from '@/session/shared/sessionCreateOrigin'
 import { readSessionCreateReportsToFromEnv } from '@/session/shared/sessionCreateReportsTo'
 import { readSessionCreateRolesFromEnv } from '@/session/shared/sessionCreateRoles'
-import { claimSessionRunnerOwnership } from '@/daemon/sessionRunnerLock'
+import { claimSessionRunnerOwnership, readSessionRunnerLockStatus } from '@/daemon/sessionRunnerLock'
+import { configuration } from '@/configuration'
+import { readTerminalHostAttachmentState, terminalMetadataMatchesHostHandle } from '@/terminal/attachment/terminalAttachmentInfo'
+import { buildActiveTerminalHostHandleFromMetadata } from '@/terminal/runtime/terminalMetadata'
+import { PluginTerminalHostError } from '@/plugins/runtime/context/errors'
 
 export interface InitializeBackendRunSessionOptions {
   api: Pick<ApiClient, 'getOrCreateSession' | 'sessionSyncClient'>
@@ -60,6 +64,8 @@ export interface InitializeBackendRunSessionOptions {
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void
   onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void | Promise<void>
   startupSideEffectsOrder?: 'report-first' | 'persist-first'
+  /** Selected runtime permits exact retained-owned-host continuation, not fresh placement. */
+  retainedTerminalRecovery?: 'adopt'
   deferPendingFirstInputCommitUntilRuntimeReady?: boolean
   requireDaemonAckOnAttach?: boolean
   signal?: AbortSignal
@@ -215,6 +221,9 @@ export async function initializeBackendRunSession(
     ?? readSessionAttachMetadataIdentityPolicyFromEnv()
     ?? null
   const terminal = opts.metadata.terminal
+  const allowsRetainedHeadlessContinuation = opts.retainedTerminalRecovery === 'adopt'
+    && opts.metadata.startedBy === 'daemon' && terminal?.mode === 'plain'
+  let preservesRetainedTerminal = false
   const terminalAgentBindingRequiresDaemonAttachment = terminal?.mode === 'herdr'
     && (!terminal.herdr?.sessionName || !terminal.herdr.socketPath || !terminal.herdr.terminalId)
   const startDaemonReport = (
@@ -245,6 +254,12 @@ export async function initializeBackendRunSession(
     requireDaemonAck: boolean,
     sessionCreationOutcome?: SessionCreationOutcome,
   ): Promise<void> => {
+    if (preservesRetainedTerminal) {
+      // The headless controller is not a new physical placement. Leave the
+      // exact current/predecessor record untouched until actual host adoption.
+      await startDaemonReport(sessionId, metadata, daemonReportMode, requireDaemonAck, sessionCreationOutcome)
+      return
+    }
     const bindTerminalAgent = async () => {
       if (!opts.terminalAgentLabel) return
       await bindHerdrAgentIfNeeded({
@@ -334,58 +349,47 @@ export async function initializeBackendRunSession(
       throwIfAborted()
 
       if (snapshot) {
-      const startupNowMs = nowFn()
-      daemonReportMetadata = mergeSessionMetadataForStartup({
-        current: normalizeLegacySessionModeMetadataCompat(snapshot),
-        next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
-        nowMs: startupNowMs,
-        permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
-        sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
-        modelOverride: opts.startupMetadataOverrides.modelOverride,
-        metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
-        attachMetadataIdentityPolicy,
-        mode: 'attach',
-      })
-      await applyAttachStartupMetadataUpdateWithRetry({
-        session,
-        runtimeMetadata: daemonReportMetadata,
-        attachMetadataIdentityPolicy,
-        signal: opts.signal,
-        applyUpdate: async () => {
-          await applyStartupMetadataUpdateToSessionFn({
-            session,
-            next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
-            nowMs: startupNowMs,
-            permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
-            sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
-            modelOverride: opts.startupMetadataOverrides.modelOverride,
-            metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
-            attachMetadataIdentityPolicy,
-            mode: 'attach',
-          })
-        },
-      })
-      throwIfAborted()
-      await opts.onAttachMetadataSnapshotReady?.(snapshot, session)
-      throwIfAborted()
-      } else {
-      throwIfAborted()
-      opts.onAttachMetadataSnapshotMissing?.(snapshotError)
-      throwIfAborted()
-      if (attachMetadataIdentityPolicy === 'replace_with_runtime_identity') {
+        const startupMetadata = { ...opts.metadata }
+        if (allowsRetainedHeadlessContinuation) {
+          const attachment = await readTerminalHostAttachmentState({ happyHomeDir: configuration.happyHomeDir, sessionId: existingSessionId })
+          const retainedHandle = snapshot.terminal ? buildActiveTerminalHostHandleFromMetadata(snapshot.terminal) : null
+          if (snapshot.terminal?.controlServiceabilityV1?.retired !== true
+            && (retainedHandle || attachment.status === 'unreadable'
+              || (attachment.status === 'present' && attachment.info.version === 2))) {
+            const ownership = await readSessionRunnerLockStatus({ happyHomeDir: configuration.happyHomeDir, sessionId: existingSessionId })
+            preservesRetainedTerminal = attachment.status === 'present' && attachment.info.version === 2
+              && ownership.ok && ownership.lock.pid === process.pid
+              && snapshot.terminal !== undefined
+              && snapshot.terminal.controlServiceabilityV1?.attachmentId === attachment.info.attachmentId
+              && terminalMetadataMatchesHostHandle(snapshot.terminal, attachment.info.handle)
+            if (!preservesRetainedTerminal && !(attachment.status === 'present' && attachment.info.version === 3)) {
+              throw new PluginTerminalHostError('PLUGIN_TERMINAL_HOST_UNAVAILABLE',
+                'Retained terminal-host startup could not confirm the current attachment and runner custody')
+            }
+          }
+          if (preservesRetainedTerminal) delete startupMetadata.terminal
+        }
         const startupNowMs = nowFn()
+        daemonReportMetadata = mergeSessionMetadataForStartup({
+          current: normalizeLegacySessionModeMetadataCompat(snapshot),
+          next: normalizeLegacySessionModeMetadataCompat(startupMetadata),
+          nowMs: startupNowMs,
+          permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
+          sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
+          modelOverride: opts.startupMetadataOverrides.modelOverride,
+          metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+          attachMetadataIdentityPolicy,
+          mode: 'attach',
+        })
         await applyAttachStartupMetadataUpdateWithRetry({
           session,
-          runtimeMetadata: {
-            ...opts.metadata,
-            lifecycleState: 'running',
-          },
+          runtimeMetadata: daemonReportMetadata,
           attachMetadataIdentityPolicy,
           signal: opts.signal,
           applyUpdate: async () => {
             await applyStartupMetadataUpdateToSessionFn({
               session,
-              next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
+              next: normalizeLegacySessionModeMetadataCompat(startupMetadata),
               nowMs: startupNowMs,
               permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
               sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
@@ -396,7 +400,45 @@ export async function initializeBackendRunSession(
             })
           },
         })
-      }
+        throwIfAborted()
+        await opts.onAttachMetadataSnapshotReady?.(snapshot, session)
+        throwIfAborted()
+      } else {
+        throwIfAborted()
+        if (allowsRetainedHeadlessContinuation) {
+          const attachment = await readTerminalHostAttachmentState({ happyHomeDir: configuration.happyHomeDir, sessionId: existingSessionId })
+          if (attachment.status === 'unreadable' || (attachment.status === 'present' && attachment.info.version === 2)) {
+            throw new PluginTerminalHostError('PLUGIN_TERMINAL_HOST_UNAVAILABLE',
+              'Retained terminal-host startup requires the current Session metadata snapshot')
+          }
+        }
+        opts.onAttachMetadataSnapshotMissing?.(snapshotError)
+        throwIfAborted()
+        if (attachMetadataIdentityPolicy === 'replace_with_runtime_identity') {
+          const startupNowMs = nowFn()
+          await applyAttachStartupMetadataUpdateWithRetry({
+            session,
+            runtimeMetadata: {
+              ...opts.metadata,
+              lifecycleState: 'running',
+            },
+            attachMetadataIdentityPolicy,
+            signal: opts.signal,
+            applyUpdate: async () => {
+              await applyStartupMetadataUpdateToSessionFn({
+                session,
+                next: normalizeLegacySessionModeMetadataCompat(opts.metadata),
+                nowMs: startupNowMs,
+                permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
+                sessionModeOverride: opts.startupMetadataOverrides.sessionModeOverride,
+                modelOverride: opts.startupMetadataOverrides.modelOverride,
+                metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+                attachMetadataIdentityPolicy,
+                mode: 'attach',
+              })
+            },
+          })
+        }
       }
 
       throwIfAborted()

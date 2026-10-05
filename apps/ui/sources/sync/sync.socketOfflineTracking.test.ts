@@ -162,6 +162,7 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     },
 }));
 
+import './syncEngine';
 import { sync, type SyncServerTarget } from './sync';
 import { storage } from './domains/state/storage';
 import type { Machine, Session } from './domains/state/storageTypes';

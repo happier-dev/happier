@@ -83,7 +83,7 @@ describe('workflow.definition.edit through the real Action and Artifact owners',
     if (!local.ok) throw new Error('fixture operations invalid');
     const { name: _name, ...localDefinition } = local.draft;
     await expect(executor.execute('workflow.definition.edit', { definitionId, expectedRevision, ops }, human)).resolves.toEqual({
-      ok: true, result: { definition: localDefinition, revision: { headerVersion: 3, bodyVersion: 4 }, changedBlockIds: ['b2', 'b3'] },
+      ok: true, result: { definition: localDefinition, revision: { headerVersion: 3, bodyVersion: 4 }, metadata, changedBlockIds: ['b2', 'b3'] },
     });
     expect(http.post).toHaveBeenCalledOnce();
     expect(decodePlainArtifactStoredContent(saved().header)).toMatchObject({ metadata, revision: { headerVersion: 3, bodyVersion: 4 } });
@@ -168,7 +168,8 @@ describe('workflow.definition.edit through the real Action and Artifact owners',
   it('renames only the title and keeps the description, with no changed block ids', async () => {
     const { executor, saved } = harness();
     await expect(executor.execute('workflow.definition.edit', { definitionId, expectedRevision,
-      ops: [{ kind: 'rename', name: 'New name' }] }, human)).resolves.toMatchObject({ ok: true, result: { changedBlockIds: [] } });
+      ops: [{ kind: 'rename', name: 'New name' }] }, human)).resolves.toMatchObject({ ok: true,
+        result: { metadata: { ...metadata, title: 'New name' }, changedBlockIds: [] } });
     expect(decodePlainArtifactStoredContent(saved().header)).toMatchObject({ metadata: { ...metadata, title: 'New name' } });
   });
 });

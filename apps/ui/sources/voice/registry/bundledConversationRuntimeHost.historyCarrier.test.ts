@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { discoverVoiceHistorySession } from '@/voice/history/voiceHistorySessionDiscovery';
@@ -54,6 +56,7 @@ function installCarrierSession(sessionId: string): void {
       ...current.sessions,
       [sessionId]: createSessionFixture({
         id: sessionId,
+        serverId: getActiveServerSnapshot().serverId,
         active: false,
         encryptionMode: 'plain',
         metadata: {

@@ -12,21 +12,6 @@ import {
 import type { TrackedSession } from '../types';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
-function readTrackedProcessCommand(trackedSession: TrackedSession): string | undefined {
-  const observed = typeof trackedSession.processCommand === 'string'
-    ? trackedSession.processCommand.trim()
-    : '';
-  if (observed) return observed;
-
-  const spawnArgs = trackedSession.childProcess?.spawnargs;
-  if (!Array.isArray(spawnArgs)) return undefined;
-  const command = spawnArgs
-    .filter((arg): arg is string => typeof arg === 'string' && arg.trim().length > 0)
-    .join(' ')
-    .trim();
-  return command || undefined;
-}
-
 export async function persistAcceptedSpawnMarker(params: Readonly<{
   trackedSession: TrackedSession;
   deviceLocalSecretStorage: DeviceLocalSecretStorage;
@@ -61,6 +46,13 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
   const processIdentity = await (
     params.readProcessIdentityByPidFn ?? readProcessIdentityByPid
   )(processPid);
+  if (
+    processIdentity?.pid !== processPid
+    || !Number.isInteger(processIdentity.processStartTimeMs)
+    || (processIdentity.processStartTimeMs ?? -1) < 0
+  ) {
+    throw new Error('Accepted spawn process start witness is unavailable');
+  }
   const observedProcessCommand = processIdentity?.command?.trim() ?? '';
   const observedProcessCommandHash =
     observedProcessCommand
@@ -81,16 +73,9 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
       'Accepted spawn process identity changed before marker persistence',
     );
   }
-  const processCommand = observedProcessCommand || readTrackedProcessCommand(trackedSession);
-  if (processIdentity?.processStartTimeMs !== undefined) {
-    trackedSession.processStartTimeMs = processIdentity.processStartTimeMs;
-  }
-  if (processCommand) {
-    trackedSession.processCommand = processCommand;
-    trackedSession.processCommandHash =
-      observedProcessCommandHash
-      ?? hashProcessCommand(processCommand);
-  }
+  trackedSession.processStartTimeMs = processIdentity.processStartTimeMs;
+  trackedSession.processCommand = observedProcessCommand || undefined;
+  trackedSession.processCommandHash = observedProcessCommandHash ?? undefined;
   const startupInstructions =
     trackedSession.spawnOptions.agentSessionStartupInstructionsV1;
   const startupInstructionsMarker = startupInstructions
@@ -106,13 +91,11 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
     happySessionId: canonicalSessionId ?? `PID-${processPid}`,
     startedBy: 'daemon',
     cwd: trackedSession.spawnOptions.directory,
-    ...(processCommand
+    processStartTimeMs: processIdentity.processStartTimeMs,
+    ...(observedProcessCommand
       ? {
-          processCommand,
-          processCommandHash: hashProcessCommand(processCommand),
-          ...(processIdentity?.processStartTimeMs !== undefined
-            ? { processStartTimeMs: processIdentity.processStartTimeMs }
-            : {}),
+          processCommand: observedProcessCommand,
+          processCommandHash: observedProcessCommandHash!,
         }
       : {}),
     respawn,

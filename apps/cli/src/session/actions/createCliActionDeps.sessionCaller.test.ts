@@ -44,7 +44,7 @@ describe('daemon Account Action Session caller context', () => {
     try {
       const deps = createCliActionDeps({ ...params, getCurrentTurnWorkDepth: () => 3 });
       await expect(deps.resolveAgentStartContext?.({ surface: 'agent',
-        actionCaller: { kind: 'session', sessionId }, defaultSessionId: sessionId,
+        actionCaller: { kind: 'session', sessionId, starterDepth: 2, turnDepth: 3 }, defaultSessionId: sessionId,
         callerPermissionMode: 'default' })).resolves.toMatchObject({
         caller: { kind: 'session', sessionId, starterDepth: 2, turnDepth: 3 },
         baseline: { machineId: 'caller-machine', directory: '/caller/repo',
@@ -52,7 +52,7 @@ describe('daemon Account Action Session caller context', () => {
         workDepthLimit: 7,
       });
       await expect(deps.resolveAgentStartContext?.({ surface: 'agent',
-        actionCaller: { kind: 'session', sessionId }, defaultSessionId: 'foreign-session',
+        actionCaller: { kind: 'session', sessionId, starterDepth: 2, turnDepth: 3 }, defaultSessionId: 'foreign-session',
         callerPermissionMode: 'default' })).resolves.toBeNull();
       await expect(deps.resolveAgentStartContext?.({ surface: 'agent',
         actionCaller: { kind: 'host' }, defaultSessionId: sessionId,

@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { HAPPIER_PRIVACY_POLICY_URL } from '@/constants/legalUrls';
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
@@ -24,15 +23,13 @@ import { Icon } from '@/components/ui/icons/Icon';
  */
 export function VoicePrivacyPolicyEntry(): React.ReactElement {
   return (
-    <ItemGroup>
       <Item
         testID="settings.voice.privacyPolicy"
-        icon={<Icon name="shield-check" />}
+        icon={<Icon name="arrow-square-out" />}
         title={t('settings.privacyPolicy')}
         onPress={() => {
           fireAndForget(openExternalUrl(HAPPIER_PRIVACY_POLICY_URL));
         }}
       />
-    </ItemGroup>
   );
 }

@@ -2,14 +2,17 @@ import {
   VoiceAgentOutputEventV1Schema,
   resolveVoiceSpeechSegmentLength,
   VoiceAssistantActionSchema,
+  VOICE_OUTPUT_INCOMPLETE_TEXT,
+  canAppendVoiceAgentOutputEventsV1,
+  createVoiceAgentOutputTurnV1,
+  fitVoiceAgentOutputTextV1,
+  ingestVoiceAgentOutputEventV1,
   type VoiceAgentOutputEventV1,
 } from '@happier-dev/protocol';
 
 import type { VoiceAgentTurnStreamEvent } from './types';
 
-const MAX_SPEECH_CHARS = 65_536;
-
-export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: string }>): Readonly<{
+export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: string; speechSegmentTargetChars?: number }>): Readonly<{
   ingest(sourceCursor: number, event: VoiceAgentTurnStreamEvent): readonly VoiceAgentOutputEventV1[];
 }> {
   const streamId = String(input.streamId).trim();
@@ -25,11 +28,14 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
   let terminal = false;
   let mode: 'unknown' | 'legacy' | 'native' = 'unknown';
   let speechBuffer = '';
-  let speechChars = 0;
+  let speechText = '';
+  let incomplete = false;
+  let budget = createVoiceAgentOutputTurnV1(streamId);
   let segmentIndex = 0;
 
   const emit = <T extends VoiceAgentOutputEventV1>(event: T): T => {
     const parsed = VoiceAgentOutputEventV1Schema.parse(event);
+    budget = ingestVoiceAgentOutputEventV1(budget, parsed).state;
     nextSeq += 1;
     return parsed as T;
   };
@@ -37,19 +43,24 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
   const flushSpeech = (force: boolean): VoiceAgentOutputEventV1[] => {
     const output: VoiceAgentOutputEventV1[] = [];
     while (speechBuffer) {
-      const length = resolveVoiceSpeechSegmentLength(speechBuffer, { force, firstSegment: segmentIndex === 0 });
+      const length = resolveVoiceSpeechSegmentLength(speechBuffer, {
+        force, firstSegment: segmentIndex === 0, targetChars: input.speechSegmentTargetChars,
+      });
       if (length === 0) break;
-      const text = speechBuffer.slice(0, length);
-      speechBuffer = speechBuffer.slice(length);
-      speechChars += text.length;
-      output.push(emit({
+      const candidate = {
         v: 1,
         kind: 'speech_segment',
         turnId: streamId,
         seq: nextSeq,
         segmentId: `${streamId}:legacy:segment:${segmentIndex}`,
-        text,
-      }));
+        text: speechBuffer.slice(0, length),
+      } as const;
+      const text = fitVoiceAgentOutputTextV1(budget, candidate, speechText);
+      incomplete = text.length < candidate.text.length;
+      speechBuffer = incomplete ? '' : speechBuffer.slice(length);
+      if (!text) break;
+      speechText += text;
+      output.push(emit({ ...candidate, text }));
       segmentIndex += 1;
     }
     return output;
@@ -78,8 +89,8 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
         if (mode === 'native') throw new Error('voice_output_mixed_stream');
         mode = 'legacy';
         if (!event.textDelta) return [];
-        const remaining = Math.max(0, MAX_SPEECH_CHARS - speechChars - speechBuffer.length);
-        speechBuffer += event.textDelta.slice(0, remaining);
+        if (incomplete) return [];
+        speechBuffer += event.textDelta;
         return flushSpeech(false);
       }
       if (event.t === 'done') {
@@ -87,24 +98,40 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
         mode = 'legacy';
         terminal = true;
         const output = flushSpeech(true);
+        const finalCandidate = {
+          v: 1, kind: 'turn_final', turnId: streamId, seq: nextSeq, text: event.assistantText,
+        } as const;
+        let finalText = fitVoiceAgentOutputTextV1(budget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
+        if (finalText.length < event.assistantText.length) incomplete = true;
+        if (incomplete && speechText && !finalText.startsWith(speechText.trimEnd())) finalText = speechText.trimEnd();
         for (const [actionIndex, actionRaw] of (event.actions ?? []).entries()) {
           const action = VoiceAssistantActionSchema.safeParse(actionRaw);
           if (!action.success) continue;
-          output.push(emit({
+          const effect = {
             v: 1,
             kind: 'side_effect',
             turnId: streamId,
             seq: nextSeq,
             effectId: `${streamId}:legacy:${sourceCursor}:${actionIndex}`,
             action: action.data,
-          }));
+          } as const;
+          if (!canAppendVoiceAgentOutputEventsV1(budget, [
+            effect, { ...finalCandidate, seq: nextSeq + 1, text: `${finalText}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },
+          ]) || !canAppendVoiceAgentOutputEventsV1(budget, [
+            effect, { ...finalCandidate, seq: nextSeq + 1, text: `${speechText.trimEnd()}${VOICE_OUTPUT_INCOMPLETE_TEXT}` },
+          ])) {
+            incomplete = true;
+            if (speechText && !finalText.startsWith(speechText.trimEnd())) finalText = speechText.trimEnd();
+            break;
+          }
+          output.push(emit(effect));
         }
         output.push(emit({
           v: 1,
           kind: 'turn_final',
           turnId: streamId,
           seq: nextSeq,
-          text: event.assistantText.slice(0, MAX_SPEECH_CHARS),
+          text: `${finalText}${incomplete ? VOICE_OUTPUT_INCOMPLETE_TEXT : ''}`,
         }));
         return output;
       }

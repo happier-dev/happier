@@ -357,10 +357,11 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     }
     if (claimedSessionIds.has(happySessionId)) continue;
 
-    const processCommandHash = hashProcessCommand(processInfo.command);
     const processIdentity = processIdentityByPid?.get(
       processInfo.pid,
     );
+    const processCommand = processIdentity?.command || undefined;
+    const processCommandHash = processCommand ? hashProcessCommand(processCommand) : undefined;
     const observedProcessStartTimeMs =
       processIdentity?.pid === processInfo.pid
         ? processIdentity.processStartTimeMs
@@ -443,7 +444,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
       ...(observedProcessStartTimeMs !== undefined
         ? { processStartTimeMs: observedProcessStartTimeMs }
         : {}),
-      processCommand: processInfo.command,
+      processCommand,
       reattachedFromDiskMarker: true,
       ...(resolvedVendorResumeId ? { vendorResumeId: resolvedVendorResumeId } : {}),
       ...(spawnOptions ? { spawnOptions } : {}),
@@ -523,7 +524,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
               observedProcessStartTimeMs,
           }
         : {}),
-      processCommand: processInfo.command,
+      processCommand,
       ...(respawn ? { respawn } : {}),
       ...(incompleteMarker?.connectedServiceRestartIntent
         ? { connectedServiceRestartIntent: incompleteMarker.connectedServiceRestartIntent }
@@ -706,12 +707,16 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       aliveMarkers,
     });
     const processIdentityByPid = new Map<number, LocalServiceProcessFact>();
-    await Promise.all(aliveMarkers.map(async (marker) => {
+    const processPids = new Set([
+      ...aliveMarkers.map((marker) => marker.pid),
+      ...happyProcessesForReattach.map((processInfo) => processInfo.pid),
+    ]);
+    await Promise.all([...processPids].map(async (pid) => {
       const processIdentity = await (
         params.readProcessIdentityByPidFn ?? readProcessIdentityByPid
-      )(marker.pid);
+      )(pid);
       if (processIdentity) {
-        processIdentityByPid.set(marker.pid, processIdentity);
+        processIdentityByPid.set(pid, processIdentity);
       }
     }));
     const { adopted } = adoptSessionsFromMarkers({

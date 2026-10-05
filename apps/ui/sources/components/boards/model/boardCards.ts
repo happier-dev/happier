@@ -1,12 +1,10 @@
-import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkflowRunStateV1 } from '@happier-dev/protocol';
+import { buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkflowRunStateV1, type WorkflowRunSummaryV1, type WorkflowTriggerSummaryInputV1, type WorkBoardV1 } from '@happier-dev/protocol';
 
 import {
     resolveWorkStatusTone,
-    type WorkStatusBucket,
     type WorkStatusPresentation,
 } from '@/components/work/status/resolveWorkStatusTone';
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
-import { WORK_STATUS_BUCKETS } from '@/components/work/status/workStatusBuckets';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import {
     formatWorkflowRunDisplayName,
@@ -20,6 +18,7 @@ import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machine
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import type { BoardMember } from './boardMembership';
+import { formatTriggerSetSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 
 /**
  * One card anatomy for every kind (INT §5.1): identity, the state word, "Kind · context", then a
@@ -34,8 +33,10 @@ export type MachineSessionCounts = Readonly<{ running: number; needsYou: number 
 
 export type BoardCardBody =
     | Readonly<{ kind: 'session'; serverId: string; sessionId: string }>
-    | Readonly<{ kind: 'workflow_run'; runId: string; waitingForYou: boolean; startedAt: string | null }>
-    | Readonly<{ kind: 'workflow'; needsYouCount: number; lastRunWord: string | null; lastRunAt: string | null }>
+    | Readonly<{ kind: 'workflow_run'; runId: string; waitingForYou: boolean; startedAt: string | null;
+        progress: WorkflowRunSummaryV1['stepProgress'] }>
+    | Readonly<{ kind: 'workflow'; needsYouCount: number | null; lastRunWord: string | null; lastRunAt: string | null;
+        runSummaryAvailable: boolean; triggerSummary: string | null; nextRun: BoardWorkflowNextRun }>
     | Readonly<{ kind: 'machine'; online: boolean; counts: MachineSessionCounts }>
     | Readonly<{ kind: 'none' }>;
 
@@ -49,8 +50,14 @@ export type BoardCard = Readonly<{
     body: BoardCardBody;
 }>;
 
+/** A date is supplied only by FIN's scheduler summary, never inferred from the schedule. */
+export type BoardWorkflowNextRun = Readonly<{ kind: 'scheduled'; at: number }>
+    | Readonly<{ kind: 'unscheduled' }> | Readonly<{ kind: 'unavailable' }>;
+
 export type BoardWorkflowFacts = Readonly<{
     title: string;
+    triggers?: readonly WorkflowTriggerSummaryInputV1[] | null;
+    nextRun?: BoardWorkflowNextRun;
     /** FIN 03's `workflow.run.summaries` entry; `null` until it answers (facts are then omitted). */
     summary: Readonly<{
         needsYouCount: number;
@@ -152,7 +159,8 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
                         inAttentionWindow: waitingForYou,
                     },
                 }),
-                body: { kind: 'workflow_run', runId: id, waitingForYou, startedAt: row.summary.createdAt },
+                body: { kind: 'workflow_run', runId: id, waitingForYou, startedAt: row.summary.createdAt,
+                    progress: row.summary.stepProgress ?? null },
             };
         }
         case 'machine': {
@@ -187,7 +195,7 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
                 status: resolveWorkStatusTone({
                     kind: 'workflow',
                     facts: {
-                        word: lastRunWord ?? t('boards.card.workflow.noRuns'),
+                        word: lastRunWord ?? (workflow.summary === null ? t('boards.card.notLoaded') : t('boards.card.workflow.noRuns')),
                         needsYouCount,
                         hasActiveRun: lastRun !== null && resolveWorkStatusTone({
                             kind: 'workflow_run',
@@ -195,7 +203,11 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
                         }).bucket === 'working',
                     },
                 }),
-                body: { kind: 'workflow', needsYouCount, lastRunWord, lastRunAt: lastRun?.createdAt ?? null },
+                body: { kind: 'workflow', needsYouCount: workflow.summary?.needsYouCount ?? null,
+                    runSummaryAvailable: workflow.summary !== null, lastRunWord, lastRunAt: lastRun?.createdAt ?? null,
+                    triggerSummary: workflow.triggers ? formatTriggerSetSummary(workflow.triggers) : null,
+                    nextRun: workflow.nextRun ?? (workflow.triggers && !workflow.triggers.some(trigger => trigger.kind === 'schedule')
+                        ? { kind: 'unscheduled' } : { kind: 'unavailable' }) },
             };
         }
     }
@@ -203,16 +215,6 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
 
 export function buildBoardCards(members: readonly BoardMember[], facts: BoardCardFacts): BoardCard[] {
     return members.map((member) => buildCard(member, facts));
-}
-
-export type BoardStatusGroup = Readonly<{ bucket: WorkStatusBucket; cards: readonly BoardCard[] }>;
-
-/** By status groups every kind together; a card's column is its status, never a user choice. */
-export function groupBoardCardsByStatus(cards: readonly BoardCard[]): BoardStatusGroup[] {
-    return WORK_STATUS_BUCKETS.map((bucket) => ({
-        bucket,
-        cards: cards.filter((card) => card.status.bucket === bucket),
-    }));
 }
 
 function isSameCard(a: BoardCard, b: BoardCard): boolean {
@@ -248,8 +250,15 @@ export function countBoardCardsNeedingYou(cards: readonly BoardCard[]): number {
 }
 
 /** A board's live line in the Boards column (lab `boards-B1`): "3 need you · 9 items", or just its items. */
-export function describeBoardColumnLine(cards: readonly BoardCard[]): Readonly<{ needYou: number; text: string }> {
+/** Whether a board holds anything to show: a live source, hand-picked work, or a configured widget. */
+export function hasWorkBoardContent(board: WorkBoardV1): boolean {
+    return (board.source.sections?.length ?? 0) > 0 || board.source.filter !== undefined
+        || board.source.picked.length > 0 || (board.widgets?.length ?? 0) > 0;
+}
+
+/** "3 need you · 9 items": a board's widgets are items too; only work cards can need you. */
+export function describeBoardColumnLine(cards: readonly BoardCard[], widgetCount = 0): Readonly<{ needYou: number; text: string }> {
     const needYou = countBoardCardsNeedingYou(cards);
-    const items = t('boards.meta.items', { count: cards.length });
+    const items = t('boards.meta.items', { count: cards.length + widgetCount });
     return { needYou, text: needYou > 0 ? `${t('boards.meta.needYou', { count: needYou })} · ${items}` : items };
 }

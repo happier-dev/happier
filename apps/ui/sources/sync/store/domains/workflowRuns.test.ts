@@ -84,11 +84,12 @@ describe('workflow run body store', () => {
         const harness = createHarness();
         const run = summary({ id: 'run-1', revision: 4 });
         const definition = createWorkflowDefinitionFixture();
-        const detail = { run, definition, checkpoint: null, acceptedContext: {
+        const detail = { run, callerAccess: { canEdit: true }, definition, authoredDefinition: definition, checkpoint: null, acceptedContext: {
             startedBy: 'user' as const,
             source: { kind: 'inline' as const }, inputs: {}, machineId: run.machineId,
             executionTarget: { kind: 'session' as const },
             materializedLeaves: [],
+            frozenChildren: {},
             workspaceTarget: { project: { machineId: run.machineId, directory: '/repo', checkoutRootPath: '/repo' } },
             origin: { kind: 'direct' as const },
         } };

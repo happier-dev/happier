@@ -38,6 +38,8 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         NewSessionSimplePanelProps,
         | 'promptStore'
         | 'composerDocument'
+        | 'composerReferenceHost'
+        | 'composerFileScope'
         | 'setSessionPrompt'
         | 'handleCreateSession'
         | 'registerTemporaryComputerReplacementLaunch'

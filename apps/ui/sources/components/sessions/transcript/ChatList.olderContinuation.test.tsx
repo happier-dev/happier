@@ -6,6 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { storage } from '@/sync/domains/state/storage';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import {
     activateSessionMessagesWindow,

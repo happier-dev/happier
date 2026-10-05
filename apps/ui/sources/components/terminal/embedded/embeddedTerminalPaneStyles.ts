@@ -1,13 +1,14 @@
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 export const embeddedTerminalPaneStyles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         minHeight: 0,
         minWidth: 0,
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
     },
     toolbar: {
         paddingHorizontal: 12,
@@ -18,7 +19,7 @@ export const embeddedTerminalPaneStyles = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.inset, 'content', true),
         gap: 10,
     },
     toolbarLeft: {
@@ -47,7 +48,7 @@ export const embeddedTerminalPaneStyles = StyleSheet.create((theme) => ({
         gap: 10,
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
     },
     bannerUrl: {
         flex: 1,
@@ -73,7 +74,7 @@ export const embeddedTerminalPaneStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 16,
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
         opacity: 0.96,
     },
 }));

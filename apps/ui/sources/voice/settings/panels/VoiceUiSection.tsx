@@ -1,21 +1,30 @@
 import * as React from 'react';
-import { View } from 'react-native';
 
-import { useUnistyles } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { VOICE_ADVANCED_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
-import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import type { VoicePresenceContainer } from '@/components/voice/presence/useVoicePresenceContainer';
 import { t } from '@/text';
-import { Icon } from '@/components/ui/icons/Icon';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
+import { Item } from '@/components/ui/lists/Item';
+import { VoicePresenceContainerPreview } from '@/components/voice/presence/VoicePresenceContainerPreview';
+import { getAvailableVoicePresenceContainers, resolveVoicePresenceContainer } from '@/components/voice/presence/useVoicePresenceContainer';
+import { useDeviceType } from '@/utils/platform/responsive';
+
+/** "Show live Voice as": each tile draws the real container at rest (no subscriptions). */
+const PRESENCE_CONTAINERS = [
+  { id: 'top_bar', labelKey: 'settingsVoice.ui.presenceContainer.topBar' },
+  { id: 'island', labelKey: 'settingsVoice.ui.presenceContainer.island' },
+  { id: 'orb', labelKey: 'settingsVoice.ui.presenceContainer.orb' },
+] as const satisfies ReadonlyArray<{ id: VoicePresenceContainer; labelKey: string }>;
 
 /**
  * Presentational only.
  *
- * `voice`/`setVoice` carry the **synced** Voice settings; `voiceOrbEnabled`/`setVoiceOrbEnabled`
+ * `voice`/`setVoice` carry the **synced** Voice settings; `voicePresenceContainer`/`setVoicePresenceContainer`
  * carry a **device-local** preference. The section renders both and owns neither — the Voice
  * settings route reads MMKV through `useLocalSettingMutable` and hands the pair down. Reading
  * storage here would put a second owner behind the same switch.
@@ -23,208 +32,107 @@ import { Icon } from '@/components/ui/icons/Icon';
 export function VoiceUiSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
-  voiceOrbEnabled: boolean;
-  setVoiceOrbEnabled: (next: boolean) => void;
+  voicePresenceContainer: VoicePresenceContainer;
+  setVoicePresenceContainer: (next: VoicePresenceContainer) => void;
+  voiceHoldToTalkEnabled?: boolean;
+  setVoiceHoldToTalkEnabled?: (next: boolean) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
 }) {
-  const { theme } = useUnistyles();
   const ui = props.voice.ui;
-  const [openMenu, setOpenMenu] = React.useState<null | 'snippetsMaxMessages'>(null);
+  const deviceType = useDeviceType();
+  const availableContainers = getAvailableVoicePresenceContainers(deviceType);
 
   const setUi = (patch: Partial<typeof ui>) => {
     props.setVoice({ ...props.voice, ui: { ...ui, ...patch } });
   };
 
-  const updates = ui.updates;
-  const showSnippetsOptions = updates.activeSession === 'snippets' || updates.otherSessions === 'snippets';
-  const showOtherSessionsSnippetMode = updates.otherSessions === 'snippets';
-
-  const setUpdatePatch = (patch: Partial<typeof updates>) => {
-    setUi({ updates: { ...updates, ...patch } });
-  };
-  const updateLevelOptions = [
-    { id: 'none', label: t('settingsVoice.ui.updates.level.noneTitle'), description: t('settingsVoice.ui.updates.level.noneSubtitle') },
-    { id: 'activity', label: t('settingsVoice.ui.updates.level.activityTitle'), description: t('settingsVoice.ui.updates.level.activitySubtitle') },
-    { id: 'summaries', label: t('settingsVoice.ui.updates.level.summariesTitle'), description: t('settingsVoice.ui.updates.level.summariesSubtitle') },
-    { id: 'snippets', label: t('settingsVoice.ui.updates.level.snippetsTitle'), description: t('settingsVoice.ui.updates.level.snippetsSubtitle') },
-  ] as const satisfies ReadonlyArray<SegmentedChoiceOption<typeof updates.activeSession>>;
-
   return (
     <>
+      {props.setVoiceHoldToTalkEnabled && (
+        <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.input}>
+          <ItemGroup title={t('voicePresence.howYouTalk')}>
+            <SettingRow setting={VOICE_ADVANCED_SETTINGS.settings.holdToTalk} subtitleLines={0}
+              rightElement={<Switch testID="settings.voice.ui.holdToTalk"
+                accessibilityLabel={t('voicePresence.holdToTalkTitle')}
+                value={props.voiceHoldToTalkEnabled === true}
+                onValueChange={props.setVoiceHoldToTalkEnabled} />}
+            />
+          </ItemGroup>
+        </SettingSection>
+      )}
       <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.surface}>
-        <ItemGroup title={t('settingsVoice.ui.title')} description={t('settingsVoice.ui.footer')}>
+        <ItemGroup
+          title={t('settingsVoice.pages.advanced.onScreenTitle')}
+          description={t('settingsVoice.pages.advanced.onScreenDescription')}
+        >
+          <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.scopeDefault}>
+            <SegmentedChoiceItem
+              title={t(VOICE_ADVANCED_SETTINGS.settings.scopeDefault.titleKey)}
+              subtitleLines={0}
+              testIDPrefix="settings.voice.ui.scopeDefault"
+              value={ui.scopeDefault}
+              onChange={(scopeDefault) => setUi({ scopeDefault })}
+              options={[
+                { id: 'global', label: t('settingsVoice.pages.advanced.scopeGlobal'), description: t('settingsVoice.pages.advanced.scopeGlobalDescription') },
+                { id: 'session', label: t('settingsVoice.pages.advanced.scopeSession'), description: t('settingsVoice.pages.advanced.scopeSessionDescription') },
+              ]}
+            />
+          </SettingAnchor>
+
+          <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.presenceContainer}>
+            <Item
+              title={t(VOICE_ADVANCED_SETTINGS.settings.presenceContainer.titleKey)}
+              subtitle={t('settingsVoice.pages.advanced.showLiveAsDescription')}
+              subtitleLines={0}
+              showChevron={false}
+              accessoryLayout="stacked"
+              rightElement={(
+                <SelectionTiles<VoicePresenceContainer>
+                  variant="visual"
+                  accessibilityLabel={t(VOICE_ADVANCED_SETTINGS.settings.presenceContainer.titleKey)}
+                  testIdPrefix="settings.voice.ui.presenceContainer"
+                  value={resolveVoicePresenceContainer(props.voicePresenceContainer, deviceType)}
+                  onChange={(next) => { if (next) props.setVoicePresenceContainer(next); }}
+                  options={PRESENCE_CONTAINERS.filter((container) => availableContainers.includes(container.id)).map((container) => ({
+                    id: container.id,
+                    title: t(container.labelKey),
+                    preview: <VoicePresenceContainerPreview container={container.id} />,
+                  }))}
+                />
+              )}
+            />
+          </SettingAnchor>
+
           <SettingRow
             setting={VOICE_ADVANCED_SETTINGS.settings.activityFeedEnabled}
             subtitleLines={0}
             rightElement={
               <Switch
                 testID="settings.voice.ui.activityFeedEnabled"
-                accessibilityLabel={t('settingsVoice.ui.activityFeedEnabled')}
+                accessibilityLabel={t(VOICE_ADVANCED_SETTINGS.settings.activityFeedEnabled.titleKey)}
                 value={ui.activityFeedEnabled}
                 onValueChange={(v) => setUi({ activityFeedEnabled: v })}
               />
             }
           />
-
-          {ui.activityFeedEnabled ? (
-            <SettingRow
-              setting={VOICE_ADVANCED_SETTINGS.settings.activityFeedAutoExpandOnStart}
-              subtitleLines={0}
-              rightElement={
-                <Switch
-                  accessibilityLabel={t('settingsVoice.ui.activityFeedAutoExpandOnStart')}
-                  value={ui.activityFeedAutoExpandOnStart}
-                  onValueChange={(v) => setUi({ activityFeedAutoExpandOnStart: v })}
-                />
-              }
-            />
-          ) : null}
-
           <SettingRow
-            setting={VOICE_ADVANCED_SETTINGS.settings.orbEnabled}
+            setting={VOICE_ADVANCED_SETTINGS.settings.activityFeedAutoExpandOnStart}
+            subtitle={ui.activityFeedEnabled ? undefined : t('settingsVoice.pages.advanced.autoOpenUnavailable')}
             subtitleLines={0}
+            disabled={!ui.activityFeedEnabled}
             rightElement={
               <Switch
-                testID="settings.voice.ui.orbEnabled"
-                accessibilityLabel={t('settingsVoice.ui.orbEnabled')}
-                value={props.voiceOrbEnabled}
-                onValueChange={props.setVoiceOrbEnabled}
+                testID="settings.voice.ui.activityFeedAutoExpandOnStart"
+                accessibilityLabel={t(VOICE_ADVANCED_SETTINGS.settings.activityFeedAutoExpandOnStart.titleKey)}
+                value={ui.activityFeedAutoExpandOnStart}
+                disabled={!ui.activityFeedEnabled}
+                onValueChange={(v) => setUi({ activityFeedAutoExpandOnStart: v })}
               />
             }
           />
-
-          <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.scopeDefault}>
-            <SegmentedChoiceItem
-              title={t('settingsVoice.ui.scopeTitle')}
-              subtitleLines={0}
-              testIDPrefix="settings.voice.ui.scopeDefault"
-              value={ui.scopeDefault}
-              onChange={(scopeDefault) => setUi({ scopeDefault })}
-              options={[
-                { id: 'global', label: t('settingsVoice.ui.scopeGlobal'), description: t('settingsVoice.ui.scopeGlobalSubtitle') },
-                { id: 'session', label: t('settingsVoice.ui.scopeSession'), description: t('settingsVoice.ui.scopeSessionSubtitle') },
-              ]}
-            />
-          </SettingAnchor>
-
-          <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.surfaceLocation}>
-            <SegmentedChoiceItem
-              testID="settings.voice.ui.surfaceLocation"
-              title={t('settingsVoice.ui.surfaceLocationTitle')}
-              subtitleLines={0}
-              testIDPrefix="settings.voice.ui.surfaceLocation"
-              value={ui.surfaceLocation}
-              onChange={(surfaceLocation) => setUi({ surfaceLocation })}
-              options={[
-                { id: 'auto', label: t('settingsVoice.ui.surfaceLocation.autoTitle'), description: t('settingsVoice.ui.surfaceLocation.autoSubtitle') },
-                { id: 'sidebar', label: t('settingsVoice.ui.surfaceLocation.sidebarTitle'), description: t('settingsVoice.ui.surfaceLocation.sidebarSubtitle') },
-                { id: 'session', label: t('settingsVoice.ui.surfaceLocation.sessionTitle'), description: t('settingsVoice.ui.surfaceLocation.sessionSubtitle') },
-              ]}
-            />
-          </SettingAnchor>
         </ItemGroup>
       </SettingSection>
 
-      <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.updates}>
-        <ItemGroup title={t('settingsVoice.ui.updates.title')} description={t('settingsVoice.ui.updates.footer')}>
-          <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.activeSession}>
-            <SegmentedChoiceItem
-              title={t('settingsVoice.ui.updates.activeSessionTitle')}
-              subtitleLines={0}
-              testIDPrefix="settings.voice.ui.updates.activeSession"
-              value={updates.activeSession}
-              onChange={(activeSession) => setUpdatePatch({ activeSession })}
-              options={updateLevelOptions}
-            />
-          </SettingAnchor>
-
-          <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.otherSessions}>
-            <SegmentedChoiceItem
-              title={t('settingsVoice.ui.updates.otherSessionsTitle')}
-              subtitleLines={0}
-              testIDPrefix="settings.voice.ui.updates.otherSessions"
-              value={updates.otherSessions}
-              onChange={(otherSessions) => setUpdatePatch({ otherSessions })}
-              options={updateLevelOptions}
-            />
-          </SettingAnchor>
-
-          {showSnippetsOptions ? (
-            <>
-              <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.snippetsMaxMessages}>
-                <DropdownMenu
-                  open={openMenu === 'snippetsMaxMessages'}
-                  onOpenChange={(next) => setOpenMenu(next ? 'snippetsMaxMessages' : null)}
-                  variant="selectable"
-                  search={false}
-                  selectedId={String(updates.snippetsMaxMessages)}
-                  showCategoryTitles={false}
-                  matchTriggerWidth={true}
-                  connectToTrigger={true}
-                  rowKind="item"
-                  popoverBoundaryRef={props.popoverBoundaryRef}
-                  itemTrigger={{
-                    title: t(VOICE_ADVANCED_SETTINGS.settings.snippetsMaxMessages.titleKey),
-                    subtitle: t('settingsVoice.ui.updates.snippetsMaxMessagesSubtitle'),
-                    showSelectedSubtitle: false,
-                    itemProps: { subtitleLines: 0 },
-                  }}
-                  items={Array.from({ length: 10 }, (_, idx) => {
-                    const n = idx + 1;
-                    return {
-                      id: String(n),
-                      title: String(n),
-                      subtitle: undefined,
-                      icon: (
-                        <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                          <Icon name="list" size={20} color={theme.colors.text.secondary} />
-                        </View>
-                      ),
-                    };
-                  })}
-                  onSelect={(id) => {
-                    const n = Number(id);
-                    if (!Number.isFinite(n)) return;
-                    setUpdatePatch({ snippetsMaxMessages: Math.max(1, Math.min(10, Math.floor(n))) });
-                    setOpenMenu(null);
-                  }}
-                />
-              </SettingAnchor>
-
-              <SettingRow
-                setting={VOICE_ADVANCED_SETTINGS.settings.includeUserMessagesInSnippets}
-                subtitleLines={0}
-                rightElement={
-                  <Switch
-                    accessibilityLabel={t('settingsVoice.ui.updates.includeUserMessagesInSnippetsTitle')}
-                    value={updates.includeUserMessagesInSnippets}
-                    onValueChange={(v) => setUpdatePatch({ includeUserMessagesInSnippets: v })}
-                  />
-                }
-              />
-            </>
-          ) : null}
-
-          {showOtherSessionsSnippetMode ? (
-            <>
-              <SettingAnchor setting={VOICE_ADVANCED_SETTINGS.settings.otherSessionsSnippetsMode}>
-                <SegmentedChoiceItem
-                  title={t(VOICE_ADVANCED_SETTINGS.settings.otherSessionsSnippetsMode.titleKey)}
-                  subtitleLines={0}
-                  testIDPrefix="settings.voice.ui.updates.otherSessionsSnippetsMode"
-                  value={updates.otherSessionsSnippetsMode}
-                  onChange={(otherSessionsSnippetsMode) => setUpdatePatch({ otherSessionsSnippetsMode })}
-                  options={[
-                    { id: 'never', label: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.neverTitle'), description: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.neverSubtitle') },
-                    { id: 'on_demand_only', label: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.onDemandTitle'), description: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.onDemandSubtitle') },
-                    { id: 'auto', label: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.autoTitle'), description: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.autoSubtitle') },
-                  ]}
-                />
-              </SettingAnchor>
-            </>
-          ) : null}
-        </ItemGroup>
-      </SettingSection>
     </>
   );
 }

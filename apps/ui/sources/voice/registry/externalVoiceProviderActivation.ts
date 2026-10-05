@@ -2,6 +2,7 @@ import type {
   BundledRealtimeProviderRuntimeConfig,
   BundledRealtimeProviderRuntimeHost,
 } from './bundledConversationRuntimeContract';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
   buildQualifiedPluginContributionKey,
   ConnectedServiceBindingsV2IngressSchema,
@@ -15,7 +16,8 @@ import {
   type RecipientContractV1,
   listVoiceToolActionSpecs,
 } from '@happier-dev/protocol';
-import { buildVoiceClientToolAgentPrompt } from '@happier-dev/agents/voice';
+import { buildVoiceRealtimeAttemptPolicy } from '@happier-dev/agents/voice';
+import { resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
@@ -390,6 +392,10 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
       methods: Object.freeze([]),
     }),
     context: async () => unavailable(),
+    widgetArea: async () => unavailable(),
+    readEntityDragItem: async () => unavailable(),
+    updateEntityDragDrop: async () => unavailable(),
+    watchEntityDragDrop: async () => unavailable(),
     watchContext: unavailable,
     publishCurrentUiContext: unavailable,
     activeComposer: async () => unavailable(),
@@ -402,8 +408,10 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     pickComposerMedia: async () => unavailable(),
     inspectComposerContent: async () => unavailable(),
     releaseComposerContent: async () => unavailable(),
+    readStoredImage: async () => unavailable(),
     readSession: async () => unavailable(),
     watchSession: async () => unavailable(),
+    watchLiveStream: async () => unavailable(),
     respondToSessionPermission: async () => unavailable(),
     executeAction: async () => unavailable(),
     selectActionInput: async () => unavailable(),
@@ -611,16 +619,13 @@ export function createExternalProtocol(
             })]);
             const extraSystemAppendBlocks = await resolveUiVoicePromptStackBlocks();
             signal.throwIfAborted();
-            attemptPolicy = Object.freeze({
-              instructions: buildVoiceClientToolAgentPrompt({
+            attemptPolicy = buildVoiceRealtimeAttemptPolicy({
                 actionSpecs: listVoiceToolActionSpecs(),
                 availableToolNames: tools.map((tool) => tool.name),
                 assistantLanguage: voice.assistantLanguage,
                 welcome: voice.welcome,
+                welcomeText: resolveVoiceWelcomeText(voice.assistantLanguage),
                 extraSystemAppendBlocks,
-              }),
-              assistantLanguage: voice.assistantLanguage,
-              welcome: Object.freeze({ enabled: voice.welcome.enabled, mode: voice.welcome.mode }),
             });
             attemptPreparationByAttemptId.set(prepareInput.attemptId, Object.freeze({ policy: attemptPolicy, tools }));
           }
@@ -922,16 +927,23 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
   const contribution = createBundledRealtimeProviderRuntime(input.host, config);
   if (!runtime.dispose) return contribution;
   let disposed = false;
+  let disposePromise: Promise<void> | null = null;
   return Object.freeze({
     adapter: contribution.adapter,
     async dispose() {
       if (disposed) return;
-      disposed = true;
-      try {
-        await contribution.dispose();
-      } finally {
-        await runtime.dispose!();
-      }
+      disposePromise ??= (async () => {
+        try {
+          await contribution.dispose();
+        } finally {
+          await runtime.dispose!();
+        }
+        disposed = true;
+      })().catch((error: unknown) => {
+        disposePromise = null;
+        throw error;
+      });
+      await disposePromise;
     },
   });
 }
@@ -966,10 +978,10 @@ function createCommittedVoiceRuntimeCleanupOwner(
     },
     async dispose() {
       if (disposed) return;
-      disposed = true;
       const cleanup = ownedCleanup;
-      ownedCleanup = null;
       await cleanup?.();
+      disposed = true;
+      ownedCleanup = null;
     },
   });
 }
@@ -1042,18 +1054,17 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
   const disposeCommittedRuntimes = async (): Promise<void> => {
     settingsOperationsRevocation.abort();
     removeExternalVoiceProviderRegistration(token);
-    unsubscribeRuntimeGeneration?.();
-    unsubscribeRuntimeGeneration = null;
     if (disposalPromise) return await disposalPromise;
     const retiringCleanups = committedRuntimeCleanups;
-    committedRuntimeCleanups = Object.freeze([]);
-    disposalPromise = Promise.all(retiringCleanups.map(async (cleanup) => {
-      try {
-        await cleanup.dispose();
-      } catch {
-        // A plugin cleanup failure cannot retain registration authority.
-      }
-    })).then(() => undefined);
+    disposalPromise = Promise.all(retiringCleanups.map(async (cleanup) => await cleanup.dispose()))
+      .then(() => {
+        committedRuntimeCleanups = Object.freeze([]);
+        // The existing activation subscription retains failed cleanup custody.
+        // Later host retirement can retry it; no revoked scope can admit work.
+        unsubscribeRuntimeGeneration?.();
+        unsubscribeRuntimeGeneration = null;
+      })
+      .catch((error: unknown) => { disposalPromise = null; throw error; });
     await disposalPromise;
   };
   return Object.freeze({
@@ -1326,7 +1337,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                   })
                 ),
                 getRealtimeClientToolDefinitions: () => host.getRealtimeClientToolDefinitions({
-                  effectCalls: 'none',
+                  effectCalls: declaration.capabilities.tools.effectCalls,
                   // Settings actions provision a direct-media provider's own
                   // remote assistant; only that execution kind declares them.
                   exposure: declaration.execution?.kind === 'experimental_agent_session_realtime'
@@ -1382,7 +1393,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
           // Authority is withdrawn synchronously; host-owned teardown may finish
           // asynchronously after the replacement occurrence becomes current.
           removeExternalVoiceProviderRegistration(token);
-          void disposeCommittedRuntimes();
+          fireAndForget(disposeCommittedRuntimes(), { tag: 'VoiceProvider.retire' });
         });
         if (readCurrentHost() !== host) {
           await disposeCommittedRuntimes();
@@ -1394,7 +1405,6 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
       }
     },
     async unwind() {
-      if (unwound) return;
       unwound = true;
       await disposeCommittedRuntimes();
     },

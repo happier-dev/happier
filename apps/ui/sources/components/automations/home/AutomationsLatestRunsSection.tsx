@@ -18,7 +18,7 @@ import { createAutomationRunDetailRoute } from '@/sync/domains/workflows/workflo
 import { resolveAutomationRunProjections } from '@/sync/store/domains/workflowRuns';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 import {
     projectLatestAutomationRuns,
@@ -196,7 +196,7 @@ export const LatestRunRow = React.memo(function LatestRunRow(props: Readonly<{
             testID={`home-automations.run.${row.run.id}`}
             title={row.automationName}
             titleLines={1}
-            subtitle={`${formatAutomationRunStateLabel(row.run.state)} · ${formatAsOfTime(row.at)}`}
+            subtitle={`${formatAutomationRunStateLabel(row.run.state)} · ${formatShortRelativeTime(row.at)}`}
             subtitleLines={1}
             {...(row.tone === 'failed' ? { subtitleStyle: { color: toneColor } } : {})}
             icon={row.tone === 'active'

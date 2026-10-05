@@ -51,6 +51,15 @@ export function formatReviewFindingLocation(finding: ReviewFinding): string | nu
     return finding.filePath;
 }
 
+export function formatReviewFindingThreadQuote(finding: ReviewFinding): string {
+    const location = formatReviewFindingLocation(finding);
+    return `${reviewSeverityLabel(finding.severity)} · ${finding.title}${location ? ` · ${location}` : ''}`;
+}
+
+export function formatReviewFindingThreadUpdate(reviewerLabel: string, previous: ReviewFinding, updated: ReviewFinding): string {
+    return t('runPage.review.reviewerUpdated', { reviewer: reviewerLabel }) + (updated.severity !== previous.severity ? `: ${reviewSeverityLabel(previous.severity)} → ${reviewSeverityLabel(updated.severity)}` : '');
+}
+
 export function sortReviewFindingsBySeverity(findings: readonly ReviewFinding[]): ReviewFinding[] {
     return findings
         .map((finding, index) => ({ finding, index }))

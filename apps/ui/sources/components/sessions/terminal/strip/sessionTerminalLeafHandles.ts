@@ -1,11 +1,10 @@
-import * as React from 'react';
-
 /**
  * The verbs only a mounted terminal view can perform (copy its selection, paste, clear, restart). The
  * pane's tab menu reaches the visible tab's terminals through these; a tab that is not on screen has
  * no mounted view, so its menu offers only the layout verbs.
  */
 export type SessionTerminalLeafHandle = Readonly<{
+    find?: (() => void) | null;
     copySelection: (() => void) | null;
     paste: () => void;
     clear: () => void;
@@ -17,15 +16,23 @@ export type SessionTerminalLeafHandles = Readonly<{
     get: (terminalId: string) => SessionTerminalLeafHandle | null;
 }>;
 
-export function createSessionTerminalLeafHandles(): SessionTerminalLeafHandles {
-    const handles = new Map<string, SessionTerminalLeafHandle>();
+const handlesByScope = new Map<string, Map<string, Set<SessionTerminalLeafHandle>>>();
+
+export function createSessionTerminalLeafHandles(scopeId: string): SessionTerminalLeafHandles {
+    const read = () => handlesByScope.get(scopeId);
     return {
         register: (terminalId, handle) => {
-            handles.set(terminalId, handle);
-            return () => { if (handles.get(terminalId) === handle) handles.delete(terminalId); };
+            const handles = read() ?? new Map<string, Set<SessionTerminalLeafHandle>>();
+            handlesByScope.set(scopeId, handles);
+            const views = handles.get(terminalId) ?? new Set<SessionTerminalLeafHandle>();
+            views.add(handle);
+            handles.set(terminalId, views);
+            return () => {
+                views.delete(handle);
+                if (views.size === 0 && handles.get(terminalId) === views) handles.delete(terminalId);
+                if (handles.size === 0 && handlesByScope.get(scopeId) === handles) handlesByScope.delete(scopeId);
+            };
         },
-        get: (terminalId) => handles.get(terminalId) ?? null,
+        get: (terminalId) => Array.from(read()?.get(terminalId) ?? []).at(-1) ?? null,
     };
 }
-
-export const SessionTerminalLeafHandlesContext = React.createContext<SessionTerminalLeafHandles | null>(null);

@@ -106,6 +106,9 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     organizationPlacementActionChips?: readonly AgentInputExtraActionChip[];
     sessionAccess?: Parameters<typeof useNewSessionAgentInputExtraActionChips>[0]['sessionAccess'];
     showAutomationActionChips: boolean;
+    showInitialTriggers?: Parameters<typeof useNewSessionAgentInputExtraActionChips>[0]['showInitialTriggers'];
+    initialTriggers?: Parameters<typeof useNewSessionAgentInputExtraActionChips>[0]['initialTriggers'];
+    onInitialTriggersChange?: Parameters<typeof useNewSessionAgentInputExtraActionChips>[0]['onInitialTriggersChange'];
     /** Hands the composed draft to the shared Automation editor. */
     onOpenAutomationEditor: () => void;
     showServerPickerChip: boolean;
@@ -259,6 +262,9 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         connectedServicesAuthChip: params.connectedServicesAuthChip,
         seededPlacementActionChip: params.seededPlacementActionChip,
         showAutomationActionChips: params.showAutomationActionChips,
+        showInitialTriggers: params.showInitialTriggers,
+        initialTriggers: params.initialTriggers,
+        onInitialTriggersChange: params.onInitialTriggersChange,
         automationLabel: getAutomationChipLabel(params.automationDraft),
         onOpenAutomationEditor: params.onOpenAutomationEditor,
         checkoutActionChip,

@@ -33,6 +33,9 @@ import {
     type DeclaredAskUserQuestionSettingMutation,
 } from '@/sync/domains/plugins/settings/askUserQuestionSettings';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
+import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from '@/components/tools/shell/permissions/usePendingPromptPrimaryFocus';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText } from '../core/ToolFindText';
 
 
 interface QuestionOption {
@@ -384,6 +387,41 @@ function parseAskUserQuestionAnswersFromToolResult(result: unknown): Record<stri
     return answers;
 }
 
+export const projectAskUserQuestionDisplayText: ToolDisplayTextProjector = (tool, metadata, context) => {
+    const normalized = normalizeAskUserQuestionInput(tool.input);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata);
+    const behavior = agentId ? getAgentBehavior(agentId, resolveSessionMachineId(metadata), context?.accountScope) : null;
+    const input = applyDeclaredTerminalNoticePresentation(normalized, normalized?.happierDialog,
+        resolveDeclaredAskUserQuestionDialog(behavior, normalized?.happierDialog));
+    if (!input) return [];
+    const answers = parseAskUserQuestionAnswersFromToolResult(tool.result);
+    if (tool.state === 'completed') return input.questions.flatMap((question, index) => [
+        ...toolTextBlock(`tool-question-${index}-answer-label`, `${question.header ?? question.question}:`),
+        ...toolTextBlock(`tool-question-${index}-answer`, answers?.[question.answerKey] ?? '-'),
+    ]);
+    const declaration = resolveDeclaredAskUserQuestionDialog(behavior, normalized?.happierDialog);
+    if (declaration?.terminalNotice && isRecord(normalized?.happierDialog) && normalized.happierDialog.mode === 'notice'
+        && input.questions[0]?.options.length === 0) {
+        const question = input.questions[0];
+        return [
+            ...toolTextBlock('tool-question-0-header', question.header),
+            ...toolTextBlock('tool-question-0-prompt', question.question),
+        ];
+    }
+    return [
+        ...toolTextBlock('tool-question-title', input.title),
+        ...input.questions.flatMap((question, index) => [
+            ...toolTextBlock(`tool-question-${index}-header`, question.header),
+            ...toolTextBlock(`tool-question-${index}-prompt`, question.question),
+            ...toolTextBlock(`tool-question-${index}-freeform-description`, question.freeform?.description),
+            ...question.options.flatMap((option, optionIndex) => [
+                ...toolTextBlock(`tool-question-${index}-option-${optionIndex}-label`, option.label),
+                ...toolTextBlock(`tool-question-${index}-option-${optionIndex}-description`, option.description),
+            ]),
+        ]),
+    ];
+};
+
 // Styles MUST be defined outside the component to prevent infinite re-renders
 // with react-native-unistyles. The theme is passed as a function parameter.
 const styles = StyleSheet.create((theme) => ({
@@ -547,7 +585,7 @@ function resolveQuestionAccessibilityLabel(question: Question): string {
     return question.header ? `${question.header}: ${question.question}` : question.question;
 }
 
-export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId, serverId: explicitServerId, session: suppliedSession, interaction, executionRun }) => {
+export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId, sessionId, serverId: explicitServerId, session: suppliedSession, interaction, executionRun }) => {
     const source = useSessionTranscriptSource();
     const sourceInteraction = source.useInteraction();
     const actions = source.actions;
@@ -607,10 +645,6 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     );
     const questions = input?.questions;
 
-    if (!input || !questions || !Array.isArray(questions) || questions.length === 0) {
-        return null;
-    }
-
     const isRunning = tool.state === 'running';
     // Agent questions are conversational Send authority; Execution Runs keep
     // their own responder contract rather than borrowing Session actions.
@@ -633,6 +667,12 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         !isSubmitting &&
         canApprovePermissions &&
         hasActiveAskUserQuestionRequest;
+    const primaryAnswerRef = usePendingPromptPrimaryFocus(toolCallId, executionRun === undefined && canInteract, messageId);
+
+    if (!input || !questions || !Array.isArray(questions) || questions.length === 0) {
+        return null;
+    }
+
     const disabledMessage =
         resolvePermissionDisabledMessage(interaction?.permissionDisabledReason ?? sourceInteraction.permissionDisabledReason);
     const attachedTerminalNotice = Boolean(
@@ -656,9 +696,9 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                 <View testID="ask-user-question" style={styles.container}>
                     <View style={styles.questionSection}>
                         <View style={styles.headerChip}>
-                            <Text style={styles.headerText}>{question?.header}</Text>
+                            <ToolFindText messageId={messageId} blockId="tool-question-0-header" text={question?.header ?? ''} style={styles.headerText} />
                         </View>
-                        <Text style={styles.questionText}>{question?.question}</Text>
+                        <ToolFindText messageId={messageId} blockId="tool-question-0-prompt" text={question?.question ?? ''} style={styles.questionText} />
                         {canOpenAttachedTerminal && attachedTerminalSecondaryAction ? (
                             <TouchableOpacity
                                 testID="ask-user-question.open-attached-terminal"
@@ -824,6 +864,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             setIsSubmitting(true);
 
             await actions.answerUserAction({ id: toolCallId, answers });
+            markTranscriptPromptAnswered(source, toolCallId);
             // The requester has accepted this answer, so the interaction is
             // terminal here. Remembering the choice is a SEPARATE outcome: a
             // failed preference write must be reported as such and must never
@@ -927,8 +968,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                         : (answersFromResult?.[q.answerKey] ?? '-')));
                         return (
                             <View key={`${q.answerKey}:${qIndex}`} style={styles.submittedItem}>
-                                <Text style={styles.submittedHeader}>{q.header ?? q.question}:</Text>
-                                <Text style={styles.submittedValue}>{selectedLabels}</Text>
+                                <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-answer-label`} text={`${q.header ?? q.question}:`} style={styles.submittedHeader} />
+                                <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-answer`} text={selectedLabels} style={styles.submittedValue} />
                             </View>
                         );
                     })}
@@ -942,7 +983,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             <View testID="ask-user-question" style={styles.container}>
                 {input.title ? (
                     <View style={styles.headerChip}>
-                        <Text style={styles.headerText}>{input.title}</Text>
+                        <ToolFindText messageId={messageId} blockId="tool-question-title" text={input.title} style={styles.headerText} />
                     </View>
                 ) : null}
                 {!canApprovePermissions && isRunning ? (
@@ -988,15 +1029,16 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                         >
                             {question.header ? (
                                 <View style={styles.headerChip}>
-                                    <Text style={styles.headerText}>{question.header}</Text>
+                                    <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-header`} text={question.header} style={styles.headerText} />
                                 </View>
                             ) : null}
-                            <Text style={styles.questionText}>{question.question}</Text>
+                            <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-prompt`} text={question.question} style={styles.questionText} />
                             <View style={styles.optionsContainer}>
                                 {options.length === 0 || question.freeform ? (
                                     <View>
                                         <TextInput
                                             testID={`ask-user-question.freeform:${qIndex}`}
+                                            ref={qIndex === 0 && canInteract ? primaryAnswerRef : undefined}
                                             style={styles.freeformInput}
                                             value={freeformAnswers.get(qIndex) ?? question.freeform?.initialValue ?? ''}
                                             onChangeText={(text) => {
@@ -1030,7 +1072,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                             autoCorrect={false}
                                         />
                                         {question.freeform?.description ? (
-                                            <Text style={styles.freeformDescription}>{question.freeform.description}</Text>
+                                            <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-freeform-description`} text={question.freeform.description} style={styles.freeformDescription} />
                                         ) : null}
                                     </View>
                                 ) : null}
@@ -1042,6 +1084,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                         <TouchableOpacity
                                             key={oIndex}
                                             testID={testID}
+                                            ref={qIndex === 0 && oIndex === 0 && !question.freeform && canInteract ? primaryAnswerRef : undefined}
                                             accessibilityRole={question.multiSelect ? 'checkbox' : 'radio'}
                                             accessibilityLabel={option.label}
                                             accessibilityState={{
@@ -1075,9 +1118,9 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                                 </View>
                                             )}
                                             <View style={styles.optionContent}>
-                                                <Text style={styles.optionLabel}>{option.label}</Text>
+                                                <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-option-${oIndex}-label`} text={option.label} style={styles.optionLabel} />
                                                 {option.description && (
-                                                    <Text style={styles.optionDescription}>{option.description}</Text>
+                                                    <ToolFindText messageId={messageId} blockId={`tool-question-${qIndex}-option-${oIndex}-description`} text={option.description} style={styles.optionDescription} />
                                                 )}
                                             </View>
                                         </TouchableOpacity>

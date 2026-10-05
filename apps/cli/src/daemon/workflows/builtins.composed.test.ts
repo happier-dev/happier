@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
 import {
   getWorkflowStarterExamplesV1, materializeWorkflowAcceptedSnapshotV1,
   resolveBuiltinWorkflowDefinitionV1, type WorkflowDefinitionV1, type WorkflowAcceptedAuthorizationV1,
@@ -71,7 +72,7 @@ type Fixtures = {
   usage?: number; budget?: number;
   session?: (id: string, input: Parameters<WorkflowStepExecutor>[0]['input']) => JsonValue;
   reviewFailed?: boolean;
-  reviewLaunchFailure?: string;
+  reviewLaunchFailure?: boolean;
   comments?: () => readonly ReviewCommentV1[];
   panelCommentIds?: readonly string[];
   judgeVerdicts?: JsonValue[];
@@ -94,13 +95,17 @@ function harness(fixtures: Fixtures = {}) {
   let checkIndex = 0;
   let sessionStep: Parameters<WorkflowStepExecutor>[0] | undefined;
   let enqueueIndex = 0;
+  let reviewLaunchRejected = false;
   const nativeDeps: Partial<ActionExecutorDeps> = {
     isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id,
       fixtures.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), ctx),
     executionRunCheckProtocolV2: async () => ({ ok: true }),
     executionRunStart: async (sessionId, request) => {
-      if (request.intent === 'review' && request.backendTargetKey === fixtures.reviewLaunchFailure) {
-        throw Object.assign(new Error('native_review_launch_failed'), { code: 'native_review_launch_failed' });
+      if (request.intent === 'review' && fixtures.reviewLaunchFailure && !reviewLaunchRejected) {
+        reviewLaunchRejected = true;
+        throw Object.assign(new Error('native_review_launch_failed'), {
+          code: 'native_review_launch_failed', details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
+        });
       }
       const runId = `native-${nativeRuns.size}`;
       launches.push({ sessionId, request });
@@ -316,7 +321,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.notifications).toHaveLength(1);
   });
   it('collects a reviewer that provably launched no run while preserving its successful sibling', async () => {
-    const h = harness({ checks: [{ verdict: 'continue' }], reviewLaunchFailure: engine });
+    const h = harness({ checks: [{ verdict: 'continue' }], reviewLaunchFailure: true });
     expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine], maxRounds: 1 }))
       .toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(h.store.list().some((row) => row.blockKind === 'action' && row.lifecycle === 'failed'

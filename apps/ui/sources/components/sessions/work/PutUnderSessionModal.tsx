@@ -14,18 +14,18 @@ import { setSessionReportsTo } from '@/sync/ops/relations/setSessionReportsTo';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
+import { loadSessionReportsToEligibility, type SessionReportsToEligibilitySnapshot } from '@/sync/ops/relations/sessionReportsToEligibility';
+
 import { describeReportsToRefusal } from './putSessionUnderLead';
-import { listPutUnderCandidates } from './putUnderCandidates';
+import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
 
 /**
- * "Put under…" (ORC §3.8, R-03): the keyboard and screen-reader equivalent of dragging a Session
- * under a lead. It lists the Sessions on the same Home that can lead this one — never itself or a
- * Session already under it — plus "Top level" when it reports somewhere now, and asks the one
- * `session.reports_to.set` Action with the lead it saw as the expected current lead. The server's
- * fence and compare-and-set decide; a refusal is said in words and nothing else changes.
+ * "Put under…" (ORC §3.8, R-03; DnD lab K1c): the keyboard, phone and screen-reader equivalent of
+ * dragging a Session under a lead. It asks the Home once for the relation facts, lists the Sessions
+ * that can lead this one and, under "Can't take reports", the ones that cannot with the owner's
+ * reason, and asks the one `session.reports_to.set` Action with the lead it saw as the expected
+ * current lead. The server's fence and compare-and-set decide; a refusal is said in words.
  */
-
-const TOP_LEVEL_OPTION_ID = '__top_level__';
 
 const stylesheet = StyleSheet.create((theme) => ({
     body: {
@@ -56,31 +56,66 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
     const snapshot = React.useMemo(() => {
         const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
         const self = sessions[props.sessionId] ?? null;
-        return {
-            currentLeadId: self?.reportsTo?.sessionId ?? null,
-            candidates: self ? listPutUnderCandidates(sessions, self) : [],
-        };
+        return { sessions, currentLeadId: self?.reportsTo?.sessionId ?? null };
     }, [props.sessionId]);
+    // One relation-facts batch per open; `undefined` while the Home is being asked.
+    const [facts, setFacts] = React.useState<SessionReportsToEligibilitySnapshot | null | undefined>(undefined);
+    React.useEffect(() => {
+        if (!props.serverId) {
+            setFacts(null);
+            return;
+        }
+        const abort = new AbortController();
+        let loaded: SessionReportsToEligibilitySnapshot | null = null;
+        const candidateSessionIds = Object.values(snapshot.sessions)
+            .filter((session) => (session.serverId ?? null) === props.serverId && session.id !== props.sessionId)
+            .map((session) => session.id);
+        void loadSessionReportsToEligibility({
+            serverId: props.serverId,
+            sessionId: props.sessionId,
+            candidateSessionIds,
+            signal: abort.signal,
+        }).then((next) => {
+            if (abort.signal.aborted) {
+                next?.dispose();
+                return;
+            }
+            loaded = next;
+            setFacts(next);
+        });
+        return () => {
+            abort.abort();
+            loaded?.dispose();
+        };
+    }, [props.serverId, props.sessionId, snapshot.sessions]);
 
-    const step = React.useMemo<SelectionListStep>(() => ({
-        id: 'leads',
-        inputPlaceholder: t('sessionWork.putUnder.search'),
-        sections: [{
-            kind: 'static',
+    const step = React.useMemo<SelectionListStep>(() => {
+        const sections = facts === undefined ? [] : buildPutUnderChooserSections({
+            sessions: snapshot.sessions,
+            sessionId: props.sessionId,
+            facts,
+            describeName: (session) => getSessionName(session, session.serverId ?? null),
+        });
+        return {
             id: 'leads',
-            options: [
-                ...(snapshot.currentLeadId ? [{ id: TOP_LEVEL_OPTION_ID, label: t('sessionWork.putUnder.topLevel') }] : []),
-                ...snapshot.candidates.map((candidate) => ({
-                    id: candidate.id,
-                    label: getSessionName(candidate, candidate.serverId ?? null),
+            inputPlaceholder: t('sessionWork.putUnder.search'),
+            sections: sections.map((section) => ({
+                kind: 'static' as const,
+                id: section.id,
+                ...(section.title ? { title: section.title } : {}),
+                options: section.options.map((option) => ({
+                    id: option.id,
+                    label: option.label,
+                    ...(option.detail ? { subtitle: option.detail } : {}),
+                    ...(option.disabled ? { disabled: true } : {}),
                 })),
-            ],
-        }],
-    }), [snapshot]);
+            })),
+        };
+    }, [facts, props.sessionId, snapshot.sessions]);
 
     const onSelect = React.useCallback((optionId: string) => {
         if (busy) return;
-        const leadSessionId = optionId === TOP_LEVEL_OPTION_ID ? null : optionId;
+        const leadSessionId = optionId === PUT_UNDER_TOP_LEVEL_OPTION_ID ? null : optionId;
         if (leadSessionId === snapshot.currentLeadId) {
             onClose();
             return;

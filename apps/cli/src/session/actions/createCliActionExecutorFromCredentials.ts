@@ -517,6 +517,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
   /** Current committed contributed Action declarations for catalog discovery. */
   listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
+  inputTypeDeps?: Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>;
   /** Daemon-owned execution bypasses its own authenticated control bridge. */
   pluginActionExecutionOwner?: 'daemon_control' | 'current_process';
   /** Root `happier actions` is a signed client of the daemon External Action API. */
@@ -808,6 +809,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       ...(params.listContributedActionDefinitions
         ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
         : {}),
+      ...(params.inputTypeDeps ? { inputTypeDeps: params.inputTypeDeps } : {}),
       ...(params.hostExternalSessionAction
         ? { hostExternalSessionAction: params.hostExternalSessionAction }
         : {}),

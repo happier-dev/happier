@@ -2588,6 +2588,8 @@ export function useSessionListViewStateFromPaneState(
         folderFocus: renderPaneState.folderFocus,
         folderFocusRootTitle,
         dropOverlayShared: rowInteractions.dropOverlayShared,
+        entityDragDrop: rowInteractions.entityDragDrop,
+        stagedMove: rowInteractions.stagedMove,
         onClearFolderFocus: handleClearFolderFocus,
         onSelectFolderBreadcrumb: handleSelectFolderBreadcrumb,
     };

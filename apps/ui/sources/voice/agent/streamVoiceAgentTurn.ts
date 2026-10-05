@@ -30,13 +30,9 @@ export async function streamVoiceAgentTurn(params: Readonly<{
     onStreamFinished?: () => void | Promise<void>;
 }>): Promise<Readonly<{ assistantText: string; actions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> }>> {
     const abort = createAbortRacer(params.options?.signal);
-    const resolveStreamReadConfig = () => {
-        const settings: any = storage.getState().settings;
-        const voiceCfg = readLocalConversationSettingsFromAccountSettings(settings);
-        return resolveVoiceTurnStreamReadConfig(voiceCfg);
-    };
-
-    const streamCfg = resolveStreamReadConfig();
+    const voiceCfg = readLocalConversationSettingsFromAccountSettings(storage.getState().settings);
+    const streamCfg = resolveVoiceTurnStreamReadConfig(voiceCfg);
+    const speechSegmentTargetChars = voiceCfg.streaming.ttsChunkChars;
 
     let started: { streamId: string } | null = null;
     let terminalCancellationObserved = false;
@@ -47,6 +43,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
             voiceAgentId: params.handle.voiceAgentId,
             userText: params.userText,
             displayUserText: params.displayUserText,
+            speechSegmentTargetChars,
             ...(params.resume === true ? { resume: true } : {}),
             ...(params.options?.userTranscript ? { userTranscript: params.options.userTranscript } : {}),
         });
@@ -55,7 +52,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
         abort.throwIfAborted();
 
         let cursor = 0;
-        const outputAdapter = createLegacyVoiceOutputAdapter({ streamId: started.streamId });
+        const outputAdapter = createLegacyVoiceOutputAdapter({ streamId: started.streamId, speechSegmentTargetChars });
         let mergedDeltaText = '';
         let doneAssistantText: string | null = null;
         let doneActions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> = [];

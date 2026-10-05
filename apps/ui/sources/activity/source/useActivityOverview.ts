@@ -54,7 +54,7 @@ function readNextAttentionBoundaryMs(
  * keeps it honest while nothing arrives.
  *
  * A store change is a render, so a source-keyed projection is correct for every
- * fact the server pushes. Pre-viewer `user_action_required` is the exception —
+ * fact the server pushes. Pre-viewer pending-request attention is the exception —
  * it retires on a freshness budget rather than on an event — so a surface that
  * only re-projects on source identity keeps a retired row and an uncleanable
  * dot indefinitely. The boundary timer is local to the mounted consumer (the
@@ -85,7 +85,14 @@ export function useActivityOverview(): MountedActivityOverview {
     return React.useMemo(() => ({ source, overview }), [overview, source]);
 }
 
-export function useActivityOverviewSummary(): ActivityOverviewSummary {
+export type MountedActivityOverviewSummary = Readonly<{
+    source: ActivityAttentionSource;
+    nowMs: number;
+    summary: ActivityOverviewSummary;
+}>;
+
+/** Summary consumers share the canonical attention boundary clock, without messages. */
+export function useMountedActivityOverviewSummary(): MountedActivityOverviewSummary {
     const source = useActivityAttentionSummarySource();
     const [boundaryVersion, advanceBoundary] = React.useReducer((value: number) => value + 1, 0);
     const nowMs = React.useMemo(() => Date.now(), [boundaryVersion, source]);
@@ -107,5 +114,9 @@ export function useActivityOverviewSummary(): ActivityOverviewSummary {
         return () => clearTimeout(timeoutId);
     }, [summary.nextAttentionBoundaryMs]);
 
-    return summary;
+    return React.useMemo(() => ({ source, nowMs, summary }), [source, nowMs, summary]);
+}
+
+export function useActivityOverviewSummary(): ActivityOverviewSummary {
+    return useMountedActivityOverviewSummary().summary;
 }

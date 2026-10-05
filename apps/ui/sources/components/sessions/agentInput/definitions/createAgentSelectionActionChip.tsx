@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View, type View as ViewInstance } from 'react-native';
+import { Pressable, StyleSheet, View, type View as ViewInstance } from 'react-native';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
@@ -15,6 +15,11 @@ const AGENT_CHIP_LOGO_SLOT_STYLE = {
     alignItems: 'center',
     justifyContent: 'center',
 } as const;
+
+const styles = StyleSheet.create({
+    chip: { minWidth: 0, flexShrink: 1 },
+    label: { minWidth: 0, flexShrink: 1 },
+});
 
 export function createAgentSelectionActionChip(params: Readonly<{
     anchorRef: React.RefObject<ViewInstance | null>;
@@ -38,7 +43,7 @@ export function createAgentSelectionActionChip(params: Readonly<{
             accessibilityLabel={params.label}
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            style={(state) => params.chipStyle(state.pressed)}
+            style={(state) => [params.chipStyle(state.pressed), styles.chip]}
         >
             <View style={AGENT_CHIP_LOGO_SLOT_STYLE}>
                 {normalizeNodeForView(
@@ -54,7 +59,7 @@ export function createAgentSelectionActionChip(params: Readonly<{
                 )}
             </View>
             {params.showLabel ? (
-                <Text style={params.textStyle}>{params.label}</Text>
+                <Text numberOfLines={1} style={[params.textStyle, styles.label]}>{params.label}</Text>
             ) : null}
         </Pressable>
     );

@@ -124,7 +124,7 @@ installSessionShellCommonModuleMocks({
 // loads. Configure those first and finish loading before any renderer/test starts.
 const { renderScreen, standardCleanup } = await import('@/dev/testkit');
 const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
-await import('./sessionListChrome');
+const { ProjectGroupHeader, CollapsibleSectionHeader, FolderGroupHeader, SessionFolderFocusBreadcrumbs } = await import('./sessionListChrome');
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {

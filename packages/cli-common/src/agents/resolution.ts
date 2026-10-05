@@ -15,7 +15,7 @@ import {
 import * as legacyCustomAcpCompat from '@happier-dev/agents/compat/customAcp';
 import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 
-import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
+import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '../path/expandHomeDirPath.js';
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
 import {
   resolveExplicitJavaScriptRuntimeCommand,
@@ -410,12 +410,17 @@ function resolveCommandInKnownUserDirs(
   command: string,
   processEnv: NodeJS.ProcessEnv,
 ): string | null {
-  const homeDir = typeof processEnv.HOME === 'string' ? processEnv.HOME.trim() : '';
-  if (!homeDir) return null;
-
-  const suffixes = runtimeSpec.knownUserBinDirSuffixes ?? [];
-  for (const suffix of suffixes) {
-    const candidate = join(homeDir, suffix, command);
+  const environmentDirs = (runtimeSpec.knownEnvironmentBinDirs ?? []).flatMap(({ envVar, relativeDir }) => {
+    const root = expandHomeDirPath(processEnv[envVar]?.trim() ?? '', processEnv);
+    return root ? [join(root, relativeDir)] : [];
+  });
+  const homeDir = resolveHomeDirFromEnvironment(processEnv);
+  const knownDirs = [
+    ...environmentDirs,
+    ...(runtimeSpec.knownUserBinDirSuffixes ?? []).map((suffix) => join(homeDir, suffix)),
+  ];
+  for (const dir of knownDirs) {
+    const candidate = join(dir, command);
     if (process.platform === 'win32') {
       const resolved = resolveWindowsCommandPath(candidate, processEnv);
       if (resolved) return resolved;

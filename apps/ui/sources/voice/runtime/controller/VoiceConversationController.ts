@@ -27,6 +27,7 @@ import {
   type VoiceTurnControlAction,
 } from '@/voice/runtime/protocol/VoiceTurnControlCapabilities';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
   normalizeVoiceRuntimeFailureCode,
   recordVoiceRuntimeFailure,
@@ -91,6 +92,11 @@ export type VoiceConversationControllerMachinePort = Readonly<{
 }>;
 
 export type VoiceConversationControllerDeps = Readonly<{
+  /** A concrete capture owner that can temporarily open and restore input. */
+  holdCapture?: Readonly<{
+    /** Null restores the capture owner's current policy, including user Mute. */
+    setOpen(input: Readonly<{ controlSessionId: string; attemptId: number; open: boolean | null }>): Promise<void>;
+  }>;
   adapter: VoiceRealtimeProtocolAdapter;
   machine: VoiceConversationControllerMachinePort;
   createConnection(
@@ -180,6 +186,9 @@ export type VoiceConversationController = Readonly<{
   >;
   getActiveControlSessionId(): string | null;
   canCommitInput(): boolean;
+  canHoldToTalk(): boolean;
+  beginHoldToTalk(): VoiceHeldInput | null;
+  cancelHoldToTalk(): Promise<void>;
   getOwnedControlSessionId(): string | null;
   /** Existing attempt identity for a current owner-scoped side effect. */
   getOwnedAttemptId(): number | null;
@@ -194,11 +203,19 @@ export type VoiceConversationController = Readonly<{
   setOutputFocusState?(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
 }>;
 
+/** Admission belongs to one connection; an early release never opens capture. */
+export type VoiceHeldInput = Readonly<{
+  ready: Promise<boolean>;
+  release(): Promise<void>;
+  cancel(): Promise<void>;
+}>;
+
 export type CreateVoiceConversationController = (
   input: VoiceConversationControllerDeps,
 ) => VoiceConversationController;
 
 type Attempt = {
+  heldInput: VoiceHeldInput | null;
   id: number;
   controlSessionId: string;
   abortController: AbortController;
@@ -356,7 +373,12 @@ export function createVoiceConversationController(
       providerSessionId,
       reason,
     }) ?? Promise.resolve();
-    await attempt.providerSessionEndPromise.catch(() => {});
+    try {
+      await attempt.providerSessionEndPromise;
+    } catch (error) {
+      attempt.providerSessionEndPromise = null;
+      throw error;
+    }
     if (attempt.providerSessionId === providerSessionId) attempt.providerSessionId = null;
   };
 
@@ -382,12 +404,33 @@ export function createVoiceConversationController(
     attempt: Attempt,
     reason: VoiceConnectionCloseReason,
   ): Promise<void> => {
+    void attempt.heldInput?.cancel().catch(() => undefined);
     disposeToolBarrier(attempt);
+    // Media/audio release is independent of hosted attestation and starts now.
+    if (attempt.resourcesPrepared) {
+      attempt.resourceReleasePromise ??= deps.resources?.release({
+        controlSessionId: attempt.controlSessionId,
+        attemptId: attempt.id,
+        reason,
+      }) ?? Promise.resolve();
+      // Observe rejection now while the independent provider settlement is pending.
+      void attempt.resourceReleasePromise.catch(() => undefined);
+    }
+    const failures: unknown[] = [];
     if (attempt.connection) {
       attempt.closePromise ??= attempt.connection.close(reason);
-      await attempt.closePromise.catch(() => {});
+      try {
+        await attempt.closePromise;
+      } catch (error) {
+        attempt.closePromise = null;
+        failures.push(error);
+      }
     }
-    await endProviderSession(attempt, reason.code);
+    try {
+      await endProviderSession(attempt, reason.code);
+    } catch (error) {
+      failures.push(error);
+    }
     attempt.providerPreparationReleasePromise ??= (async () => {
       await deps.adapter.releasePrepared?.({
         controlSessionId: attempt.controlSessionId,
@@ -395,15 +438,19 @@ export function createVoiceConversationController(
         reason,
       });
     })();
-    await attempt.providerPreparationReleasePromise.catch(() => {});
-    if (attempt.resourcesPrepared) {
-      attempt.resourceReleasePromise ??= deps.resources?.release({
-        controlSessionId: attempt.controlSessionId,
-        attemptId: attempt.id,
-        reason,
-      }) ?? Promise.resolve();
-      await attempt.resourceReleasePromise.catch(() => {});
+    try {
+      await attempt.providerPreparationReleasePromise;
+    } catch (error) {
+      attempt.providerPreparationReleasePromise = null;
+      failures.push(error);
     }
+    try {
+      await attempt.resourceReleasePromise;
+    } catch (error) {
+      attempt.resourceReleasePromise = null;
+      failures.push(error);
+    }
+    if (failures.length) throw failures[0];
   };
 
   const settleDisconnected = (attempt: Attempt, code?: string): void => {
@@ -417,12 +464,14 @@ export function createVoiceConversationController(
     });
   };
 
-  const claimAttemptOwnership = (attempt: Attempt): Promise<void> => {
+  const claimAttemptOwnership = async (attempt: Attempt): Promise<void> => {
     const previous = current;
-    current = attempt;
-    if (!previous) return Promise.resolve();
-    previous.abortController.abort();
-    return closeAttempt(previous, { code: 'replaced' });
+    if (previous) {
+      previous.abortController.abort();
+      await closeAttempt(previous, { code: 'replaced' });
+      if (current === previous) current = null;
+    }
+    if (sequence === attempt.id) current = attempt;
   };
 
   const settleReconnectFailure = async (attempt: Attempt, code: string): Promise<void> => {
@@ -464,6 +513,7 @@ export function createVoiceConversationController(
 
     const reconnectPromise = (async () => {
     attempt.reconnecting = true;
+    void attempt.heldInput?.cancel().catch(() => undefined);
     deps.machine.reconnecting?.({
       controlSessionId: attempt.controlSessionId,
       attemptId: attempt.id,
@@ -646,8 +696,8 @@ export function createVoiceConversationController(
         if (!attempt.toolBarrier) createToolBarrier(attempt);
         attempt.reconnecting = false;
         const connectionId = ++attempt.connectionSequence;
-        void pumpControlEvents(attempt, nextConnection, connectionId);
-        void pumpTransportEvents(attempt, nextConnection);
+        fireAndForget(pumpControlEvents(attempt, nextConnection, connectionId), { tag: 'VoiceConversation.controlEvents' });
+        fireAndForget(pumpTransportEvents(attempt, nextConnection), { tag: 'VoiceConversation.transportEvents' });
         return;
       }
       await settleReconnectFailure(attempt, 'reconnect_exhausted');
@@ -874,6 +924,7 @@ export function createVoiceConversationController(
       toolTasks: new Set(),
       toolResultReplay: 'none',
       inputCommitRequired: false,
+      heldInput: null,
       request: input.request ?? null,
       resourcesPrepared: false,
       resourceReleasePromise: null,
@@ -883,10 +934,9 @@ export function createVoiceConversationController(
       authRefreshCount: 0,
       connectionSequence: 0,
     };
-    const previousAttemptCleanup = claimAttemptOwnership(attempt);
+    await claimAttemptOwnership(attempt);
 
     try {
-      await previousAttemptCleanup;
       if (!owns(attempt)) {
         await closeAttempt(attempt, { code: 'aborted' });
         settleDisconnected(attempt);
@@ -1044,8 +1094,8 @@ export function createVoiceConversationController(
       }
       createToolBarrier(attempt);
       const connectionId = ++attempt.connectionSequence;
-      void pumpControlEvents(attempt, connection, connectionId);
-      void pumpTransportEvents(attempt, connection);
+      fireAndForget(pumpControlEvents(attempt, connection, connectionId), { tag: 'VoiceConversation.controlEvents' });
+      fireAndForget(pumpTransportEvents(attempt, connection), { tag: 'VoiceConversation.transportEvents' });
       return { status: 'connected' };
     } catch (error) {
       const aborted = attempt.abortController.signal.aborted || current !== attempt;
@@ -1078,12 +1128,12 @@ export function createVoiceConversationController(
   const stop = async (): Promise<void> => {
     const attempt = current;
     if (!attempt) return;
-    current = null;
     attempt.abortController.abort();
     if (!attempt.terminalSettled) {
       deps.machine.ending({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
     }
     await closeAttempt(attempt, { code: 'user_stop' });
+    if (current === attempt) current = null;
     if (!attempt.terminalSettled && sequence === attempt.id) {
       attempt.terminalSettled = true;
       deps.machine.disconnected({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
@@ -1093,9 +1143,9 @@ export function createVoiceConversationController(
   const fail = async (code: string): Promise<void> => {
     const attempt = current;
     if (!attempt) return;
-    current = null;
     attempt.abortController.abort();
     await closeAttempt(attempt, { code: 'error', detail: code });
+    if (current === attempt) current = null;
     if (attempt.terminalSettled || sequence !== attempt.id) return;
     attempt.terminalSettled = true;
     deps.machine.failed({
@@ -1108,11 +1158,15 @@ export function createVoiceConversationController(
   const performTurnControl = async (
     action: VoiceTurnControlAction,
     payload?: VoiceRealtimeJsonValue,
+    heldInput?: VoiceHeldInput,
   ): Promise<Readonly<{ status: 'sent' }> | Readonly<{
     status: 'unavailable';
     code: 'voice_turn_action_unsupported' | 'voice_connection_not_open';
   }>> => {
     const attempt = current;
+    if (action === 'commit_input' && attempt?.heldInput && attempt.heldInput !== heldInput) {
+      return { status: 'unavailable', code: 'voice_turn_action_unsupported' };
+    }
     const availability = resolveVoiceTurnControlAction(
       action === 'commit_input'
         ? { ...deps.adapter.turnControls, commitInput: attempt?.inputCommitRequired === true }
@@ -1128,7 +1182,8 @@ export function createVoiceConversationController(
     const connection = attempt.connection;
     await connection.sendControl(encoded);
     if (action === 'commit_input') {
-      const ownsConnection = () => owns(attempt) && attempt.connection === connection && connection.state() === 'open';
+      const ownsConnection = () => owns(attempt) && deps.isSelectionCurrent()
+        && attempt.connection === connection && connection.state() === 'open';
       if (!ownsConnection()) return { status: 'unavailable', code: 'voice_connection_not_open' };
       for (const event of deps.adapter.encodePostInputCommitControls?.() ?? []) {
         if (!ownsConnection()) return { status: 'unavailable', code: 'voice_connection_not_open' };
@@ -1163,6 +1218,61 @@ export function createVoiceConversationController(
   const canCommitInput = (): boolean => {
     const attempt = current;
     return attempt?.inputCommitRequired === true && owns(attempt) && attempt.connection?.state() === 'open';
+  };
+
+  const canHoldToTalk = (): boolean => canCommitInput()
+    && current?.reconnecting !== true
+    && deps.isSelectionCurrent()
+    && deps.holdCapture !== undefined
+    && deps.adapter.turnControls.clearInput
+    && deps.adapter.encodeTurnControl('clear_input') !== null
+    && (deps.adapter.encodePostInputCommitControls?.().length ?? 0) > 0;
+
+  const beginHoldToTalk = (): VoiceHeldInput | null => {
+    const attempt = current;
+    const capture = deps.holdCapture;
+    if (!attempt?.connection || !capture || !canHoldToTalk() || attempt.heldInput) return null;
+    const connection = attempt.connection;
+    const isCurrent = () => owns(attempt) && deps.isSelectionCurrent()
+      && attempt.connection === connection && connection.state() === 'open';
+    let finishing: Promise<void> | null = null;
+    let settled = false;
+    let opened = false;
+    const setOpen = (open: boolean | null) => capture.setOpen({
+      controlSessionId: attempt.controlSessionId, attemptId: attempt.id, open,
+    });
+    const ready = (async () => {
+      await setOpen(false);
+      if (settled || !isCurrent()) return false;
+      await performTurnControl('clear_input');
+      if (settled || !isCurrent()) return false;
+      opened = true;
+      await setOpen(true);
+      return !settled && isCurrent();
+    })();
+    const finish = (commit: boolean): Promise<void> => {
+      if (finishing) return finishing;
+      settled = true;
+      finishing = (async () => {
+        try {
+          let admitted = false;
+          try { admitted = await ready; }
+          finally { if (opened) await setOpen(false); }
+          if (!opened || !isCurrent()) return;
+          await performTurnControl(commit && admitted ? 'commit_input' : 'clear_input', undefined, hold);
+        } finally {
+          try { await setOpen(null); }
+          finally { if (attempt.heldInput === hold) attempt.heldInput = null; }
+        }
+      })();
+      return finishing;
+    };
+    const hold: VoiceHeldInput = Object.freeze({ ready, release: () => finish(true), cancel: () => finish(false) });
+    attempt.heldInput = hold;
+    // Retiring the attempt makes every late gesture inert; resource teardown
+    // remains the capture owner's responsibility even if admission is pending.
+    void ready.catch(() => { void hold.cancel().catch(() => undefined); });
+    return hold;
   };
 
   const getOwnedControlSessionId = (): string | null => {
@@ -1228,6 +1338,9 @@ export function createVoiceConversationController(
     sendClientControl,
     getActiveControlSessionId,
     canCommitInput,
+    canHoldToTalk,
+    beginHoldToTalk,
+    cancelHoldToTalk: async () => { await current?.heldInput?.cancel(); },
     getOwnedControlSessionId,
     getOwnedAttemptId,
     requestReconnect,

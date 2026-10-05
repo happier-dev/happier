@@ -61,6 +61,8 @@ const {
 const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
 const { createPluginActionCurrentIntentHandler } = await import('./pluginSurfaceFeedback');
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+const { PluginProjectedActionV2Schema, normalizeActionsSettingsV1 } = await import('@happier-dev/protocol');
+const { getStorage } = await import('@/sync/domains/state/storageStore');
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -90,9 +92,16 @@ const canonicalSurface = createPluginSurfaceContextFixture({
  * only `@/modal`, the platform dialog boundary, is substituted, and it answers
  * with a real user decision.
  */
-function createMountedSurface(isCurrent?: () => boolean) {
+function createMountedSurface(isCurrent?: () => boolean, dangerLevel: 'safe' | 'writesLocal' = 'writesLocal') {
+    const action = PluginProjectedActionV2Schema.parse({
+        pluginId: surfaceContext.pluginId, id: 'update', occurrenceId: 'occurrence-1', title: 'Update preview',
+        dangerLevel, scopes: ['global'], surfaces: ['ui'],
+        ...(dangerLevel === 'safe' ? {} : { confirmation: { title: 'Update preview?', body: 'This changes local state.' } }),
+        available: true, execution: { target: 'daemon' },
+    });
     const host = createPluginSurfaceActionHostApi({
         surfaceContext,
+        resolveContributedAction: ({ pluginId, localId }) => pluginId === action.pluginId && localId === action.id ? action : null,
         interactionRequester: {
             pluginId: 'acme.preview',
             contributionId: 'native-preview',
@@ -135,6 +144,44 @@ afterEach(() => {
 });
 
 describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () => {
+    it('refuses an Action-bound direct write when its declaration is unavailable', async () => {
+        const { adapter } = createMountedSurface();
+        await expect(adapter.api.confirm('Update?', { action: 'missing' })).rejects.toMatchObject({ code: 'unavailable' });
+        expect(modalHarness.shown()).toBe(false);
+        adapter.dispose();
+    });
+    it('uses Action policy for direct UI writes: waiver skips, safe Ask-first asks and decline prevents the write', async () => {
+        const storage = getStorage();
+        const previous = storage.getState();
+        const setPolicy = (required: boolean) => storage.setState(state => ({
+            ...state, settings: { ...state.settings, actionsSettingsV1: normalizeActionsSettingsV1(required
+                ? { v: 1, actions: { 'acme.preview/actions/update': { approvalRequiredSurfaces: ['ui'] } } }
+                : { v: 1, approvalWaivedSurfaces: { 'acme.preview/actions/update': ['ui'] } }) },
+        }));
+        try {
+            setPolicy(false);
+            const waived = createMountedSurface();
+            const waivedResult = waived.adapter.api.confirm('Update?', { action: 'update' }).catch(error => error);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(modalHarness.shown()).toBe(false);
+            await expect(waivedResult).resolves.toBe(true);
+            waived.adapter.dispose();
+            setPolicy(true);
+            const required = createMountedSurface(undefined, 'safe');
+            let written = false;
+            const write = (async () => {
+                if (await required.adapter.api.confirm('Update?', { action: 'update' })) written = true;
+            })();
+            await openedDialog();
+            expect(written).toBe(false);
+            modalHarness.readConfig().props.onCancel();
+            await write;
+            expect(written).toBe(false);
+            required.adapter.dispose();
+        } finally {
+            storage.setState(previous);
+        }
+    });
     it('advertises notify and confirm as installed methods', () => {
         const { host, adapter } = createMountedSurface();
         expect(host.installedMethods).toEqual(expect.arrayContaining(['notify', 'confirm']));

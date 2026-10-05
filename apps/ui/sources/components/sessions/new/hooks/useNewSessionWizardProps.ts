@@ -151,6 +151,8 @@ export function useNewSessionWizardProps(params: Readonly<{
     // Footer section
     promptStore: NewSessionPromptStore;
     composerDocument?: NewSessionWizardFooterProps['composerDocument'];
+    composerReferenceHost?: NewSessionWizardFooterProps['composerReferenceHost'];
+    composerFileScope?: NewSessionWizardFooterProps['composerFileScope'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: () => void;
     registerTemporaryComputerReplacementLaunch?: NewSessionWizardFooterProps['registerTemporaryComputerReplacementLaunch'];
@@ -515,6 +517,8 @@ export function useNewSessionWizardProps(params: Readonly<{
         return {
             promptStore: params.promptStore,
             composerDocument: params.composerDocument,
+            composerReferenceHost: params.composerReferenceHost,
+            composerFileScope: params.composerFileScope,
             setSessionPrompt: params.setSessionPrompt,
             handleCreateSession: params.handleCreateSession,
             registerTemporaryComputerReplacementLaunch: params.registerTemporaryComputerReplacementLaunch,
@@ -571,6 +575,8 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.resumeSessionId,
         params.retryProviderLaunch,
         params.composerDocument,
+        params.composerReferenceHost,
+        params.composerFileScope,
         params.promptStore,
         params.sessionPromptInputMaxHeight,
         params.setSessionPrompt,

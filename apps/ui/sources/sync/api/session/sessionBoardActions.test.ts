@@ -4,8 +4,6 @@ import { createSessionSystemRecordRepository } from '@/sync/domains/sessionSyste
 import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
 import { SecretBoxEncryption } from '@/sync/encryption/encryptor';
-import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 const scope = { serverId: 'home-a', accountId: 'alice' };
@@ -15,25 +13,18 @@ const item = {
     v: 1, title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
     source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Hello' } } },
 } as const;
+const installed = { ...item, source: { kind: 'widget', instance: {
+    v: 1, id: 'status', definition: { kind: 'installed', surface: { pluginId: 'acme.widgets', localId: 'status' } }, bindings: {},
+} } } as const;
 
 function createSessionBoardActionAdapter(options: Omit<Parameters<typeof createAdapter>[0], 'repository'>) {
     return createAdapter({ ...options, repository: createSessionSystemRecordRepository(options) });
 }
 
 describe('Session Board Action adapter', () => {
-    it('creates only an exact available widget from the current projection', async () => {
-        const installed = { ...item, source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'status' } } } as const;
-        const binding = normalizePluginUiInlineSurfaceBindingV1({ pluginId: 'acme.widgets', surfaceId: 'status', rendererId: 'native', role: 'widget', target: { kind: 'session' } });
-        if (!binding) throw new Error('invalid fixture');
-        const projection: PluginUiProjectionModel = { ...EMPTY_PLUGIN_UI_PROJECTION, surfacePlacementsById: {
-            status: { id: 'status', pluginId: 'acme.widgets', occurrenceId: 'acme-widgets-occurrence-current', contributionKind: 'surfacePlacement', descriptorId: 'status', binding,
-                target: binding.target, renderer: { kind: 'declarative', contributionId: 'native' }, display: { title: 'Status' }, headerActions: [],
-                availability: { state: 'available', reason: 'available', diagnostics: [] } },
-        } };
-        let currentProjection: PluginUiProjectionModel | null = projection;
+    it('stores current widget references and rejects the retired installed-surface shape', async () => {
         let writes = 0;
         const execute = createSessionBoardActionAdapter({ scope, session, contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true },
-            resolveInstalledSurfaceProjection: async () => currentProjection,
             request: async (_path, init) => {
                 if (init?.method !== 'PUT') return new Response(JSON.stringify({ record: null }));
                 writes += 1;
@@ -42,20 +33,12 @@ describe('Session Board Action adapter', () => {
         });
         const input = { sessionId: session.sessionId, itemId: 'status', expectedItemRevision: null, item: installed, placement: { tabId: 'overview', tabTitle: 'Overview' } };
         await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input })).resolves.toMatchObject({ result: { outcome: 'created' } });
-        currentProjection = null;
-        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input })).resolves.toMatchObject({ errorCode: 'unsupported_action' });
-        currentProjection = { ...projection, surfacePlacementsById: { status: { ...projection.surfacePlacementsById.status!, availability: { state: 'disabled', reason: 'disabled', diagnostics: [] } } } };
-        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input })).resolves.toMatchObject({ errorCode: 'unsupported_action' });
-        currentProjection = { ...projection, surfacePlacementsById: { ...projection.surfacePlacementsById, duplicate: { ...projection.surfacePlacementsById.status!, id: 'duplicate' } } };
-        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input })).resolves.toMatchObject({ errorCode: 'unsupported_action' });
-        currentProjection = projection;
         await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: { ...input,
-            item: { ...installed, source: { ...installed.source, surface: { pluginId: 'other.widgets', localId: 'status' } } },
-        } })).resolves.toMatchObject({ errorCode: 'unsupported_action' });
+            item: { ...item, source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'status' } } },
+        } })).resolves.toMatchObject({ errorCode: 'session_board_invalid' });
         expect(writes).toBe(1);
     });
     it('updates an existing installed item without replacing its source identity', async () => {
-        const installed = { ...item, source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'status' } } } as const;
         const writes: unknown[] = [];
         const execute = createSessionBoardActionAdapter({ scope, session, contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true },
             request: async (_path, init) => {
@@ -71,7 +54,9 @@ describe('Session Board Action adapter', () => {
             itemId: 'status', expectedItemRevision: revision, item: { ...installed, title: 'Renamed' } } })).resolves.toMatchObject({ result: { outcome: 'updated' } });
         expect(writes).toEqual([expect.objectContaining({ itemContent: { t: 'plain', v: { ...installed, title: 'Renamed' } } })]);
         await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: { sessionId: session.sessionId,
-            itemId: 'status', expectedItemRevision: revision, item: { ...installed, source: { ...installed.source, surface: { ...installed.source.surface, localId: 'other' } } } } })).resolves.toMatchObject({ errorCode: 'session_board_source_conflict' });
+            itemId: 'status', expectedItemRevision: revision, item: { ...installed, source: { ...installed.source, instance: {
+                ...installed.source.instance, definition: { ...installed.source.instance.definition, surface: { ...installed.source.instance.definition.surface, localId: 'other' } },
+            } } } } })).resolves.toMatchObject({ errorCode: 'session_board_source_conflict' });
         expect(writes).toHaveLength(1);
     });
     it('acknowledges the requested second view when an item already placed elsewhere gains another placement', async () => {
@@ -431,23 +416,16 @@ describe('Session Board Action adapter', () => {
         })).resolves.toEqual({ ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' });
         expect(requests).toBe(0);
     });
-    it('projects pre-dispatch owner exceptions through the strict Board failure vocabulary', async () => {
-        const installed = {
-            ...item,
-            source: { kind: 'installedSurface', surface: { pluginId: 'acme.widgets', localId: 'status' } },
-        } as const;
+    it('projects pre-dispatch record transport failures through the strict Board failure vocabulary', async () => {
         let requests = 0;
         const execute = createSessionBoardActionAdapter({
             scope,
             session,
             contentContext: { mode: 'plain' },
             capabilities: { readTranscript: true, editSessionRecords: true },
-            resolveInstalledSurfaceProjection: async () => {
-                throw { code: 'plugin_session_records_unavailable' };
-            },
             request: async (_path, init) => {
                 requests += 1;
-                if (init?.method !== 'PUT') return new Response(JSON.stringify({ record: null }));
+                if (init?.method !== 'PUT') throw new Error('network unavailable');
                 throw new Error('mutation must not be reached');
             },
         });
@@ -462,7 +440,7 @@ describe('Session Board Action adapter', () => {
                 placement: { tabId: 'overview', tabTitle: 'Overview' },
             },
             context: {},
-        })).resolves.toEqual({ ok: false, errorCode: 'protocol_unavailable', error: 'protocol_unavailable' });
+        })).resolves.toEqual({ ok: false, errorCode: 'offline', error: 'offline' });
         expect(requests).toBe(1);
     });
     it('projects a record-owner feature refusal with the exact Board operation', async () => {

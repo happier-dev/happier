@@ -87,6 +87,24 @@ function setWorkingTextAnimation(enabled: boolean) {
     }));
 }
 
+describe('nullable static session presentation', () => {
+    it('keeps an unbound presenter inert and uses canonical static work copy when it binds', async () => {
+        const { useSessionStatus } = await import('./sessionUtils');
+        setWorkingTextAnimation(true);
+        const session = createSessionListRenderableSessionFixture({
+            id: 'voice-work', encryptionMode: 'plain', active: true, activeAt: Date.now(),
+            presence: 'online', thinking: true, thinkingAt: Date.now(),
+        });
+        const hook = await renderHook(({ bound }: { bound: boolean }) => useSessionStatus(bound ? session : null, {
+            workingTextMode: 'static', subscribeToSession: false, subscribeToTranscript: false,
+        }), { initialProps: { bound: false } });
+        expect(hook.getCurrent()).toBeNull();
+        await hook.rerender({ bound: true });
+        expect(hook.getCurrent()).toMatchObject({ state: 'thinking', statusText: 'status.working' });
+        await hook.unmount();
+    });
+});
+
 function seedDisplayTargetSession(session: Session, path: string) {
     const serverId = getActiveServerSnapshot().serverId;
     storage.setState({

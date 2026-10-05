@@ -29,6 +29,7 @@ import {
     createPluginSurfaceOpenableContentHandlers,
     type PluginSurfaceOpenableContentBinding,
 } from '@/components/plugins/surfaces/pluginSurfaceOpenableContent';
+import { createPluginSurfaceStoredImageOwner } from '@/components/plugins/surfaces/pluginSurfaceStoredImage';
 
 import {
     createCanonicalPluginReactNativeHostApiAdapter,
@@ -57,6 +58,72 @@ function readProductionSource(relativePath: string): string {
 }
 
 describe('canonical React Native plugin Host API adapter', () => {
+    it('preserves an acknowledged area mutation when the carrier retires after the mounted edit', async () => {
+        let retire = () => {};
+        const result = { ok: true, result: { ref: { surface: { serverId: 'home', accountId: 'viewer',
+            owner: { kind: 'pluginArea', pluginId: surface.pluginId, pageId: surface.contributionId, area: 'pinned' } }, instanceId: 'copy' }, instance: null } };
+        const owner = createPluginSurfaceHostApi({ surfaceContext: surface, handlers: { widgetArea: () => { retire(); return result; } } });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
+            requestIdPrefix: 'rn-area-edit', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+        retire = adapter.dispose;
+        await expect(adapter.api.widgetArea({ area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } })).resolves.toEqual(result);
+    });
+    it('transports declared-area operations through the mounted host and refuses author authority', async () => {
+        const requests: unknown[] = [];
+        const owner = createPluginSurfaceHostApi({ surfaceContext: surface,
+            handlers: { widgetArea: request => { requests.push(request.payload); return { ok: false, errorCode: 'unavailable', error: 'area_not_available' }; } } });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
+            requestIdPrefix: 'rn-area', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+        const request = { area: 'pinned', operation: { actionId: 'widgets.instance.list' as const } };
+        await expect(adapter.api.widgetArea(request)).resolves.toMatchObject({ ok: false, errorCode: 'unavailable' });
+        await expect(adapter.api.widgetArea({ ...request, accountId: 'other' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(requests).toEqual([request]);
+        adapter.dispose();
+        await expect(adapter.api.widgetArea(request)).rejects.toMatchObject({ code: 'stale_surface' });
+    });
+    it('uses negotiated mounted entity methods and rejects authority-bearing source commands', async () => {
+        const owner = createPluginSurfaceHostApi({ surfaceContext: surface,
+            handlers: { readEntityDragItem: () => null, updateEntityDragDrop: () => ({ accepted: true }) } });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
+            requestIdPrefix: 'rn-entity', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+        await expect(adapter.api.readEntityDragItem({ kind: 'session' })).resolves.toBeNull();
+        await expect(adapter.api.updateEntityDragDrop({ kind: 'cancel' })).resolves.toEqual({ accepted: true });
+        await expect(adapter.api.updateEntityDragDrop({ kind: 'cancel', scope: { accountId: 'other' } } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        adapter.dispose();
+    });
+    it('reads stored images through the mounted owner and rejects malformed references and responses', async () => {
+        const image = { bytesBase64: 'aW1hZ2U=', mimeType: 'image/png' as const, width: 2, height: 3 };
+        let deliveredImage = image;
+        const mediaOwner = createPluginSurfaceStoredImageOwner({
+            pluginId: surface.pluginId, occurrenceId: 'occurrence-1', machineId: 'machine-1', serverId: 'server-1',
+            lifetimeSignal: new AbortController().signal, isCurrent: () => true,
+            // Only daemon transport is substituted; custody and mounted admission stay real.
+            read: async () => ({ ok: true, image: deliveredImage }),
+        });
+        mediaOwner.retainActionResult({ mediaId: 'media-1', mediaKind: 'image', width: 2, height: 3, sizeBytes: 5,
+            file: { sessionId: 'session-1', storage: 'daemon', path: '.happier/uploads/artifacts/session-1/image.png',
+                sha256: 'a'.repeat(64), mimeType: 'image/png' } });
+        const owner = createPluginSurfaceHostApi({
+            surfaceContext: surface,
+            handlers: { readStoredImage: mediaOwner.readStoredImage },
+        });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
+            requestSurface: surface,
+            requestIdPrefix: 'rn-stored-image',
+            handleRequest: owner.handleRequest,
+            installedMethods: owner.installedMethods,
+        });
+        const reference = { sessionId: 'session-1', mediaId: 'media-1' };
+        await expect(adapter.api.readStoredImage(reference)).resolves.toEqual(image);
+        await expect(adapter.api.readStoredImage({ ...reference, path: '/private/image.png' } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        deliveredImage = { ...image, width: 0 };
+        await expect(adapter.api.readStoredImage(reference)).rejects.toMatchObject({ code: 'invalid_payload' });
+        adapter.dispose();
+        mediaOwner.dispose();
+    });
+
     it('omits an absent optional Action input from the strict mounted request', async () => {
         const requests: PluginUiHostApiRequestEnvelopeV1[] = [];
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({

@@ -4,6 +4,7 @@ import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActionInputFields, type ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
+import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -173,7 +174,7 @@ export const ExecutionRunLauncherOptions = React.memo((props: Readonly<{
     fields: readonly EffectiveActionInputField[];
     input: Record<string, unknown>;
     editable: boolean;
-    resolveFieldOptions: (field: EffectiveActionInputField) => readonly ActionFieldOption[];
+    resolveFieldOptions: ResolveSessionActionFieldOptions;
     /** Which decisions to show; all of them when omitted. */
     sections?: readonly ExecutionRunLauncherOptionsSection[];
     /** Narrows the `fields` section to the paths a chip owns (the review scope, or everything else). */

@@ -28,6 +28,7 @@ import {
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { ToolTimelineRowHeader } from '@/components/tools/shell/views/timeline/ToolTimelineRowHeader';
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
@@ -39,6 +40,8 @@ import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happie
 import { buildToolCallMessageRouteId } from "@happier-dev/session-core/messages";
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { PermissionFooter } from '../permissions/PermissionFooter';
+import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
+import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
@@ -55,9 +58,11 @@ import {
 } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { SessionBoardActionResultReference } from '@/components/sessions/transcript/references/SessionBoardActionResultReference';
 import { WorkflowRunActionResultReference } from '@/components/sessions/transcript/references/WorkflowRunActionResultReference';
+import { WorkflowDefinitionActionResultReference } from '@/components/sessions/transcript/references/WorkflowDefinitionActionResultReference';
 import { BrowserActionResultReference } from '@/components/sessions/transcript/references/BrowserActionResultReference';
 import { ComputerActionResultReference } from '@/components/sessions/transcript/references/ComputerActionResultReference';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
+import { useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
 
 const TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS = 10;
 
@@ -127,6 +132,8 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         });
     }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
     const toolForRendering = headerModel.toolForRendering;
+    const pendingLanding = usePendingPromptLanding(resolvePermissionRequestId(toolForRendering), props.messageId);
+    const pendingLandingToken = props.messageId ? pendingLanding?.token : undefined;
 
     const {
         toolViewDetailLevelDefault,
@@ -147,9 +154,18 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
     });
     const forceExpandedForPendingUserAction = isPendingUserAction;
 
-    const initialIsExpandedRef = React.useRef<boolean>(toolViewTimelineFeedDefaultExpanded === true || forceExpandedForPendingUserAction);
+    const initialIsExpandedRef = React.useRef<boolean>(toolViewTimelineFeedDefaultExpanded === true || forceExpandedForPendingUserAction || pendingLandingToken !== undefined);
     const [isExpanded, setIsExpanded] = React.useState<boolean>(initialIsExpandedRef.current);
     const [expandedByUser, setExpandedByUser] = React.useState<boolean>(false);
+    const find = useTranscriptFindRow(props.messageId);
+    const findBodyReveal = find?.reveal && find.reveal.blockId !== 'tool-title';
+    const findRevealId = findBodyReveal ? find?.reveal?.requestId : undefined;
+    React.useEffect(() => {
+        if (findRevealId !== undefined) setIsExpanded(true);
+    }, [findRevealId]);
+    React.useEffect(() => {
+        if (pendingLandingToken !== undefined) setIsExpanded(true);
+    }, [pendingLandingToken]);
 
     React.useEffect(() => {
         if (!forceExpandedForPendingUserAction) return;
@@ -239,7 +255,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
     const expandedDetailLevel: 'summary' | 'full' =
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
-    const effectiveIsExpanded = forceExpandedForPendingUserAction ? true : isExpanded;
+    const effectiveIsExpanded = forceExpandedForPendingUserAction || pendingLandingToken !== undefined ? true : isExpanded;
 
     const transcriptSidechainId = React.useMemo(() => {
         return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
@@ -268,7 +284,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             status: sidechainHydrationStatus,
         });
 
-    const effectiveDetailLevel = effectiveIsExpanded ? expandedDetailLevel : collapsedDetailLevel;
+    const effectiveDetailLevel = effectiveIsExpanded ? (findBodyReveal ? 'full' : expandedDetailLevel) : collapsedDetailLevel;
     const inlineDetailLevel =
         isGenericSubAgentToolName(normalizedToolName) && effectiveDetailLevel === 'full'
             ? 'summary'
@@ -367,7 +383,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             ? t('status.waitingForYourResponse')
             : t('status.actionRequired');
     const headerStatusText = effectiveDetailLevel === 'title' ? null : (pendingUserActionStatusText ?? statusText);
-    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript
+    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript || pendingLandingToken !== undefined
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
@@ -382,6 +398,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         }) ? (
             <PermissionFooter
                 permission={toolForRendering.permission}
+                messageId={props.messageId}
                 sessionId={props.sessionId}
                 toolName={normalizedToolName}
                 toolInput={toolForRendering.input}
@@ -432,7 +449,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
     return (
         <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
-            sessionId={props.sessionId ?? ''}
+            sessionAddress={transcriptSource.sessionId === props.sessionId ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null}
             routeMessageId={routeMessageId}
             seq={transcriptSeq}
             radius={TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS}
@@ -444,6 +461,8 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                 density={density}
                 icon={icon}
                 title={title}
+                findBlocks={find?.blocks}
+                findRevealBlockId={find?.reveal?.blockId}
                 subtitle={headerSubtitle}
                 statusText={headerStatusText}
                 onPress={onPress}
@@ -495,6 +514,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                 tool={toolForRendering}
                 serverId={props.serverId}
             />
+            <WorkflowDefinitionActionResultReference tool={toolForRendering} serverId={props.serverId} />
             <BrowserActionResultReference
                 tool={toolForRendering}
                 sessionId={props.sessionId}

@@ -54,6 +54,8 @@ import {
     openAccountSecurityForHome,
 } from '@/components/settings/account/openAccountSecurityForHome';
 import { readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { useOpenPersonalize } from '@/components/onboarding/personalize/useOpenPersonalize';
+import type { JourneyCompletion } from '@/components/onboarding/tour/state/useJourneyProgress';
 
 type OnboardingJourneyHostModule = typeof import('@/components/onboarding/tour/OnboardingJourneyHost');
 let onboardingJourneyHostModulePromise: Promise<OnboardingJourneyHostModule> | null = null;
@@ -169,6 +171,7 @@ function resolveJourneySurface(params: Readonly<{ isDesktopShell: boolean; platf
 export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
     const auth = useAuth();
     const router = useRouter();
+    const openPersonalize = useOpenPersonalize();
     const suppliedHomeAddress = React.useMemo(() => readWebServerUrlOverrideFromLocation(), []);
     const clearSuppliedHomeAddress = React.useCallback(() => {
         if (!suppliedHomeAddress || typeof window === 'undefined') return;
@@ -360,6 +363,12 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const resolvedInitialBeatId = React.useMemo((): JourneyBeatId | undefined => (
         readJourneyReplayBeatId()
     ), []);
+    const handleJourneyExit = React.useCallback((completion?: JourneyCompletion) => {
+        if (!auth.isAuthenticated) return;
+        // A replay URL is a continuing viewport intent; retire it before the phone sheet opens.
+        if (resolvedInitialBeatId) router.replace('/');
+        if (completion) openPersonalize();
+    }, [auth.isAuthenticated, openPersonalize, resolvedInitialBeatId, router]);
 
     const shellChrome = shellChromeHost === 'unauth-shell' ? (
         <>
@@ -454,6 +463,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                         retentionDisclosure={authEntryOptions.retentionDisclosure}
                         preAuthController={controller}
                         wizardSurfaceProps={wizardSurfaceProps}
+                        onExit={handleJourneyExit}
                     />
                 </React.Suspense>
             </JourneyHostErrorBoundary>

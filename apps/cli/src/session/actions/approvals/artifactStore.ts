@@ -105,6 +105,11 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
 
   return {
     promptLibraryStore: {
+      list: async (options) => {
+        const page = await accountArtifactStore.list(options);
+        return { items: page.items.map((artifact) => ({ id: artifact.artifactId, header: artifact.header, updatedAtMs: artifact.updatedAt })),
+          coverage: page.coverage, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+      },
       read: async (artifactId, options) => {
         const artifact = await accountArtifactStore.read(artifactId, options);
         if (!artifact) return null;

@@ -6,6 +6,7 @@ import {
   deriveBoxPublicKeyFromSeed,
   openEncryptedDataKeyEnvelopeV1,
   signAccountContentKeyBindingV1,
+  SessionInitialTriggerAdmissionV1Schema,
   type PatchSessionDataKeyEnvelopesV1,
   type SessionInitialAccessDraftV1,
 } from '@happier-dev/protocol';
@@ -15,6 +16,7 @@ import { ApiClient } from './api';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { readSessionCreationTerminalSpawnErrorDetail } from './session/sessionCreationTerminalSpawnErrorDetail';
 
 const initialAccess: SessionInitialAccessDraftV1 = {
   grants: [{ subject: { kind: 'team', teamId: 'team-1' }, accessLevel: 'edit', canApprovePermissions: false }],
@@ -25,6 +27,14 @@ const metadata = {
   happyHomeDir: '/home/user/.happier', happyLibDir: '/lib', happyToolsDir: '/tools',
 };
 const creation = { credentials, tag: 'access-create', metadata, agentState: null, state: null };
+const initialTriggers = [SessionInitialTriggerAdmissionV1Schema.parse({
+  automationId: 'automation-initial', name: 'Prepare workspace', enabled: true,
+  workflowDefinitionId: 'builtin:review-and-converge', assignments: [{ machineId: 'machine-1', enabled: true }],
+  executionRecipe: { v: 2, templateVersion: 0, triggerEvidence: null,
+    workflow: { t: 'plain', v: { workspace: { directory: '/workspace' }, executionTarget: { kind: 'session' } } } },
+  triggers: [{ triggerId: 'trigger-initial', trigger: { kind: 'sessionLifecycle', enabled: true,
+    events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
+})];
 
 function features(
   sharing: boolean,
@@ -83,7 +93,30 @@ for (const owner of ['api', 'http'] as const) {
       expect(body).toMatchObject({ metadataLayoutVersion: 1, initialAccess, primaryTeamId: 'team-1' });
       expect(JSON.stringify((body as { ownerMetadata: unknown }).ownerMetadata)).not.toContain('initialAccess');
       expect(JSON.stringify((body as { sharedMetadata: unknown }).sharedMetadata)).not.toContain('initialAccess');
+      expect(vi.mocked(axios.get).mock.calls.some(call => String(call[0]).includes('/data-key/envelopes'))).toBe(false);
     });
+
+    it('delivers the sealed trigger recipe only through the Session birth request', async () => {
+      await create({ initialTriggers });
+      expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toMatchObject({ initialTriggers });
+      expect(JSON.stringify((vi.mocked(axios.post).mock.calls[0]?.[1] as { ownerMetadata: unknown }).ownerMetadata))
+        .not.toContain('initialTriggers');
+    });
+
+    it.each(['invalid_input', 'target_unavailable', 'feature_disabled'] as const)(
+      'preserves a no-effect initial-trigger birth refusal %s without retrying', async (code) => {
+        const response = { status: code === 'invalid_input' ? 400 : 409,
+          data: { error: 'initial_trigger_admission_failed', code } };
+        if (owner === 'api') vi.mocked(axios.post).mockRejectedValueOnce({ isAxiosError: true, response });
+        else vi.mocked(axios.post).mockResolvedValueOnce(response);
+        const error = await create({ initialTriggers }).catch((error: unknown) => error);
+        expect(error).toMatchObject({ code, retryable: false });
+        expect(readSessionCreationTerminalSpawnErrorDetail(error)).toEqual({
+          kind: 'session_creation_initial_trigger_refused', code,
+        });
+        expect(axios.post).toHaveBeenCalledTimes(1);
+      },
+    );
 
     it.each([
       [403, 'session_access_external_sharing_disabled'],
@@ -152,10 +185,11 @@ for (const owner of ['api', 'http'] as const) {
       let returnedOwnerEnvelope = '';
       let originalPayload: { sharedMetadata: { ciphertext: string }; ownerMetadata: unknown; dataEncryptionKey: string; agentState: string | null } | undefined;
       vi.mocked(axios.post).mockImplementation(async (_url, body) => {
+        const firstCreate = originalPayload === undefined;
         originalPayload ??= body as NonNullable<typeof originalPayload>;
         const payload = originalPayload;
         returnedOwnerEnvelope = payload.dataEncryptionKey;
-        return { status: 200, data: { created, organizationPlacement: { folderId: null, tagIds: [] }, session: {
+        return { status: 200, data: { created: firstCreate || created, organizationPlacement: { folderId: null, tagIds: [] }, session: {
           id: 'created-session', seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
           encryptionMode: 'e2ee', metadataLayoutVersion: 1, metadata: payload.sharedMetadata.ciphertext,
           share: null, ownerMetadata: payload.ownerMetadata, metadataVersion: 0,
@@ -163,9 +197,12 @@ for (const owner of ['api', 'http'] as const) {
         } } };
       });
       if (!created) {
-        const privateParams = { ...creation, credentials: e2eeCredentials };
-        if (owner === 'http') await getOrCreateSessionByTag(privateParams);
-        else await (await ApiClient.create(e2eeCredentials)).getOrCreateSession(privateParams);
+        const originalParams = { ...creation, credentials: e2eeCredentials, initialAccess };
+        if (owner === 'http') await getOrCreateSessionByTag(originalParams);
+        else await (await ApiClient.create(e2eeCredentials)).getOrCreateSession(originalParams);
+        // A rejoin may repair a missing recipient tuple, but never changes the
+        // original Team grant or replaces the returned Session's key.
+        committed = undefined;
       }
       const params = { ...creation, credentials: e2eeCredentials, initialAccess };
       if (owner === 'http') await getOrCreateSessionByTag(params);
@@ -316,7 +353,7 @@ for (const owner of ['api', 'http'] as const) {
       const transportFailure = new Error('transport unavailable');
       let attached: unknown;
       await expect(createSpawnedSession({
-        credentials, directory: metadata.path, initialAccess, primaryTeamId: 'team-1',
+        credentials, directory: metadata.path, initialAccess, initialTriggers, primaryTeamId: 'team-1',
         replaySeededCreation: {
           tag: creation.tag, flavor: 'codex', metadata,
           sourceRecipe: { sourceSessionId: 'source', cutoffSeqInclusive: 1 },
@@ -326,9 +363,10 @@ for (const owner of ['api', 'http'] as const) {
           resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
         },
       })).rejects.toBe(transportFailure);
-      expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toMatchObject({ initialAccess, primaryTeamId: 'team-1' });
+      expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toMatchObject({ initialAccess, initialTriggers, primaryTeamId: 'team-1' });
       expect(attached).toMatchObject({ existingSessionId: 'created-session' });
       expect(attached).not.toHaveProperty('initialAccess');
+      expect(attached).not.toHaveProperty('initialTriggers');
       expect(attached).not.toHaveProperty('primaryTeamId');
     });
 

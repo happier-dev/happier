@@ -1,19 +1,16 @@
 import * as React from 'react';
 
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
-import { Switch } from '@/components/ui/forms/Switch';
 import {
   readLocalDirectVoiceSettings,
   voiceSettingsParse,
   writeLocalDirectVoiceSettings,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
-import { parseLocalVoiceSttSettings } from '@/voice/local/localVoiceSettings';
+import { parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
+import { VoiceHearControls } from '@/voice/settings/panels/VoiceHearControls';
+import { resolveVoiceSttCapturePlan } from '@/voice/runtime/input/resolveVoiceSttCapturePlan';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
@@ -33,7 +30,6 @@ export function LocalDirectSection(props: {
     props.setVoice(writeLocalDirectVoiceSettings(voice, { ...cfg, ...patch }));
   };
 
-  const sttProvider = parseLocalVoiceSttSettings(cfg.stt).provider;
 
   return (
     <>
@@ -44,44 +40,17 @@ export function LocalDirectSection(props: {
         setVoice={props.setVoice}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-      />
+      >
+        <VoiceHearControls
+          handsFree={cfg.handsFree}
+          handsFreeSupported={resolveVoiceSttCapturePlan({ voice }).provider !== 'recorded_audio'}
+          setHandsFree={(handsFree) => setCfg({ handsFree })}
+          bargeInEnabled={parseLocalVoiceTtsSettings(cfg.tts).bargeInEnabled}
+          setBargeInEnabled={(bargeInEnabled) => setCfg({ tts: { ...parseLocalVoiceTtsSettings(cfg.tts), bargeInEnabled } })}
+          testIDPrefix="settings.voice.localDirect"
+        />
+      </LocalVoiceSttGroup>
 
-      {sttProvider === 'device' ? (
-        <ItemGroup title={t('settingsVoice.local.conversation.handsFree.title')}>
-          <Item
-            title={t('settingsVoice.local.conversation.handsFree.enableTitle')}
-            rightElement={
-              <Switch
-                accessibilityLabel={t('settingsVoice.local.conversation.handsFree.enableTitle')}
-                value={cfg.handsFree.enabled}
-                onValueChange={(v) => setCfg({ handsFree: { ...cfg.handsFree, enabled: v } })}
-              />
-            }
-          />
-          <FieldValueItem
-            title={t('settingsVoice.local.conversation.handsFree.silenceTitle')}
-            fieldTestID="settings.voice.localDirect.handsFree.silenceMs.field"
-            kind="integer"
-            value={String(cfg.handsFree.endpointing.silenceMs)}
-            onCommit={(draft) => {
-              const next = Math.max(0, Math.min(5000, Math.floor(Number(draft))));
-              setCfg({ handsFree: { ...cfg.handsFree, endpointing: { ...cfg.handsFree.endpointing, silenceMs: next } } });
-              return String(next);
-            }}
-          />
-          <FieldValueItem
-            title={t('settingsVoice.local.conversation.handsFree.minSpeechTitle')}
-            fieldTestID="settings.voice.localDirect.handsFree.minSpeechMs.field"
-            kind="integer"
-            value={String(cfg.handsFree.endpointing.minSpeechMs)}
-            onCommit={(draft) => {
-              const next = Math.max(0, Math.min(5000, Math.floor(Number(draft))));
-              setCfg({ handsFree: { ...cfg.handsFree, endpointing: { ...cfg.handsFree.endpointing, minSpeechMs: next } } });
-              return String(next);
-            }}
-          />
-        </ItemGroup>
-      ) : null}
 
       <LocalVoiceTtsGroup
         cfgTts={cfg.tts}
@@ -93,20 +62,6 @@ export function LocalDirectSection(props: {
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
       />
 
-      <ItemGroup title={t('settingsVoice.local.conversation.network.title')}>
-        <FieldValueItem
-          title={t('settingsVoice.local.conversation.network.timeoutTitle')}
-          subtitle={t('settingsVoice.local.conversation.network.timeoutPromptBody')}
-          fieldTestID="settings.voice.localDirect.networkTimeoutMs.field"
-          kind="integer"
-          value={String(cfg.networkTimeoutMs)}
-          onCommit={(draft) => {
-            const next = Math.max(1000, Math.min(60000, Math.floor(Number(draft))));
-            setCfg({ networkTimeoutMs: next });
-            return String(next);
-          }}
-        />
-      </ItemGroup>
     </>
   );
 }

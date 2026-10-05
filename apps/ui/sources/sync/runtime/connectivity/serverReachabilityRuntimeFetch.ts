@@ -1,4 +1,5 @@
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { normalizeRequestBodyHeaders } from '@/sync/http/requestBodyHeaders';
 import {
     AccountStoredContentCompatibilityUnavailableError,
     readAccountStoredContentCompatibilityRequestDeclaration,
@@ -79,6 +80,7 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
     const headers = compatibility?.status === 'available'
         ? compatibility.headers
         : stripAccountStoredContentCompatibilityHeader(params.init.headers);
+    normalizeRequestBodyHeaders(headers, params.init.body);
     const explicitAuthHeader = headers.get('Authorization') ?? '';
     const bearerTokenFromHeader = (() => {
         const header = explicitAuthHeader.trim();

@@ -27,6 +27,24 @@ afterEach(() => {
 describe('formatAutomationTriggerLabel', () => {
     const sourceSelectorId = '11111111-1111-4111-8111-111111111111';
 
+    it('distinguishes PR and Run conditions without exposing private source configuration', () => {
+        const base = { id: 'trigger-1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1 };
+        const labels = [
+            { ...base, kind: 'prComment', sourceSessionId: 'private-session' },
+            { ...base, kind: 'ciFailed', sourceSessionId: 'private-session' },
+            ...(['terminal', 'needs_attention'] as const).map(condition => ({
+                ...base, kind: 'runLifecycle', source: { kind: 'workflow_run', runId: 'private-run' },
+                condition, remainingOccurrences: 1, status: { state: 'waiting', runId: null },
+            })),
+        ].map(value => formatAutomationTriggerLabel(AutomationTriggerListItemSchema.parse(value)));
+        for (const label of labels) {
+            expect(label).toEqual(expect.any(String));
+            expect(label.length).toBeGreaterThan(0);
+            expect(label).not.toContain('private-');
+        }
+        expect(new Set(labels).size).toBe(labels.length);
+    });
+
     it('labels a Plugin Event from its safe event reference without reading private source content', () => {
         const trigger = AutomationTriggerListItemSchema.parse({
             id: 'trigger-event-1',

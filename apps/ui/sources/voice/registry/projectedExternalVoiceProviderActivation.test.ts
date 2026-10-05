@@ -724,7 +724,6 @@ describe('projected external Voice provider activation', () => {
     await expect(speechRuntime.transcribeRecordedAudio(`${manifest.id}/speech-stt`, {
       uri: 'file:///recording.wav',
       providerConfig: { model: 'packed-stt-v1' },
-      fallbackLanguage: 'en',
     })).resolves.toBe('packed transcript');
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: `${manifest.id}/speech-stt` }),

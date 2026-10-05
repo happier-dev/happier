@@ -30,7 +30,7 @@ describe('ActivitySurfacesRuntime settings subscriptions', () => {
         const baseline = commits.mock.calls.length;
         const computationBaseline = resolvePolicies.mock.calls.length;
         await act(async () => {
-            storage.getState().applySettingsLocal({ homeHubLayoutV1: { order: ['sessions'], hidden: [] } });
+            storage.getState().applySettingsLocal({ favoriteDirectories: ['~/code'] });
         });
         expect(commits.mock.calls.length).toBe(baseline);
         expect(resolvePolicies.mock.calls.length).toBe(computationBaseline);

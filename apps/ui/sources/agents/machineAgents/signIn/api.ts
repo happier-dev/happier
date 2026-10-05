@@ -3,24 +3,27 @@ import {
   AgentSignInPrepareRequestSchema, AgentSignInPrepareResponseSchema,
   AgentSignInStatusRequestSchema, AgentSignInStatusResponseSchema,
   startMachineAgentSignIn, type AgentSignInPrepareRequest,
+  cancelMachineAgentSignIn,
 } from '@happier-dev/protocol';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { runConnectedAccountAuthenticationCommand } from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
-import { machineTerminalEnsure, machineTerminalClose } from '@/sync/ops/machineTerminal';
+import { machineTerminalEnsure, machineTerminalClose, machineTerminalList } from '@/sync/ops/machineTerminal';
 
 export type AgentSignInTarget = Readonly<{ serverId?: string | null; machineId: string; signal?: AbortSignal }>;
 
 export async function prepareAgentSignInRpc(target: AgentSignInTarget, input: AgentSignInPrepareRequest) {
   const payload = AgentSignInPrepareRequestSchema.parse(input);
   return AgentSignInPrepareResponseSchema.parse(await machineRpcWithServerScope<unknown, typeof payload>({
-    ...target, method: AGENT_SIGN_IN_PREPARE_RPC_METHOD, payload,
+    serverId: target.serverId, machineId: target.machineId, signal: target.signal,
+    method: AGENT_SIGN_IN_PREPARE_RPC_METHOD, payload,
   }));
 }
 
 export async function checkAgentSignInRpc(target: AgentSignInTarget, agentId: string) {
   const payload = AgentSignInStatusRequestSchema.parse({ agentId });
   return AgentSignInStatusResponseSchema.parse(await machineRpcWithServerScope<unknown, typeof payload>({
-    ...target, method: AGENT_SIGN_IN_STATUS_RPC_METHOD, payload,
+    serverId: target.serverId, machineId: target.machineId, signal: target.signal,
+    method: AGENT_SIGN_IN_STATUS_RPC_METHOD, payload,
   }));
 }
 
@@ -47,4 +50,12 @@ export async function startAgentSignInRpc(
     },
   });
   return result;
+}
+
+export async function cancelAgentSignInRpc(target: AgentSignInTarget, agentId: string, terminalId: string) {
+  return await cancelMachineAgentSignIn({ machineId: target.machineId, agentId, terminalId }, {
+    signal: target.signal,
+    listTerminals: () => machineTerminalList(target.machineId, target),
+    closeTerminal: (id) => machineTerminalClose(target.machineId, { terminalId: id }, target),
+  });
 }

@@ -7,16 +7,9 @@ import type { MachineMetadata } from '../../domains/state/storageTypes';
 const {
     mmkvStore,
     invalidateCachedTransferRoutesForMachineSpy,
-    machineDisplayWarmCacheSaveState,
-    saveMachineDisplayWarmCacheEntriesSpy,
 } = vi.hoisted(() => ({
     mmkvStore: new Map<string, string>(),
     invalidateCachedTransferRoutesForMachineSpy: vi.fn(),
-    machineDisplayWarmCacheSaveState: {
-        timer: null as ReturnType<typeof setTimeout> | null,
-        args: null as unknown[] | null,
-    },
-    saveMachineDisplayWarmCacheEntriesSpy: vi.fn(),
 }));
 
 vi.mock('react-native-mmkv', () => {
@@ -42,10 +35,7 @@ afterEach(() => {
     vi.clearAllMocks();
     mmkvStore.clear();
     invalidateCachedTransferRoutesForMachineSpy.mockReset();
-    saveMachineDisplayWarmCacheEntriesSpy.mockReset();
-    if (machineDisplayWarmCacheSaveState.timer) clearTimeout(machineDisplayWarmCacheSaveState.timer);
-    machineDisplayWarmCacheSaveState.timer = null;
-    machineDisplayWarmCacheSaveState.args = null;
+    vi.restoreAllMocks();
 });
 
 const ONLINE = 'online' as const;
@@ -101,17 +91,6 @@ function mockMachineDomainBoundaries(profiles: readonly ServerProfileMockProfile
         ...await importOriginal<typeof import('../../domains/state/warmCachePersistence')>(),
         resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
         peekMachineDisplayWarmCacheEntries: vi.fn(() => null),
-        saveMachineDisplayWarmCacheEntries: saveMachineDisplayWarmCacheEntriesSpy,
-        scheduleMachineDisplayWarmCacheEntriesSave: (...args: unknown[]) => {
-            machineDisplayWarmCacheSaveState.args = args;
-            if (machineDisplayWarmCacheSaveState.timer) return;
-            machineDisplayWarmCacheSaveState.timer = setTimeout(() => {
-                machineDisplayWarmCacheSaveState.timer = null;
-                const pendingArgs = machineDisplayWarmCacheSaveState.args;
-                machineDisplayWarmCacheSaveState.args = null;
-                if (pendingArgs) saveMachineDisplayWarmCacheEntriesSpy(...pendingArgs);
-            }, 0);
-        },
     }));
 }
 
@@ -1277,7 +1256,8 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
 
     it('preserves machine and display record identity on a true no-op apply', async () => {
         mockMachineDomainBoundaries();
-
+        const writer = await import('../../domains/state/machineDisplayWarmCacheWriter');
+        const scheduleMachineDisplayWarmCacheSaveSpy = vi.spyOn(writer, 'scheduleMachineDisplayWarmCacheSave');
         const { createMachinesDomain } = await import('./machines');
 
         const machine = {
@@ -1340,6 +1320,8 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
 
     it('delegates each changed full-fleet snapshot to the warm-cache persistence owner', async () => {
         mockMachineDomainBoundaries();
+        const writer = await import('../../domains/state/machineDisplayWarmCacheWriter');
+        const scheduleMachineDisplayWarmCacheSaveSpy = vi.spyOn(writer, 'scheduleMachineDisplayWarmCacheSave');
 
             const { createMachinesDomain } = await import('./machines');
             const machine = {

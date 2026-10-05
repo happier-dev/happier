@@ -1,5 +1,6 @@
 import type { AppPaneAction, AppPaneState } from '@/components/appShell/panes/model/appPaneReducer';
 import { readSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
+import { openSessionTerminalInDetails } from './embeddedTerminalDocking';
 
 type Owner = Readonly<{ getState: () => AppPaneState; dispatch: (action: AppPaneAction) => void }>;
 let mountedOwner: Owner | null = null;
@@ -27,6 +28,16 @@ export function readSessionTerminalWorkspaceForScope(scopeId: string) {
 export function dispatchSessionTerminalWorkspaceCommand(scopeId: string, command: SessionTerminalWorkspaceCommand): boolean {
     if (!mountedOwner) return false;
     mountedOwner.dispatch({ type: 'terminalWorkspace', scopeId, command });
+    return true;
+}
+
+export function openSessionTerminalInDetailsForScope(scopeId: string, terminalId: string): boolean {
+    const owner = mountedOwner;
+    if (!owner) return false;
+    openSessionTerminalInDetails({
+        openDetailsTab: (tab, options) => owner.dispatch({ type: 'openDetailsTab', scopeId, tab, openAs: options?.intent === 'pinned' ? 'pinned' : 'preview' }),
+        closeBottom: () => owner.dispatch({ type: 'closeBottom', scopeId }),
+    }, terminalId);
     return true;
 }
 

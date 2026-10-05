@@ -166,6 +166,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { DaemonPluginChangeOwner } from '@/plugins/daemon/changeService';
 import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
+import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
 import { DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY } from '@/plugins/runtime/context/daemonDatabaseLimitsPolicy';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { createDaemonPluginRegistryProjectionInvalidation } from './pluginRegistryProjectionInvalidation';
@@ -1214,6 +1215,7 @@ export async function startDaemon(
       daemonDatabaseLimits: DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY,
       resolveCurrentMachineId: () => machineId,
       machineAdmissionTransport,
+      executeClientAction: createClientActionMachineRpcExecutor(() => apiMachineForSessions),
       resolveComposerMediaStageTransferRpcHandler: () => (
         apiMachineForSessions?.getPeerMediationMachineRpcHandlerManager() ?? null
       ),

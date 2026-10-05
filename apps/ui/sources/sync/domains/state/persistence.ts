@@ -39,6 +39,7 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     AcpConfigOptionOverridesV1Schema,
+    SessionInitialTriggerV1Schema,
     AgentExecutionTargetV1Schema,
     ComposerAttachmentDraftV1Schema,
     type ComposerAttachmentAuthorValueV1,
@@ -66,6 +67,7 @@ import {
     type SessionModelSelectionV1,
     type RuntimeDescriptorV1,
     type SessionOrganizationPlacementV1,
+    type SessionInitialTriggerV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
@@ -249,6 +251,7 @@ export interface NewSessionDraft {
      */
     agentNewSessionOptionStateByAgentId?: BackendNewSessionOptionStateByTargetKey | null;
     automationDraft?: NewSessionAutomationDraft | null;
+    initialTriggers?: SessionInitialTriggerV1[];
     updatedAt: number;
 }
 
@@ -807,6 +810,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ? (parsed as any).auggieAllowIndexing
             : undefined;
         const automationDraft = sanitizeNewSessionAutomationDraft((parsed as any).automationDraft);
+        const initialTriggers = SessionInitialTriggerV1Schema.array().safeParse(parsed.initialTriggers);
         // Released remote-dev local `new-session-draft-v1` records stored Codex
         // selection at top level. Normalize it once at this named persistence
         // ingress; current writers carry only the Agent-owned descriptor. Remove
@@ -858,6 +862,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(Object.keys(migratedAgentOptions).length > 0 ? { backendNewSessionOptionStateByTargetKey: migratedAgentOptions } : {}),
             ...(automationDraft.enabled ? { automationDraft } : {}),
+            ...(initialTriggers.success ? { initialTriggers: initialTriggers.data } : {}),
             updatedAt,
         };
     } catch (e) {

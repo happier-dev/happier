@@ -8,6 +8,9 @@ import { useUnistyles } from 'react-native-unistyles';
 import { getMachineDropdownMenuItems } from '@/components/settings/pickers/machineDropdownItems';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Icon } from '@/components/ui/icons/Icon';
+import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import {
   voiceSettingsParse,
   type VoiceSettings,
@@ -24,6 +27,9 @@ import {
   type VoiceProviderCredentialSourceKind,
 } from '@/voice/registry/readiness';
 import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { applyVoiceExecutionMachineChoice } from '@/voice/settings/executionMachineChoice';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { VOICE_ADVANCED_SETTINGS, VOICE_CONVERSATIONS_SETTINGS, VOICE_DICTATION_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 const defaultRegistry = createDefaultVoiceProviderRegistry();
 
@@ -33,6 +39,8 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   popoverBoundaryRef?: React.RefObject<any> | null;
   registry?: VoiceProviderRegistry;
   intent?: 'conversations' | 'dictation' | 'advanced';
+  /** `chip`: the page header's "Runs on" chip; `section` (default): a page section with the field. */
+  presentation?: 'section' | 'chip';
 }>) {
   const { theme } = useUnistyles();
   const machines = useAllMachines();
@@ -90,7 +98,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   const requiresExecutionMachine = props.intent === 'dictation'
     ? dictationRequiresExecutionMachine
     : props.intent === 'advanced'
-      ? conversationRequiresExecutionMachine || dictationRequiresExecutionMachine
+      ? true // Advanced also owns speech-model management, independently of the selected service.
       : conversationRequiresExecutionMachine;
 
   const items = React.useMemo(() => getMachineDropdownMenuItems({
@@ -118,11 +126,46 @@ export function VoiceExecutionMachineSection(props: Readonly<{
     ? items.find((item) => item.id === stickyAutoMachineId) ?? null
     : null;
 
+  const selectMachine = (id: string) => {
+    const machineId = String(id ?? '').trim();
+    if (!machineId) return;
+    props.setVoice(applyVoiceExecutionMachineChoice(voice, machineId));
+    setOpen(false);
+  };
+
+  if (props.presentation === 'chip') {
+    const fixedMachine = fixedMachineId ? machines.find((machine) => machine.id === fixedMachineId) ?? null : null;
+    const shownMachineId = fixedMachineId || stickyAutoMachineId;
+    const shownMachine = shownMachineId ? machines.find((machine) => machine.id === shownMachineId) ?? null : null;
+    const valueLabel = selectedId === 'auto'
+      ? (stickyAutoItem ? `${t('settingsVoice.local.executionMachine.autoTitle')} · ${stickyAutoItem.title}` : t('settingsVoice.local.executionMachine.autoTitle'))
+      : (selectedItem?.title ?? fixedMachineId);
+    return (
+      <SelectionListFilterChip
+        filter={{
+          id: 'voiceComputer',
+          label: t('settingsVoice.pages.conversations.runsOn'),
+          valueLabel,
+          icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
+          ...(shownMachine ? { presence: isMachineOnline(shownMachine) ? 'online' as const : 'offline' as const } : {}),
+          options: items.map((item) => ({ id: item.id, label: item.title, subtitle: item.subtitle, icon: item.icon })),
+          selectedId,
+          onChange: selectMachine,
+          testID: 'settings.voice.executionMachine.chip',
+          ...(fixedMachine === null && fixedMachineId ? { muted: true } : {}),
+        }}
+      />
+    );
+  }
+
   return (
     <ItemGroup
-      title={t('settingsVoice.local.executionMachine.groupTitle')}
-      description={t('settingsVoice.local.executionMachine.groupFooter')}
+      title={t('settingsVoice.pages.advanced.computerTitle')}
+      description={t('settingsVoice.pages.advanced.computerDescription')}
     >
+      <SettingAnchor setting={props.intent === 'advanced'
+        ? VOICE_ADVANCED_SETTINGS.settings.executionMachine : props.intent === 'dictation'
+          ? VOICE_DICTATION_SETTINGS.settings.executionMachine : VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine}>
       <DropdownMenu
         open={open}
         onOpenChange={setOpen}
@@ -135,40 +178,17 @@ export function VoiceExecutionMachineSection(props: Readonly<{
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: t('settingsVoice.local.executionMachine.title'),
+          // The section already says "Voice computer"; the row says what it decides.
+          title: t('settingsVoice.pages.conversations.runsOn'),
           subtitleFormatter: () => selectedItem?.subtitle ?? t('settingsVoice.local.executionMachine.fallbackSubtitle'),
           detailFormatter: () => selectedId === 'auto' && stickyAutoItem
             ? `${selectedItem?.title ?? t('settingsVoice.local.executionMachine.autoTitle')} · ${stickyAutoItem.title}`
             : (selectedItem?.title ?? fixedMachineId) || selectedId,
         }}
         items={items}
-        onSelect={(id) => {
-          if (id === 'auto') {
-            props.setVoice({
-              ...voice,
-              executionMachine: {
-                mode: 'auto',
-                machineId: null,
-                autoMachineId: null,
-              },
-            });
-            setOpen(false);
-            return;
-          }
-
-          const machineId = String(id ?? '').trim();
-          if (!machineId) return;
-          props.setVoice({
-            ...voice,
-            executionMachine: {
-              ...voice.executionMachine,
-              mode: 'fixed',
-              machineId,
-            },
-          });
-          setOpen(false);
-        }}
+        onSelect={selectMachine}
       />
+      </SettingAnchor>
     </ItemGroup>
   );
 }

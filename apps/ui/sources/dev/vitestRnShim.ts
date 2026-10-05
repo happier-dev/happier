@@ -85,8 +85,8 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
             // ignore
         }
         // Some Vitest environments (for example jsdom) can evaluate modules with non-file URLs.
-        // Fall back to the UI workspace root.
-        return resolve(process.cwd(), 'sources');
+        // The canonical config supplies the package root: --root does not change cwd.
+        return process.env.VITEST_UI_SOURCES_DIR ?? resolve(process.cwd(), 'sources');
     })();
     const requireBase = (() => {
         try {

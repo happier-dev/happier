@@ -239,6 +239,10 @@ async function machineRpcWithServerTransport<R, A>(
             method: params.method,
             timeoutMs: configuredTimeoutMs,
         });
+        const runOperation = async <T>(scope: MachineRpcTimeoutScope, operation: (timeoutMs: number | null) => Promise<T>): Promise<T> =>
+            params.operationTimeoutMs === null
+                ? await operation(null)
+                : await timeoutBudget.runWithinTimeout(scope, operation);
         const preferScoped = options?.forceScoped === true || initialPreferScoped || Boolean(requestedAccountId);
         const requestedScopedContext = preferScoped
             || Boolean(requestedServerId && !areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId));
@@ -261,17 +265,15 @@ async function machineRpcWithServerTransport<R, A>(
         if (context.scope === 'active' && !preferScoped) {
             let abandonedBeforeEmission = false;
             const activeOnIssued = () => {
-                if (onIssued) {
-                    if (abandonedBeforeEmission) {
-                        throw new Error('Exact active machine RPC was superseded before emission');
-                    }
-                    onIssued();
+                if (abandonedBeforeEmission) {
+                    throw new Error('Active machine RPC was superseded before emission');
                 }
+                onIssued?.();
                 socketRpcAbortScope.issued = true;
                 params.onDispatched?.();
             };
             try {
-                const result = await timeoutBudget.runWithinTimeout(
+                const result = await runOperation(
                     'active',
                     async (timeoutMs) =>
                         await apiSocket.machineRPC<R, A>(
@@ -397,7 +399,7 @@ async function machineRpcWithServerTransport<R, A>(
         );
         try {
             throwIfMachineRpcAborted(params.method, params.signal);
-            return await timeoutBudget.runWithinTimeout(
+            return await runOperation(
                 'scoped',
                 async (timeoutMs) => {
                     try {
@@ -419,7 +421,7 @@ async function machineRpcWithServerTransport<R, A>(
                                                 async () => await machineEncryption!.encryptRaw(payload),
                                             ),
                                         ),
-                                        decryptRaw: async (payload) => await timeoutBudget.runWithinTimeout(
+                                        decryptRaw: async (payload) => await runOperation(
                                             'scoped',
                                             async () => await machineEncryption!.decryptRaw(payload),
                                         ),
@@ -435,7 +437,7 @@ async function machineRpcWithServerTransport<R, A>(
                             signal: params.signal,
                         });
                     } catch (error) {
-                        if (isSocketIoAckTimeoutError(error)) {
+                        if (isSocketIoAckTimeoutError(error) && timeoutMs !== null) {
                             const timeoutError = createMachineRpcTimeoutError({
                                 scope: 'scoped',
                                 method: params.method,

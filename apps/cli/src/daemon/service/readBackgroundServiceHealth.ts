@@ -73,7 +73,8 @@ export function readBackgroundServiceActivity(params: Readonly<{
 }>): BackgroundServiceActivity {
   if (params.platform === 'darwin') {
     if (params.uid == null) return 'unknown';
-    return tryReadLaunchctl(params.uid, params.label) ? 'active' : 'inactive';
+    const output = tryReadLaunchctl(params.uid, params.label);
+    return output === null ? 'unknown' : output ? 'active' : 'inactive';
   }
   if (params.platform === 'linux') {
     const status = tryReadSystemdStatus({
@@ -172,7 +173,7 @@ function readLaunchdHealth(params: Readonly<{
   label: string;
 }>): Pick<ServiceHealthSignal, 'runs' | 'lastExitCode' | 'isCrashLooping' | 'lastErrorLine'> {
   const launchctlOutput = params.uid != null ? tryReadLaunchctl(params.uid, params.label) : '';
-  const { runs, lastExitCode } = parseLaunchctlFields(launchctlOutput);
+  const { runs, lastExitCode } = parseLaunchctlFields(launchctlOutput ?? '');
   return {
     runs,
     lastExitCode,
@@ -213,7 +214,7 @@ function systemdScopeArgs(mode: DaemonServiceMode): readonly string[] {
   return mode === 'system' ? [] : ['--user'];
 }
 
-function tryReadLaunchctl(uid: number, label: string): string {
+function tryReadLaunchctl(uid: number, label: string): string | null {
   try {
     const args = ['print', `gui/${uid}/${label}`];
     const result = spawnBackgroundSync('launchctl', args, {
@@ -221,10 +222,13 @@ function tryReadLaunchctl(uid: number, label: string): string {
       timeout: 2_000,
       env: buildServiceCommandEnv({ cmd: 'launchctl', args, env: process.env }),
     });
-    if (result.status !== 0) return '';
+    if (result.error || result.status === null) return null;
+    if (result.status !== 0) {
+      return String(result.stderr ?? '').trim().startsWith(`Could not find service "${label}" in domain for `) ? '' : null;
+    }
     return String(result.stdout ?? '');
   } catch {
-    return '';
+    return null;
   }
 }
 

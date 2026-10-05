@@ -229,7 +229,8 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
     useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.current,
 }));
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
     getMachineContributionRegistryProjectionRevision: () => machineProjectionRevision.current,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machinePluginSettingsSet: (...args: unknown[]) => machinePluginSettingsSet(...args),
@@ -256,7 +257,8 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) 
     getActiveServerAccountScope: () => null,
 }));
 
-vi.mock('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime', () => ({
+vi.mock('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime')>()),
     scopedPluginSettingsAdapter: {
         read: (...args: unknown[]) => scopedPluginSettingsRead(...args),
         write: (...args: unknown[]) => scopedPluginSettingsWrite(...args),
@@ -266,7 +268,8 @@ vi.mock('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime', () => ({
     ),
 }));
 
-vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
+vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/sessions/terminal/openAttachedSessionTerminal')>()),
     useOpenAttachedSessionTerminal: () => ({
         available: attachedSessionTerminalAvailable,
         unavailableReason: attachedSessionTerminalUnavailableReason,
@@ -304,14 +307,19 @@ describe('AskUserQuestionView', () => {
     }
 
     it('shows serialized structured answers on the completed question card', async () => {
-        const { AskUserQuestionView } = await import('./AskUserQuestionView');
-        const screen = await renderScreen(React.createElement(AskUserQuestionView, makeToolViewProps(makeTool({
+        const { AskUserQuestionView, projectAskUserQuestionDisplayText } = await import('./AskUserQuestionView');
+        const tool = makeTool({
             state: 'completed',
-            result: JSON.stringify({ status: 'answered', answers: { 'Pick one': ['B'] } }),
-        }), { sessionId: 's1' })));
+            result: JSON.stringify({ status: 'answered', answers: { 'Pick one': ['B'] }, hidden: 'private needle' }),
+        });
+        const screen = await renderScreen(React.createElement(AskUserQuestionView, makeToolViewProps(tool, { sessionId: 's1' })));
 
         expect(screen.getTextContent()).toContain('B');
         expect(screen.getTextContent()).not.toContain('Q1 : -');
+        expect(projectAskUserQuestionDisplayText(tool)).toEqual([
+            { id: 'tool-question-0-answer-label', text: 'Q1:', format: 'plain', kind: 'toolBody' },
+            { id: 'tool-question-0-answer', text: 'B', format: 'plain', kind: 'toolBody' },
+        ]);
     });
 
     function makeFreeformTool(overrides: Partial<ToolCall> = {}): ToolCall {

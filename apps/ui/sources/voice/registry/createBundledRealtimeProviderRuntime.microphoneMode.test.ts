@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { VoiceConversationController, VoiceConversationControllerDeps } from '@/voice/runtime/controller/VoiceConversationController';
+import {
+  createVoiceConversationController,
+  type VoiceConversationController,
+  type VoiceConversationControllerDeps,
+} from '@/voice/runtime/controller/VoiceConversationController';
 import type { BundledRealtimeProviderRuntimeHost } from '@/voice/registry/bundledConversationRuntimeContract';
 
 import { createBundledRealtimeProviderRuntime } from './createBundledRealtimeProviderRuntime';
@@ -23,7 +27,9 @@ function createRuntimeForMode(
   };
   const acquireAudioMode = vi.fn(async () => ({ release: vi.fn(async () => undefined) }));
   const setInputMuted = vi.fn(input?.setInputMuted ?? (async () => undefined));
-  const controller: VoiceConversationController = {
+  // Existing resource/mute overrides do not establish coupled Hold correctness:
+  // the real delegate remains idle when this legacy start override executes.
+  const controller = {
     async start(input) {
       await resources?.prepare?.({
         controlSessionId: input.controlSessionId,
@@ -45,7 +51,7 @@ function createRuntimeForMode(
     playbackCursorMs: vi.fn(() => null),
     beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
     resolveOutputInterruptionCandidate: vi.fn(),
-  };
+  } satisfies Partial<VoiceConversationController>;
   const host = {
     // This focused microphone test has no Session-address fixture. Treat its
     // synthetic control id as Global so address admission remains out of scope.
@@ -80,7 +86,7 @@ function createRuntimeForMode(
     },
     createConversationController: vi.fn((input: VoiceConversationControllerDeps) => {
       resources = input.resources;
-      return controller;
+      return { ...createVoiceConversationController(input), ...controller };
     }),
     createMicSession: vi.fn(() => mic),
     createSdkHandleConnection: vi.fn(() => { throw new Error('unused'); }),

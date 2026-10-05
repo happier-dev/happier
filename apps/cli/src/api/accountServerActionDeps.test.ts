@@ -1781,7 +1781,7 @@ describe('Session access HTTP adapter', () => {
     })).rejects.toThrow();
   });
 
-  it('creates a Plain fragment public link and refuses publication without local secret custody', async () => {
+  it('returns a complete Plain fragment public link with or without a mounted consumer', async () => {
     const issued: ArtifactPublicLinkIssuedV1[] = [];
     const physicalBodies: unknown[] = [];
     let sessionReads = 0;
@@ -1837,14 +1837,15 @@ describe('Session access HTTP adapter', () => {
     expect(physical).toHaveProperty('keyDerivation', 'fragment_v1');
     expect(physical).not.toHaveProperty('token');
     expect(issued[0]?.url).toBe(`https://public.example.test/s/${issued[0]?.lookupId}#k=${issued[0]?.secret}`);
-    expect(JSON.stringify({ physical, result })).not.toContain(issued[0]?.secret);
+    expect(result).toMatchObject({ url: issued[0]?.url });
+    expect(JSON.stringify(physical)).not.toContain(issued[0]?.secret);
     expect(physical).not.toHaveProperty('encryptedDataKey');
     expect(physical).toMatchObject({ isConsentRequired: false });
     expect(physical.subject).toEqual({ kind: 'session', id: 'session-plain' });
     const noCustody = createAccountServerActionDeps({ token: 'bound-home-token', serverId: 'home', serverHttpBaseUrl: 'http://access.test' });
     await expect(noCustody.sessionAccessAction!({ actionId: 'session.public_link.create', input: logicalInput,
-      context: { surface: 'cli', serverId: 'home' } })).resolves.toMatchObject({ ok: false, errorCode: 'public_link_custody_unavailable' });
-    expect(physicalBodies).toHaveLength(1);
+      context: { surface: 'cli', serverId: 'home' } })).resolves.toMatchObject({ url: expect.stringMatching(/^https:\/\/public.example.test\/s\/[^#]+#k=.+$/) });
+    expect(physicalBodies).toHaveLength(2);
   });
 
   it('does not rotate an older Home publication through a Session route that strips new fields', async () => {
@@ -1998,12 +1999,11 @@ describe('Session access HTTP adapter', () => {
     );
     expect(openPublicShareDataKeyV1({ encryptedDataKey: physical.encryptedDataKey as string, secret })).toEqual(sessionDataKey);
     expect(openPublicShareDataKeyV1({ encryptedDataKey: physical.encryptedDataKey as string, secret: physical.lookupId as string })).toBeNull();
-    const serialized = JSON.stringify({ result, physical });
     expect(result).not.toHaveProperty('token');
     expect(result).not.toHaveProperty('encryptedDataKey');
-    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(result).toMatchObject({ url: issued[0]!.url });
     expect(JSON.stringify(result)).not.toContain(physical.encryptedDataKey as string);
-    expect(serialized).not.toContain(secret);
+    expect(JSON.stringify(physical)).not.toContain(secret);
   });
 
   it('rejects a caller-authored public-link envelope before any effect', async () => {

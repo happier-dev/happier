@@ -1,10 +1,11 @@
 import * as React from 'react';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
 
 import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
@@ -20,6 +21,7 @@ import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/d
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { LocalNeuralSttLanguageItem } from './LocalNeuralSttLanguageItem';
 
 type Progress = { loaded: number; total: number; file?: string };
 
@@ -37,10 +39,9 @@ export function LocalNeuralSttSettings(props: {
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
+  const settings = useVoiceSttSettingRefs();
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'packId' | 'language'>(null);
-  /** The Custom language entry is typed inline beneath the language menu. */
-  const [customLanguageOpen, setCustomLanguageOpen] = React.useState(false);
   const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
     requestedExecution: props.cfg.localNeural.execution,
   }), [props.cfg.localNeural.execution]);
@@ -240,25 +241,6 @@ export function LocalNeuralSttSettings(props: {
     }
   }, [effectivePackId, modelStatus, refreshInstalled]);
 
-  const languageOptions = React.useMemo(
-    () => {
-      const bcp47Options = [
-        { id: 'en', titleKey: 'settingsVoice.language.options.english' as const },
-        { id: 'en-US', titleKey: 'settingsVoice.language.options.englishUs' as const },
-        { id: 'fr', titleKey: 'settingsVoice.language.options.french' as const },
-        { id: 'es', titleKey: 'settingsVoice.language.options.spanish' as const },
-      ];
-
-      return [
-        { id: '', title: t('settingsVoice.language.autoDetect'), subtitle: t('settingsVoice.language.autoDetectSubtitle') },
-        ...bcp47Options.map((o) => ({ id: o.id, title: t(o.titleKey), subtitle: o.id })),
-        { id: '__custom__', title: t('settingsVoice.language.customTitle'), subtitle: t('settingsVoice.language.customSubtitle') },
-      ];
-    },
-    [],
-  );
-
-  const effectiveLanguage = props.cfg.localNeural.language ?? '';
   const installedBuild = formatModelPackBuildLabel((installSummary as any)?.manifest);
   const downloadDetail =
     modelStatus === 'downloading'
@@ -273,13 +255,16 @@ export function LocalNeuralSttSettings(props: {
 
   return (
     <>
+      <SettingAnchor setting={settings.sttExecution}>
       <DaemonVoiceInferenceExecutionDropdown
         execution={executionPolicy.selectableExecution}
         setExecution={(execution) => setLocalNeural({ execution })}
         popoverBoundaryRef={props.popoverBoundaryRef}
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
+      </SettingAnchor>
 
+      <SettingAnchor setting={settings.sttAssetId}>
       <DropdownMenu
         open={openMenu === 'packId'}
         onOpenChange={(next) => setOpenMenu(next ? 'packId' : null)}
@@ -303,14 +288,17 @@ export function LocalNeuralSttSettings(props: {
           setOpenMenu(null);
         }}
       />
+      </SettingAnchor>
 
       {usesDaemonExecution ? (
         <SelectedDaemonModelPackRow
           packId={effectivePackId}
           kind="stt_sherpa"
+          setting={settings.sttPrepareModel}
         />
       ) : (
         <>
+          <SettingAnchor setting={settings.sttPrepareModel}>
           <Item
             title={t('settingsVoice.local.localNeuralStt.modelFiles.title')}
             subtitle={t('settingsVoice.local.localNeuralStt.modelFiles.subtitle')}
@@ -337,7 +325,9 @@ export function LocalNeuralSttSettings(props: {
             showChevron={false}
             selected={false}
           />
+          </SettingAnchor>
 
+          <SettingAnchor setting={settings.sttRemoveModel}>
           <Item
             title={t('settingsVoice.local.localNeuralStt.removeModelFiles.title')}
             subtitle={t('settingsVoice.local.localNeuralStt.removeModelFiles.subtitle')}
@@ -346,7 +336,9 @@ export function LocalNeuralSttSettings(props: {
             showChevron={false}
             selected={false}
           />
+          </SettingAnchor>
 
+          <SettingAnchor setting={settings.sttUpdateModel}>
           <Item
             title={t('settingsVoice.local.kokoro.updates.title')}
             subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
@@ -363,52 +355,17 @@ export function LocalNeuralSttSettings(props: {
             showChevron={false}
             selected={false}
           />
+          </SettingAnchor>
         </>
       )}
 
-      <DropdownMenu
+      <LocalNeuralSttLanguageItem
+        language={props.cfg.localNeural.language}
         open={openMenu === 'language'}
         onOpenChange={(next) => setOpenMenu(next ? 'language' : null)}
-        variant="selectable"
-        search={true}
-        selectedId={effectiveLanguage}
-        showCategoryTitles={false}
-        matchTriggerWidth={true}
-        connectToTrigger={true}
-        rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        itemTrigger={{
-          title: t('settingsVoice.local.localNeuralStt.language.title'),
-          subtitle: t('settingsVoice.local.localNeuralStt.language.subtitle'),
-          showSelectedSubtitle: false,
-          detailFormatter: () => (effectiveLanguage || t('settingsVoice.language.autoDetect')),
-        }}
-        items={languageOptions}
-        onSelect={(id) => {
-          if (id === '__custom__') {
-            setCustomLanguageOpen(true);
-            setOpenMenu(null);
-            return;
-          }
-          setLocalNeural({ language: id ? id : null });
-          setOpenMenu(null);
-        }}
+        onSelect={(language) => setLocalNeural({ language })}
       />
-      {!customLanguageOpen ? null : (
-        <FieldValueItem
-          title={t('settingsVoice.local.localNeuralStt.language.promptTitle')}
-          subtitle={t('settingsVoice.local.localNeuralStt.language.promptBody')}
-          fieldTestID="settings.voice.localNeuralStt.language.custom.field"
-          autoCapitalize="none"
-          autoFocus
-          placeholder={t('settingsVoice.language.autoDetect')}
-          value={effectiveLanguage}
-          onCommit={(draft) => {
-            setCustomLanguageOpen(false);
-            setLocalNeural({ language: draft ? draft : null });
-          }}
-        />
-      )}
     </>
   );
 }

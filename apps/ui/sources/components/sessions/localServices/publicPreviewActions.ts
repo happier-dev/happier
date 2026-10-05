@@ -67,7 +67,7 @@ function readPreviewTarget(target: LocalServicePublicPreviewActionTarget): Reado
     sessionId: string;
     previewId: string;
 }> | null {
-    const browserTarget = 'kind' in target ? target : target.browserTarget;
+    const browserTarget = 'id' in target ? target.browserTarget : target;
     if (browserTarget?.kind !== 'localServicePreview') {
         return null;
     }

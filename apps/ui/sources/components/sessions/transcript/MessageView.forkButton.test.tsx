@@ -18,6 +18,7 @@ const resolvePreferredServerIdForSessionIdSpy = vi.fn<(sessionId: string) => str
 const storageStoreRef = vi.hoisted(() => ({ current: null as any }));
 
 let replayEnabled = true;
+let committedActionsEnabled = true;
 let copyButtonsVisible = true;
 let sessionMetadata: any = { machineId: 'm1' };
 let sessionForkSupportSource: any = { metadata: sessionMetadata };
@@ -192,6 +193,7 @@ installMessageViewCommonModuleMocks({
     storageStoreRef.current = storageStore;
     return createStorageModuleStub({
       useSetting: (key: string) => {
+        if (key === 'transcriptMessageForkActionEnabled' || key === 'transcriptMessageCopyActionEnabled') return committedActionsEnabled;
         if (key === 'sessionReplayEnabled') return replayEnabled;
         if (key === 'sessionThinkingDisplayMode') return 'inline';
         if (key === 'toolViewTimelineChromeMode') return 'cards';
@@ -312,6 +314,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 
 describe('MessageView (fork button)', () => {
   beforeEach(() => {
+    committedActionsEnabled = true;
     routerPushSpy.mockReset();
     forkSessionSpy.mockReset();
     openSessionForkStrategyFlowSpy.mockReset();
@@ -334,6 +337,22 @@ describe('MessageView (fork button)', () => {
 
   afterEach(() => {
     standardCleanup();
+  });
+
+  it.each(['user-text', 'agent-text'] as const)('removes disabled fork and copy actions from mounted and recycled %s rows', async (kind) => {
+    const { MessageView } = await import('./MessageView');
+    const message = { kind, id: 'off', localId: 'off-local', createdAt: 1, text: 'hello', seq: 5 };
+    const element = <MessageView sessionId="s1" metadata={sessionMetadata} message={message} />;
+    const screen = await renderScreen(element);
+    expect(screen.findHostByTestId('transcript-message-copy:off')).not.toBeNull();
+    expect(screen.findHostByTestId('transcript-message-fork:off')).not.toBeNull();
+    committedActionsEnabled = false;
+    await screen.update(element);
+    expect(screen.findHostByTestId('transcript-message-copy:off')).toBeNull();
+    expect(screen.findHostByTestId('transcript-message-fork:off')).toBeNull();
+    await screen.update(<MessageView sessionId="s1" metadata={sessionMetadata} message={{ ...message, id: 'recycled' }} />);
+    expect(screen.findHostByTestId('transcript-message-copy:recycled')).toBeNull();
+    expect(screen.findHostByTestId('transcript-message-fork:recycled')).toBeNull();
   });
 
   it('does not use pointerEvents prop on web when actions are hidden (prevents click interception)', async () => {
@@ -489,7 +508,7 @@ describe('MessageView (fork button)', () => {
       );
     });
     expect(screen.tree.root.findAll(
-      (node) => node.props?.testID === 'transcript-message-fork:m1' && typeof node.props?.onPress === 'function',
+      (node) => typeof node.type === 'string' && node.props?.testID === 'transcript-message-fork:m1' && typeof node.props?.onPress === 'function',
     )).toHaveLength(1);
   });
 
@@ -627,7 +646,9 @@ describe('MessageView (fork button)', () => {
 
   it('renders fork button when replay is disabled but provider supports native fork-at-message', async () => {
     replayEnabled = false;
-    sessionMetadata = { machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server' };
+    sessionMetadata = { machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server',
+      agentRuntimeCapabilitiesV1: { sessionCapabilities: { sessionListing: 'supported',
+        sessionFork: { conversation: 'supported', fromMessage: 'supported' }, sessionRollback: { conversation: 'unsupported' } } } };
     sessionForkSupportSource = { metadata: sessionMetadata };
 
     const { MessageView } = await import('./MessageView');
@@ -641,8 +662,8 @@ describe('MessageView (fork button)', () => {
     const forkStyle = typeof forkButton?.props.style === 'function'
       ? forkButton.props.style({ pressed: false })
       : forkButton?.props.style;
-    expect(flattenStyleProp(forkStyle).minWidth).toBeGreaterThanOrEqual(44);
-    expect(flattenStyleProp(forkStyle).minHeight).toBeGreaterThanOrEqual(44);
+    expect(flattenStyleProp(forkStyle).width).toBeGreaterThanOrEqual(44);
+    expect(flattenStyleProp(forkStyle).height).toBeGreaterThanOrEqual(44);
   });
 
   it('uses a physical 48dp Android target without overlapping hit slop', async () => {
@@ -651,7 +672,9 @@ describe('MessageView (fork button)', () => {
     (Platform as { OS: string }).OS = 'android';
     try {
       replayEnabled = false;
-      sessionMetadata = { machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server' };
+      sessionMetadata = { machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server',
+        agentRuntimeCapabilitiesV1: { sessionCapabilities: { sessionListing: 'supported',
+          sessionFork: { conversation: 'supported', fromMessage: 'supported' }, sessionRollback: { conversation: 'unsupported' } } } };
       sessionForkSupportSource = { metadata: sessionMetadata };
 
       const { MessageView } = await import('./MessageView');
@@ -662,9 +685,9 @@ describe('MessageView (fork button)', () => {
       const forkStyle = typeof forkButton?.props.style === 'function'
         ? forkButton.props.style({ pressed: false })
         : forkButton?.props.style;
-      expect(flattenStyleProp(forkStyle).minWidth).toBeGreaterThanOrEqual(48);
-      expect(flattenStyleProp(forkStyle).minHeight).toBeGreaterThanOrEqual(48);
-      expect(forkButton?.props.hitSlop).toBeUndefined();
+      expect(flattenStyleProp(forkStyle).width).toBeGreaterThanOrEqual(48);
+      expect(flattenStyleProp(forkStyle).height).toBeGreaterThanOrEqual(48);
+      expect(forkButton?.props.hitSlop ?? 0).toBe(0);
       await screen.unmount();
     } finally {
       (Platform as { OS: string }).OS = previousPlatform;

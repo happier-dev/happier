@@ -9,9 +9,40 @@ import { useReviewComposerHandoff } from '@/components/sessions/reviews/comments
 import { useReviewAskComposer } from '@/components/sessions/reviews/comments/useReviewAskComposer';
 import { ReviewCommentsSessionSurface } from '@/components/reviews/ReviewCommentsSessionSurface';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
-import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
+import { ScmComparisonHeader } from '@/components/sessions/files/comparison/ScmComparisonHeader';
+import { ScmComparisonScopePicker } from '@/components/sessions/files/comparison/ScmComparisonScopePicker';
+import { ScmComparisonPhoneHeader } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
+import { ScmComparisonBar, ScmComparisonExplainToggle, ScmComparisonStartReview, ScmComparisonViewSwitch } from '@/components/sessions/files/comparison/ScmComparisonBar';
+import { SessionWalkthroughView } from '@/components/sessions/files/walkthrough/SessionWalkthroughView';
+import { SessionCommitsView } from '@/components/sessions/files/commits/SessionCommitsView';
+import { WalkthroughExplainNotes, WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX } from '@/components/sessions/files/walkthrough/WalkthroughExplainNotes';
+import { WalkthroughAnalysisFact, WalkthroughReviewedFact } from '@/components/sessions/files/walkthrough/WalkthroughAtoms';
+import { useWalkthroughReviewedMarks } from '@/components/sessions/files/walkthrough/useWalkthroughReviewedMarks';
+import { buildWalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { useSessionScmWalkthrough } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
+import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import {
+    describeChangedFilesModeAsComparison,
+    listFilesComparisonScopeOptions,
+    resolveFilesComparisonLabel,
+    resolveFilesComparisonPresentation,
+    scmComparisonKey,
+} from '@/components/sessions/files/comparison/filesComparison';
+import {
+    createSessionScmReviewDetailsTab,
+    resolveSessionScmReviewViewLabel,
+    type SessionScmReviewComparison,
+    type SessionScmReviewTarget,
+    type SessionScmReviewView,
+} from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { ChangedFilesLayoutSwitch } from '@/components/sessions/panes/git/display/GitDisplayMenu';
+import { createExecutionRunLauncherDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
+import { presentStartReviewDialog } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import type { ChangedFilesReviewCoverage } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useSessionMessages, useSessionProjectScmCommitSelectionPatches, useSessionProjectScmCommitSelectionPaths, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useWorkspaceScmTouchedPathsForSession, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useProjectForSession, useSession, useSessionMessages, useSessionProjectScmCommitSelectionPatches, useSessionProjectScmCommitSelectionPaths, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useWorkspaceScmTouchedPathsForSession, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -26,17 +57,14 @@ import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { NotSourceControlRepositoryState, SourceControlStaleSnapshotNotice, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
-import {
-    getPreferredChangedFilesViewMode,
-    resolveChangedFilesViewMode,
-    type ChangedFilesViewMode,
-} from '@/scm/scmAttribution';
 import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
 import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -55,134 +83,48 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import { buildCommitSelectionPathHints, isFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
 import { isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
+import { SessionCapturedScmReviewDetailsView } from './SessionCapturedScmReviewDetailsView';
+import { useSessionScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 
 export type SessionScmReviewDetailsViewProps = Readonly<{
     sessionId: string;
     serverId?: string | null;
     scopeId: string;
     active?: boolean;
+    /** The comparison and view this destination shows (from its tab or link); absent keeps the default. */
+    target?: SessionScmReviewTarget;
 }>;
 
-const REVIEW_SCROLL_TOP_PERSIST_DEBOUNCE_MS = 250;
-const REVIEW_SCROLL_TOP_PERSIST_EPSILON_PX = 1;
-
-function areReviewScrollTopValuesEqual(previous: unknown, next: unknown): boolean {
-    if (Object.is(previous, next)) return true;
-    if (typeof previous !== 'number' || typeof next !== 'number') return false;
-    if (!Number.isFinite(previous) || !Number.isFinite(next)) return false;
-    return Math.abs(previous - next) < REVIEW_SCROLL_TOP_PERSIST_EPSILON_PX;
-}
-
-function areReviewTabStateValuesEqual(key: string, previous: unknown, next: unknown): boolean {
-    if (key === 'scrollTop') {
-        return areReviewScrollTopValuesEqual(previous, next);
-    }
-    if (Object.is(previous, next)) return true;
-    if (Array.isArray(previous) || Array.isArray(next)) {
-        const previousArray = Array.isArray(previous) ? previous : [];
-        const nextArray = Array.isArray(next) ? next : [];
-        if (previousArray.length !== nextArray.length) return false;
-        return previousArray.every((value, index) => Object.is(value, nextArray[index]));
-    }
-    return false;
-}
-
-function useMountedReviewInitialState(
-    sessionId: string,
-    scrollTop: number | null,
-    collapsedPaths: string[] | null,
-): Readonly<{ scrollTop: number | null; collapsedPaths: string[] | null }> {
-    const initialStateRef = React.useRef<Readonly<{
-        sessionId: string;
-        scrollTop: number | null;
-        collapsedPaths: string[] | null;
-    }> | null>(null);
-
-    if (!initialStateRef.current || initialStateRef.current.sessionId !== sessionId) {
-        initialStateRef.current = {
-            sessionId,
-            scrollTop,
-            collapsedPaths: collapsedPaths ? [...collapsedPaths] : null,
-        };
-    }
-
-    return initialStateRef.current;
-}
+/** Wide enough for the file rail beside a readable stream (lab WT8: a 300 px rail, about 560 px of code). */
+const COMPARISON_RAIL_MIN_WIDTH_PX = 860;
+/** Below this the header stacks its coverage, as on a phone (lab WT8 F1p). */
+const COMPARISON_STACKED_MAX_WIDTH_PX = 560;
+/** Files and Walkthrough over any comparison; Commits only over pending changes (lab WT4: explain-and-commit). */
+const COMPARISON_VIEWS: readonly SessionScmReviewView[] = ['files', 'walkthrough'];
+const PENDING_COMPARISON_VIEWS: readonly SessionScmReviewView[] = ['files', 'walkthrough', 'commits'];
+const PENDING_COMPARISON = { kind: 'workingTree' } as const;
 
 export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDetailsViewProps) => {
+    const comparison = props.target?.comparison;
+    if (comparison && resolveFilesComparisonPresentation(comparison, {
+        showTurnViewToggle: false, showTurnAgentReportedViewToggle: false, showTurnCheckpointViewToggle: false, showSessionViewToggle: false,
+    }).kind === 'captured') return <SessionCapturedScmReviewDetailsView {...props} comparison={comparison} />;
+    return <SessionWorkingScmReviewDetailsView {...props} />;
+});
+
+const SessionWorkingScmReviewDetailsView = React.memo((props: SessionScmReviewDetailsViewProps) => {
+    const { machineReachable } = useSessionMachineReachability(props.sessionId, props.serverId);
+    const reviewDisabledReason = machineReachable ? null : t('walkthrough.notice.offlineA11y');
     const { theme } = useUnistyles();
     const pane = useAppPaneScope(props.scopeId);
     const openDetailsTab = pane.openDetailsTab;
     const goToComposer = useReviewComposerHandoff(props.scopeId);
-    const setDetailsTabState = pane.setDetailsTabState;
-    const reviewTabKey = 'scmReview:working';
-    const persistedReviewTabState = pane.scopeState?.details?.tabState?.[reviewTabKey] as any as
-        | Readonly<{ collapsedPaths?: unknown; scrollTop?: unknown }>
-        | null
-        | undefined;
-    const persistedCollapsedPaths = React.useMemo(() => {
-        const raw = persistedReviewTabState?.collapsedPaths;
-        return Array.isArray(raw) ? (raw.filter((p) => typeof p === 'string') as string[]) : null;
-    }, [persistedReviewTabState?.collapsedPaths]);
-    const persistedScrollTop = React.useMemo(() => {
-        const raw = persistedReviewTabState?.scrollTop;
-        return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
-    }, [persistedReviewTabState?.scrollTop]);
-    const mountedInitialReviewState = useMountedReviewInitialState(props.sessionId, persistedScrollTop, persistedCollapsedPaths);
+    const { persistedReviewTabState, mountedInitialReviewState, setPersistedReviewTabState,
+        onCollapsedPathsChange, onScrollTopChange, explain, setExplain } = useSessionScmReviewTabState(props.sessionId, pane, props.target);
     const sessionAddress = React.useMemo(
         () => normalizeSessionAddress(props.serverId, props.sessionId),
         [props.serverId, props.sessionId],
     );
-    const persistedReviewTabStateRef = React.useRef<Record<string, unknown>>({});
-    React.useEffect(() => {
-        persistedReviewTabStateRef.current =
-            persistedReviewTabState && typeof persistedReviewTabState === 'object'
-                ? (persistedReviewTabState as any as Record<string, unknown>)
-                : {};
-    }, [persistedReviewTabState]);
-    const setPersistedReviewTabState = React.useCallback((patch: Record<string, unknown>) => {
-        const prev = persistedReviewTabStateRef.current ?? {};
-        let hasChange = false;
-        for (const [key, value] of Object.entries(patch)) {
-            if (!areReviewTabStateValuesEqual(key, prev[key], value)) {
-                hasChange = true;
-                break;
-            }
-        }
-        if (!hasChange) return;
-        const next = { ...prev, ...patch };
-        persistedReviewTabStateRef.current = next;
-        setDetailsTabState(reviewTabKey, next);
-    }, [setDetailsTabState]);
-    const onCollapsedPathsChange = React.useCallback((paths: string[]) => {
-        setPersistedReviewTabState({ collapsedPaths: paths });
-    }, [setPersistedReviewTabState]);
-    const pendingScrollTopRef = React.useRef<number | null>(null);
-    const scrollTopPersistTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const flushPendingScrollTop = React.useCallback(() => {
-        if (scrollTopPersistTimerRef.current) {
-            clearTimeout(scrollTopPersistTimerRef.current);
-            scrollTopPersistTimerRef.current = null;
-        }
-        const top = pendingScrollTopRef.current;
-        pendingScrollTopRef.current = null;
-        if (typeof top !== 'number' || !Number.isFinite(top)) return;
-        setPersistedReviewTabState({ scrollTop: top });
-    }, [setPersistedReviewTabState]);
-    const onScrollTopChange = React.useCallback((top: number) => {
-        if (!Number.isFinite(top)) return;
-        if (areReviewScrollTopValuesEqual(pendingScrollTopRef.current, top)) return;
-        if (pendingScrollTopRef.current === null && areReviewScrollTopValuesEqual(persistedReviewTabStateRef.current?.scrollTop, top)) return;
-        pendingScrollTopRef.current = top;
-        if (scrollTopPersistTimerRef.current) {
-            clearTimeout(scrollTopPersistTimerRef.current);
-        }
-        scrollTopPersistTimerRef.current = setTimeout(
-            flushPendingScrollTop,
-            REVIEW_SCROLL_TOP_PERSIST_DEBOUNCE_MS,
-        );
-    }, [flushPendingScrollTop]);
-    React.useEffect(() => flushPendingScrollTop, [flushPendingScrollTop]);
     // Every working-tree read and commit target below is qualified by the Home this screen was
     // opened for. Reading by bare id resolves through same-id discovery, which cannot separate two
     // Homes hosting one Session id and would review — and commit — the wrong working tree.
@@ -286,8 +228,11 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         latestTurnCheckpointDiffByPath,
         sessionChangeSet,
         providerDiffByPath,
-    } = useDerivedSessionChangeSet(sessionAddress, effectiveSnapshot?.repo.rootPath);
-    const [requestedChangedFilesViewMode, setRequestedChangedFilesViewMode] = React.useState<ChangedFilesViewMode | null>(null);
+        sessionLatestTurnId,
+        turnChangeSets,
+    } = useDerivedSessionChangeSet(sessionAddress, effectiveSnapshot?.repo.rootPath, {
+        presentedTurnId: props.target?.comparison?.kind === 'turnCheckpoint' ? props.target.comparison.turnId ?? null : null,
+    });
 
     useScmAdaptivePolling({
         enabled: props.active !== false && Boolean(props.sessionId) && effectiveSnapshot?.repo.isRepo === true,
@@ -331,18 +276,26 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         changed.showTurnViewToggle,
     ]);
 
-    const changedFilesViewMode = React.useMemo(() => {
-        if (requestedChangedFilesViewMode) {
-            return resolveChangedFilesViewMode({
-                mode: requestedChangedFilesViewMode,
-                ...changedFilesAvailability,
-            });
-        }
-        return getPreferredChangedFilesViewMode(changedFilesAvailability);
-    }, [
-        changedFilesAvailability,
-        requestedChangedFilesViewMode,
-    ]);
+    // The comparison is the one decision (the tab's link or the scope picker); the data mode follows it.
+    // The tab resource is re-read each render; its comparison is reused while its identity is unchanged.
+    const requestedComparisonKey = props.target?.comparison ? scmComparisonKey(props.target.comparison) : null;
+    const requestedComparisonRef = React.useRef<SessionScmReviewComparison | null>(null);
+    if ((requestedComparisonRef.current ? scmComparisonKey(requestedComparisonRef.current) : null) !== requestedComparisonKey) {
+        requestedComparisonRef.current = props.target?.comparison ?? null;
+    }
+    const requestedComparison = requestedComparisonRef.current;
+    const comparisonPresentation = React.useMemo(
+        () => resolveFilesComparisonPresentation(requestedComparison, changedFilesAvailability),
+        [changedFilesAvailability, requestedComparison],
+    );
+    const changedFilesViewMode = comparisonPresentation.kind === 'changedFiles' ? comparisonPresentation.mode : 'repository';
+    const pickerLatestTurnId = requestedComparison?.kind === 'turnCheckpoint'
+        ? sessionLatestTurnId
+        : (latestTurnChangeSet?.turnId ?? latestTurnId ?? null);
+    const shownComparison = React.useMemo(
+        () => requestedComparison ?? describeChangedFilesModeAsComparison(changedFilesViewMode, latestTurnId ?? null),
+        [changedFilesViewMode, latestTurnId, requestedComparison],
+    );
 
     const reviewProviderDiffByPath = React.useMemo(() => {
         if (changedFilesViewMode === 'turn') return latestTurnDiffByPath;
@@ -493,21 +446,269 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         onUpsertReviewCommentDraft({ ...draft, includeInPrompt: false });
     }, [onUpsertReviewCommentDraft]);
 
-    const reviewViewMenu = React.useMemo(() => (
-        changed.showTurnViewToggle || changed.showTurnAgentReportedViewToggle
-        || changed.showTurnCheckpointViewToggle || changed.showSessionViewToggle
-    ) ? (
-        <ChangedFilesViewModeMenu
-            testID="scm-review-view-menu"
-            theme={theme}
-            changedFilesViewMode={changedFilesViewMode}
-            showTurnViewToggle={changed.showTurnViewToggle}
-            showTurnAgentReportedViewToggle={changed.showTurnAgentReportedViewToggle}
-            showTurnCheckpointViewToggle={changed.showTurnCheckpointViewToggle}
-            showSessionViewToggle={changed.showSessionViewToggle}
-            onChangedFilesViewMode={setRequestedChangedFilesViewMode}
+    // Choosing another scope updates this destination in place (same tab key), so it keeps its place.
+    const requestedView = props.target?.view ?? 'files';
+    const selectComparison = React.useCallback((comparison: SessionScmReviewComparison) => {
+        // Commits exists only over pending changes; another scope keeps the reading view instead.
+        const view = requestedView === 'commits' && comparison.kind !== 'workingTree' ? 'files' : requestedView;
+        openDetailsTab(createSessionScmReviewDetailsTab({ ...props.target, comparison, view }), { intent: 'pinned' });
+    }, [openDetailsTab, props.target, requestedView]);
+    const scopeOptions = React.useMemo(
+        () => listFilesComparisonScopeOptions(changedFilesAvailability, pickerLatestTurnId, shownComparison, {
+            pendingFileCount: changed.allRepositoryChangedFiles.length,
+            latestTurnFileCount: latestTurnChangeSet?.files.length,
+        }),
+        [changedFilesAvailability, pickerLatestTurnId, shownComparison, changed.allRepositoryChangedFiles.length, latestTurnChangeSet?.files.length],
+    );
+    const scopeLabel = shownComparison
+        ? resolveFilesComparisonLabel(shownComparison, pickerLatestTurnId)
+        : t('scmComparison.scope.workingTree');
+    const pending = shownComparison?.kind === 'workingTree';
+    const reviewView: SessionScmReviewView = requestedView === 'commits' && !pending ? 'files' : requestedView;
+    const viewLabel = resolveSessionScmReviewViewLabel(reviewView);
+    // What "This session" spans: since the Session began, over the turns that changed files.
+    const sessionCreatedAt = useSession(props.sessionId)?.createdAt ?? null;
+    const scopeDetail = shownComparison?.kind === 'session'
+        ? [
+            typeof sessionCreatedAt === 'number' && sessionCreatedAt > 0 ? t('scmComparison.since', { time: formatAsOfTime(sessionCreatedAt) }) : null,
+            (turnChangeSets?.length ?? 0) > 0 ? t('scmComparison.turnsWithChanges', { count: turnChangeSets.length }) : null,
+        ].filter((part): part is string => part !== null).join(' · ') || null
+        : null;
+    // A review of the comparison on screen (lab WT5-R4): the comparison replaces Change type and Base, and
+    // the walkthrough output starts on. Without a working copy to capture from, the general launcher stays.
+    const reviewCwd = effectiveSnapshot?.repo.rootPath ?? sessionPath ?? null;
+    const startedReviewRunIds = React.useMemo(() => {
+        const raw = (persistedReviewTabState as { reviewRunIds?: unknown } | null | undefined)?.reviewRunIds;
+        return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : null;
+    }, [persistedReviewTabState]);
+    const openReviewDialog = React.useCallback((preselectedEngineIds?: readonly string[]) => {
+        if (!machineReachable) return;
+        if (!shownComparison || !reviewCwd) {
+            openDetailsTab(createExecutionRunLauncherDetailsTab('review'), { intent: 'preview' });
+            return;
+        }
+        presentStartReviewDialog({
+            sessionId: props.sessionId,
+            serverId: props.serverId ?? null,
+            cwd: reviewCwd,
+            comparison: shownComparison,
+            scopeLabel,
+            scopeDetail,
+            defaultWalkthrough: true,
+            ...(preselectedEngineIds ? { preselectedEngineIds } : {}),
+            onStarted: (started, walkthrough) => {
+                setPersistedReviewTabState({ reviewRunIds: [...started.reviewRunIds] });
+                if (walkthrough) {
+                    openDetailsTab(createSessionScmReviewDetailsTab({ ...props.target, comparison: { ...shownComparison, comparisonId: started.comparisonId }, view: 'walkthrough' }), { intent: 'pinned' });
+                }
+                const said = [
+                    started.notStartedEngineIds.length > 0 ? t('reviewWalkthrough.started.notStarted', { engines: started.notStartedEngineIds.join(', ') }) : null,
+                    started.narrationError ? t('reviewWalkthrough.started.narrationFailed') : null,
+                ].filter((line): line is string => line !== null);
+                if (said.length > 0) Modal.alert(t('scmComparison.startReview'), said.join('\n'));
+            },
+        });
+    }, [machineReachable, openDetailsTab, props.serverId, props.sessionId, props.target, reviewCwd, scopeDetail, scopeLabel, setPersistedReviewTabState, shownComparison]);
+    const openReviewLauncher = React.useCallback(() => openReviewDialog(), [openReviewDialog]);
+    const [contentWidth, setContentWidth] = React.useState<number | null>(null);
+    const onContentLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
+        const width = Math.round(event.nativeEvent.layout.width);
+        setContentWidth((current) => (current === width ? current : width));
+    }, []);
+    const indexPlacement = contentWidth !== null && contentWidth >= COMPARISON_RAIL_MIN_WIDTH_PX ? 'rail' : 'stream';
+    const stacked = contentWidth !== null && contentWidth < COMPARISON_STACKED_MAX_WIDTH_PX;
+    // Files and Walkthrough are two views of one comparison: switching keeps the tab, scope and place.
+    const selectView = React.useCallback((view: SessionScmReviewView) => {
+        openDetailsTab(createSessionScmReviewDetailsTab({ ...props.target, ...(shownComparison ? { comparison: shownComparison } : null), view }), { intent: 'pinned' });
+    }, [openDetailsTab, props.target, shownComparison]);
+    // The proposal's size labels the Commits view ("Commits 3"); proposing opens that view.
+    const commitPlan = useSessionScmWalkthrough(props.sessionId, pending && props.active !== false ? PENDING_COMPARISON : null, 'commitPlan', props.serverId);
+    const commitsCount = commitPlan?.outputs?.commitPlan?.value?.groups.length ?? null;
+    const viewSwitch = <ScmComparisonViewSwitch view={reviewView} views={pending ? PENDING_COMPARISON_VIEWS : COMPARISON_VIEWS} onSelect={selectView} commitsCount={commitsCount} />;
+    const proposeCommits = pending && reviewView !== 'commits' && !commitPlan?.outputs?.commitPlan ? (
+        <RoundButton
+            testID="scm-comparison-propose-commits"
+            size="small"
+            display="inverted"
+            title={t('scmComparison.proposeCommits')}
+            leading={<Icon name="git-commit" size={ICON_SIZE.xs} color={theme.colors.text.primary} />}
+            onPress={() => selectView('commits')}
         />
-    ) : null, [changed.showTurnViewToggle, changed.showTurnAgentReportedViewToggle, changed.showTurnCheckpointViewToggle, changed.showSessionViewToggle, changedFilesViewMode, theme]);
+    ) : null;
+    // Files' Explain projects the same walkthrough beside its hunks; it never asks for a second output.
+    const walkthroughAnalysis = useSessionScmWalkthrough(props.sessionId, shownComparison, 'walkthrough', props.serverId);
+    const marks = useWalkthroughReviewedMarks({ comparison: reviewView === 'files' ? walkthroughAnalysis?.comparison ?? null : null, serverId: props.serverId ?? null });
+    const marksAvailable = marks.record?.comparisonId === walkthroughAnalysis?.comparison?.id && marks.record !== null && marks.unavailableReason === null;
+    const filesReading = React.useMemo(() => (walkthroughAnalysis?.comparison && walkthroughAnalysis.outputs?.walkthrough?.value
+        ? buildWalkthroughReading({
+            comparison: walkthroughAnalysis.comparison,
+            walkthrough: walkthroughAnalysis.outputs.walkthrough,
+            analysis: walkthroughAnalysis.analysis,
+            reviewed: marksAvailable ? marks.record : null,
+        })
+        : null), [walkthroughAnalysis?.analysis, walkthroughAnalysis?.comparison, walkthroughAnalysis?.outputs?.walkthrough, marksAvailable, marks.record]);
+    const readInWalkthrough = React.useCallback(() => selectView('walkthrough'), [selectView]);
+    const renderHunkNotes = React.useMemo(() => (explain && filesReading
+        ? (path: string, hunkIndex: number, placement: 'column' | 'inline') => (
+            <WalkthroughExplainNotes reading={filesReading} path={path} hunkIndex={hunkIndex} placement={placement} onReadInWalkthrough={readInWalkthrough} />
+        )
+        : null), [explain, filesReading, readInWalkthrough]);
+    const renderPhoneHeader = React.useCallback((count: number | null, actions?: React.ReactNode) => <ScmComparisonPhoneHeader
+        view={reviewView} views={pending ? PENDING_COMPARISON_VIEWS : COMPARISON_VIEWS}
+        scope={{ options: scopeOptions, current: shownComparison, currentLabel: scopeLabel, fileCount: count, onSelect: selectComparison }}
+        onSelectView={selectView} onBack={pane.closeDetails} onStartReview={openReviewLauncher}
+        reviewDisabled={!machineReachable} reviewDisabledReason={reviewDisabledReason}
+        onProposeCommits={proposeCommits ? () => selectView('commits') : null} extraActions={actions} />,
+    [reviewView, pending, scopeOptions, shownComparison, scopeLabel, selectComparison, selectView, pane.closeDetails, openReviewLauncher, Boolean(proposeCommits), machineReachable, reviewDisabledReason]);
+    const comparisonChrome = React.useMemo(() => ({
+        renderBar: stacked ? (coverage: ChangedFilesReviewCoverage, actions: React.ReactNode) => renderPhoneHeader(coverage.fileCount, actions) : undefined,
+        renderBarLeading: (coverage: ChangedFilesReviewCoverage) => (
+            <>
+                {viewSwitch}
+                <ScmComparisonScopePicker
+                    options={scopeOptions}
+                    current={shownComparison}
+                    currentLabel={scopeLabel}
+                    fileCount={coverage.fileCount}
+                    onSelect={selectComparison}
+                />
+            </>
+        ),
+        barTrailing: (
+            <>
+                <ScmComparisonStartReview disabled={!machineReachable} disabledReason={reviewDisabledReason} onPress={openReviewLauncher} />
+                {proposeCommits}
+            </>
+        ),
+        renderHeader: (coverage: ChangedFilesReviewCoverage) => (
+            <ScmComparisonHeader
+                viewLabel={viewLabel}
+                scopeLabel={scopeLabel}
+                scopeDetail={scopeDetail}
+                title={filesReading?.title ?? null}
+                coverage={coverage}
+                changeCount={filesReading?.source.changeCount ?? null}
+                analysis={filesReading?.analysis ? (
+                    <WalkthroughAnalysisFact
+                        parts={filesReading.analysis.parts}
+                        analysed={filesReading.analysis.analysed}
+                        total={filesReading.analysis.total}
+                        model={walkthroughAnalysis?.producer?.modelId ?? null}
+                        stopped={filesReading.phase === 'cancelled' || filesReading.phase === 'failed'}
+                        unavailableCount={filesReading.source.unavailableCount}
+                    />
+                ) : null}
+                reviewed={filesReading && marksAvailable ? <WalkthroughReviewedFact count={filesReading.reviewedCount} total={filesReading.stops.length} /> : null}
+                stacked={stacked}
+                accessory={(
+                    <>
+                        {filesReading ? <ScmComparisonExplainToggle value={explain} onChange={setExplain} /> : null}
+                        {stacked ? <ChangedFilesLayoutSwitch testIDPrefix="scm-comparison-layout" /> : null}
+                    </>
+                )}
+            />
+        ),
+        indexPlacement: stacked ? 'phone' : indexPlacement,
+        rootPath: effectiveSnapshot?.repo.rootPath ?? null,
+        renderHunkNotes,
+        hunkNotesColumnWidth: WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX,
+    } as const), [
+        explain,
+        filesReading,
+        marksAvailable,
+        renderHunkNotes,
+        setExplain,
+        viewSwitch,
+        walkthroughAnalysis?.producer?.modelId,
+        effectiveSnapshot?.repo.rootPath,
+        indexPlacement,
+        openReviewLauncher,
+        proposeCommits,
+        scopeLabel,
+        scopeOptions,
+        selectComparison,
+        shownComparison,
+        scopeDetail,
+        stacked,
+        theme.colors.text.primary,
+        viewLabel,
+        renderPhoneHeader,
+        machineReachable,
+        reviewDisabledReason,
+    ]);
+
+    if (reviewView === 'commits') {
+        const branch = effectiveSnapshot?.branch?.detached ? null : effectiveSnapshot?.branch?.head ?? null;
+        const focusGroupId = (persistedReviewTabState as { commitGroupId?: unknown } | null | undefined)?.commitGroupId;
+        return (
+            <View style={{ flex: 1, minHeight: 0 }} onLayout={onContentLayout}>
+                <SessionCommitsView
+                    sessionId={props.sessionId}
+                    serverId={props.serverId}
+                    branch={branch}
+                    layout={stacked ? 'phone' : 'wide'}
+                    active={props.active !== false}
+                    focusGroupId={typeof focusGroupId === 'string' ? focusGroupId : null}
+                    onOpenComposer={goToComposer}
+                    renderBar={() => stacked ? renderPhoneHeader(filesReading?.source.fileCount ?? null) : (
+                        <ScmComparisonBar
+                            leading={(
+                                <>
+                                    {viewSwitch}
+                                    <ScmComparisonScopePicker
+                                        options={scopeOptions}
+                                        current={shownComparison}
+                                        currentLabel={scopeLabel}
+                                        fileCount={null}
+                                        onSelect={selectComparison}
+                                    />
+                                </>
+                            )}
+                            trailing={comparisonChrome.barTrailing}
+                        />
+                    )}
+                />
+            </View>
+        );
+    }
+
+    if (reviewView === 'walkthrough') {
+        return (
+            <View style={{ flex: 1, minHeight: 0 }} onLayout={onContentLayout}>
+                <SessionWalkthroughView
+                    sessionId={props.sessionId}
+                    serverId={props.serverId}
+                    comparison={shownComparison}
+                    scopeLabel={scopeLabel}
+                    scopeDetail={scopeDetail}
+                    layout={indexPlacement === 'rail' ? 'wide' : stacked ? 'phone' : 'narrow'}
+                    active={props.active !== false}
+                    renderBar={(actions) => stacked ? renderPhoneHeader(filesReading?.source.fileCount ?? null, actions) : (
+                        <ScmComparisonBar
+                            leading={(
+                                <>
+                                    {viewSwitch}
+                                    <ScmComparisonScopePicker
+                                        options={scopeOptions}
+                                        current={shownComparison}
+                                        currentLabel={scopeLabel}
+                                        fileCount={null}
+                                        onSelect={selectComparison}
+                                    />
+                                </>
+                            )}
+                            trailing={<>{actions}{comparisonChrome.barTrailing}</>}
+                        />
+                    )}
+                    onShowFiles={() => selectView('files')}
+                    onOpenFile={openFile}
+                    onOpenComposer={goToComposer}
+                    startedReviewRunIds={startedReviewRunIds}
+                    onRetryReviewEngines={openReviewDialog}
+                />
+            </View>
+        );
+    }
 
     if (!effectiveSnapshot && !snapshotError) {
         return (
@@ -549,8 +750,26 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         );
     }
 
+    if (comparisonPresentation.kind === 'unsupported') {
+        return (
+            <View style={{ flex: 1 }}>
+                <SurfaceStateCard
+                    testID="scm-comparison-unsupported"
+                    kind="empty"
+                    iconName="git-diff"
+                    title={scopeLabel}
+                    reason={t('scmComparison.unsupportedReason')}
+                    action={{
+                        label: t('scmComparison.showPendingChanges'),
+                        onPress: () => selectComparison({ kind: 'workingTree' }),
+                    }}
+                />
+            </View>
+        );
+    }
+
     return (
-        <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <View style={{ flex: 1, minHeight: 0, position: 'relative' }} onLayout={onContentLayout}>
             {staleSnapshotNotice}
             {reviewCommentsEnabled && reviewScope ? (
                 <ReviewCommentsSessionSurface
@@ -572,7 +791,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 />
             ) : null}
             <ChangedFilesReview
-                toolbarLeading={reviewViewMenu}
+                comparisonChrome={comparisonChrome}
                 detailsHeader={reviewDetailsHeader}
                 activeReviewFile={activeReviewFile}
                 bottomInsetPx={reviewTrayVisible ? REVIEW_TRAY_RESERVED_PX : 0}

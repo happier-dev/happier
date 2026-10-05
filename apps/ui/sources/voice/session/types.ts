@@ -64,6 +64,7 @@ export type VoiceSessionSnapshot = Readonly<{
   mode: VoiceSessionMode;
   canStop: boolean;
   canCommitInput?: boolean;
+  canHoldToTalk?: boolean;
   micMuted?: boolean;
   errorCode?: string;
   errorMessage?: string;
@@ -100,6 +101,8 @@ export type VoiceAdapterController = Readonly<{
   }>): Promise<void>;
   interrupt(input: Readonly<{ sessionId: string }>): Promise<void>;
   commitInput?(input: Readonly<{ sessionId: string }>): Promise<void>;
+  beginHoldToTalk?(input: Readonly<{ sessionId: string }>): import('@/voice/runtime/controller/VoiceConversationController').VoiceHeldInput | null;
+  cancelHoldToTalk?(input: Readonly<{ sessionId: string }>): Promise<void>;
   bargeIn?(input: Readonly<{ sessionId: string }>): Promise<void>;
   /**
    * Applies the native audio-session's provider-neutral output policy through

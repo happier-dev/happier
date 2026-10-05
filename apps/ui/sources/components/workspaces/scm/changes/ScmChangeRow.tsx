@@ -13,6 +13,8 @@ import { TREE_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { ScmChangeMark } from './ScmChangeMark';
 import { resolveScmChangeRowDisplayText } from './scmChangeRowDisplayText';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 const PATH_SEPARATOR = '/';
 const CHANGE_STATS_MIN_COLUMN_WIDTH = 38;
 const CHANGE_STATS_CHARACTER_WIDTH = 7;
@@ -115,6 +117,7 @@ function describeChange(file: ScmFileStatus, theme: Theme): ChangeDescriptor {
 }
 
 export type ScmChangeRowProps = Readonly<{
+    findRanges?: Readonly<Partial<Record<'path' | 'tag' | 'mark' | 'added' | 'removed' | 'unavailable' | 'rename', readonly FindTextRange[]>>>;
     theme: Theme;
     file: ScmFileStatus;
     /**
@@ -185,11 +188,12 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
     const minHeight = compact ? Math.max(handset ? 40 : 0, resolveCompactRowMinHeight()) : stacked && handset ? 52 : undefined;
     const nameFirst = stacked || compact || props.showChangeMark === false;
     const displayText = resolveScmChangeRowDisplayText(file, nameFirst);
+    const findText = (text: string, ranges?: readonly FindTextRange[]) => ranges?.length ? <FindHighlightedText text={text} ranges={ranges} /> : text;
     // Web reveals the row's actions on hover or focus (touch has no hover, so they stay visible there).
     const [actionsRevealed, setActionsRevealed] = React.useState(false);
     const revealActions = React.useCallback(() => setActionsRevealed(true), []);
     const hideActions = React.useCallback(() => setActionsRevealed(false), []);
-    const trailingShown = !(stacked || compact) || !isWeb || touch || actionsRevealed;
+    const trailingShown = file.status === 'conflicted' || !(stacked || compact) || !isWeb || touch || actionsRevealed;
     const statsShown = !(stacked || compact) || !props.trailingElement || !trailingShown;
     const statsColumnWidth = props.statsColumnWidth ?? resolveScmChangeStatsColumnWidth([file]);
 
@@ -254,6 +258,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                     color={props.statusTone === 'neutral' ? theme.colors.text.primary : descriptor.color}
                     size={compact ? 'compact' : 'regular'}
                     accessibilityLabel={descriptor.label}
+                    findRanges={props.findRanges?.mark}
                 />
             )}
 
@@ -266,6 +271,8 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                     siblingPaths={props.siblingPaths}
                     rootLabel={props.rootLabel}
                     detail={displayText.renamedFrom}
+                    findRanges={props.findRanges?.path}
+                    detailFindRanges={props.findRanges?.rename}
                     pathTextStyle={{
                         fontSize: 12,
                         color: theme.colors.text.secondary,
@@ -284,6 +291,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                     fullPath={file.fullPath}
                     preferNameOverPath
                     alignForRootFiles={false}
+                    findRanges={props.findRanges?.path}
                     pathTextStyle={{
                         flex: 0,
                         flexBasis: 'auto',
@@ -308,7 +316,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
 
             {props.tag ? (
                 <View testID="scm-change-row-tag" style={{ flexShrink: 0, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, backgroundColor: theme.colors.surface?.inset ?? theme.colors.surface?.base }}>
-                    <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>{props.tag}</Text>
+                    <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>{findText(props.tag, props.findRanges?.tag)}</Text>
                 </View>
             ) : null}
 
@@ -326,30 +334,30 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 }}
             >
                 {file.isComplete === false ? (
-                    <Text accessibilityLabel={t('common.unavailable')} style={{ color: theme.colors.text.secondary }}>{displayText.unavailable ?? ''}</Text>
+                    <Text accessibilityLabel={t('common.unavailable')} style={{ color: theme.colors.text.secondary }}>{findText(displayText.unavailable ?? '', props.findRanges?.unavailable)}</Text>
                 ) : nameFirst ? (
                     <>
                         {displayText.added !== null ? (
                             <Text style={{ fontSize: 12, fontVariant: ['tabular-nums'], color: theme.colors.state.success.foreground ?? theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                                {displayText.added}
+                                {findText(displayText.added, props.findRanges?.added)}
                             </Text>
                         ) : null}
                         {displayText.removed !== null ? (
                             <Text style={{ fontSize: 12, fontVariant: ['tabular-nums'], color: theme.colors.state.danger.foreground ?? theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                                {displayText.removed}
+                                {findText(displayText.removed, props.findRanges?.removed)}
                             </Text>
                         ) : null}
                     </>
                 ) : (
                     <>
                         <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.state.success.foreground ?? theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                            {displayText.added ?? ''}
+                            {findText(displayText.added ?? '', props.findRanges?.added)}
                         </Text>
                         <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.text.secondary, ...Typography.default() }}>
                             {PATH_SEPARATOR}
                         </Text>
                         <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.state.danger.foreground ?? theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                            {displayText.removed ?? ''}
+                            {findText(displayText.removed ?? '', props.findRanges?.removed)}
                         </Text>
                     </>
                 )}

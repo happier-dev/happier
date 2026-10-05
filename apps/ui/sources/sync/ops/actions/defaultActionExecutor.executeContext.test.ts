@@ -11,6 +11,10 @@ import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+installDisconnectedServerSocketBoundary();
 
 /**
  * The Account context, its Artifact codec, the approval writer's
@@ -67,6 +71,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 const harness = createHomeGovernanceHarness();
+let ingressConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 installHomeGovernanceBoundaries(harness);
 // Load the real executor after installing its environment boundaries. Cold graph
 // transformation belongs to collection, rather than a single behavior test's timer.
@@ -166,7 +171,16 @@ describe('withDefaultActionExecuteContext', () => {
         rpc.machine.mockReset();
     });
 
-    afterEach(() => standardCleanup());
+    afterEach(async () => {
+        standardCleanup();
+        if (ingressConnection) {
+            try { await ingressConnection.dispose(); }
+            finally {
+                ingressConnection = null;
+                installHomeGovernanceBoundaries(harness);
+            }
+        }
+    });
 
     it('refuses preparation for another captured Account before creating an approval or machine effect', async () => {
         const serverId = await addHome();
@@ -177,6 +191,85 @@ describe('withDefaultActionExecuteContext', () => {
         })).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'action_account_scope_changed' } });
         expect(harness.artifacts(serverId).list()).toEqual([]);
         expect(rpc.machine).not.toHaveBeenCalled();
+    });
+
+    it('keeps composer ingress effects inside the invocation Home and Account, not the active input scope', async () => {
+        await addHome();
+        const otherServerId = await harness.addHome({
+            name: 'Home B', serverUrl: 'https://home-b.example', serverIdentityId: 'srv_stable-home-b',
+            accountId: 'account-b', active: false,
+        });
+        await loadSyncSingletonForTests();
+        ingressConnection = await restoreServerAccountForTest({ serverUrl: 'https://home-a.example', accountId: ACCOUNT_ID });
+        // Restore uses a single-Home credential boundary; the Action front door
+        // must keep the governance harness's real credentials for both Homes.
+        installHomeGovernanceBoundaries(harness);
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('The real Sync Account scope was not restored');
+        expect(scope.accountId).toBe(ACCOUNT_ID);
+        const { createEphemeralComposerDocumentOwner } = await import('@/components/sessions/composer/composerDocumentOwner');
+        const { projectComposerDocumentSnapshot } = await import('@/components/sessions/composer/composerSnapshotProjection');
+        const { registerComposerPresentationTarget } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+        const { registerRepositoryUploadTarget } = await import('@/components/workspaces/files/repositoryTree/repositoryUploadActionRuntime');
+        const ref = { kind: 'newSession', instanceId: 'invocation-scoped-composer' } as const;
+        const owner = createEphemeralComposerDocumentOwner({
+            ref, capabilities: { text: true, references: true, attachments: true, submit: true },
+            initialDocument: { text: 'draft', structuredInputMentions: [], composerAttachments: [] },
+        });
+        let attachmentPickerOpened = false;
+        const uploadDestinations: string[] = [];
+        // Mounted controls and OS picker requests are the UI boundary. Document
+        // projection, transactions, Account capture and Action dispatch stay real.
+        const releaseComposer = registerComposerPresentationTarget(ref, {
+            readScope: () => scope,
+            readRevision: () => owner.read().revision,
+            replace: (text) => owner.replaceDocument({ ...owner.read().document, text }),
+            readSnapshot: () => projectComposerDocumentSnapshot({
+                owner, attachmentCatalog: { entriesById: null },
+                presentation: { layout: 'wrap', focused: false, editable: true, submittable: true,
+                    submitting: false, running: false },
+            }),
+            commitDocument: ({ expectedRevision, mutation }) => owner.apply(expectedRevision, mutation),
+            openAttachmentPicker: () => { attachmentPickerOpened = true; return true; },
+        });
+        const workspace = { serverId: scope.serverId, machineId: 'machine-a', rootPath: '/repo' };
+        const releaseRepository = registerRepositoryUploadTarget({
+            scope, workspaceScope: workspace, isCurrent: () => true,
+            pick: async ({ destinationDir }) => { uploadDestinations.push(destinationDir); return { status: 'requested' }; },
+        });
+        try {
+            const { createDefaultActionExecutor } = await loadExecutor();
+            const executor = createDefaultActionExecutor();
+            const transaction = { scope, ref, transaction: { expectedRevision: 0,
+                operations: [{ kind: 'text.insert', position: { offset: 5 }, text: ' context' }] } };
+            const upload = { scope, workspace, destinationDir: 'src', kind: 'files' };
+            const otherContext = { serverId: otherServerId, expectedAccountId: 'account-b',
+                surface: 'ui', authority: 'present_user', bypassApprovals: true } as const;
+            expect(await executor.execute('composer.transaction.apply', transaction, otherContext))
+                .toEqual({ ok: true, result: { status: 'composerUnavailable' } });
+            expect(await executor.execute('composer.attachments.pick', { scope, ref }, otherContext))
+                .toEqual({ ok: true, result: { status: 'unavailable' } });
+            expect(await executor.execute('repository.upload.pick', upload, otherContext))
+                .toEqual({ ok: true, result: { status: 'unavailable' } });
+            expect(owner.read().document.text).toBe('draft');
+            expect(attachmentPickerOpened).toBe(false);
+            expect(uploadDestinations).toEqual([]);
+
+            const context = { ...otherContext, serverId: scope.serverId, expectedAccountId: ACCOUNT_ID };
+            expect(await executor.execute('composer.transaction.apply', transaction, context))
+                .toEqual({ ok: true, result: { status: 'applied', revision: 1 } });
+            expect(await executor.execute('composer.attachments.pick', { scope, ref }, context))
+                .toEqual({ ok: true, result: { status: 'opened' } });
+            expect(await executor.execute('repository.upload.pick', upload, context))
+                .toEqual({ ok: true, result: { status: 'requested' } });
+            expect(owner.read().document.text).toBe('draft context');
+            expect(attachmentPickerOpened).toBe(true);
+            expect(uploadDestinations).toEqual(['src']);
+        } finally {
+            releaseRepository();
+            releaseComposer();
+        }
     });
 
     it('executes approved undo on the selected machine with the exact observed HEAD', async () => {
@@ -433,7 +526,7 @@ describe('withDefaultActionExecuteContext', () => {
         // run beneath it.
         const discussionHttp: Array<{ path: string; method: string | undefined }> = [];
         const runtimeAddresses: unknown[] = [];
-        const { sync } = await import('@/sync/sync');
+        const { sync } = await import('@/sync/syncEngine');
         const runtime = vi.spyOn(sync, 'withSessionSystemRecordRuntime').mockImplementation((async (
             address: unknown,
             operation: (runtime: unknown) => Promise<unknown>,
@@ -709,8 +802,7 @@ describe('withDefaultActionExecuteContext', () => {
     it('asserts currentness again after the scoped callback and always disposes', async () => {
         const serverId = await addHome();
         const { withDefaultActionExecuteContext } = await loadExecutor();
-        // The caller's cancellation retires the captured Account scope, exactly
-        // as it does when the invoking surface goes away mid-callback.
+        // A projection stays delivery-cancellable when its surface goes away.
         const caller = new AbortController();
         await expect(withDefaultActionExecuteContext(
             undefined,
@@ -719,8 +811,43 @@ describe('withDefaultActionExecuteContext', () => {
                 caller.abort();
                 return 'stale';
             },
-        )).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        )).rejects.toMatchObject({ name: 'AbortError' });
 
+        expect(lifetime.disposed).toBe(1);
+    });
+
+    it('retains a completed effect result after caller cancellation without retiring its Account', async () => {
+        const serverId = await addHome();
+        const { withDefaultActionExecuteContext } = await loadExecutor();
+        const caller = new AbortController();
+        const completed = { ok: true, result: { status: 'accepted', localId: 'accepted-input' } };
+        await expect(withDefaultActionExecuteContext(undefined, { serverId, signal: caller.signal }, async () => {
+            caller.abort();
+            return completed;
+        }, 'session.message.send')).resolves.toBe(completed);
+        expect(lifetime.disposed).toBe(1);
+    });
+
+    it('refuses a completed effect result when the captured Account was replaced', async () => {
+        const serverId = await addHome();
+        const { withDefaultActionExecuteContext } = await loadExecutor();
+        const caller = new AbortController();
+        await expect(withDefaultActionExecuteContext(undefined, { serverId, signal: caller.signal }, async () => {
+            await harness.switchAccount(serverId, 'replacement-account');
+            caller.abort();
+            return { ok: true, result: { status: 'accepted' } };
+        }, 'session.message.send')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        expect(lifetime.disposed).toBe(1);
+    });
+
+    it('does not return a cancelled read as a completed effect result', async () => {
+        const serverId = await addHome();
+        const { withDefaultActionExecuteContext } = await loadExecutor();
+        const caller = new AbortController();
+        await expect(withDefaultActionExecuteContext(undefined, { serverId, signal: caller.signal }, async () => {
+            caller.abort();
+            return { ok: true, result: { id: 'session.message.send' } };
+        }, 'action.spec.get')).rejects.toMatchObject({ name: 'AbortError' });
         expect(lifetime.disposed).toBe(1);
     });
 
@@ -755,6 +882,64 @@ describe('withDefaultActionExecuteContext', () => {
 
         expect(openSession).toHaveBeenCalledWith('session-a', { serverId });
         expect(lifetime.disposed).toBe(1);
+    });
+
+    it.each([true, false])('opens Files Explain=%s through the real executor and shared pane target', async (explain) => {
+        const serverId = await addHome();
+        const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+        const { parseSessionPaneUrlState, createSessionPaneDetailsTab } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+        const opened: string[] = [];
+        const release = registerMountedWorkspaceAction(async ({ actionId, input }) => {
+            if (actionId !== 'workspace.tabs.open') throw new Error('Unexpected workspace request');
+            opened.push((input as { href: string }).href);
+            return { ok: true };
+        });
+        try {
+            const { createDefaultActionExecutor } = await loadExecutor();
+            await expect(createDefaultActionExecutor().execute('session.open', {
+                sessionId: 'session-a', destination: { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'files', explain },
+            }, { serverId })).resolves.toMatchObject({ ok: true });
+            const href = new URL(opened[0]!, 'https://app.example');
+            const state = parseSessionPaneUrlState(Object.fromEntries(href.searchParams));
+            expect(state?.details).toMatchObject({ kind: 'scmReview', explain });
+            expect(createSessionPaneDetailsTab(state!.details!)?.resource).toMatchObject({ explain });
+        } finally {
+            release();
+        }
+    });
+
+    it('opens a semantic PR destination in the host workspace with its pinned comparison', async () => {
+        const serverId = await addHome();
+        const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+        const { parseSessionPaneUrlState } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+        const opened: string[] = [];
+        const release = registerMountedWorkspaceAction(async ({ actionId, input }) => {
+            if (actionId !== 'workspace.tabs.open') throw new Error('Unexpected workspace request');
+            const href = (input as { href: string }).href;
+            opened.push(href);
+            return { ok: true };
+        });
+        try {
+            const { createDefaultActionExecutor } = await loadExecutor();
+            const comparison = { kind: 'pullRequest', locator: {
+                providerId: 'hosting-source', repository: 'owner/repo', number: 17,
+                baseOid: 'b'.repeat(40), headOid: 'c'.repeat(40),
+                sourceAction: { action: { pluginId: 'acme.source', localId: 'pr-detail' }, input: { id: 'pr-17' } },
+            } } as const;
+            const comparisonId = 'a'.repeat(64);
+            await expect(createDefaultActionExecutor().execute('session.open', {
+                sessionId: 'session-a', destination: { kind: 'scmReview', comparison, view: 'walkthrough', comparisonId },
+            }, { serverId })).resolves.toMatchObject({ ok: true });
+            expect(opened).toHaveLength(1);
+            const href = new URL(opened[0]!, 'https://app.example');
+            expect(href.pathname).toBe('/session/session-a');
+            expect(href.searchParams.get('serverId')).toBe(serverId);
+            expect(parseSessionPaneUrlState(Object.fromEntries(href.searchParams))).toMatchObject({
+                details: { kind: 'scmReview', comparison: { ...comparison, comparisonId }, view: 'walkthrough' },
+            });
+        } finally {
+            release();
+        }
     });
 
     it('resumes fresh-folder consent from the exact Home snapshot before navigating', async () => {

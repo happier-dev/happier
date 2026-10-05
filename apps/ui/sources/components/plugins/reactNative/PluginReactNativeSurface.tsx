@@ -8,6 +8,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
+    createPluginUiHostApiResourceClient,
+    createPluginUiResourceStore,
+    type PluginUiResourceAccountLifetime,
+    type PluginUiResourceStore,
+} from '@happier-dev/plugin-ui/advanced';
+import {
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PluginUiMountContextV1Schema,
@@ -49,6 +55,7 @@ import {
     type PluginReactNativeWatchdog,
 } from './watchdog';
 import { PLUGIN_UI_PRIVATE_SURFACE_ENTRY_PROVIDER_KEY } from '@/components/plugins/pluginUiPrivateCarrierKeys';
+import { useWidgetFrameResourceStoreActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 
 type PluginReactNativeLocalFailure = 'render_error' | 'invalid_surface_module' | 'load_error';
 
@@ -62,6 +69,7 @@ type PluginReactNativeLocalFailure = 'render_error' | 'invalid_surface_module' |
 export type PluginReactNativeSurfacePrivateHostBindings = Readonly<{
     accountLifetime?: unknown;
     resourceStoreGeneration?: unknown;
+    resourceStore?: PluginUiResourceStore;
     /** Host-selected Composer mount ref for the cooperative carrier; never part of RenderContext. */
     composerRef?: unknown;
     presentationHost?: unknown;
@@ -228,6 +236,9 @@ function installPluginUiPrivateHostBindings(
     if (bindings.resourceStoreGeneration !== undefined) {
         privateProviderProps.resourceStoreGeneration = bindings.resourceStoreGeneration;
     }
+    if (bindings.resourceStore !== undefined) {
+        privateProviderProps.resourceStore = bindings.resourceStore;
+    }
     if (bindings.composerRef !== undefined) {
         privateProviderProps.composerRef = bindings.composerRef;
     }
@@ -261,18 +272,50 @@ function PluginReactNativeSurfaceRenderer({
         () => module.renderSurface(renderContext),
         [module, renderContext],
     );
+    const bindings = useNativeResourceHostBindings(privateHostBindings, renderContext, element);
     return React.useMemo(
-        () => installPluginUiPrivateHostBindings(element, privateHostBindings),
-        [element, privateHostBindings],
+        () => installPluginUiPrivateHostBindings(element, bindings),
+        [element, bindings],
     );
+}
+
+/** Narrow the existing trusted host-private facade, never Account identity or an author-supplied token. */
+function isResourceAccountLifetime(value: unknown): value is PluginUiResourceAccountLifetime {
+    return value !== null && typeof value === 'object'
+        && 'isCurrent' in value && typeof value.isCurrent === 'function'
+        && 'onRetire' in value && typeof value.onRetire === 'function';
+}
+
+function useNativeResourceHostBindings(
+    bindings: PluginReactNativeSurfacePrivateHostBindings | undefined,
+    renderContext: RenderContext,
+    element: React.ReactElement | null,
+) {
+    const hasProvider = element !== null && isPluginUiCooperativeHostPrivateEntryProviderElement(element);
+    const accountLifetime = bindings?.accountLifetime;
+    const fallback = React.useMemo(() => {
+        if (!hasProvider || bindings?.resourceStore) return undefined;
+        if (accountLifetime !== undefined && accountLifetime !== null && !isResourceAccountLifetime(accountLifetime)) return undefined;
+        // Use the incumbent provider fallback's exact L1 factory and inputs. Injecting it means the provider creates no second store.
+        return createPluginUiResourceStore({
+            client: createPluginUiHostApiResourceClient(renderContext.hostApi),
+            accountLifetime: accountLifetime ?? null,
+            pluginId: renderContext.plugin.id,
+        });
+    }, [accountLifetime, bindings?.resourceStore, bindings?.resourceStoreGeneration, hasProvider, renderContext.hostApi, renderContext.plugin.id]);
+    React.useEffect(() => fallback ? () => fallback.dispose() : undefined, [fallback]);
+    const resourceStore = useWidgetFrameResourceStoreActivity(bindings?.resourceStore ?? fallback);
+    return React.useMemo(() => resourceStore && resourceStore !== bindings?.resourceStore
+        ? { ...bindings, resourceStore } : bindings, [bindings, resourceStore]);
 }
 
 function PluginReactNativeCandidateRenderer(props: PluginReactNativeSurfaceRendererProps & Readonly<{
     onReady: () => void;
 }>): React.ReactElement | null {
     const element = props.module.renderSurface(props.renderContext);
+    const bindings = useNativeResourceHostBindings(props.privateHostBindings, props.renderContext, element);
     React.useLayoutEffect(props.onReady, [props.onReady]);
-    return installPluginUiPrivateHostBindings(element, props.privateHostBindings);
+    return installPluginUiPrivateHostBindings(element, bindings);
 }
 
 /**

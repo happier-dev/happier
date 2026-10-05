@@ -197,6 +197,66 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     expect(frames).toEqual(['AAE=', 'AgM=']);
   });
 
+  it('delivers onset PCM emitted by native start before shared capture acquisition resolves', async () => {
+    const harness = createNativeVoicePcmCaptureHarness(false);
+    runtime.realCapture = harness.capture;
+    vi.mocked(harness.nativeModule.start).mockImplementationOnce(async () => {
+      harness.emit('AgM=');
+      return { streamId: 'native-stream' };
+    });
+    sherpaStreamingPushFrame.mockResolvedValueOnce({ text: 'onset words', isEndpoint: true });
+    sherpaStreamingFinish.mockResolvedValueOnce({ status: 'finalized', text: 'onset words' });
+    const sink = createSink();
+    const onEndpointSignal = vi.fn();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings(), onEndpointSignal });
+
+    try {
+      await controller.start({ capturePurpose: 'dictation', micSession: createMicSession(), sink });
+      await harness.capture.waitForDrain();
+
+      expect(sherpaStreamingPushFrame).toHaveBeenCalledWith(expect.objectContaining({ pcm16leBase64: 'AgM=' }));
+      expect(sink.onPartial).toHaveBeenCalledWith('onset words');
+      expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({ source: 'native_stream', transcript: 'onset words' }));
+      await expect(controller.stop()).resolves.toEqual({ finalText: 'onset words' });
+    } finally {
+      await controller.stop();
+      await harness.capture.dispose();
+    }
+  });
+
+  it('retires capture acquired after cancellation without delivering onset or retaining a stale handle', async () => {
+    const harness = createNativeVoicePcmCaptureHarness(false);
+    runtime.realCapture = harness.capture;
+    const signal = new AbortController();
+    vi.mocked(harness.nativeModule.start).mockImplementationOnce(async () => {
+      harness.emit();
+      signal.abort();
+      return { streamId: 'native-stream' };
+    });
+    const sink = createSink();
+    const micSession = createMicSession();
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+
+    try {
+      await controller.start({ capturePurpose: 'dictation', micSession, sink, signal: signal.signal });
+      expect(harness.capture.getSnapshot().subscriberCount).toBe(0);
+      expect(sherpaStreamingPushFrame).not.toHaveBeenCalled();
+      expect(sherpaCancel).toHaveBeenCalledTimes(1);
+      expect(micSession.teardown).toHaveBeenCalledTimes(1);
+      await expect(controller.stop()).resolves.toEqual({ finalText: '' });
+
+      await controller.start({ capturePurpose: 'dictation', micSession: createMicSession(), sink: createSink() });
+      harness.emit('AgM=');
+      await harness.capture.waitForDrain();
+      expect(sherpaStreamingPushFrame).toHaveBeenCalledWith(expect.objectContaining({ pcm16leBase64: 'AgM=' }));
+    } finally {
+      await controller.stop();
+      await harness.capture.dispose();
+    }
+  });
+
   it('cancels native decode immediately when graceful finishing is aborted', async () => {
     const harness = createNativeVoicePcmCaptureHarness(false);
     runtime.realCapture = harness.capture;
@@ -318,13 +378,23 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
   });
 
   it('rolls back recognizer, capture lease, and mic when capture acquisition fails', async () => {
-    runtime.acquire.mockRejectedValueOnce(new Error('audio_session_failed'));
+    const harness = createNativeVoicePcmCaptureHarness(false);
+    runtime.realCapture = harness.capture;
+    vi.mocked(harness.nativeModule.start).mockRejectedValueOnce(new Error('audio_session_failed'));
     const micSession = createMicSession();
     const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
     const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
     await expect(controller.start({ micSession, sink: createSink() })).rejects.toThrow('audio_session_failed');
     expect(sherpaCancel).toHaveBeenCalledTimes(1);
     expect(micSession.teardown).toHaveBeenCalledTimes(1);
+    expect(harness.capture.getSnapshot().subscriberCount).toBe(0);
+    await expect(controller.stop()).resolves.toEqual({ finalText: '' });
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
+    harness.emit('AgM=');
+    await harness.capture.waitForDrain();
+    expect(sherpaStreamingPushFrame).toHaveBeenCalledWith(expect.objectContaining({ pcm16leBase64: 'AgM=' }));
+    await controller.stop();
+    await harness.capture.dispose();
   });
 
   it('surfaces pack/runtime/backpressure failures without leaking capture', async () => {
@@ -507,7 +577,7 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     const request = runtime.captureRequest;
     if (!request?.onError) throw new Error('capture_error_callback_missing');
     request.onError(new Error('push_failed'));
-    expect(runtime.release).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(runtime.release).toHaveBeenCalledTimes(1));
     let stopFinished = false;
     const stopping = controller.stop().then((result) => {
       stopFinished = true;

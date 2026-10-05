@@ -9,14 +9,31 @@ import { encodeBase64 } from '@/encryption/base64';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { decryptDataKeyFromPublicShare } from '@/sync/encryption/publicShareEncryption';
+import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
-afterEach(() => vi.restoreAllMocks());
+// Substitute native UI boundaries only; the default Action executor and its
+// account-scoped Session HTTP dependency remain real.
+installApprovalCommonModuleMocks({ storage: importOriginal => importOriginal() });
+
+afterEach(() => {
+    retireActiveServerAccountScopeLifetime();
+    invalidateAccountEncryptionModeCache();
+    resetServerFeaturesClientForTests();
+    vi.restoreAllMocks();
+});
 
 describe.each(['plain', 'e2ee'] as const)('Session public-link physical materialization (%s)', mode => {
-    it('keeps the fragment local and sends only an independent lookup and wrapped key', async () => {
+    it('returns the complete link and sends only an independent lookup and wrapped key', async () => {
         const active = await upsertAndActivateServer({ serverUrl: 'https://active-material.example', name: 'Active' });
         const target = await upsertServerProfile({ serverUrl: 'https://target-material.example', name: 'Target' });
         storage.getState().activateProfileScope({ serverId: active.id, accountId: 'active-account' });
+        // As in the Artifact frontdoor fixture, this Home's Settings have
+        // already been loaded by their real scoped store owner.
+        storage.setState({ settingsScope: { serverId: target.id, accountId: 'target-account' } });
         const contentKeys = tweetnacl.box.keyPair();
         const token = (sub: string) => `e30.${Buffer.from(JSON.stringify({sub})).toString('base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async url => ({
@@ -33,6 +50,8 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/auth/ping') return new Response('{}');
+            if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (path === '/v2/sessions/same') return new Response(JSON.stringify({session:{
                 id:'same',createdAt:1,updatedAt:2,seq:0,active:true,activeAt:2,encryptionMode:mode,
                 dataEncryptionKey:mode === 'e2ee' ? callerEnvelope : null,metadata:mode === 'e2ee' ? 'sealed' : '{}',metadataVersion:1,agentState:null,agentStateVersion:1,share:null,
@@ -70,7 +89,7 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         expect(body).not.toHaveProperty('sessionId');
         expect(body).not.toHaveProperty('token');
         expect(JSON.stringify(body)).not.toContain(issued[0]!.secret);
-        expect(JSON.stringify(result)).not.toContain(issued[0]!.secret);
+        expect(result).toMatchObject({ url: `https://public.example/s/${issued[0]!.lookupId}#k=${issued[0]!.secret}` });
         if (mode === 'e2ee') {
             await expect(decryptDataKeyFromPublicShare(String(body!.encryptedDataKey),issued[0]!.secret)).resolves.toEqual(dataKey);
             await expect(decryptDataKeyFromPublicShare(String(body!.encryptedDataKey),issued[0]!.lookupId)).resolves.toBeNull();
@@ -80,11 +99,23 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         await expect(executeSessionAccessHttpAction({scope:{serverId:target.id,accountId:'target-account'},
             availability:'available',actionId:'session.public_link.create',input:{sessionId:'same',isConsentRequired:false},
             onPublicLinkIssued: material => { throw new Error(material.secret); },
-        })).rejects.toMatchObject({code:'public_link_custody_unavailable'});
-        expect(posts).toBe(2);
+        })).rejects.toMatchObject({code:'outcome_unknown'});
+        expect(posts).toBe(3);
         await expect(executeSessionAccessHttpAction({scope:{serverId:target.id,accountId:'target-account'},
             availability:'available',actionId:'session.public_link.create',input:{sessionId:'same',isConsentRequired:false},
-        })).rejects.toMatchObject({code:'public_link_custody_unavailable'});
-        expect(posts).toBe(2);
+        })).resolves.toMatchObject({ url: expect.stringMatching(/^https:\/\/public.example\/s\/[^#]+#k=.+$/) });
+        expect(posts).toBe(4);
+        const actionResult = await createDefaultActionExecutor().execute('session.public_link.create',
+            { sessionId: 'same', isConsentRequired: false }, {
+                serverId: target.id, expectedAccountId: 'target-account', surface: 'ui', authority: 'present_user',
+                actionCaller: { kind: 'host' }, presentUserConfirmation: { actionId: 'session.public_link.create' },
+            });
+        expect(actionResult, JSON.stringify(actionResult)).toMatchObject({ ok: true, result: {
+            id: 'share', url: expect.stringMatching(/^https:\/\/public.example\/s\/[^#]+#k=.+$/),
+        } });
+        const callerUrl = new URL((actionResult as { result: { url: string } }).result.url);
+        const callerSecret = new URLSearchParams(callerUrl.hash.slice(1)).get('k')!;
+        expect(JSON.stringify(body)).not.toContain(callerSecret);
+        expect(posts).toBe(5);
     });
 });

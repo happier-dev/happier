@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -46,6 +47,7 @@ function createRuntimeRegistry(
 ): ResolvedExecutablePluginRuntimeRegistry {
     return {
         contributes,
+        resolveCaptureSource: unexpectedCaptureSourceResolution,
         resolvePromptAssetBlocks: async () => [],
         hookHandlersByHookId: new Map(),
         agentRuntimesByAgentId: new Map(),

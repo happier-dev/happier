@@ -230,6 +230,7 @@ export type ExecutionRunState = Readonly<{
     permissionIntent: PermissionIntent;
     idleTtlSeconds: number;
     initialContext: string;
+    voicePolicy?: import('@happier-dev/protocol').ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
     initialContextMode: 'bootstrap' | 'first_turn';
     verbosity: 'short' | 'balanced';
     bootstrapTimeoutMs?: number;

@@ -554,6 +554,128 @@ describe('sessionRegistry', () => {
     ]));
   });
 
+  it('adopts accepted birth-only custody without deriving identity from systemd spawn arguments', async () => {
+    const { ChildProcess } = await import('node:child_process');
+    const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
+    const { readSessionMarkerForPid, writeSessionMarker, hashProcessCommand } = await import('./sessionRegistry');
+    const child = new ChildProcess();
+    // OS subprocess boundary: Node publishes spawnargs as a readonly property.
+    Object.defineProperty(child, 'spawnargs', {
+      value: ['systemd-run', '--user', '--scope', '--', '/usr/bin/node', 'runner'],
+    });
+    const trackedSession: import('./types').TrackedSession = {
+      pid: 12346, startedBy: 'daemon', childProcess: child,
+      processCommand: child.spawnargs.join(' '),
+      processCommandHash: hashProcessCommand(child.spawnargs.join(' ')),
+      spawnOptions: { directory: '/tmp/project', spawnNonce: 'birth-only-nonce',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } },
+    };
+    await persistAcceptedSpawnMarker({ trackedSession, deviceLocalSecretStorage: testDeviceLocalSecretStorage,
+      readProcessIdentityByPidFn: async () => ({ pid: 12346, processStartTimeMs: 123450, command: '' }) });
+    const accepted = await readSessionMarkerForPid(12346);
+    expect(accepted?.processStartTimeMs).toBe(123450);
+    expect(accepted?.processCommandHash).toBeUndefined();
+    expect(accepted?.processCommand).toBeUndefined();
+    expect(trackedSession.processCommandHash).toBeUndefined();
+    const canonical = { pid: 12346, happySessionId: 'canonical-birth-only', startedBy: 'daemon' as const,
+      processStartTimeMs: 123450, processCommand: '/usr/bin/node runner',
+      processCommandHash: hashProcessCommand('/usr/bin/node runner'), respawn: accepted!.respawn };
+    await writeSessionMarker(canonical, { adoptCanonicalSessionIdFromPidPlaceholder: true });
+    expect((await readSessionMarkerForPid(12346))?.happySessionId).toBe(canonical.happySessionId);
+    const { logger } = await import('@/ui/logger');
+    const diagnostic = vi.spyOn(logger, 'debug');
+    try {
+      await expect(writeSessionMarker({ ...canonical, processStartTimeMs: 123460 },
+        { adoptCanonicalSessionIdFromPidPlaceholder: true })).rejects.toThrow('session_marker_canonical_adoption_ownership_mismatch');
+      expect(diagnostic).toHaveBeenCalledWith('[sessionRegistry] Canonical adoption ownership mismatch', {
+        pid: 12346, canonicalIdValid: true, existingMarkerPresent: true,
+        placeholderOrSameSession: true, noncePresent: true, nonceEqual: true,
+        existingStartWitnessPresent: true, incomingStartWitnessPresent: true,
+        startWitnessEqual: false, commandHashEqual: true,
+      });
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform !== 'linux')('adopts a real systemd-scoped child after an empty initial cmdline observation', async (context) => {
+    const { spawn, spawnSync } = await import('node:child_process');
+    if (spawnSync('systemd-run', ['--user', '--scope', '--quiet', '--', 'true']).status !== 0) {
+      context.skip();
+      return;
+    }
+    const { readFile, readdir, readlink } = await import('node:fs/promises');
+    const { once } = await import('node:events');
+    const { buildCgroupSelfMigratingHappyCliLaunchSpec } = await import('./platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec');
+    const { readProcessIdentityByPid } = await import('./processIdentity');
+    const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
+    const { createOnHappySessionWebhook } = await import('./sessions/onHappySessionWebhook');
+    const { readSessionMarkerForPid } = await import('./sessionRegistry');
+    const { configuration } = await import('@/configuration');
+    const spec = await buildCgroupSelfMigratingHappyCliLaunchSpec({
+      launchSpec: { runtime: 'node', filePath: process.execPath, args: ['-e', 'console.log(process.pid);setInterval(()=>{},1000)'] },
+    });
+    expect(spec?.filePath).toBe('systemd-run');
+    const launchProbe = spawnSync(spec!.filePath, [...spec!.args.slice(0, spec!.args.indexOf('--') + 1), 'true']);
+    if (launchProbe.status !== 0) {
+      context.skip(`Owner systemd launch unavailable: ${String(launchProbe.stderr).trim()}`);
+      return;
+    }
+    const child = spawn(spec!.filePath, spec!.args, { env: { ...process.env, ...spec!.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    try {
+      await vi.waitFor(() => {
+        if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Scoped test child exited: ${stderr}`);
+        expect(stdout.trim()).toMatch(/^\d+$/);
+      });
+      const pid = Number(stdout.trim());
+      const tracked: import('./types').TrackedSession = { pid, childProcess: child, startedBy: 'daemon',
+        agentRuntimeDaemonServiceAuthorityFilePath: join(happyHomeDir, 'authority.json'),
+        spawnOptions: { directory: happyHomeDir, spawnNonce: 'real-child-nonce',
+          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } };
+      await persistAcceptedSpawnMarker({ trackedSession: tracked, deviceLocalSecretStorage: testDeviceLocalSecretStorage,
+        readProcessIdentityByPidFn: (targetPid) => readProcessIdentityByPid(targetPid, { platform: 'linux',
+          linuxBoundary: { readFile: async (path, encoding) => String(path).endsWith('/cmdline') ? '' : readFile(path, encoding), readdir, readlink } }) });
+      const accepted = await readSessionMarkerForPid(pid);
+      expect(accepted?.processStartTimeMs).toBeDefined();
+      expect(accepted?.processCommandHash).toBeUndefined();
+      const onWebhook = createOnHappySessionWebhook({ pidToTrackedSession: new Map([[pid, tracked]]), pidToAwaiter: new Map(),
+        getParentPidFn: () => null, findHappyProcessByPidFn: async () => null,
+        readCredentialsFn: async () => null, deviceLocalSecretStorage: testDeviceLocalSecretStorage });
+      await onWebhook('real-child-canonical', { path: happyHomeDir, host: 'test-host', homeDir: '/tmp',
+        happyHomeDir: configuration.happyHomeDir, happyLibDir: '/tmp/lib', happyToolsDir: '/tmp/tools',
+        hostPid: pid, startedBy: 'daemon', machineId: 'machine-test' });
+      await tracked.reportMarkerCustody?.pending;
+      const adopted = await readSessionMarkerForPid(pid);
+      expect(adopted?.happySessionId).toBe('real-child-canonical');
+      expect(adopted?.processStartTimeMs).toBe(accepted?.processStartTimeMs);
+      expect(adopted?.processCommandHash).toBeDefined();
+      expect(() => process.kill(pid, 0)).not.toThrow();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGTERM');
+        await exited;
+      }
+    }
+  }, 60_000);
+
+  it('rejects accepted custody without an OS start witness instead of hashing spawn arguments', async () => {
+    const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
+    const { readSessionMarkerForPid } = await import('./sessionRegistry');
+    await expect(persistAcceptedSpawnMarker({
+      trackedSession: { pid: 12346, startedBy: 'daemon', processCommand: 'systemd-run -- node runner',
+        spawnOptions: { directory: '/tmp/project', spawnNonce: 'missing-birth-nonce',
+          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } },
+      deviceLocalSecretStorage: testDeviceLocalSecretStorage,
+      readProcessIdentityByPidFn: async () => null,
+    })).rejects.toThrow('Accepted spawn process start witness is unavailable');
+    expect(await readSessionMarkerForPid(12346)).toBeNull();
+  });
+
   it('persists accepted pre-webhook child custody with secret-free startup identity before session attach', async () => {
     const { configuration } = await import('@/configuration');
     const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
@@ -2126,6 +2248,16 @@ describe('sessionRegistry', () => {
     const beforeMissingNonce = await listSessionMarkers();
     await expect(promoteSessionMarkerPid(790, 791)).resolves.toBeNull();
     await expect(listSessionMarkers()).resolves.toEqual(beforeMissingNonce);
+  });
+
+  it('preserves an observed start witness when promoting to a runner with no command', async () => {
+    const { writeSessionMarker, promoteSessionMarkerPid, readSessionMarkerForPid } = await import('./sessionRegistry');
+    await writeSessionMarker({ pid: 784, happySessionId: 'PID-784', startedBy: 'daemon' });
+    await promoteSessionMarkerPid(784, 785, {
+      readProcessIdentityByPidFn: async () => ({ pid: 785, processStartTimeMs: 123450, command: '' }),
+    });
+    expect((await readSessionMarkerForPid(785))?.processStartTimeMs).toBe(123450);
+    expect((await readSessionMarkerForPid(785))?.processCommandHash).toBeUndefined();
   });
 
   it('retains the existing no-target marker promotion behavior', async () => {

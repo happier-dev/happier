@@ -260,6 +260,7 @@ describe('voiceSettings', () => {
             model: 'current-only-tts',
             voice: 'current-only-voice',
             format: 'wav',
+            maxInputCharacters: 123,
           },
         },
       },
@@ -277,6 +278,7 @@ describe('voiceSettings', () => {
       insecureLocalOriginConsent: '',
       insecureLocalConsentMachineId: '',
       format: 'mp3',
+      maxInputCharacters: 4096,
       model: 'tts-1',
       voiceName: 'alloy',
     });

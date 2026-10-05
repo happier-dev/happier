@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, createLaunchProfilePublisherV1,
-    decodePlainArtifactStoredContent, withArtifactExcerptV1 } from '@happier-dev/protocol';
+    createActionExecutor, ArtifactActionOutputSchemasV1, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, withArtifactExcerptV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { encodeBase64 } from '@/encryption/base64';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { captureLazyActionAccountContext } from './actionAccountContext';
+import { createUiArtifactAction } from './artifactActionDeps';
+import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 // HTTP, device credential storage and the native theme runtime are substituted boundaries.
 const runtimeFetch = vi.hoisted(() => vi.fn());
@@ -23,6 +29,236 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 afterEach(() => { runtimeFetch.mockReset(); vi.restoreAllMocks(); });
 
 describe('scoped Account workflow Artifact operations', () => {
+    it('admits a typed binary body through the captured public-link keyholding resource', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-binary-resource.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const body = { blobId: '11111111-1111-4111-8111-111111111111', mime: 'image/png', sizeBytes: 4, sha256: 'a'.repeat(64) };
+        runtimeFetch.mockImplementation(async (url: unknown) => {
+            const target = new URL(String(url));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (target.pathname === '/v1/artifacts/binary-artifact') return json({ id: 'binary-artifact',
+                ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ title: 'Image', kind: 'published.v1' }), body: encodePlainArtifactStoredContent({ body }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            return json({ error: 'unexpected_route' }, 404);
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            expect(await account.readArtifactPublicLinkResource('binary-artifact')).toMatchObject({ body, encryptionMode: 'plain', dataKey: null, access: 'owner' });
+        } finally { account.dispose(); }
+    });
+    it('returns the committed Artifact create acknowledgement without depending on a subsequent read', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-create-acknowledgement.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://artifact-create-other-home.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        const reads: string[] = [];
+        let committed: Artifact | undefined;
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+            const target = new URL(String(url));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            expect(target.origin).toBe(home.serverUrl);
+            if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
+                const write = JSON.parse(String(init.body)) as ArtifactCreateRequest;
+                // Exact-id create may acknowledge an incumbent row after a same-id race.
+                committed = { ...write, ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain',
+                    header: encodePlainArtifactStoredContent({ title: 'Incumbent' }), body: encodePlainArtifactStoredContent({ body: 'incumbent body' }),
+                    headerVersion: 3, bodyVersion: 4, seq: 4, createdAt: 1, updatedAt: 2 };
+                return json(committed);
+            }
+            reads.push(target.pathname);
+            return json({ error: 'read_transport_unavailable' }, 403);
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(account) })));
+            const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+            expect(await execute('artifact.create', { artifactId, header: { title: 'Attempted' }, body: 'attempted body' }, caller))
+                .toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 3, bodyVersion: 4 } } });
+            expect(committed?.id).toBe(artifactId);
+            expect(reads).toEqual([]);
+            expect(await account.workflowArtifacts.create({ artifactId, header: {}, body: 'workflow body' })).toBe(artifactId);
+            expect(reads).toEqual([]);
+        } finally { account.dispose(); }
+    });
+    it('selects ordinary Artifact lists across structural pages without leaking filters or truncating omitted limits', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://ordinary-artifact-selection.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const row = (id: string, title: string, kind: string, updatedAt: number, createdAt = updatedAt): Artifact => ({
+            id, ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain',
+            header: encodePlainArtifactStoredContent({ title, kind }), body: encodePlainArtifactStoredContent({ body: 'retained body' }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt, updatedAt,
+        });
+        const rows = [...Array.from({ length: 500 }, (_, index) => row(`other-${index}`, 'Other', 'other.v1', 1000 - index)),
+            row('zebra', 'Private zebra', 'published.v1', 2, 6000), row('alpha', 'Private alpha', 'published.v1', 1, 5000)];
+        const urls: URL[] = [];
+        runtimeFetch.mockImplementation(async (url: unknown) => {
+            const target = new URL(String(url));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            expect(target.origin).toBe(home.serverUrl);
+            if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (target.pathname !== '/v1/artifacts') return json({ error: 'unexpected_route' }, 404);
+            urls.push(target);
+            const cursor = target.searchParams.get('cursor');
+            const after = cursor ? JSON.parse(new TextDecoder().decode(decodeBase64(cursor, 'base64url'))) as { id: string } : null;
+            const start = after ? rows.findIndex(item => item.id === after.id) + 1 : 0;
+            const limit = Number(target.searchParams.get('limit') ?? 100);
+            if (limit > 500) return json({ error: 'invalid_limit' }, 400);
+            return json(rows.slice(start, start + limit));
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(account) })));
+            const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+            const selected = await execute('artifact.list', { search: 'PRIVATE', kind: 'published.v1', sort: 'title_asc', limit: 1 }, caller);
+            expect(selected).toMatchObject({ ok: true, result: { items: [{ artifactId: 'alpha' }], nextCursor: expect.any(String) } });
+            if (!selected.ok) throw new Error(selected.error);
+            const first = ArtifactActionOutputSchemasV1['artifact.list'].parse(selected.result);
+            expect(first.items.map(item => item.artifactId)).toEqual(['alpha']);
+            const next = await execute('artifact.list', { search: 'PRIVATE', kind: 'published.v1', sort: 'title_asc', limit: 1, cursor: first.nextCursor }, caller);
+            expect(next).toMatchObject({ ok: true, result: { items: [{ artifactId: 'zebra' }] } });
+            if (!next.ok) throw new Error(next.error);
+            expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(next.result).nextCursor).toBeUndefined();
+            const created = await execute('artifact.list', { search: 'PRIVATE', kind: 'published.v1', sort: 'created_desc' }, caller);
+            if (!created.ok) throw new Error(created.error);
+            expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(created.result).items.map(item => item.artifactId)).toEqual(['zebra', 'alpha']);
+            const complete = await execute('artifact.list', {}, caller);
+            if (!complete.ok) throw new Error(complete.error);
+            expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(complete.result).items).toHaveLength(rows.length);
+            const structural = await account.workflowArtifacts.list({ limit: 500, includeBody: true });
+            expect(structural.items).toHaveLength(500);
+            expect(structural.items[0]).toMatchObject({ body: 'retained body' });
+            expect(structural.nextCursor).toBeDefined();
+            for (const url of urls) {
+                expect(url.searchParams.has('search') || url.searchParams.has('kind') || url.searchParams.has('sort')).toBe(false);
+            }
+        } finally { account.dispose(); }
+    });
+    it.each(['plain', 'e2ee'] as const)('runs ordinary %s Artifact CRUD through the front door on the captured Home', async mode => {
+        const home = await upsertAndActivateServer({ serverUrl: `https://ordinary-artifacts-${mode}.test`, scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: `https://ordinary-focused-${mode}.test`, scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(mode === 'plain' ? { token }
+            : { token, secret: encodeBase64(new Uint8Array(32).fill(24), 'base64url') });
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        let stored: Artifact | undefined;
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+            const target = new URL(String(url));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            expect(target.origin).toBe(home.serverUrl);
+            if (target.pathname === '/v1/account/encryption') return json({ mode, updatedAt: 0 });
+            if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
+                const write = JSON.parse(String(init.body)) as ArtifactCreateRequest;
+                stored = { ...write, ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode,
+                    seq: 1, headerVersion: 1, bodyVersion: 1, createdAt: 1, updatedAt: 1 };
+                return json(stored);
+            }
+            if (target.pathname === '/v1/artifacts') return json(stored ? [stored] : []);
+            if (stored && target.pathname.endsWith('/recipients')) return json({ artifactId: stored.id,
+                ownerAccountId: stored.ownerAccountId, access: stored.access, encryptionMode: mode, dataEncryptionKey: stored.dataEncryptionKey,
+                callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] });
+            if (stored && target.pathname === `/v1/artifacts/${stored.id}/html-preview`) return json({ url: `https://artifact-isolated.test/a/${stored.id}` });
+            if (stored && init?.method === 'DELETE' && target.pathname === `/v1/artifacts/${stored.id}/revision/2/2`) {
+                stored = undefined; return new Response(null, { status: 204 });
+            }
+            if (!stored || target.pathname !== `/v1/artifacts/${stored.id}`) return json({ error: 'not_found' }, 404);
+            if (init?.method === 'DELETE') { stored = undefined; return new Response(null, { status: 204 }); }
+            if (init?.method !== 'POST') return json(stored);
+            const write = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
+            if (write.expectedHeaderVersion !== stored.headerVersion || write.expectedBodyVersion !== stored.bodyVersion) return json({ success: false, error: 'version-mismatch' });
+            stored = { ...stored, header: write.header!, body: write.body!, headerVersion: 2, bodyVersion: 2 };
+            return json({ success: true, headerVersion: 2, bodyVersion: 2 });
+        });
+        const context = await captureLazyActionAccountContext(home.id);
+        try {
+            const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(context) })));
+            const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+            expect(await execute('artifact.create', { artifactId, header: { title: 'First' }, body: 'initial' }, caller))
+                .toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } } });
+            expect(stored?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
+            expect(await execute('artifact.get', { artifactId }, caller)).toMatchObject({ ok: true, result: { artifact: { artifactId, body: 'initial', header: { title: 'First' } } } });
+            expect(await execute('artifact.list', {}, caller)).toMatchObject({ ok: true, result: { items: [{ artifactId, header: { title: 'First' } }] } });
+            expect(await execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: { title: 'Second' }, body: 'changed' }, caller))
+                .toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
+            expect(await execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: {}, body: 'stale' }, caller))
+                .toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+            expect(await execute('artifact.delete', { artifactId, expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, caller))
+                .toEqual({ ok: true, result: { artifactId, deleted: true } });
+            expect(await execute('artifact.get', { artifactId }, caller)).toEqual({ ok: true, result: { artifact: null } });
+            expect(await execute('artifact.publish_from_file', { path: 'result.txt' }, caller))
+                .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
+            expect(await execute('artifact.publish_from_file', { path: 'result.txt' }, { ...caller, defaultSessionId: 'publication-session' }))
+                .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
+            storage.setState({ sessions: { 'publication-session': createSessionFixture({ id: 'publication-session', serverId: home.id,
+                metadata: { ...createSessionFixture().metadata!, path: '/workspace', machineId: 'publication-machine' } }) },
+                machineListByServerId: { [home.id]: [createMachineFixture({ id: 'publication-machine' })] } });
+            const download = vi.fn(async (request: { destination: { writeBytes: (bytes: Uint8Array) => Promise<void>; close: () => Promise<void> } }) => {
+                await request.destination.writeBytes(new TextEncoder().encode('<h1>Published</h1>'));
+                await request.destination.close();
+                return { ok: true as const, name: 'result.html', sizeBytes: 18 };
+            });
+            // This port is the remote workspace byte-transport boundary; Session lookup and publication remain real.
+            const publication = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(context, {
+                workspaceDownload: download,
+            }) })));
+            const publicationCaller = { kind: 'session', sessionId: 'publication-session', starterDepth: 0, turnDepth: 0 } satisfies NonNullable<ActionExecutorContext['actionCaller']>;
+            const sessionCaller = { ...caller, serverId: home.id, runtimeAccountId: 'artifact-account',
+                defaultSessionId: 'publication-session', actionCaller: publicationCaller };
+            expect(await publication('artifact.publish_from_file', { path: 'result.html' }, { ...sessionCaller, runtimeAccountId: 'other-account' }))
+                .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
+            expect(await publication('artifact.publish_from_file', { path: 'result.html' }, { ...sessionCaller, serverId: 'other-home' }))
+                .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
+            expect(download).not.toHaveBeenCalled();
+            expect(await publication('artifact.publish_from_file', { path: 'result.html' }, sessionCaller))
+                .toMatchObject({ ok: true, result: { revision: { headerVersion: 1, bodyVersion: 1 }, previewUrl: expect.stringContaining('#d=') } });
+            expect(download).toHaveBeenCalledWith(expect.objectContaining({ serverId: home.id, machineId: 'publication-machine', rootPath: '/workspace', confinedToWorkingDirectory: true }));
+            const published = stored;
+            const publishedRead = await publication('artifact.get', { artifactId: published!.id }, caller);
+            expect(publishedRead).toMatchObject({ ok: true, result: { artifact: { body: '<h1>Published</h1>', header: { kind: 'html',
+                source: { sessionId: 'publication-session', machineId: 'publication-machine', path: 'result.html', sha: expect.any(String) } } }, previewUrl: expect.stringContaining('#d=') } });
+            const calls = download.mock.calls.length;
+            expect(await publication('artifact.publish_from_file', { path: '../private.txt' }, sessionCaller))
+                .toMatchObject({ ok: false, errorCode: 'artifact_source_forbidden' });
+            expect(download).toHaveBeenCalledTimes(calls);
+            const cancellation = new AbortController();
+            download.mockImplementationOnce(async () => {
+                cancellation.abort();
+                return { ok: true, name: 'result.html', sizeBytes: 18 };
+            });
+            expect(await publication('artifact.publish_from_file', { path: 'result.html' }, { ...sessionCaller, signal: cancellation.signal }))
+                .toMatchObject({ ok: false, errorCode: 'cancelled' });
+            expect(stored).toBe(published);
+            download.mockImplementationOnce(async () => {
+                const session = storage.getState().sessions['publication-session'];
+                storage.setState({ sessions: { 'publication-session': { ...session, metadata: { ...session.metadata!, path: '/different-workspace' } } } });
+                return { ok: true, name: 'result.html', sizeBytes: 18 };
+            });
+            expect(await publication('artifact.publish_from_file', { path: 'result.html' }, sessionCaller))
+                .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
+            expect(stored).toBe(published);
+        } finally { context.dispose(); }
+    });
     it('publishes from raw exact-Home Settings through the existing Settings CAS and Artifact stores', async () => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://profile-publisher.test', scope: 'tab' });
         await upsertAndActivateServer({ serverUrl: 'https://profile-publisher-focused.test', scope: 'tab' });

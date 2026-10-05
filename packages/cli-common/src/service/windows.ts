@@ -28,6 +28,42 @@ export function splitQualifiedWindowsScheduledTaskName(qualifiedTaskName: string
   };
 }
 
+/** Register only the invoking user's interactive task, never an all-users logon trigger. */
+export function buildRegisterWindowsUserScheduledTaskPowerShellCommand(params: Readonly<{
+  qualifiedTaskName: string;
+  definitionPath: string;
+  persistent: boolean;
+}>): string {
+  const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
+  const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+  const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  const action = buildWindowsScheduledTaskPowerShellAction({ definitionPath: params.definitionPath });
+  const xml = '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">'
+    + (params.persistent
+      ? '<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>current-user</UserId></LogonTrigger></Triggers>'
+      : '<Triggers/>')
+    + '<Principals><Principal id="Author"><UserId>current-user</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>'
+    + '<Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>'
+    + xmlEscape(action.slice('powershell.exe '.length)) + '</Arguments></Exec></Actions></Task>';
+  return [
+    '$ErrorActionPreference = "Stop"',
+    '$userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+    `[xml]$xml = ${literal(xml)}`,
+    '$xml.Task.Principals.Principal.UserId = $userId',
+    ...(params.persistent ? ['$xml.Task.Triggers.LogonTrigger.UserId = $userId'] : []),
+    '$scheduler = New-Object -ComObject Schedule.Service',
+    '$scheduler.Connect()',
+    // Create the existing task namespace only when absent; access failures must remain failures.
+    '$folder = $scheduler.GetFolder("\\")',
+    ...taskPath.split('\\').filter(Boolean).map((part) =>
+      `$child = $folder.GetFolders(0) | Where-Object { $_.Name -eq ${literal(part)} }; if ($null -eq $child) { $child = $folder.CreateFolder(${literal(part)}) }; $folder = $child`),
+    `$taskName = ${literal(taskName)}`,
+    // TASK_CREATE_OR_UPDATE=6, TASK_LOGON_INTERACTIVE_TOKEN=3: no password or elevation.
+    '$folder.RegisterTask($taskName, $xml.OuterXml, 6, $userId, $null, 3, $null) | Out-Null',
+  ].join('; ');
+}
+
 export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: Readonly<{
   qualifiedTaskName: string;
   definitionPath: string;
@@ -258,6 +294,8 @@ export function buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand(par
   restartPolicy: 'always' | 'on-failure' | 'no';
   restartIntervalMinutes?: number;
   restartCount?: number;
+  /** No missed-start catch-up for an on-demand task. */
+  catchUpMissedStart?: boolean;
 }>): string {
   const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
   const restartIntervalMinutes = Number.isFinite(params.restartIntervalMinutes)
@@ -282,7 +320,7 @@ export function buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand(par
     '-ExecutionTimeLimit (New-TimeSpan -Seconds 0)',
     '-AllowStartIfOnBatteries',
     '-DontStopIfGoingOnBatteries',
-    '-StartWhenAvailable',
+    ...(params.catchUpMissedStart === false ? [] : ['-StartWhenAvailable']),
     '-MultipleInstances IgnoreNew',
   ].join(' ');
 

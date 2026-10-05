@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import {
   createDeferred,
   createSessionAccessFixture,
@@ -585,6 +586,50 @@ describe('SessionHeaderActionMenu handoff', () => {
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     for (const binding of voiceSessionBindingStore.getState().list()) {
       voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+    }
+  });
+
+  it('opens Find in chat on the exact mounted session surface without keyboard preferences', async () => {
+    // DOM event registration is a platform boundary; this node renderer has no window.
+    vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const { KeyboardShortcutProvider, useFindSurfaceRegistration } = await import('@/keyboard/KeyboardShortcutProvider');
+    let opened = false;
+    const controller: FindController = {
+      query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' },
+      capabilities: { regex: true, stop: false },
+      setQuery() {}, setOptions() {}, step() {}, stop() {}, close() { opened = false; },
+    };
+    function MountedTranscript() {
+      useFindSurfaceRegistration({
+        surfaceId: 'transcript:server_a:session-find-entry',
+        containsFocus: () => false,
+        open: () => { opened = true; },
+        isOpen: () => opened,
+        isInputFocused: () => false,
+        controller,
+      });
+      return null;
+    }
+    // Existing header harness uses the platform/storage boundary fixture shape.
+    const session = {
+      id: 'session-find-entry', serverId: 'server_a', active: true, seq: 1,
+      metadataLayoutVersion: 1, metadata: {}, ownerMetadataView: {}, agentState: null, access: null,
+    } as any;
+    const screen = await renderScreen(
+      <KeyboardShortcutProvider handlers={{}}>
+        <MountedTranscript />
+        <SessionHeaderActionMenu sessionId={session.id} session={session} />
+      </KeyboardShortcutProvider>,
+    );
+    try {
+      const dropdown = screen.findByType('DropdownMenu' as any);
+      expect(dropdown.props.items.map((item: { id: string }) => item.id)).toContain('header.findChat');
+      await act(async () => { dropdown.props.onSelect('header.findChat'); });
+      expect(opened).toBe(true);
+    } finally {
+      await act(async () => { screen.unmount(); });
+      vi.unstubAllGlobals();
     }
   });
 

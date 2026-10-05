@@ -23,6 +23,12 @@ import {
 
 import { installVoiceSettingsPanelCommonModuleMocks } from './voiceSettingsPanelTestHelpers';
 
+// This third-party SDK export is unavailable on some workers and is never used by these settings rows.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected streaming Markdown in Voice settings test'); },
+}));
+
+
 const storageBoundary = vi.hoisted(() => ({
     settings: null as unknown,
 }));
@@ -158,6 +164,8 @@ vi.mock('@/sync/store/hooks', () => ({
     useMachineCliDetectionTarget: () => passiveSetupBoundary.machineTarget,
     useProfile: () => passiveSetupBoundary.profile ?? { connectedServicesV2: [] },
     useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : null,
+    // Device-local preferences (e.g. hiding connected-account identities) read as unset.
+    useLocalSettingMutable: () => [null, () => {}],
 }));
 
 vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
@@ -213,6 +221,96 @@ function installCodexConnectedAccountDescriptor() {
     });
 }
 
+type TestNode = { props: Record<string, any>; findAll: (predicate: (node: TestNode) => boolean) => TestNode[] };
+
+/**
+ * The Service gallery as a provider choice: a service tile, or — for a service whose options only
+ * change who pays — its "Pay with" option. Returns the same row facts the radio list exposed
+ * (title, readiness detail, disabled, selected, press) so behavioural assertions stay unchanged.
+ */
+/**
+ * The checked passive readiness the page reports. The card shows it (the model's selected readiness
+ * is the checked one) and the polite status region announces this same text.
+ */
+function checkedReadinessRow(tree: { root: { findAllByProps: (props: Record<string, unknown>) => Array<{ props: Record<string, unknown> }> } }) {
+    const announcement = tree.root.findAllByProps({ statusTestID: 'settings.voice.provider.readiness-status' })[0]?.props.announcement;
+    return typeof announcement === 'string' && announcement.length > 0 ? { props: { subtitle: announcement } } : null;
+}
+
+function findProviderChoiceRow(tree: TestNode, query: Readonly<{ testID?: string; title?: string }>) {
+    const gallery = tree.findAll((node) => Array.isArray(node.props?.tiles) && typeof node.props?.onSelectOff === 'function')[0];
+    if (!gallery) return null;
+    const payWith = tree.findAll((node) => node.props?.testIDPrefix === 'settings.voice.provider.payWith'
+        && Array.isArray(node.props?.options))[0];
+    const tiles: any[] = gallery.props.tiles;
+    const tileRow = (tile: any) => ({ props: {
+        testID: tile.testID,
+        title: tile.title,
+        // The full prerequisite is the tile status's accessible detail; its visible text is a short status.
+        subtitle: tile.status?.detail ?? tile.status?.text ?? tile.subtitle ?? '',
+        disabled: tile.disabled,
+        selected: tile.selected,
+        accessibilityRole: 'radio',
+        rightElement: tile.selected ? {} : null,
+        onPress: tile.disabled ? undefined : () => gallery.props.onSelect(tile.id),
+    } });
+    const optionRow = (tile: any, option: any) => ({ props: {
+        testID: `${tile.testID.split('.').slice(0, -1).join('.')}.${option.id}`,
+        title: option.label,
+        subtitle: option.unavailableReason ?? option.description ?? '',
+        disabled: option.unavailableReason !== undefined,
+        selected: tile.selected && payWith!.props.value === option.id,
+        accessibilityRole: 'radio',
+        rightElement: tile.selected && payWith!.props.value === option.id ? {} : null,
+        onPress: option.unavailableReason !== undefined ? undefined : () => payWith!.props.onChange(option.id),
+    } });
+    if (query.testID === 'settings.voice.provider.off') {
+        return { props: {
+            testID: query.testID, title: 'settingsVoice.mode.off', subtitle: '', disabled: false,
+            selected: gallery.props.offSelected === true, accessibilityRole: 'radio',
+            rightElement: gallery.props.offSelected ? {} : null, onPress: () => gallery.props.onSelectOff(),
+        } };
+    }
+    if (query.testID) {
+        const exact = tiles.find((tile) => tile.testID === query.testID);
+        // Provider ids contain dots, so the option is the last segment and the provider is the rest.
+        const rest = query.testID.startsWith('settings.voice.provider.') ? query.testID.slice('settings.voice.provider.'.length) : '';
+        const cut = rest.lastIndexOf('.');
+        const providerId = cut > 0 ? decodeURIComponent(rest.slice(0, cut)) : null;
+        const optionId = cut > 0 ? decodeURIComponent(rest.slice(cut + 1)) : null;
+        const tile = exact ?? tiles.find((candidate) => candidate.id === providerId);
+        if (!tile) return null;
+        const option = payWith && tile.selected
+            ? payWith.props.options.find((candidate: any) => candidate.id === optionId)
+            : null;
+        return option ? optionRow(tile, option) : tileRow(tile);
+    }
+    if (query.title) {
+        const selectedTile = tiles.find((tile) => tile.selected);
+        const option = payWith && selectedTile
+            ? payWith.props.options.find((candidate: any) => candidate.label === query.title)
+            : null;
+        if (option) return optionRow(selectedTile, option);
+        const tile = tiles.find((candidate) => candidate.title === query.title);
+        return tile ? tileRow(tile) : null;
+    }
+    return null;
+}
+
+/** Every provider choice the gallery offers, including Off, as row facts. */
+function listProviderChoiceRows(tree: TestNode) {
+    const gallery = tree.findAll((node) => Array.isArray(node.props?.tiles) && typeof node.props?.onSelectOff === 'function')[0];
+    if (!gallery) return [];
+    return [
+        ...gallery.props.tiles.map((tile: any) => findProviderChoiceRow(tree, { testID: tile.testID })!),
+        findProviderChoiceRow(tree, { testID: 'settings.voice.provider.off' })!,
+    ];
+}
+
+// The settings owner graph is collection work, not part of a timed user interaction.
+await import('./VoiceProviderSection');
+await import('./BundledConversationSettingsSection');
+
 describe('VoiceProviderSection', () => {
     it('does not render a second declarative settings writer for a provider-owned settings section', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
@@ -238,7 +336,7 @@ describe('VoiceProviderSection', () => {
         expect(duplicateDeclarativeControls).toEqual([]);
     }, 120_000);
 
-    it('checks the exact machine and selected Codex Connected Service through the passive capability', async () => {
+    it('checks the exact machine and selected Codex Connected Service passively when the page opens and when the machine changes', async () => {
         passiveSetupBoundary.profile = {
             connectedServicesV2: [{
                 serviceId: 'openai-codex',
@@ -281,8 +379,8 @@ describe('VoiceProviderSection', () => {
             passiveSetupBoundary.refresh.mockReset();
         });
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
-        const screen = await renderScreen(React.createElement(VoiceProviderSection, {
-            voice: {
+        const sectionProps = {
+            voice: settingsParse({ voice: {
                 providerId: CODEX_PROVIDER_ID,
                 providers: {
                     [CODEX_PROVIDER_ID]: {
@@ -301,7 +399,7 @@ describe('VoiceProviderSection', () => {
                         },
                     },
                 },
-            } as any,
+            } }).voice,
             setVoice: vi.fn(),
             happierVoiceSupported: true,
             platformOs: 'web',
@@ -309,11 +407,13 @@ describe('VoiceProviderSection', () => {
                 browserSpeech: { support: 'available' },
             },
             executionMachineId: 'machine-1',
-        }));
+        } satisfies React.ComponentProps<typeof VoiceProviderSection>;
+        const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
+        await act(async () => {});
 
-        // The empty live region has to exist before the first synchronous result.
+        // Always-on card readiness: no "Check setup" button; the passive check ran because the page opened.
+        expect(screen.findHostByTestId('settings.voice.provider.checkSetup')).toBeNull();
         expect(screen.findHostByTestId('settings.voice.provider.readiness-status')).not.toBeNull();
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
 
         expect(passiveSetupBoundary.refresh).toHaveBeenCalledWith(expect.objectContaining({
             bypassCache: true,
@@ -338,17 +438,26 @@ describe('VoiceProviderSection', () => {
             },
             { timeoutMs: 30_000 },
         );
-        const readinessHost = screen.findHostByTestId('settings.voice.provider.readiness');
-        expect(readinessHost?.type).toBe('Item');
-        expect(readinessHost?.props.onPress).toBeUndefined();
-        expect(readinessHost?.props.role).toBeUndefined();
+        const readinessHost = checkedReadinessRow(screen.tree);
         expect(readinessHost?.props.subtitle).toContain('voice.readiness.runtime_unknown');
         expect(readinessHost?.props.subtitle).not.toContain('voice.readiness.actions.switch_provider');
+        // The card itself shows the checked readiness; there is no second "Setup status" row.
+        expect(screen.getTextContent()).toContain('voice.readiness.runtime_unknown');
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
         const status = screen.findHostByTestId('settings.voice.provider.readiness-status');
         expect(status).not.toBeNull();
         if (status === null) return;
         expect(status.props.accessibilityLiveRegion).toBe('polite');
         expect(status.props['aria-live']).toBe('polite');
+
+        // A different computer is a different setup to check; the page checks it without being asked.
+        passiveSetupBoundary.invoke.mockClear();
+        await act(async () => {
+            screen.tree.update(React.createElement(VoiceProviderSection, { ...sectionProps, executionMachineId: 'machine-2' }));
+        });
+        await act(async () => {});
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(1);
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledWith('machine-2', expect.anything(), { timeoutMs: 30_000 });
     }, 120_000);
 
     it('marks Codex setup ready only from the strict passive owner result', async () => {
@@ -399,7 +508,7 @@ describe('VoiceProviderSection', () => {
         };
         const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
 
         expect(screen.getTextContent()).toContain('voice.readiness.ready');
 
@@ -471,20 +580,24 @@ describe('VoiceProviderSection', () => {
         });
         const screen = await renderScreen(render('machine-1'));
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
         await act(async () => {
             screen.tree.update(render('machine-2'));
         });
         await act(async () => {
             settlePassiveCheck?.({
                 supported: true,
-                response: { ok: true, result: { v: 1, status: 'ready' } },
+                response: { ok: true, result: { v: 1, status: 'unavailable' } },
             });
             await Promise.resolve();
         });
 
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
-        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(1);
+        // The page checked the new machine on its own; machine-1's late answer never lands.
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(2);
+        expect(passiveSetupBoundary.invoke).toHaveBeenLastCalledWith('machine-2', expect.anything(), { timeoutMs: 30_000 });
+        const readiness = checkedReadinessRow(screen.tree);
+        expect(readiness?.props.subtitle).toContain('voice.readiness.ready');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.runtime_unknown');
     }, 120_000);
 
     it('clears a settled passive result when the active Account changes', async () => {
@@ -497,10 +610,9 @@ describe('VoiceProviderSection', () => {
         passiveSetupBoundary.machineTarget = { daemonStateVersion: 7, isOnline: true };
         const accountA = createActiveAccountLifetime('account-a');
         activeAccountLifetimeBoundary.value = accountA;
-        passiveSetupBoundary.invoke.mockResolvedValue({
-            supported: true,
-            response: { ok: true, result: { v: 1, status: 'ready' } },
-        });
+        passiveSetupBoundary.invoke
+            .mockResolvedValueOnce({ supported: true, response: { ok: true, result: { v: 1, status: 'unavailable' } } })
+            .mockResolvedValueOnce({ supported: true, response: { ok: true, result: { v: 1, status: 'ready' } } });
         onTestFinished(() => {
             passiveSetupBoundary.profile = null;
             passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
@@ -537,8 +649,8 @@ describe('VoiceProviderSection', () => {
         };
         const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).not.toBeNull();
+        await act(async () => {});
+        expect(checkedReadinessRow(screen.tree)).not.toBeNull();
 
         accountA.retire();
         activeAccountLifetimeBoundary.value = createActiveAccountLifetime('account-b');
@@ -546,7 +658,12 @@ describe('VoiceProviderSection', () => {
             screen.tree.update(React.createElement(VoiceProviderSection, sectionProps));
         });
 
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+        await act(async () => {});
+        // Account A's answer is gone; the page checked again for account B.
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(2);
+        const readiness = checkedReadinessRow(screen.tree);
+        expect(readiness?.props.subtitle).toContain('voice.readiness.ready');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.runtime_unknown');
     }, 120_000);
 
     it('does not display a settled passive result after the active Account lifetime restarts', async () => {
@@ -599,8 +716,8 @@ describe('VoiceProviderSection', () => {
         };
         const screen = await renderScreen(React.createElement(VoiceProviderSection, sectionProps));
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).not.toBeNull();
+        await act(async () => {});
+        expect(checkedReadinessRow(screen.tree)).not.toBeNull();
 
         accountA.retire();
         activeAccountLifetimeBoundary.value = createActiveAccountLifetime('account-a');
@@ -608,7 +725,7 @@ describe('VoiceProviderSection', () => {
             screen.tree.update(React.createElement(VoiceProviderSection, sectionProps));
         });
 
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+        expect(checkedReadinessRow(screen.tree)).toBeNull();
     }, 120_000);
 
     it('does not commit a stale passive result after the active Account lifetime restarts', async () => {
@@ -663,7 +780,7 @@ describe('VoiceProviderSection', () => {
         });
         const screen = await renderScreen(render());
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
         accountA.retire();
         activeAccountLifetimeBoundary.value = createActiveAccountLifetime('account-a');
         await act(async () => {
@@ -677,7 +794,7 @@ describe('VoiceProviderSection', () => {
             await Promise.resolve();
         });
 
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+        expect(checkedReadinessRow(screen.tree)).toBeNull();
     }, 120_000);
 
     it('does not commit a delayed passive result after the selected daemon restarts', async () => {
@@ -692,7 +809,9 @@ describe('VoiceProviderSection', () => {
         const pendingPassiveCheck = new Promise<unknown>((resolve) => {
             settlePassiveCheck = resolve;
         });
-        passiveSetupBoundary.invoke.mockImplementation(async () => await pendingPassiveCheck);
+        passiveSetupBoundary.invoke
+            .mockImplementationOnce(async () => await pendingPassiveCheck)
+            .mockResolvedValueOnce({ supported: true, response: { ok: true, result: { v: 1, status: 'ready' } } });
         onTestFinished(() => {
             passiveSetupBoundary.profile = null;
             passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
@@ -729,7 +848,7 @@ describe('VoiceProviderSection', () => {
         });
         const screen = await renderScreen(render());
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
         passiveSetupBoundary.machineTarget = { daemonStateVersion: 8, isOnline: true };
         await act(async () => {
             screen.tree.update(render());
@@ -737,12 +856,16 @@ describe('VoiceProviderSection', () => {
         await act(async () => {
             settlePassiveCheck?.({
                 supported: true,
-                response: { ok: true, result: { v: 1, status: 'ready' } },
+                response: { ok: true, result: { v: 1, status: 'unavailable' } },
             });
             await Promise.resolve();
         });
 
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
+        // The restarted daemon was checked again; the old daemon's late answer never lands.
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(2);
+        const readiness = checkedReadinessRow(screen.tree);
+        expect(readiness?.props.subtitle).toContain('voice.readiness.ready');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.runtime_unknown');
     }, 120_000);
 
     it('keeps the first passive setup check visibly and accessibly checking until it settles', async () => {
@@ -800,7 +923,7 @@ describe('VoiceProviderSection', () => {
         const screen = await renderScreen(render());
         const { tree } = screen;
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
 
         expect(screen.getTextContent()).toContain('settings.updates.checking');
         const checkingAnnouncers = tree.root.findAllByProps({
@@ -809,8 +932,10 @@ describe('VoiceProviderSection', () => {
         expect(checkingAnnouncers).toHaveLength(1);
         expect(checkingAnnouncers[0]?.props.announcement).toBe('settings.updates.checking');
 
-        expect(screen.findHostByTestId('settings.voice.provider.checkSetup')?.props.disabled).toBe(true);
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        // A re-render while the check is pending shares the one in flight.
+        await act(async () => {
+            tree.update(render());
+        });
         expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(1);
 
         passiveSetupBoundary.state = {
@@ -852,9 +977,11 @@ describe('VoiceProviderSection', () => {
         expect(announcers).toHaveLength(1);
         expect(announcers[0]?.props.announcement).toContain('voice.readiness.runtime_missing');
 
-        expect(screen.findHostByTestId('settings.voice.provider.checkSetup')?.props.disabled).toBeFalsy();
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
-        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(2);
+        // A settled check is not repeated while the setup it checked is unchanged.
+        await act(async () => {
+            tree.update(render());
+        });
+        expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(1);
     }, 120_000);
 
     it('does not turn a settled passive check back into checking during a CLI refresh', async () => {
@@ -921,11 +1048,7 @@ describe('VoiceProviderSection', () => {
         });
         const { tree } = await renderScreen(render());
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
+        await act(async () => {});
         const terminalAnnouncement = tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
         })[0];
@@ -939,9 +1062,7 @@ describe('VoiceProviderSection', () => {
         await act(async () => {
             tree.update(render());
         });
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props.subtitle).toContain('voice.readiness.runtime_missing');
+        expect(checkedReadinessRow(tree)?.props.subtitle).toContain('voice.readiness.runtime_missing');
         expect(tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
         })[0]?.props.transitionKey).toBe(terminalTransitionKey);
@@ -953,9 +1074,7 @@ describe('VoiceProviderSection', () => {
         await act(async () => {
             tree.update(render());
         });
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props.subtitle).toContain('voice.readiness.runtime_unknown');
+        expect(checkedReadinessRow(tree)?.props.subtitle).toContain('voice.readiness.runtime_unknown');
         expect(tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
         })[0]?.props.transitionKey).not.toBe(terminalTransitionKey);
@@ -992,16 +1111,9 @@ describe('VoiceProviderSection', () => {
             executionMachineSelectionKind: 'selected_unreachable',
         }));
 
-        const check = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.checkSetup',
-        });
-        await act(async () => {
-            check?.props.onPress();
-        });
+        await act(async () => {});
 
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        const readiness = checkedReadinessRow(tree);
         expect(readiness?.props.subtitle).toContain('voice.readiness.execution_machine_incompatible');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
         expect(JSON.stringify(readiness?.props)).not.toContain('machine-offline');
@@ -1028,7 +1140,7 @@ describe('VoiceProviderSection', () => {
             onRecoveryAction,
         }));
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
         expect(screen.getTextContent()).toContain(
             'voice.readiness.settings_missing_required_setting',
         );
@@ -1036,9 +1148,15 @@ describe('VoiceProviderSection', () => {
             'voice.readiness.actions.open_provider_settings',
         );
         expect(screen.getTextContent()).not.toContain('voice.readiness.ready');
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')?.type).toBe('Item');
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')?.props.onPress).toBeTypeOf('function');
-        await screen.pressByTestIdAsync('settings.voice.provider.readiness');
+        // The card carries the readiness and its one recovery action.
+        const recoverActions = (root: any) => root.findAll((node: any) => typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith('settings.voice.conversations.pipeline')
+            && node.props.testID.endsWith('.recover')
+            && typeof node.props.onPress === 'function');
+        expect(checkedReadinessRow(screen.tree)).not.toBeNull();
+        const recover = recoverActions(screen.tree.root)[0];
+        expect(recover).toBeTruthy();
+        await act(async () => { recover.props.onPress(); });
         expect(onRecoveryAction).toHaveBeenCalledWith('open_provider_settings');
 
         const withoutRecoveryHandler = await renderScreen(React.createElement(VoiceProviderSection, {
@@ -1055,10 +1173,9 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
         }));
-        await withoutRecoveryHandler.pressByTestIdAsync('settings.voice.provider.checkSetup');
-        const passiveOnlyReadiness = withoutRecoveryHandler.findHostByTestId('settings.voice.provider.readiness');
-        expect(passiveOnlyReadiness?.type).toBe('Item');
-        expect(passiveOnlyReadiness?.props.onPress).toBeUndefined();
+        await act(async () => {});
+        expect(checkedReadinessRow(withoutRecoveryHandler.tree)).not.toBeNull();
+        expect(recoverActions(withoutRecoveryHandler.tree.root)).toHaveLength(0);
         expect(withoutRecoveryHandler.findHostByTestId('settings.voice.provider.testLive')).toBeNull();
         expect(setVoice).not.toHaveBeenCalled();
     }, 120_000);
@@ -1184,27 +1301,28 @@ describe('VoiceProviderSection', () => {
 
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const { VoiceCredentialSourceField } = await import('./realtime/VoiceCredentialSourceField');
-        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
-            voice: selected.settings.voice,
-            executionMachineId: machineOnline ? 'machine-online' : 'machine-offline',
-            setVoice: vi.fn(),
-            happierVoiceSupported: true,
-            platformOs: 'web',
-        }));
+        const { BundledConversationSettingsSection } = await import('./BundledConversationSettingsSection');
+        // Provider choice/readiness and the public curated settings presentation
+        // have separate renderers, as on the composed Conversations page.
+        const { tree } = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(VoiceProviderSection, {
+                voice: selected.settings.voice,
+                executionMachineId: machineOnline ? 'machine-online' : 'machine-offline',
+                setVoice: vi.fn(),
+                happierVoiceSupported: true,
+                platformOs: 'web',
+            }),
+            React.createElement(BundledConversationSettingsSection, {
+                voice: selected.settings.voice,
+                setVoice: vi.fn(),
+            }),
+        ));
 
         expect(tree.root.findByType(VoiceCredentialSourceField).props.isCurrent()).toBe(true);
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props.subtitle).toContain(expectedReadiness);
-        expect(JSON.stringify(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props)).not.toContain(account.ref.accountId);
+        await act(async () => {});
+        expect(checkedReadinessRow(tree)?.props.subtitle).toContain(expectedReadiness);
+        expect(JSON.stringify(checkedReadinessRow(tree)?.props)).not.toContain(account.ref.accountId);
     }, 120_000);
 
     it('does not claim a bound Connected Account credential is missing when its descriptor is unavailable', async () => {
@@ -1286,21 +1404,13 @@ describe('VoiceProviderSection', () => {
             platformOs: 'web',
         }));
 
-        const row = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: `settings.voice.provider.${encodeURIComponent(OPENAI_PROVIDER_ID)}.byo`,
-        });
+        const row = findProviderChoiceRow(tree as any, { testID: `settings.voice.provider.${encodeURIComponent(OPENAI_PROVIDER_ID)}.byo` });
         expect(row?.props.subtitle).toContain('voice.readiness.credential_unknown');
         expect(row?.props.subtitle).not.toContain('voice.readiness.credential_missing');
         expect(row?.props.disabled).not.toBe(true);
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        await act(async () => {});
+        const readiness = checkedReadinessRow(tree);
         expect(readiness?.props.subtitle).toContain('voice.readiness.credential_unknown');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.credential_missing');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
@@ -1371,9 +1481,7 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
         }));
-        const row = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: `settings.voice.provider.${encodeURIComponent(OPENAI_PROVIDER_ID)}.byo`,
-        });
+        const row = findProviderChoiceRow(tree as any, { testID: `settings.voice.provider.${encodeURIComponent(OPENAI_PROVIDER_ID)}.byo` });
 
         expect(row?.props.subtitle).toContain('voice.readiness.credential_unknown');
         expect(row?.props.disabled).not.toBe(true);
@@ -1386,12 +1494,19 @@ describe('VoiceProviderSection', () => {
         }));
 
         const selectedVoice = setVoice.mock.calls[0]?.[0];
-        const selected = await renderScreen(React.createElement(VoiceProviderSection, {
-            voice: selectedVoice,
-            setVoice: vi.fn(),
-            happierVoiceSupported: true,
-            platformOs: 'web',
-        }));
+        const { BundledConversationSettingsSection } = await import('./BundledConversationSettingsSection');
+        const selected = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(VoiceProviderSection, {
+                voice: selectedVoice,
+                setVoice: vi.fn(),
+                happierVoiceSupported: true,
+                platformOs: 'web',
+            }),
+            React.createElement(BundledConversationSettingsSection, {
+                voice: selectedVoice,
+                setVoice: vi.fn(),
+            }),
+        ));
         const sourceField = findTestInstanceByTypeWithProps(selected.tree, 'DropdownMenu' as any, {
             testID: 'voice-credential-source-api_key',
         });
@@ -1403,9 +1518,9 @@ describe('VoiceProviderSection', () => {
             subtitle: 'codex-work',
         }));
         const credentialEditor = selected.tree.root.findAll((node) => (
-            node.props.contribution?.pluginId === 'happier.voice.openai'
-            && node.props.contribution?.localId === 'realtime-openai'
-            && node.props.credentialSlotId === 'api_key'
+            node.props?.contribution?.pluginId === 'happier.voice.openai'
+            && node.props?.contribution?.localId === 'realtime-openai'
+            && node.props?.credentialSlotId === 'api_key'
         ))[0];
         // The source resolver correctly fails closed for the orphaned purpose
         // binding. That must not make an explicit SavedSecret choice take the
@@ -1466,22 +1581,22 @@ describe('VoiceProviderSection', () => {
             const { VoiceProviderSection } = await import('./VoiceProviderSection');
             const setVoice = vi.fn();
             const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
-                voice: { providerId: null } as any,
+                // ElevenLabs is one service whose billing option is chosen beneath it once it is selected.
+                voice: (providerId === ELEVENLABS_PROVIDER_ID ? { providerId } : { providerId: null }) as any,
                 setVoice,
                 happierVoiceSupported: true,
                 platformOs: 'web',
             }));
-            const row = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: `settings.voice.provider.${encodeURIComponent(providerId)}.${optionId}`,
-            });
+            const row = findProviderChoiceRow(tree as any, { testID: `settings.voice.provider.${encodeURIComponent(providerId)}.${optionId}` });
 
             expect(row?.props?.disabled).not.toBe(true);
             expect(row?.props?.onPress).toBeTypeOf('function');
-            expect(row?.props?.subtitle).toContain(
-                providerId === ELEVENLABS_PROVIDER_ID
-                    ? 'voice.readiness.settings_missing_required_setting'
-                    : 'voice.readiness.credential_missing',
-            );
+            if (providerId === ELEVENLABS_PROVIDER_ID) {
+                // Pay with says what this way to pay means; once chosen, the card says what it still needs.
+                expect(row?.props?.subtitle).toBe('settingsVoice.pages.conversations.payWithOwnDescription');
+            } else {
+                expect(row?.props?.subtitle).toContain('voice.readiness.credential_missing');
+            }
             row?.props?.onPress?.();
             expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
                 providerId,
@@ -1513,18 +1628,11 @@ describe('VoiceProviderSection', () => {
             platformOs: 'web',
         }));
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        await act(async () => {});
+        const readiness = checkedReadinessRow(tree);
 
         expect(readiness?.props.subtitle).toContain('voice.readiness.credential_missing');
-        expect(readiness?.props.detail).toBeUndefined();
-        expect(JSON.stringify(readiness?.props)).not.toContain(providerId);
+        expect(readiness?.props.subtitle).not.toContain(providerId);
     }, 120_000);
 
     it('does not require external-publisher re-review for a bundled provider with a stale digest', async () => {
@@ -1571,14 +1679,8 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
         }));
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        await act(async () => {});
+        const readiness = checkedReadinessRow(tree);
         expect(readiness?.props.subtitle).toContain('voice.readiness.ready');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.credential_missing');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.actions.configure_credential');
@@ -1631,14 +1733,8 @@ describe('VoiceProviderSection', () => {
             platformOs: 'web',
         }));
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        await act(async () => {});
+        const readiness = checkedReadinessRow(tree);
         expect(readiness?.props.subtitle).toContain(
             'voice.readiness.settings_missing_required_setting',
         );
@@ -1649,7 +1745,7 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.subtitle).not.toContain('credential');
     }, 120_000);
 
-    it('exposes every provider choice as the same radio control with selected state', async () => {
+    it('offers every provider as one choice in the gallery with exactly one selected', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
             voice: { providerId: ELEVENLABS_PROVIDER_ID, providers: {
@@ -1658,15 +1754,37 @@ describe('VoiceProviderSection', () => {
             setVoice: vi.fn(),
             happierVoiceSupported: true,
         }));
-        const providerGroup = tree.findAllByType('ItemGroup' as any)
-            .find((group: any) => group.props.accessibilityRole === 'radiogroup');
-        const rows = providerGroup?.findAllByType('Item' as any) ?? [];
-        expect(providerGroup?.props.accessibilityLabel).toBe('settingsVoice.providerSectionTitle');
+        const rows = listProviderChoiceRows(tree as any);
         expect(rows.length).toBeGreaterThan(1);
-        expect(rows.every((row: any) => row.props.accessibilityRole === 'radio' && row.props.webRole === 'radio')).toBe(true);
-        expect(rows.every((row: any) => typeof row.props.testID === 'string')).toBe(true);
-        expect(rows.filter((row: any) => row.props.selected === true)).toHaveLength(1);
-        expect(rows.filter((row: any) => row.props.selected === false).length).toBe(rows.length - 1);
+        expect(rows.every((row) => typeof row.props.testID === 'string')).toBe(true);
+        expect(rows.filter((row) => row.props.selected === true)).toHaveLength(1);
+        // One ElevenLabs service: who pays is its own choice beneath the gallery.
+        expect(rows.filter((row) => row.props.testID.startsWith(`settings.voice.provider.${encodeURIComponent(ELEVENLABS_PROVIDER_ID)}.`))).toHaveLength(1);
+        const payWith = (tree as any).findAll((node: any) => node.props?.testIDPrefix === 'settings.voice.provider.payWith')[0];
+        expect(payWith?.props.options.map((option: { id: string }) => option.id)).toEqual(['happier', 'byo']);
+    });
+
+    it('keeps gallery tiles and Pay with to what each choice needs or means; the card owns the recovery action', async () => {
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+            voice: { providerId: ELEVENLABS_PROVIDER_ID, providers: {
+                [ELEVENLABS_PROVIDER_ID]: { schemaVersion: 2, config: elevenLabsByoConfig() },
+            } } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+        }));
+        await act(async () => {});
+        const gallery = (tree as any).findAll((node: any) => Array.isArray(node.props?.tiles) && typeof node.props?.onSelectOff === 'function')[0];
+        const needing = gallery.props.tiles.filter((tile: any) => tile.status?.tone === 'needs_you' && !tile.disabled);
+        expect(needing.length).toBeGreaterThan(0);
+        for (const tile of needing) {
+            expect(tile.status.text).toMatch(/^voice\.readiness\.short\./);
+            expect(tile.status.detail).not.toContain('voice.readiness.actions.');
+        }
+        const payWith = (tree as any).findAll((node: any) => node.props?.testIDPrefix === 'settings.voice.provider.payWith')[0];
+        const selected = payWith.props.options.find((option: any) => option.id === payWith.props.value);
+        expect(selected.description).not.toContain('voice.readiness.');
     });
 
     it.each([
@@ -1710,21 +1828,15 @@ describe('VoiceProviderSection', () => {
                 platformOs: 'web',
             }));
 
-            const unavailableRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.selectedUnavailable',
-            });
-            const offRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.off',
-            });
-            const selectedRows = tree.findAllByType('Item' as any)
-                .filter((row: any) => row.props.accessibilityRole === 'radio' && row.props.selected === true);
-            const ordinaryRowsForSelectedProvider = tree.findAllByType('Item' as any)
-                .filter((row: any) => row.props.testID?.startsWith(
+            const unavailableRow = findProviderChoiceRow(tree as any, { testID: 'settings.voice.provider.selectedUnavailable' });
+            const offRow = findProviderChoiceRow(tree as any, { testID: 'settings.voice.provider.off' });
+            const choices = listProviderChoiceRows(tree as any);
+            const selectedRows = choices.filter((row) => row.props.selected === true);
+            const ordinaryRowsForSelectedProvider = choices
+                .filter((row) => row.props.testID?.startsWith(
                     `settings.voice.provider.${encodeURIComponent(providerId)}.`,
                 ));
-            const otherProviderRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: `settings.voice.provider.${encodeURIComponent(OPENAI_PROVIDER_ID)}.byo`,
-            });
+            const otherProviderRow = findProviderChoiceRow(tree as any, { testID: `settings.voice.provider.${encodeURIComponent(OPENAI_PROVIDER_ID)}.byo` });
 
             expect(unavailableRow).toBeTruthy();
             expect(unavailableRow?.props.accessibilityRole).toBe('radio');
@@ -1734,7 +1846,7 @@ describe('VoiceProviderSection', () => {
             expect(unavailableRow?.props.title.length).toBeGreaterThan(0);
             expect(unavailableRow?.props.subtitle).toContain(expectedReason);
             expect(unavailableRow?.props.subtitle).toContain(expectedAction);
-            expect(selectedRows).toEqual([unavailableRow]);
+            expect(selectedRows.map((row) => row.props.testID)).toEqual([unavailableRow?.props.testID]);
             expect(ordinaryRowsForSelectedProvider).toHaveLength(0);
             expect(otherProviderRow).toBeTruthy();
             expect(offRow?.props.selected).toBe(false);
@@ -1769,10 +1881,10 @@ describe('VoiceProviderSection', () => {
         );
 
         expect(
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, { title: 'settingsVoice.mode.local' })?.props?.rightElement,
+            findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' })?.props?.rightElement,
         ).toBeTruthy();
         expect(
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, { title: 'settingsVoice.mode.byo' })?.props?.rightElement,
+            findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.byo' })?.props?.rightElement,
         ).toBeFalsy();
     });
 
@@ -1780,8 +1892,9 @@ describe('VoiceProviderSection', () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const setVoice = vi.fn();
 
+        // Who pays is chosen beneath the selected ElevenLabs service, so the hosted option is read there.
         const voice: any = {
-            providerId: 'off',
+            providerId: ELEVENLABS_PROVIDER_ID,
             providers: {
                 [ELEVENLABS_PROVIDER_ID]: { schemaVersion: 2, config: elevenLabsByoConfig() },
             },
@@ -1794,16 +1907,15 @@ describe('VoiceProviderSection', () => {
                 happierVoiceSupported: false,
             }),
         );
-        const hostedRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.happier',
-        });
+        const hostedRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.happier' });
 
         expect(hostedRow?.props?.disabled).toBe(true);
         expect(hostedRow?.props?.onPress).toBeUndefined();
-        expect(hostedRow?.props?.subtitle).toContain('voice.readiness.server_feature_disabled');
-        expect(hostedRow?.props?.subtitle).toContain('voice.readiness.actions.switch_provider');
+        expect(hostedRow?.props?.subtitle).toContain('settingsVoice.pages.conversations.happierBillingUnavailable');
+        // The reason alone; the recovery action lives on the card, not in a Pay with option.
+        expect(hostedRow?.props?.subtitle).not.toContain('voice.readiness.actions.');
         expect(
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, { title: 'settingsVoice.mode.local' }),
+            findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' }),
         ).toBeTruthy();
         expect(setVoice).not.toHaveBeenCalled();
     });
@@ -1831,9 +1943,7 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.local',
-        });
+        const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
 
         expect(localRow?.props?.disabled).toBe(true);
         expect(localRow?.props?.onPress).toBeUndefined();
@@ -1858,9 +1968,7 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.local',
-        });
+        const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
 
         expect(localRow).toBeTruthy();
         expect(localRow?.props?.disabled).toBe(true);
@@ -1893,9 +2001,7 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.local',
-        });
+        const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
 
         expect(localRow?.props?.disabled).toBe(true);
         expect(localRow?.props?.onPress).toBeUndefined();
@@ -1926,9 +2032,7 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.local',
-        });
+        const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
 
         expect(localRow?.props?.disabled).not.toBe(true);
         localRow?.props?.onPress?.();
@@ -1964,9 +2068,7 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.local',
-        });
+        const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
         expect(localRow?.props?.disabled).not.toBe(true);
         localRow?.props?.onPress?.();
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'local_conversation' }));
@@ -1996,9 +2098,7 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            title: 'settingsVoice.mode.local',
-        });
+        const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
         expect(localRow?.props?.disabled).not.toBe(true);
         localRow?.props?.onPress?.();
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'local_conversation' }));
@@ -2138,9 +2238,7 @@ describe('VoiceProviderSection', () => {
                 }),
             );
 
-            const localRow = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                title: 'settingsVoice.mode.local',
-            });
+            const localRow = findProviderChoiceRow(tree as any, { title: 'settingsVoice.mode.local' });
             if (expectedCode === null) {
                 expect(localRow?.props?.subtitle).not.toContain('voice.readiness');
             } else {
@@ -2216,14 +2314,8 @@ describe('VoiceProviderSection', () => {
                 }),
             );
 
-            await act(async () => {
-                findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                    testID: 'settings.voice.provider.checkSetup',
-                })?.props.onPress();
-            });
-            const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.readiness',
-            });
+            await act(async () => {});
+            const readiness = checkedReadinessRow(tree);
             expect(readiness?.props.subtitle).toContain(expectedCode);
             expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
         },
@@ -2289,14 +2381,8 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        await act(async () => {});
+        const readiness = checkedReadinessRow(tree);
         expect(readiness?.props.subtitle).toContain('voice.readiness.endpoint_missing');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
     }, 120_000);
@@ -2365,14 +2451,8 @@ describe('VoiceProviderSection', () => {
             }),
         );
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
-        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        });
+        await act(async () => {});
+        const readiness = checkedReadinessRow(tree);
         expect(readiness?.props.subtitle).toContain('voice.readiness.credential_missing');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
         expect(setVoice).not.toHaveBeenCalled();
@@ -2383,6 +2463,7 @@ describe('VoiceProviderSection', () => {
             readLocalConversationVoiceSettings,
             voiceSettingsDefaults,
             writeLocalConversationVoiceSettings,
+            writeVoiceProviderSettingsConfig,
         } = await import('@/sync/domains/settings/voiceSettings');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const { saveAndUseAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
@@ -2481,11 +2562,24 @@ describe('VoiceProviderSection', () => {
         const screen = await renderScreen(render(ready.voice));
         const { tree } = screen;
 
-        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        await act(async () => {});
         expect(rawCredentialReadiness).toHaveBeenCalledTimes(2);
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props.subtitle).toContain('voice.readiness.ready');
+        expect(checkedReadinessRow(tree)?.props.subtitle).toContain('voice.readiness.ready');
+
+        const missingVoiceNameVoice = writeVoiceProviderSettingsConfig(
+            ready.voice, 'happier.voice.google/google-cloud-tts', {
+                voiceName: '', languageCode: 'en-US', format: 'mp3', speakingRate: 1, pitch: 0,
+            },
+        );
+        const missingVoiceName = {
+            ...ready,
+            voice: missingVoiceNameVoice,
+            voiceSettingsV1: { ...ready.voiceSettingsV1, providers: missingVoiceNameVoice.providers },
+        };
+        storageBoundary.settings = missingVoiceName;
+        await act(async () => { tree.update(render(missingVoiceName.voice)); });
+        await act(async () => {});
+        expect(checkedReadinessRow(tree)?.props.subtitle).toContain('voice.readiness.settings_missing_required_setting');
 
         const removed = settingsParse({
             ...ready,
@@ -2496,10 +2590,108 @@ describe('VoiceProviderSection', () => {
             tree.update(render(removed.voice));
         });
 
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-            testID: 'settings.voice.provider.readiness',
-        })?.props.subtitle).toContain('voice.readiness.credential_missing');
+        expect(checkedReadinessRow(tree)?.props.subtitle).toContain('voice.readiness.credential_missing');
         expect(setVoice).not.toHaveBeenCalled();
+    }, 120_000);
+
+    it('checks Local voice when the page opens and when the Hear engine changes, never from the hub model alone', async () => {
+        const {
+            readLocalConversationVoiceSettings,
+            voiceSettingsDefaults,
+            writeLocalConversationVoiceSettings,
+        } = await import('@/sync/domains/settings/voiceSettings');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const { saveAndUseAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+        const base = {
+            ...voiceSettingsDefaults,
+            providerId: 'local_conversation',
+            providers: {
+                ...voiceSettingsDefaults.providers,
+                'happier.voice.google/gemini-stt': { schemaVersion: 2, config: { model: 'gemini-2.5-flash', language: '' } },
+                'happier.voice.google/google-cloud-tts': {
+                    schemaVersion: 2,
+                    config: { voiceName: 'en-US-Wavenet-D', languageCode: 'en-US', format: 'mp3', speakingRate: 1, pitch: 0 },
+                },
+            },
+        };
+        const withHear = (stt: string) => writeLocalConversationVoiceSettings(base, {
+            ...local,
+            stt: { ...local.stt, provider: stt },
+            tts: { ...local.tts, provider: 'happier.voice.google/google-cloud-tts' },
+        });
+        // Both cloud keys are saved up front, so only the engine choice differs between the two renders.
+        const registry = createDefaultVoiceProviderRegistry();
+        let settings = settingsParse({ voice: withHear(local.stt.provider) });
+        for (const localId of ['gemini-stt', 'google-cloud-tts'] as const) {
+            const entry = registry.get(`happier.voice.google/${localId}`);
+            const declaration = entry?.kind === 'voice.speech-engine.v1' ? entry.declaration : null;
+            if (declaration?.kind !== 'speech') throw new Error('expected current Google speech declarations');
+            settings = saveAndUseAccountVoiceCredential({
+                settings,
+                contribution: { pluginId: 'happier.voice.google', localId },
+                credentialSlotId: 'api_key',
+                expectedSettingsVersion: 0,
+                currentDeclaration: declaration,
+                machineId: 'machine-online',
+                value: `${localId}-key`,
+                generateId: () => `${localId}-secret`,
+                now: 1,
+                expectedSecretId: null,
+                expectedSecretUpdatedAt: null,
+            }).settings;
+        }
+        rawCredentialReadiness.mockClear();
+        storageBoundary.settings = settings;
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 1, isOnline: true };
+        onTestFinished(() => {
+            storageBoundary.settings = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
+        });
+
+        const { VoiceProviderSection, useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
+        const sectionProps = (voice: typeof settings.voice) => ({
+            voice,
+            executionMachineId: 'machine-online',
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+            localAvailability: {
+                browserSpeech: { support: 'cloud_only' as const, onDevice: 'unsupported' as const },
+                daemon: {
+                    featureEnabled: true,
+                    route: 'direct' as const,
+                    modelState: 'ready' as const,
+                    runtimeState: 'available' as const,
+                    pcmCapture: 'available' as const,
+                },
+                nativeDevice: { requested: false },
+            },
+        });
+        // The hub reads the same model for its cards; reading it never runs the check.
+        function HubModelReader() {
+            useVoiceConversationsReadinessModel(sectionProps(settings.voice));
+            return null;
+        }
+        const hub = await renderScreen(React.createElement(HubModelReader));
+        await act(async () => {});
+        expect(rawCredentialReadiness).not.toHaveBeenCalled();
+        await hub.unmount();
+
+        const render = (voice: typeof settings.voice) => React.createElement(VoiceProviderSection, sectionProps(voice));
+        const screen = await renderScreen(render(settings.voice));
+        await act(async () => {});
+        const checkedContributions = () => rawCredentialReadiness.mock.calls
+            .map((call) => (call as unknown as [{ localId: string }])[0].localId);
+        expect(checkedContributions()).toEqual(['google-cloud-tts']);
+
+        const geminiHear = { ...settings, voice: withHear('happier.voice.google/gemini-stt') };
+        storageBoundary.settings = geminiHear;
+        await act(async () => { screen.tree.update(render(geminiHear.voice)); });
+        await act(async () => {});
+        expect(checkedContributions()).toContain('gemini-stt');
+        await screen.unmount();
     }, 120_000);
 
     it('updates an already-mounted provider selector when an external activation is added and removed', async () => {
@@ -2534,7 +2726,7 @@ describe('VoiceProviderSection', () => {
             platformOs: 'web',
         }));
 
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, { title: 'Synthetic Live' })).toBeFalsy();
+        expect(findProviderChoiceRow(tree as any, { title: 'Synthetic Live' })).toBeFalsy();
         await act(async () => {
             scope.api.voiceProviders.register('conversation', {
                 kind: 'conversation',
@@ -2566,10 +2758,10 @@ describe('VoiceProviderSection', () => {
             });
             scope.commit();
         });
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, { title: 'Synthetic Live' })).toBeTruthy();
+        expect(findProviderChoiceRow(tree as any, { title: 'Synthetic Live' })).toBeTruthy();
 
         await act(async () => scope.unwind());
-        expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, { title: 'Synthetic Live' })).toBeFalsy();
+        expect(findProviderChoiceRow(tree as any, { title: 'Synthetic Live' })).toBeFalsy();
     });
 
     it('renders and persists an active external provider select through the canonical qualified envelope', async () => {
@@ -2840,10 +3032,7 @@ describe('VoiceProviderSection', () => {
             happierVoiceSupported: true,
             platformOs: 'web',
         }));
-        const row = tree.root.findAll((node) => (
-            typeof node.props.testID === 'string'
-            && node.props.testID.startsWith(`settings.voice.provider.${encodeURIComponent(providerId)}.`)
-        ))[0];
+        const row = findProviderChoiceRow(tree.root as any, { testID: `settings.voice.provider.${encodeURIComponent(providerId)}.default` })!;
 
         expect(row).toBeTruthy();
         expect(row.props.subtitle).toContain('voice.readiness.credential_unknown');

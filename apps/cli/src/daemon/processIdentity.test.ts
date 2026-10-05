@@ -92,18 +92,45 @@ describe('readProcessIdentityByPid', () => {
         ExecutablePath: 'C:\\Tools\\provider.exe',
       },
     ],
-    [
-      'command and executable path are unavailable',
-      {
-        ProcessId: 777,
-        CreationDate: '20250630123456.123000+000',
-      },
-    ],
   ])('fails closed when exact Windows %s', async (_label, row) => {
     await expect(readProcessIdentityByPid(777, {
       platform: 'win32',
       execFile: async () => ({ stdout: JSON.stringify(row) }),
     })).resolves.toBeNull();
+  });
+
+  it('retains Windows birth evidence when command and executable path are unavailable', async () => {
+    await expect(readProcessIdentityByPid(777, {
+      platform: 'win32',
+      execFile: async () => ({ stdout: JSON.stringify({
+        ProcessId: 777,
+        CreationDate: '20250630123456.123000+000',
+      }) }),
+    })).resolves.toMatchObject({
+      pid: 777,
+      processStartTimeMs: Date.UTC(2025, 5, 30, 12, 34, 56, 123),
+      command: '',
+    });
+  });
+
+  it.each(['', 'unknown'])('retains Linux birth evidence without an observed command (%s)', async (command) => {
+    await expect(readProcessIdentityByPid(777, {
+      platform: 'linux',
+      linuxBoundary: {
+        readFile: async (path) => path.endsWith('/stat')
+          ? '777 (runner) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 12345 22'
+          : path.endsWith('/cmdline') ? command : '',
+        readdir: async () => [],
+        readlink: async () => '/repo',
+      },
+    })).resolves.toMatchObject({ pid: 777, processStartTimeMs: 190, command: '' });
+  });
+
+  it('retains Darwin birth evidence when the ps row has no command', async () => {
+    await expect(readProcessIdentityByPid(777, {
+      platform: 'darwin',
+      execFile: async () => ({ stdout: '777 1 1000 Mon Jun 30 12:34:56 2025    \n' }),
+    })).resolves.toMatchObject({ pid: 777, processStartTimeMs: Date.parse('Mon Jun 30 12:34:56 2025'), command: '' });
   });
 
   it('keeps Linux process identity stable when procfs boot wall time shifts, but detects new start ticks', async () => {

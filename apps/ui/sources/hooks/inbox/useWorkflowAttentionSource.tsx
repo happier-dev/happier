@@ -17,6 +17,8 @@ import type { WorkflowRunListWindowId } from '@/sync/store/domains/workflowRuns'
  * `refreshFailed` + `knownAt`; only a first read with nothing known is `failed`.
  */
 export type WorkflowAttentionSource = Readonly<{
+    /** Home qualification of the window's rows, supplied by its canonical reader. */
+    serverId: string | null;
     /** Workflows are offered on this Home; when false the source is empty and never read. */
     available: boolean;
     phase: 'idle' | 'loading' | 'loaded' | 'failed';
@@ -36,6 +38,7 @@ const EMPTY_RUN_IDS: readonly string[] = Object.freeze([]);
 const NOOP = () => {};
 
 export const EMPTY_WORKFLOW_ATTENTION_SOURCE: WorkflowAttentionSource = Object.freeze({
+    serverId: null,
     available: false,
     phase: 'idle',
     runIds: EMPTY_RUN_IDS,
@@ -52,11 +55,11 @@ function useAttentionSource(windowId: WorkflowRunListWindowId, available: boolea
     const window = useWorkflowRunWindow(windowId, { enabled: available });
     const phase = !available ? 'idle' : window.knownAt !== null ? 'loaded' : window.status;
     return React.useMemo(() => available ? {
-        available, phase, runIds: window.runIds,
+        serverId: window.serverId, available, phase, runIds: window.runIds,
         refreshFailed: window.status === 'failed', knownAt: window.knownAt,
         hasMore: window.hasMore, loadingMore: window.loadingMore, loadMoreFailed: window.loadMoreFailed,
         retry: window.retry, loadMore: window.loadMore,
-    } : EMPTY_WORKFLOW_ATTENTION_SOURCE, [available, phase, window.runIds, window.status, window.knownAt,
+    } : EMPTY_WORKFLOW_ATTENTION_SOURCE, [available, phase, window.serverId, window.runIds, window.status, window.knownAt,
         window.hasMore, window.loadingMore, window.loadMoreFailed, window.retry, window.loadMore]);
 }
 

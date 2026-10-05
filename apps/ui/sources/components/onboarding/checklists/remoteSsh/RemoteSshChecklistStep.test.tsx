@@ -1,3 +1,4 @@
+import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -160,6 +161,7 @@ function createRunner({
     };
 
     const runner: SystemTaskRunner = {
+        ...createManualSystemTaskRunner('dev').runner,
         mode: 'dev',
         start: startSpy,
         respond: respondSpy,

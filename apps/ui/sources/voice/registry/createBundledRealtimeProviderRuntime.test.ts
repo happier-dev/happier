@@ -20,7 +20,7 @@ import { createVoiceConversationRuntimeMachine } from '@/voice/runtime/machine/V
 import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
 
 import { createBundledRealtimeProviderRuntime } from './createBundledRealtimeProviderRuntime';
@@ -75,7 +75,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     storage.setState((current) => ({ ...current, sessions: previousSessions }) as never);
   });
 
-  it('keeps same-session replacement B live while established A stop cleanup settles', async () => {
+  it('settles A provider custody before replacement B, without letting A transcript drain stop B', async () => {
     const providerId = 'realtime_overlap';
     const controlSessionId = 'shared-control-session';
     const staleConnectionClose = createDeferredVoid();
@@ -306,7 +306,11 @@ describe('createBundledRealtimeProviderRuntime', () => {
       staleStop = runtime.adapter.stop({ sessionId: controlSessionId });
       await vi.waitFor(() => expect(connections.get(1)?.state()).toBe('open'));
 
-      await runtime.adapter.start({ sessionId: controlSessionId, requestedTargetSessionAddress: null });
+      const replacementStart = runtime.adapter.start({ sessionId: controlSessionId, requestedTargetSessionAddress: null });
+      await Promise.resolve();
+      expect(createConnection).toHaveBeenCalledTimes(1);
+      staleConnectionClose.resolve();
+      await replacementStart;
       expect(runtimeMachine.getSnapshot()).toMatchObject({
         adapterId: providerId,
         controlSessionId,
@@ -316,7 +320,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(activeProviderPreparation).toBe(2);
       expect(onStopped).not.toHaveBeenCalled();
 
-      staleConnectionClose.resolve();
       await vi.waitFor(() => {
         expect(host.releaseDirectMediaConversation).toHaveBeenCalledTimes(1);
       });
@@ -332,7 +335,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
         controlSessionId,
         state: 'connected',
       });
-      expect(mic.teardown).not.toHaveBeenCalled();
+      expect(mic.teardown).toHaveBeenCalledTimes(1);
       expect(releaseDirectMediaConversation).toHaveBeenCalledExactlyOnceWith({
         adapterId: providerId,
         controlSessionId,
@@ -384,7 +387,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       await Promise.resolve();
       expect(activeStopSettled).toBe(false);
       expect(micActive).toBe(false);
-      expect(mic.teardown).toHaveBeenCalledTimes(1);
+      expect(mic.teardown).toHaveBeenCalledTimes(2);
       expect(runtimeMachine.getSnapshot()).toMatchObject({
         adapterId: providerId,
         controlSessionId,
@@ -440,6 +443,9 @@ describe('createBundledRealtimeProviderRuntime', () => {
       authentication: { source: 'voice_saved_secret' },
     };
     let controllerInput: VoiceConversationControllerDeps | null = null;
+    // Retain only the legacy overrides for this resource oracle. New operations
+    // come from the real controller; an overridden start does not prove Hold
+    // to talk composition, which the real-controller suites exercise separately.
     const controller = {
       start: vi.fn(async (): Promise<VoiceConversationControllerStartResult> => ({ status: 'connected' })),
       stop: vi.fn(async () => undefined),
@@ -457,7 +463,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       playbackCursorMs: vi.fn(() => null),
       beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
       resolveOutputInterruptionCandidate: vi.fn(),
-    } satisfies VoiceConversationController;
+    } satisfies Partial<VoiceConversationController>;
     const host = {
       globalVoiceSessionId: 'voice-global',
       runCurrentGenerationEffect,
@@ -475,7 +481,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       },
       createConversationController: vi.fn((input: VoiceConversationControllerDeps) => {
         controllerInput = input;
-        return controller;
+        return { ...createVoiceConversationController(input), ...controller };
       }),
       createMicSession: vi.fn(() => mic),
       createSdkHandleConnection: vi.fn(() => { throw new Error('unused'); }),
@@ -704,7 +710,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       playbackCursorMs: vi.fn(() => null),
       beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
       resolveOutputInterruptionCandidate: vi.fn(),
-    } satisfies VoiceConversationController;
+    } satisfies Partial<VoiceConversationController>;
     const host = {
       globalVoiceSessionId: 'voice-global',
       runCurrentGenerationEffect,
@@ -728,7 +734,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       },
       createConversationController: vi.fn((input: VoiceConversationControllerDeps) => {
         controllerInput = input;
-        return controller;
+        return { ...createVoiceConversationController(input), ...controller };
       }),
       createMicSession: vi.fn(() => ({
         ensureActive: vi.fn(async () => undefined),
@@ -965,6 +971,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       createConversationController: vi.fn((input: VoiceConversationControllerDeps) => {
         controllerInput = input;
         return {
+          ...createVoiceConversationController(input),
           start,
           stop,
           fail,
@@ -1203,6 +1210,24 @@ describe('createBundledRealtimeProviderRuntime', () => {
     await runtimeEvents.onCanonicalEvent({ type: 'input_speech_started' });
     expect(beginOutputInterruptionCandidate).not.toHaveBeenCalled();
     hostGenerationCurrent = true;
+    const unavailableIntl = Object.create(Intl);
+    Object.defineProperty(unavailableIntl, 'Segmenter', { value: undefined });
+    vi.stubGlobal('Intl', unavailableIntl);
+    try {
+      interruptionPolicy = 'provider_immediate';
+      await expect(controllerInput!.resources!.preflight?.({
+        controlSessionId: 'session-1', attemptId: 1, request: {}, signal: new AbortController().signal,
+      })).resolves.toBeUndefined();
+      interruptionPolicy = 'client_two_stage';
+      await expect(controllerInput!.resources!.preflight?.({
+        controlSessionId: 'session-1', attemptId: 1, request: { textOnly: true }, signal: new AbortController().signal,
+      })).resolves.toBeUndefined();
+      await expect(controllerInput!.resources!.preflight?.({
+        controlSessionId: 'session-1', attemptId: 1, request: {}, signal: new AbortController().signal,
+      })).rejects.toMatchObject({ code: 'provider_setup_required', message: 'voice_text_segmentation_unavailable' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
     const onConnectionReady = (controllerInput as unknown as Readonly<{
       onConnectionReady(input: Readonly<{
         request: VoiceRealtimeJsonValue;
@@ -1239,21 +1264,6 @@ describe('createBundledRealtimeProviderRuntime', () => {
     await expect(startupProtocol.adapter.prepare({})).resolves.toEqual({
       kind: 'declined', code: 'realtime_agent_update_required',
     });
-    const unavailableIntl = Object.create(Intl);
-    Object.defineProperty(unavailableIntl, 'Segmenter', { value: undefined });
-    vi.stubGlobal('Intl', unavailableIntl);
-    try {
-      interruptionPolicy = 'provider_immediate';
-      await expect(controllerInput!.resources!.preflight?.({
-        controlSessionId: 'session-1', attemptId: 1, request: {}, signal: new AbortController().signal,
-      })).resolves.toBeUndefined();
-      interruptionPolicy = 'client_two_stage';
-      await expect(controllerInput!.resources!.preflight?.({
-        controlSessionId: 'session-1', attemptId: 1, request: {}, signal: new AbortController().signal,
-      })).rejects.toMatchObject({ code: 'provider_setup_required', message: 'voice_text_segmentation_unavailable' });
-    } finally {
-      vi.unstubAllGlobals();
-    }
     await controllerInput!.resources!.preflight?.({
       controlSessionId: 'session-1',
       attemptId: 1,

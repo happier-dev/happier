@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, freezeActionCompletionContractV1, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
-import { ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, PluginJsonValueV2Schema, ResolvedRoleV1Schema } from '@happier-dev/protocol';
+import { ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, PluginJsonValueV2Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows';
@@ -403,7 +403,9 @@ describe('workflow Action leaves', () => {
       executionRunCheckProtocolV2: async () => ({ ok: true }),
       executionRunStart: async (_sessionId, request) => {
         starts++;
-        if (starts === 3) throw new Error('engine launch failed');
+        if (starts === 3) throw Object.assign(new Error('engine launch failed'), {
+          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
+        });
         return { runId: `run-${starts}`, callId: `call-${starts}`, sidechainId: `call-${starts}` };
       },
       reviewEnginesList: async () => ({ items: ['codex', 'claude', 'gemini'].map((value) => ({ value, label: value })) }),

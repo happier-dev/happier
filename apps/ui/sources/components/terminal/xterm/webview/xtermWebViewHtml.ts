@@ -1,4 +1,6 @@
 import { XTERM_WEBVIEW_BUNDLE_JS, XTERM_WEBVIEW_CSS } from './xtermWebViewAssets.generated';
+import { XTERM_READABILITY_OPTIONS } from '../readability';
+import { createXtermFindEngine, type XtermFindColors } from '../findEngine';
 import {
     buildTerminalRendererInteractionContract,
     type TerminalRendererInteractionContract,
@@ -10,6 +12,7 @@ export type XtermWebViewTheme = Readonly<{
     cursorColor: string;
     selectionBackgroundColor: string;
     isDark: boolean;
+    findColors?: XtermFindColors;
 }>;
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -48,6 +51,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
                 import('https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm'),
                 import('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm'),
                 import('https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm'),
+                import('https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/+esm'),
               ]`;
 
     return `<!DOCTYPE html>
@@ -80,6 +84,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
         lineHeight: ${lineHeight},
       };
       const INTERACTION_POLICY = ${interactionContractJson};
+      const createXtermFindEngine = ${createXtermFindEngine.toString()};
       const INITIAL_READY_FIT_DELAY_MS = 20;
       const READY_FIT_RETRY_INTERVAL_MS = 50;
       const READY_FIT_RETRY_LIMIT = 30;
@@ -239,11 +244,12 @@ export function buildXtermWebViewHtml(params: Readonly<{
 
         const cdnImports = ${cdnModuleImports || 'null'};
         if (cdnImports) {
-          const [xterm, fit, links] = await Promise.all(cdnImports);
+          const [xterm, fit, links, search] = await Promise.all(cdnImports);
           globalThis.HAPPIER_XTERM_WEBVIEW = {
             Terminal: xterm.Terminal,
             FitAddon: fit.FitAddon,
             WebLinksAddon: links.WebLinksAddon,
+            SearchAddon: search.SearchAddon,
           };
         }
 
@@ -252,6 +258,9 @@ export function buildXtermWebViewHtml(params: Readonly<{
       }
 
       let term = null;
+      let find = null;
+      let findRevision = 0;
+      let findKeySignatures = [];
       let fitAddon = null;
       let didSendReady = false;
       let lastCols = 0;
@@ -352,6 +361,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
             cursor: theme.cursorColor,
             selectionBackground: theme.selectionBackgroundColor,
           };
+          if (find && theme.findColors) find.setColors(theme.findColors);
         } catch (e) {
           // ignore
         }
@@ -462,6 +472,28 @@ export function buildXtermWebViewHtml(params: Readonly<{
         if (message.v !== 1) return;
         const payload = message.payload || {};
 
+        if (message.type === 'find.keybindings') {
+          findKeySignatures = Array.isArray(payload.signatures) ? payload.signatures.filter((value) => typeof value === 'string') : [];
+          return;
+        }
+        if (find && Number.isSafeInteger(payload.revision) && payload.revision >= findRevision) {
+          if (message.type === 'find.set' && typeof payload.query === 'string' && payload.options && typeof payload.options.regex === 'boolean' && typeof payload.options.matchCase === 'boolean') {
+            findRevision = payload.revision;
+            find.applyQuery(payload.query, payload.options);
+            return;
+          }
+          if (message.type === 'find.step' && (payload.direction === 1 || payload.direction === -1)) {
+            findRevision = payload.revision;
+            find.step(payload.direction);
+            return;
+          }
+          if (message.type === 'find.close') {
+            findRevision = payload.revision;
+            find.close();
+            return;
+          }
+        }
+
         if (message.type === 'write') {
           if (typeof payload.data === 'string') enqueueWrite(payload.data, payload.intent);
           return;
@@ -502,6 +534,8 @@ export function buildXtermWebViewHtml(params: Readonly<{
         }
 
         term = new mod.Terminal({
+          allowProposedApi: true,
+          ...${JSON.stringify(XTERM_READABILITY_OPTIONS)},
           cursorBlink: true,
           fontFamily: 'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
           fontSize: DEFAULT_CONFIG.fontSizePx,
@@ -540,6 +574,16 @@ export function buildXtermWebViewHtml(params: Readonly<{
         } catch {}
 
         term.open(root);
+        if (mod.SearchAddon && DEFAULT_CONFIG.theme.findColors) {
+          const search = new mod.SearchAddon();
+          term.loadAddon(search);
+          find = createXtermFindEngine(term, search, DEFAULT_CONFIG.theme.findColors);
+          find.subscribe(() => {
+            const snapshot = find.getSnapshot();
+            sendEnvelope({ v: 1, type: 'find.results', payload: { revision: findRevision, status: snapshot.status, retainedLines: snapshot.retainedLines } });
+          });
+        }
+        window.addEventListener('pagehide', () => { if (find) find.dispose(); term.dispose(); }, { once: true });
         const focusTerminalWhenAllowed = () => {
           if (INTERACTION_POLICY.mouseCaptureEnabled === true) focusTerminal();
         };
@@ -555,7 +599,15 @@ export function buildXtermWebViewHtml(params: Readonly<{
         }, true);
         term.attachCustomKeyEventHandler((event) => {
           if (!event || event.type !== 'keydown') return true;
+          if (event.defaultPrevented) return false;
           const key = String(event.key || '').toLowerCase();
+          const signatureKey = key === 'escape' ? 'Escape' : key === 'enter' ? 'Enter' : key;
+          const signature = signatureKey + '|shift=' + !!event.shiftKey + '|ctrl=' + !!event.ctrlKey + '|meta=' + !!event.metaKey + '|alt=' + !!event.altKey;
+          if (!event.isComposing && !event.repeat && findKeySignatures.includes(signature)) {
+            event.preventDefault(); event.stopPropagation();
+            sendEnvelope({ v: 1, type: 'find.key', payload: { key: event.key, code: event.code, repeat: false, modifiers: { shift: !!event.shiftKey, ctrl: !!event.ctrlKey, meta: !!event.metaKey, alt: !!event.altKey } } });
+            return false;
+          }
           const isCopy = (event.ctrlKey || event.metaKey) && key === 'c';
           if (INTERACTION_POLICY.hostCopyShortcuts !== true || !isCopy || !term.hasSelection()) return true;
           event.preventDefault();

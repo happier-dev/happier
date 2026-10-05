@@ -77,6 +77,15 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('ServiceRowView', () => {
+    it('shows a ready script without a running or stopped status badge', async () => {
+        const target = launchTarget({ state: 'available', actions: ['start'], sourceClass: { kind: 'package_script', packageName: 'docs', scriptName: 'dev', runTargetId: 'docs:dev' }, commandPreview: 'yarn docs:dev' });
+        const screen = await renderScreen(<ServiceRowView row={serviceRow({ target, status: 'stopped', reasonCode: null, processLabel: 'yarn docs:dev', primaryAction: { kind: 'run_script', target } })} onStartLauncherTarget={() => {}} testID="row" />);
+        expect(screen.findByTestId('row-dot')).toBeNull();
+        expect(screen.findByTestId('row-status-stopped')).toBeNull();
+        expect(screen.findByTestId('row-start')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('yarn docs:dev');
+    });
+
     beforeEach(() => {
         modalSpies.confirm.mockReset();
         modalSpies.confirm.mockResolvedValue(true);

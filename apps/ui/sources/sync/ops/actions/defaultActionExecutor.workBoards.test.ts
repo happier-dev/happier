@@ -12,6 +12,10 @@ import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decodePlainArtifactStoredContent,
     createWorkBoardV1, buildWorkBoardItemKeyV1, WorkBoardV1Schema } from '@happier-dev/protocol';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
+import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
+import { createWorkBoardAccountStore } from '@/components/boards/model/workBoardAccountStore';
+import { createWorkBoardUiActionPort } from '@/components/boards/model/workBoardEntityDrop';
+import { projectBoardMembership } from '@/components/boards/model/boardMembership';
 
 // Only HTTP, credentials and native UI modules are replaced; domain and encryption owners run.
 installApprovalCommonModuleMocks();
@@ -62,7 +66,7 @@ describe('Board Actions through captured Home Artifacts', () => {
                 board = WorkBoardV1Schema.parse(JSON.parse(opened.body)); version++;
                 return Response.json({ success: true, headerVersion: version, bodyVersion: version });
             }
-            if (url.pathname === '/v1/artifacts/mine/revision/3/3' && method === 'DELETE') {
+            if (url.pathname === `/v1/artifacts/mine/revision/${version}/${version}` && method === 'DELETE') {
                 deleted = true; return Response.json({ success: true });
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
@@ -71,6 +75,27 @@ describe('Board Actions through captured Home Artifacts', () => {
         const context = { serverId: target.id, surface: 'ui', bypassApprovals: true } as const;
         expect(await executor.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'mine', positionsByItemRef: { [first]: { x: 48, y: 96 } } } }, context))
             .toMatchObject({ ok: true, result: { board: { positionsByItemRef: { [first]: { x: 48, y: 96 }, [second]: { x: 3, y: 4 } } } } });
+        // The mounted UI queue is the trusted live-membership port, not a second writer.
+        // Account capture, Action schema/policy and execution all stay real above the Artifact boundary.
+        const uiBoard = { ...board, source: { picked: [{ kind: 'session' as const, qualifiedId: { serverId: target.id, id: 's1' } }] } };
+        const uiPersistence = createWorkBoardArtifactBoundary({ v: 1, boards: [uiBoard] });
+        const uiStore = createWorkBoardAccountStore(uiPersistence.transport, () => true);
+        const uiPort = createWorkBoardUiActionPort(() => ({ scope: { serverId: target.id, accountId: 'board-owner' }, board: uiBoard,
+            membership: projectBoardMembership(uiBoard, { isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true }), uiStore.queue);
+        const uiExecutor = createDefaultActionExecutor({ workBoardArtifacts: uiPort });
+        expect(await uiExecutor.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'mine',
+            positionsByItemRef: { [first]: { x: 72, y: 120 } } } }, { ...context, expectedAccountId: 'board-owner' }))
+            .toMatchObject({ ok: true, result: { board: { positionsByItemRef: { [first]: { x: 72, y: 120 } } } } });
+        expect(uiPersistence.acknowledged().boards[0]!.positionsByItemRef).toEqual({ [first]: { x: 72, y: 120 } });
+        expect(board.positionsByItemRef[first]).toEqual({ x: 48, y: 96 });
+        const surface = { serverId: target.id, accountId: 'board-owner', owner: { kind: 'workBoard', boardId: 'mine' } } as const;
+        const instance = { v: 1, id: 'configured', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
+        expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'mine', ref: { surface, instanceId: instance.id }, instance } }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance, width: 'half' }] } });
+        expect(await executor.execute('widgets.instance.width.set', { ref: { surface, instanceId: instance.id }, width: 'full' }, context)).toMatchObject({ ok: true });
+        expect(board.widgets?.[0]?.width).toBe(2);
+        expect(await executor.execute('widgets.instance.remove', { ref: { surface, instanceId: instance.id } }, context)).toMatchObject({ ok: true });
+        expect(board.widgets).toEqual([]);
         expect(await executor.execute('boards.list', {}, context)).toMatchObject({ ok: true, result: { boards: [{ id: 'mine' }] } });
         expect(await executor.execute('boards.apply', { intent: { kind: 'delete', boardId: 'mine' } }, context)).toMatchObject({ ok: true });
         expect(deleted).toBe(true);

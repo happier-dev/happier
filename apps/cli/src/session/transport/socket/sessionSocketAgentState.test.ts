@@ -39,6 +39,28 @@ describe('waitForIdleViaSocket', () => {
     vi.useRealTimers();
   });
 
+  it('cancels a busy idle observation and retires its deadline', async () => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocketConnection: () => ({ socket, transport: createSocketTransportAdapter({ ...socket, connected: false }) }),
+    }));
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const controller = new AbortController();
+    const result = waitForIdleViaSocket({
+      token: 'token', sessionId: 'session-cancel', ctx: null, sessionEncryptionMode: 'plain', timeoutMs: 1000,
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: true, turnInFlight: true },
+      initialAgentStateCiphertextBase64: JSON.stringify({ requests: { r1: { createdAt: 1 } } }),
+      ...{ signal: controller.signal },
+    });
+    const observed = result.then((value) => value, (error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort(new Error('idle_observation_cancelled'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await observed).toMatchObject({ message: 'idle_observation_cancelled' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('parks a busy wait and catches missed terminal evidence on socket reconnect', async () => {
     vi.useFakeTimers();
 

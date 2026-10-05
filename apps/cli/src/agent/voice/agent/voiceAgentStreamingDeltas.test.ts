@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createVoiceAgentOutputTurnV1 } from '@happier-dev/protocol';
 
 import { finalizeVoiceAgentStreamingSpeech, ingestVoiceAgentStreamingDelta } from './voiceAgentStreamingDeltas';
 
@@ -8,7 +9,9 @@ function createStream() {
     suppressActionDeltas: false,
     deltaHold: '',
     outputSpeechBuffer: '',
-    outputSpeechChars: 0,
+    outputSpeechText: '',
+    outputBudget: createVoiceAgentOutputTurnV1('turn-1'),
+    outputIncomplete: false,
     events: [] as any[],
     id: 'turn-1',
     outputSeq: 0,
@@ -49,7 +52,8 @@ describe('voice agent streaming speech segmentation', () => {
   it('emits a useful first sentence before completion and filters split action tags', () => {
     const stream = {
       done: false, suppressActionDeltas: false, deltaHold: '', outputSpeechBuffer: '',
-      outputSpeechChars: 0, events: [] as unknown[], id: 'turn', outputSeq: 0, outputSegmentIndex: 0,
+      outputSpeechText: '', outputBudget: createVoiceAgentOutputTurnV1('turn'), outputIncomplete: false,
+      events: [] as unknown[], id: 'turn', outputSeq: 0, outputSegmentIndex: 0,
     };
     const patch = (next: Partial<typeof stream>) => Object.assign(stream, next);
     ingestVoiceAgentStreamingDelta(stream, patch, 'Open index.');

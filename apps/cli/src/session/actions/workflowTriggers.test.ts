@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowDefinitionV1Schema, createAccountScopedCryptoMaterialSnapshotV1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-  type AutomationDefinitionDetail, type AutomationDefinitionCreateRequest } from '@happier-dev/protocol';
+  type AutomationDefinitionDetail, type AutomationDefinitionCreateRequest, type AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
+import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 
-const network = vi.hoisted(() => ({ currentness: vi.fn(), list: vi.fn(), get: vi.fn(), create: vi.fn(), reconcile: vi.fn(), remove: vi.fn() }));
+const network = vi.hoisted(() => ({ currentness: vi.fn(), session: vi.fn(), list: vi.fn(), get: vi.fn(), create: vi.fn(), reconcile: vi.fn(), remove: vi.fn() }));
 // These are network transport adapters; Workflow semantics and the Account codec remain real.
 vi.mock('@/api/client/connectedServiceCredentialApi', () => ({ fetchAccountEncryptionCurrentness: network.currentness }));
 vi.mock('@/api/automations', () => ({ listAutomationDefinitions: network.list, getAutomationDefinition: network.get,
   createAutomationDefinition: network.create, reconcileAutomationDefinition: network.reconcile, deleteAutomationDefinition: network.remove }));
+vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionById: network.session }));
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -32,6 +34,50 @@ describe('CLI workflow trigger Account codec', () => {
     });
     network.get.mockImplementation(async () => stored);
     network.list.mockResolvedValue({ automations: [], nextCursor: null });
+  });
+  it('projects retained E2EE Session templates from historical credentials while ordinary Account reads stay plain', async () => {
+    network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    stored = { id: 'automation-old', name: 'Old', description: null, enabled: true, targetType: 'existingSession',
+      existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+      workflowDefinitionId: null, scopeSessionId: null, templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
+      assignments: [{ machineId: 'machine', enabled: true, priority: 0, updatedAt: 1 }], triggers: [] };
+    network.list.mockResolvedValue({ automations: [stored], nextCursor: null });
+    network.session.mockResolvedValue({ id: 'session-old', encryptionMode: 'e2ee', dataEncryptionKey: null, share: null });
+    const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
+    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
+      resolveWorkflow: async () => definition });
+    expect((await actions.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ health: 'available', legacy: { editable: false },
+      target: { definition: { defaults: { conversation: { sessionId: 'session-old' } } } } });
+    const keyless = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
+    expect((await keyless.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ health: 'source_unavailable',
+      legacy: { lockedReason: 'session_key_required' } });
+    expect(stored.templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
+    expect(network.reconcile).not.toHaveBeenCalled();
+  });
+  it.each(['absent', 'bound', 'unknown'] as const)('uses the Channels transport witness before converting a predecessor row (%s)', async (kind) => {
+    network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    stored = { id: 'automation-old', name: 'Old', description: null, enabled: true,
+      targetType: 'newSession', existingSessionId: null, templateVersion: 1, lastRunAt: null,
+      createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: null,
+      templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN,
+      assignments: [{ machineId: 'machine', enabled: true, priority: 0, updatedAt: 1 }], triggers: [] };
+    network.reconcile.mockImplementation(async ({ input }: { input: AutomationDefinitionReconcileRequest }) => {
+      stored = { ...stored, templateVersion: 2, templateCiphertext: undefined, executionRecipe: input.executionRecipe, enabled: input.enabled };
+      return stored;
+    });
+    const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
+    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition,
+      // Channels invocation is an external plugin transport; its domain/read owner is tested separately.
+      observeLegacyChannelAssociation: async () => ({ kind }) });
+    const updating = actions.update({ automationId: stored.id, expectedRevision: 1, patch: { enabled: false } });
+    if (kind === 'absent') {
+      expect((await updating).set).toMatchObject({ revision: 2, health: 'available', context: { workspace: { directory: '/repo' } } });
+      expect(stored.executionRecipe).toMatchObject({ v: 2 });
+    } else {
+      await expect(updating).rejects.toMatchObject({ code: 'legacy_conversion_unsupported', details: {
+        reason: kind === 'bound' ? 'channel_reply_handoff' : 'channel_association_unknown' } });
+      expect(network.reconcile).not.toHaveBeenCalled();
+    }
   });
   it('writes a keyless plain Account inline payload through the Automation owner', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });

@@ -62,7 +62,7 @@ function toCanonicalService(service: InstalledDaemonServiceEntry): HappierServic
     backend: resolveBackend(service.platform, service.mode ?? 'user'),
     label: service.label,
     targetMode: service.targetMode,
-    verification: 'verified',
+    verification: service.verification,
     ring: resolvePublicReleaseRingLabelForId(service.releaseChannel),
     instanceId: service.serverId,
     scope: service.mode ?? 'user',

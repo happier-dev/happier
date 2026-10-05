@@ -1,5 +1,16 @@
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
-import { getCurrentAuth } from '@/auth/context/AuthContext';
+import { createWidgetInputActionDepsV1 } from './widgetInputActionDeps';
+import { createWidgetRefreshActionDepsV1 } from './widgetRefreshActionDeps';
+import { createWidgetDefinitionActionDepsV1 } from './widgetDefinitionActionDeps';
+import { executeComposerIngressAction } from './composerIngressActionRuntime';
+import { createWidgetCompanionActionDepsV1 } from './widgetCompanionActionDeps';
+import { readWidgetEntityMovementAdmission } from './widgetEntityMovement';
+import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
+import { forgetHistoricalEncryptionKey } from '@/sync/ops/account/forgetHistoricalEncryptionKey';
+import { recoverHistoricalAutomationTemplates } from '@/sync/ops/account/recoverHistoricalAutomationTemplates';
 import { startAgentSignInRpc, checkAgentSignInRpc } from '@/agents/machineAgents/signIn/api';
 import {
   buildSessionPermissionRespondRpcParamsV1,
@@ -12,6 +23,14 @@ import {
   normalizeActionsSettingsV1,
   buildBackendTargetKeyV2,
   createActionExecutor,
+  createPromptDocInLibrary,
+  setPromptDocFavorite,
+  listPromptLibrary,
+  readPromptDocInLibrary,
+  updatePromptDocInLibrary,
+  listPromptInvocationsInLibrary,
+  resolvePromptInvocationInLibrary,
+  getActionSpec,
   createLaunchProfilePublisherV1,
   createWorkBoardArtifactPortV1,
   createArtifactAccessActionsV1,
@@ -34,6 +53,7 @@ import {
   type ActionExecutorDeps,
   type ActionExecuteResult,
   type ActionId,
+  type AutomationV3Settings,
   type ArtifactPublicLinkIssuedV1,
   type ApprovalRequest,
   type SessionModelTransitionRequestV1,
@@ -48,8 +68,10 @@ import {
   type SessionFollowSourceKeyPreparationResultV1,
 } from '@happier-dev/protocol';
 import { loadDaemonMergedProjectionInputs, loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { machineWorkspaceFileSearch } from '@/sync/ops/machineWorkspaceFileSearch';
 import { randomUUID } from '@/platform/randomUUID';
-import { resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
+import { executeCurrentUiContextAction, executeCurrentUiContextContributedAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
 import { buildMachineAgentInventoryDescriptors } from '@/agents/machineAgents/machineAgentCatalog';
 import {
   startAgentInstallJobRpc,
@@ -76,21 +98,34 @@ import { HappyError } from '@/utils/errors/errors';
 
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiArtifactAction } from './artifactActionDeps';
+import { createWidgetCatalogActionDepsV1 } from './widgetCatalogActionDeps';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureMountedWorkspaceAction, invokeWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
+import { invokeSessionCanvasAction } from '@/components/sessions/canvas/sessionSplitCanvasRuntime';
+import { invokeWorkflowConversationBinding } from './workflowAuthoringAction';
+import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
 import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sessionTerminalActions';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { scmReviewComparisonOfSource } from '@/sync/domains/scm/diffSummary/selection';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import { createSettingsDeclarationAction } from './settingsDeclarationAction';
+import { createSettingsDeclarationAction, resolveSettingsDeclarationOperationApprovalRequired } from './settingsDeclarationAction';
+import { getAutomationSettings, updateAutomationSettings } from '@/sync/api/automations/apiAutomations';
+import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySettingsCatalog';
 import { createAppShellAction } from './appShellAction';
+import { createNotificationConfigurationAction } from './notificationConfigurationAction';
+import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
 import { executeExternalSessionBrowseAction } from './externalSessionBrowseAction';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import { createUiScmAction } from './scmActionDeps';
 import { resolveSettingsHost, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
 import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog';
 import { executeCommandPaletteAction } from '@/components/appShell/commandPalette/commandPaletteActionRuntime';
+import { executeFindAction } from '@/keyboard/findActionRuntime';
+import { executePromptPickerOpenAction } from '@/components/sessions/agentInput/commandMenu/promptPickerActionRuntime';
+import { invokeNextPendingRequest } from '@/activity/source/pendingNavigationRuntime';
 import { executeApiTokenAction, type ApiTokenActionTransport } from './apiTokenActionTransport';
 import { createMachinePoolActionClient, MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { createRunnerActivationClient, RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';
@@ -186,16 +221,17 @@ import { sessionReadStateAction } from '@/sync/api/session/sessionReadStateActio
 import { executeSessionAttentionSetAction } from '@/sync/ops/sessionOrganization/setSessionAttentionStanding';
 import { createSessionReportsToAction } from '@/sync/api/session/sessionReportsToAction';
 import { createSessionBoardActionAdapter } from '@/sync/api/session/sessionBoardActions';
-import { EMPTY_PLUGIN_UI_PROJECTION, resolvePluginUiProjectionState } from '@/sync/domains/plugins/ui/projection';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { sync } from '@/sync/sync';
+import { executeListReorderAction } from './listReorderAction';
+import { executeTodoSessionLinkAction } from './todoSessionLinkAction';
 import { createHomeDomainActionExecutorForScope } from '@/sync/api/home/homeDomainActions';
 import { createSessionOrganizationResourceAction, isSessionOrganizationResourceAction } from '@/sync/ops/sessionOrganization/sessionOrganizationAction';
 import { resolveSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { writeApprovalRequestArtifact } from './approvalArtifactWriter';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
-import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
+import { createUiPromptLibraryArtifactStore, uiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
@@ -281,7 +317,7 @@ export function projectServerScopedSessionSendMessageResult(
     : { status: 'outcomeUnknown', localId, code: 'session_input_pending' };
 }
 
-  type OpenSessionOptions = Readonly<{ serverId?: string | null }>;
+  type OpenSessionOptions = Readonly<{ serverId?: string | null; query?: Readonly<Record<string, string>> }>;
 
 function projectSessionInteractionRpcResult(result: unknown): unknown {
   return result === undefined || result === null ? { ok: true } : result;
@@ -449,7 +485,12 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   /** Subordinate target-bound transport for a confirmed workspace conflict Action. */
   workspaceSyncConflictResolve?: NonNullable<ActionExecutorDeps['workspaceSyncConflictResolve']>;
   workflowAction?: NonNullable<ActionExecutorDeps['workflowAction']>;
-  }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }): ReturnType<typeof createActionExecutor> {
+  /** A mounted WorkBoard binds current UI membership and its existing Account save queue. */
+  workBoardArtifacts?: NonNullable<ActionExecutorDeps['workBoardArtifacts']>;
+  }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }): ReturnType<typeof createActionExecutor> & Readonly<{
+    readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
+  }> {
+  const promptLibraryStore = accountContext ? createUiPromptLibraryArtifactStore(accountContext.workflowArtifacts) : uiPromptLibraryArtifactStore;
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
 
@@ -543,11 +584,28 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     connectedServiceAction: accountContext ? createUiConnectedServiceAction(accountContext) : undefined,
     scmActionExecute: createUiScmAction(accountContext),
     appShellAction: createAppShellAction(accountContext),
+    notificationConfigurationAction: createNotificationConfigurationAction(accountContext ?? null),
+    appUpdateAction: executeAppUpdateAction,
     hostExternalSessionAction: executeExternalSessionBrowseAction,
     settingsDeclarationAction: createSettingsDeclarationAction({
       host: settingsHost,
       tauriDesktop: settingsHosts.tauriDesktop(settingsHost),
       readPageGate: readSettingsPageGate,
+      canUseRuntimeContributions: () => Boolean(accountContext && accountContext.readLiveSettings() !== null),
+      isCurrent: () => accountContext?.accountLifetime.isCurrent() === true,
+      openHumanInteraction: async (href, signal) => {
+        throwIfAborted(signal);
+        if (!accountContext || accountContext.readLiveSettings() === null) return false;
+        accountContext.assertCurrent();
+        const { router } = await import('expo-router');
+        throwIfAborted(signal);
+        accountContext.assertCurrent();
+        if (accountContext.readLiveSettings() === null) return false;
+        router.push(href as Parameters<typeof router.push>[0]);
+        return true;
+      },
+      mutationServices: { readAgentCatalog: createVoiceAgentSettingsCatalogReader(accountContext ?? null),
+        readScmDiffSummaryCatalog: createScmDiffSummarySettingsCatalogReader(accountContext ?? null) },
       isFeatureEnabled: async (featureId) => {
         const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId });
         const settings = accountContext ? await accountContext.readSettings() : storage.getState().settings;
@@ -561,10 +619,18 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         if (!accountContext) throw new Error('Account settings context is unavailable');
         await accountContext.mutateRawSettings((raw) => ({ ...raw, ...delta }));
       },
+      mutateAccountSettings: async (mutate) => {
+        if (!accountContext) throw new Error('Account settings context is unavailable');
+        await accountContext.mutateRawSettings(mutate);
+      },
       readLocalSettings: () => storage.getState().localSettings,
       writeLocalSettings: (delta) => storage.getState().applyLocalSettings(delta, { source: 'ui' }),
+      ...(accountContext ? { automationSettings: {
+        read: () => accountContext.runPrepared(() => getAutomationSettings(accountContext.credentials, accountContext)),
+        write: (settings: AutomationV3Settings) => accountContext.runPrepared(() => updateAutomationSettings(accountContext.credentials, settings, accountContext)),
+      } } : {}),
     }),
-    ...(accountContext ? { workBoardArtifacts: createWorkBoardArtifactPortV1(accountContext.workflowArtifacts, {
+    ...(accountContext ? { workBoardArtifacts: opts?.workBoardArtifacts ?? createWorkBoardArtifactPortV1(accountContext.workflowArtifacts, {
       shouldContinue: accountContext.accountLifetime.isCurrent,
     }) } : {}),
     ...(accountContext ? { launchProfilePublish: async (input, context) => {
@@ -587,6 +653,11 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       : accountContext
         ? { workflowAction: createUiWorkflowAction({ account: accountContext }) }
         : {}),
+    ...(accountContext ? {
+      readAdmittedInputTypeOptions: async ({ input, context }) => createUiAccountAction({ account: accountContext })({
+        actionId: 'action.options.resolve', input, context,
+      }),
+    } satisfies Pick<ActionExecutorDeps, 'readAdmittedInputTypeOptions'> : {}),
     resolveSessionReference: opts?.resolveSessionReference ?? (async ({ sessionId, sessionTitle, context, signal }) => {
       // An exact tuple needs no corpus. A bare id or title is resolved against the one admitted
       // corpus — a mounted pane's membership when one owns it, otherwise one acquired through the
@@ -646,32 +717,28 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         preparation,
       );
     },
-    ...(accountContext ? { homeHubLayoutAction: async (params: Parameters<NonNullable<ActionExecutorDeps['homeHubLayoutAction']>>[0]) => {
+    ...(accountContext ? { homeHubArtifacts: createHomeHubArtifactPortV1(accountContext.workflowArtifacts, {
+      accountId: accountContext.accountId,
+      shouldContinue: accountContext.accountLifetime.isCurrent,
+      readWidgets: async signal => {
+        accountContext.assertCurrent();
+        const { readWidgetActionCandidatesV1 } = await import('./widgetCatalogActionDeps');
+        const candidates = await readWidgetActionCandidatesV1({
+          serverId: accountContext.serverId, accountId: accountContext.accountId, owner: { kind: 'home' },
+        }, accountContext, signal);
+        accountContext.assertCurrent();
+        if ('ok' in candidates) throw Object.assign(new Error(candidates.error), { code: candidates.errorCode });
+        return candidates;
+      },
+    }), homeHubLayoutAction: async (params: Parameters<NonNullable<ActionExecutorDeps['homeHubLayoutAction']>>[0]) => {
       // Home renderers/projection are needed only by this client-local family,
       // not every executor creation (including headless or Voice startup).
-      const [{ createHomeHubLayoutAction }, { HOME_HUB_BUILTIN_SECTIONS }, { selectWidgetCandidates }, { readCurrentAppShellPluginUiProjection }] = await Promise.all([
-        import('@/components/hub/layout/homeHubLayoutAction'),
-        import('@/components/hub/homeHubSections'),
-        import('@/components/widgets/widgetCatalog'),
-        import('@/components/appShell/plugins/AppShellPluginUiProjection'),
-      ]);
+      const { createHomeHubLayoutAction } = await import('@/components/hub/layout/homeHubLayoutAction');
       return createHomeHubLayoutAction({
-        builtins: HOME_HUB_BUILTIN_SECTIONS,
         isClientTargetCurrent: () => {
           accountContext.assertCurrent();
           return areServerAccountScopesEqual(getActiveServerAccountScope(), accountContext.accountLifetime.scope);
         },
-        readWidgets: () => {
-          accountContext.assertCurrent();
-          return selectWidgetCandidates(readCurrentAppShellPluginUiProjection(), 'app');
-        },
-        read: async () => (await accountContext.readSettings()).homeHubLayoutV1,
-        mutate: async (update) => accountContext.mutateRawSettings((raw) => {
-          accountContext.assertCurrent();
-          const current = settingsParse(raw).homeHubLayoutV1;
-          const next = update(current);
-          return next === current ? { ...raw } : { ...raw, homeHubLayoutV1: { ...next, order: [...next.order], hidden: [...next.hidden] } };
-        }),
       })(params);
     } } : {}),
     sessionReadStateAction,
@@ -707,19 +774,6 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
           },
           onMutationIssued: () => {
             mutationDispatched = true;
-          },
-          resolveInstalledSurfaceProjection: async (session, signal) => {
-            if (!runtime.isCurrent()) return null;
-            const target = readMachineControlTargetForSession({ ...session, accountId: runtime.scope.accountId });
-            if (!target) return null;
-            const projection = (await loadDaemonMergedProjectionInputs({
-              machineId: target.machineId,
-              serverId: session.serverId,
-            }))?.pluginProjectionV2;
-            if (signal?.aborted || !runtime.isCurrent() || !projection) return null;
-            const currentTarget = readMachineControlTargetForSession({ ...session, accountId: runtime.scope.accountId });
-            if (currentTarget?.machineId !== target.machineId) return null;
-            return resolvePluginUiProjectionState(EMPTY_PLUGIN_UI_PROJECTION, projection);
           },
           capabilities: { readTranscript: access.capabilities.readTranscript, editSessionRecords: access.capabilities.editSessionRecords },
         })(args);
@@ -758,16 +812,83 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
         return isSessionModeActionAvailable(session);
       },
-    isActionApprovalRequired: (actionId, ctx) =>
-      isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
+    isActionApprovalRequired: (actionId, ctx, input) => {
+      const operationSettings = actionId === 'settings.invoke' ? accountContext?.readLiveSettings() : null;
+      const anchor = input && typeof input === 'object' && 'anchor' in input && typeof input.anchor === 'string' ? input.anchor : '';
+      const operationSafety = actionId === 'settings.invoke'
+        ? operationSettings && !resolveSettingsDeclarationOperationApprovalRequired(anchor, operationSettings) ? 'safe' : 'danger'
+        : undefined;
+      return isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
         surface: ctx.surface ?? null,
         authority: ctx.authority,
         actionCaller: ctx.actionCaller,
-      }),
+      }, operationSafety, undefined, input);
+    },
     ...createUiExecutionRunActionDeps(),
     resolveSessionSpawnAgentInventorySelection: resolveSessionSpawnAgentInventorySelectionForActions,
     runtimeActionExecute: createDefaultRuntimeActionExecutor(opts?.runtimeActions),
     uiCommandPaletteAction: executeCommandPaletteAction,
+    voiceConversationAction: async ({ actionId, input, context }) => {
+      throwIfAborted(context.signal);
+      if (!accountContext?.readLiveSettings()) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      accountContext.assertCurrent();
+      const opensMicrophone = actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.recover'
+        || actionId === 'ui.voice_global.hold_begin' || actionId === 'ui.voice_global.brief.request'
+        || actionId === 'ui.voice_global.brief.retry';
+      if (opensMicrophone) {
+        const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext.serverId });
+        throwIfAborted(context.signal);
+        accountContext.assertCurrent();
+        const settings = accountContext.readLiveSettings();
+        if (!settings || resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'voice', settings, snapshot })?.state !== 'enabled') {
+          return { ok: false, errorCode: 'voice_unavailable', error: 'voice_unavailable' };
+        }
+      }
+      if (actionId.startsWith('ui.voice_global.brief.')) {
+        const { executeVoiceBriefOperation } = await import('@/components/voice/brief/voiceBriefActionRuntime');
+        accountContext.assertCurrent();
+        throwIfAborted(context.signal);
+        const operation = actionId === 'ui.voice_global.brief.request' ? 'request' : actionId === 'ui.voice_global.brief.retry' ? 'retry' : 'stop';
+        const result = executeVoiceBriefOperation(operation, input as Readonly<{ expectedAttemptId?: string }>);
+        return result.ok ? result.result : { ...result, error: result.errorCode };
+      }
+      const [{ executeVoiceConversationAction }, { router }] = await Promise.all([
+        import('./voiceConversationAction'), import('expo-router'),
+      ]);
+      accountContext.assertCurrent();
+      throwIfAborted(context.signal);
+      return await executeVoiceConversationAction(actionId, input, { isCurrent: () => accountContext.accountLifetime.isCurrent() && !context.signal?.aborted, navigate: (href) => {
+        accountContext.assertCurrent();
+        throwIfAborted(context.signal);
+        router.push(href as Parameters<typeof router.push>[0]);
+      } });
+    },
+    uiCurrentContextAction: (request) => executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
+    invokeContributedAction: (request) => executeCurrentUiContextContributedAction(request, { execute: executor.execute, context: request.context }),
+    uiFindAction: executeFindAction,
+    uiPromptPickerOpen: executePromptPickerOpenAction,
+    nextPendingSession: (context) => invokeNextPendingRequest({
+      expectedServerId: context.serverId,
+      signal: context.signal,
+    }),
+    accountEncryptionAutomationTemplatesRecoverAction: async ({ context, signal }) => {
+      const scope = accountContext?.accountLifetime.scope ?? getActiveServerAccountScope();
+      if (!scope || (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, scope.serverId))
+        || (context.runtimeAccountId && context.runtimeAccountId !== scope.accountId)) {
+        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      }
+      accountContext?.assertCurrent();
+      return await recoverHistoricalAutomationTemplates({ settingsScope: scope, ...(signal ? { signal } : {}) });
+    },
+    accountHistoricalEncryptionKeyForgetAction: async ({ context, signal }) => {
+      const scope = accountContext?.accountLifetime.scope ?? getActiveServerAccountScope();
+      if (!scope || (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, scope.serverId))
+        || (context.runtimeAccountId && context.runtimeAccountId !== scope.accountId)) {
+        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      }
+      accountContext?.assertCurrent();
+      return await forgetHistoricalEncryptionKey({ settingsScope: scope, ...(signal ? { signal } : {}) });
+    },
     accountPluginDataEraseAction: async ({ input, signal }) => await executeAccountPluginDataEraseAction(
       input,
       signal ? { signal } : undefined,
@@ -836,9 +957,21 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     } : {}),
 
     workspaceAction: invokeWorkspaceAction,
+    sessionCanvasAction: invokeSessionCanvasAction,
+    workflowConversationBind: invokeWorkflowConversationBinding,
+    sessionOrganizationMove: invokeSessionListOrganizationAction,
+    composerIngress: executeComposerIngressAction,
+    listReorder: executeListReorderAction,
+    todoSessionLink: executeTodoSessionLinkAction,
     sessionTerminalAction: invokeSessionTerminalAction,
-    sessionOpen: async ({ sessionId, serverId, approvedNewDirectoryCreation, tabId, signal }) => {
-      const workspace = tabId ? captureMountedWorkspaceAction() : null;
+    sessionOpen: async ({ sessionId, serverId, approvedNewDirectoryCreation, tabId, destination, signal }) => {
+      const comparison = destination ? scmReviewComparisonOfSource(destination.comparison, destination.comparisonId) : null;
+      if (destination && !comparison) return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_selector_unavailable' };
+      const query = destination && comparison ? serializeSessionPaneUrlState({ details: {
+        kind: 'scmReview', comparison, view: destination.view,
+        ...(typeof destination.explain === 'boolean' ? { explain: destination.explain } : {}),
+      } }) : undefined;
+      const workspace = tabId || destination ? captureMountedWorkspaceAction() : null;
       if (tabId) {
         if (!workspace) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
         const target = await workspace({ actionId: 'workspace.tabs.list', input: {}, ...(signal ? { signal } : {}) });
@@ -881,15 +1014,15 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         accountContext.assertCurrent();
         if (resumed.type === 'error') return { ok: false, errorCode: resumed.errorCode, error: resumed.errorMessage };
       }
-      if (tabId && workspace) {
+      if ((tabId || destination) && workspace) {
         const outcome = await workspace({ actionId: 'workspace.tabs.open',
-          input: { href: buildScopedSessionRouteHref({ sessionId, serverId }), tabId }, ...(signal ? { signal } : {}) });
-        return outcome.ok ? { ok: true, status: 'opened', sessionId, serverId, tabId, address: { serverId, sessionId } } : outcome;
+          input: { href: buildScopedSessionRouteHref({ sessionId, serverId, query }), ...(tabId ? { tabId } : {}) }, ...(signal ? { signal } : {}) });
+        return outcome.ok ? { ok: true, status: 'opened', sessionId, serverId, ...(tabId ? { tabId } : {}), address: { serverId, sessionId } } : outcome;
       }
       return opts?.openSession
         ? (
           serverId
-            ? await opts.openSession(sessionId, { serverId })
+            ? await opts.openSession(sessionId, { serverId, ...(query ? { query } : {}) })
             : await opts.openSession(sessionId),
           {
             ok: true,
@@ -902,6 +1035,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         : await openSessionForVoiceTool({
           sessionId,
           serverId,
+          ...(query ? { query } : {}),
           resolveServerIdForSessionId: serverId
             ? (targetSessionId) => targetSessionId === sessionId ? serverId : opts?.resolveServerIdForSessionId?.(targetSessionId) ?? null
             : opts?.resolveServerIdForSessionId,
@@ -1183,8 +1317,13 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
     projectsList: async (args) => await listProjectsForActions(args),
-    promptInvocationsList: async (args) => listPromptInvocationsForActions(args),
-    promptInvocationResolve: async (args) => await resolvePromptInvocationForActions(args),
+    promptInvocationsList: async (args) => accountContext
+      ? listPromptInvocationsInLibrary({ invocations: (await accountContext.readRawSettings()).promptInvocationsV1, request: args })
+      : listPromptInvocationsForActions(args),
+    promptInvocationResolve: async (args) => accountContext
+      ? resolvePromptInvocationInLibrary({ invocations: (await accountContext.readRawSettings()).promptInvocationsV1,
+        store: promptLibraryStore, request: args, sessionId: args.sessionId ?? null, signal: args.signal })
+      : resolvePromptInvocationForActions(args),
     spawnProfilesList: async (args) => listSpawnProfilesForActions(args, accountContext
       ? projectUiAiLaunchProfileSnapshot(await accountContext.readLaunchProfileSnapshot((await accountContext.readRawSettings()).profiles)) : undefined),
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
@@ -1279,6 +1418,18 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       const { includeDisabled, limit, machineId } = args as AgentsBackendsListArgs;
       return await listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId });
     },
+    workspaceFilesSearch: async ({ machineId, ...request }, context) => {
+      const result = await machineWorkspaceFileSearch(machineId, request, {
+        serverId: context.serverId,
+        accountId: accountContext?.accountId,
+        signal: context.signal,
+      });
+      if (!result.ok && 'errorCode' in result) {
+        return { ok: false, errorCode: result.errorCode === 'method_unavailable' ? 'update_required' : 'workspace_file_search_unavailable',
+          error: result.errorCode };
+      }
+      return result;
+    },
     machinesAgentsList: async (args, context) => {
       const inputs = await loadDaemonMergedProjectionInputs({ machineId: args.machineId, serverId: args.serverId });
       if (!inputs?.pluginProjectionV2) {
@@ -1302,10 +1453,26 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         throw error;
       }
     },
-    machineAgentSignInStart: async ({ machineId, serverId, signal, ...request }) =>
-      startAgentSignInRpc({ machineId, serverId, signal }, request),
+    machineAgentSignInStart: async ({ machineId, serverId, signal, ...request }) => {
+      if (request.method !== 'native' || !accountContext) return await startAgentSignInRpc({ machineId, serverId, signal }, request);
+      const { executeAgentSignInLifecycle } = await import('@/agents/machineAgents/signIn/useAgentSignIn');
+      return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId: request.agentId,
+        lifetime: accountContext.accountLifetime, signal }, 'start');
+    },
     machineAgentSignInStatus: async ({ machineId, serverId, signal, agentId }) =>
       checkAgentSignInRpc({ machineId, serverId, signal }, agentId),
+    machineAgentSignInCancel: async ({ machineId, signal, agentId, terminalId }) => {
+      if (!accountContext) return { ok: false, errorCode: 'sign_in_unavailable', error: 'An exact Home Account is required.' };
+      const { executeAgentSignInLifecycle } = await import('@/agents/machineAgents/signIn/useAgentSignIn');
+      return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId,
+        lifetime: accountContext.accountLifetime, signal }, 'cancel', terminalId);
+    },
+    machineAgentSignInRestart: async ({ machineId, signal, agentId, terminalId }) => {
+      if (!accountContext) return { ok: false, errorCode: 'sign_in_unavailable', error: 'An exact Home Account is required.' };
+      const { executeAgentSignInLifecycle } = await import('@/agents/machineAgents/signIn/useAgentSignIn');
+      return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId,
+        lifetime: accountContext.accountLifetime, signal }, 'restart', terminalId);
+    },
     machineAgentInstallStart: async ({ machineId, serverId, signal, ...request }) =>
       await startAgentInstallJobRpc({ machineId, serverId, signal }, request),
     machineAgentInstallRead: async ({ machineId, serverId, signal, ...request }) =>
@@ -1908,10 +2075,11 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
     },
 
-    promptDocUpdate: async ({ artifactId, title, markdown, folderId, tags }) => {
-      await updatePromptDoc({ artifactId, title, markdown, ...(typeof folderId !== 'undefined' ? { folderId } : {}), ...(tags ? { tags } : {}) });
-      return { ok: true, artifactId };
-    },
+    promptDocGet: async (args) => readPromptDocInLibrary({ store: promptLibraryStore, ...args }),
+    promptDocCreate: async ({ signal, ...request }) => createPromptDocInLibrary({ store: promptLibraryStore, request, signal }),
+    promptDocFavoriteSet: async ({ signal, ...request }) => setPromptDocFavorite({ store: promptLibraryStore, request, signal }),
+    promptsLibraryList: async ({ signal, ...request }) => listPromptLibrary({ store: promptLibraryStore, request, signal }),
+    promptDocUpdate: async ({ signal, ...request }) => updatePromptDocInLibrary({ store: promptLibraryStore, request, signal }),
 
     promptBundleUpdate: async ({ artifactId, title, skillMarkdown, folderId, tags }) => {
       await updateSkillPromptBundle({ artifactId, title, skillMarkdown, ...(typeof folderId !== 'undefined' ? { folderId } : {}), ...(tags ? { tags } : {}) });
@@ -1968,26 +2136,43 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     ...(opts?.resolveServerIdForSessionId ? { resolveServerIdForSessionId: opts.resolveServerIdForSessionId } : {}),
   };
 
-  const executor = createActionExecutor(deps);
+  const companionDeps = accountContext ? createWidgetCompanionActionDepsV1(accountContext) : {};
+  const areaDeps = createWidgetAreaActionDepsV1(accountContext);
+  const widgetSurfaceDeps = { ...deps, widgetSurfaceActions: { ...deps.widgetSurfaceActions, ...companionDeps.widgetSurfaceActions, ...areaDeps.widgetSurfaceActions } };
+  const widgetDefinitionDeps = { ...widgetSurfaceDeps, ...createWidgetDefinitionActionDepsV1(accountContext, widgetSurfaceDeps) };
+  const widgetHostDeps = { ...widgetDefinitionDeps, ...createWidgetCatalogActionDepsV1(accountContext, widgetDefinitionDeps) };
+  const widgetInputDeps = { ...widgetHostDeps, ...createWidgetInputActionDepsV1(accountContext, widgetHostDeps) };
+  const executor = createActionExecutor({ ...widgetInputDeps, ...createWidgetRefreshActionDepsV1(accountContext, widgetInputDeps) });
 
   // Surface attribution is owned by the host that constructs the executor, mirroring
   // `apps/cli/src/session/actions/createCliActionExecutor.ts` (`?? 'cli'`). This factory is the
   // app client's entrypoint, so an unattributed caller is a `ui` caller — a `voice` or `plugin`
   // caller stamps its own surface and still wins. Without this the surface reaches the catalog
   // gate nullish, which now fails closed (INV-1 / DEC-2).
-  const resolveContext = (context: Parameters<typeof executor.execute>[2]): ActionExecutorContext => {
+  const resolveContext = (context: Parameters<typeof executor.execute>[2], input: unknown): ActionExecutorContext => {
     const surface = context?.surface ?? 'ui';
     const credential = accountContext?.credentialAuthorityKind ?? getCurrentAuth()?.credentialAuthorityKind ?? 'none';
+    const authority = resolveInvocationAuthority({ credential, surface });
+    // Ordinary UI callers do not author approval provenance. Retain stronger
+    // invocation identities, otherwise bind one attempt at this host before
+    // execute/prepare reaches the strict approval-origin owner.
+    const creationKey = typeof input === 'object' && input !== null && 'creationKey' in input
+      && typeof input.creationKey === 'string' ? input.creationKey.trim() : undefined;
     return {
       ...(context ?? {}),
       surface,
-      authority: resolveInvocationAuthority({ credential, surface }),
+      authority,
+      ...(surface === 'ui' && (credential === 'account' || credential === 'terminal')
+        ? { actionRequestId: context?.actionRequestId ?? (creationKey || randomUUID()) }
+        : {}),
     };
   };
 
   return {
-    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, resolveContext(context)),
-    execute: async (actionId, input, context) => await executor.execute(actionId, input, resolveContext(context)),
+    readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
+      readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
+    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, resolveContext(context, input)),
+    execute: async (actionId, input, context) => await executor.execute(actionId, input, resolveContext(context, input)),
     replayApprovedApprovalRequest: async (args) => await executor.replayApprovedApprovalRequest(args),
   };
 }
@@ -2106,7 +2291,8 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext): Read
 export async function withDefaultActionExecuteContext<TResult>(
   opts: DefaultActionExecutorOptions,
   context: DefaultActionExecuteContext,
-  work: (executor: ReturnType<typeof createActionExecutor>, account: LazyActionAccountContext) => Promise<TResult>,
+  work: (executor: ReturnType<typeof buildDefaultActionExecutor>, account: LazyActionAccountContext) => Promise<TResult>,
+  executedActionId?: ActionId,
 ): Promise<TResult> {
   const account = await captureLazyActionAccountContext(context.serverId, context.signal);
   try {
@@ -2118,7 +2304,12 @@ export async function withDefaultActionExecuteContext<TResult>(
       account.assertCurrent();
       context.signal?.throwIfAborted();
       const result = await work(buildDefaultActionExecutor(opts, { ...account, settings }), account);
-      account.assertCurrent();
+      const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
+      // A returned effect result records its actual disposition, including an
+      // unknown outcome. Caller cancellation cannot rewrite that disposition;
+      // genuine Account retirement still prevents disclosure to a new scope.
+      if (effectClass === 'write' || effectClass === 'external' || effectClass === 'danger') account.assertAccountCurrent();
+      else account.assertCurrent();
       return result;
     } catch (error) {
       if (!context.onCurrentError) throw error;
@@ -2135,9 +2326,20 @@ export async function withDefaultActionExecuteContext<TResult>(
   }
 }
 
+/** Read-only drag admission borrows the complete Action dependency composition and exact Account lifetime. */
+export async function readDefaultWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, signal?: AbortSignal) {
+  return withDefaultActionExecuteContext(undefined, { serverId: surface.serverId, expectedAccountId: surface.accountId, signal },
+    executor => executor.readWidgetMovementAdmission(ref, surface, { surface: 'ui', serverId: surface.serverId, signal }));
+}
+
 export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions): DefaultActionExecutor {
   let unscoped: ReturnType<typeof createActionExecutor> | undefined;
   const ordinary = () => unscoped ?? (unscoped = buildDefaultActionExecutor(opts));
+  // Capture an implicit UI Home at invocation, then use the same credential
+  // lifetime as explicitly scoped callers. Other surfaces retain their existing targeting.
+  const resolveInvocationServerId = (actionId: ActionId, context?: UiActionExecutorContext) => context?.serverId
+    ?? ((isRoleActionIdV1(actionId) || (context?.surface ?? 'ui') === 'ui')
+      ? getActiveServerAccountScope()?.serverId : undefined);
   const apiTokenTransport = async (): Promise<ApiTokenActionTransport | null> => {
     if (opts?.apiTokenAction) return opts.apiTokenAction;
     if (getCurrentAuth()?.credentialAuthorityKind !== 'api_token') return null;
@@ -2152,7 +2354,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     execute: async (actionId, input, context) => {
       const api = await apiTokenTransport();
       if (api) return await executeApiTokenAction(api, actionId, input, context);
-      const serverId = context?.serverId ?? (isRoleActionIdV1(actionId) ? getActiveServerAccountScope()?.serverId : undefined);
+      const serverId = resolveInvocationServerId(actionId, context);
       if (!serverId) return await ordinary().execute(actionId, input, context);
       try {
         return await withDefaultActionExecuteContext(opts, { ...context, serverId }, async (executor, account) => (
@@ -2162,7 +2364,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
             ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
             runtimeAccountId: account.accountId,
           })
-        ));
+        ), actionId);
       } catch (error) {
         const failure = accountScopeFailure(error);
         if (failure) return failure;
@@ -2172,7 +2374,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     prepare: async (actionId, input, context) => {
       const api = await apiTokenTransport();
       if (api) return { kind: 'ready', invocation: { run: async () => await executeApiTokenAction(api, actionId, input, context) } };
-      const serverId = context?.serverId ?? (isRoleActionIdV1(actionId) ? getActiveServerAccountScope()?.serverId : undefined);
+      const serverId = resolveInvocationServerId(actionId, context);
       if (!serverId) return await ordinary().prepare(actionId, input, context);
       const account = await captureLazyActionAccountContext(serverId, context?.signal);
       try {
@@ -2215,3 +2417,5 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     },
   };
 }
+import { createVoiceAgentSettingsCatalogReader } from './voiceAgentSettingsCatalog';
+import { createWidgetAreaActionDepsV1 } from './widgetAreaActionDeps';

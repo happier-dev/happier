@@ -14,7 +14,7 @@ import { Modal } from '@/modal';
 import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
-import { isApprovalReplayRouteUnavailable, useApprovalDecisionHandler } from './useApprovalDecisionHandler';
+import { getApprovalDecisionErrorMessage, isApprovalReplayRouteUnavailable, useApprovalDecisionHandler } from './useApprovalDecisionHandler';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionApprovalFieldsCard } from '@/components/approvals/ActionApprovalFieldsCard';
 import { ComputerActionApprovalCard } from '@/components/approvals/ComputerActionApprovalCard';
@@ -108,8 +108,8 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
             if (!ok) {
                 Modal.alert(t('common.error'), t('approvals.decisionError'));
             }
-        } catch {
-            Modal.alert(t('common.error'), t('approvals.decisionError'));
+        } catch (error) {
+            Modal.alert(t('common.error'), getApprovalDecisionErrorMessage(error));
         } finally {
             setIsDeciding(false);
         }

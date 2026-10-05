@@ -100,7 +100,7 @@ describe('sync: voice permission request announcements', () => {
     });
 
     it('applies pending permission requests to the loaded transcript when agentStateVersion advances (no voice side effects asserted here)', async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
 
         (sync as any).applySessions([createSession('s1')]);
 

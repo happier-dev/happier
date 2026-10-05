@@ -3,6 +3,8 @@ import { resolveVoiceSpeechDiagnosticsHealthPresentation } from '@happier-dev/pr
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
+import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { Switch } from '@/components/ui/forms/Switch';
 import {
   useVoiceAttemptControl,
@@ -19,13 +21,50 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 
 import { createVoiceDiagnosticsClientForMachine } from './client';
-import { createVoiceDiagnosticArtifactExportTarget } from './artifactExportTarget';
+import { exportVoiceDiagnosticArtifact } from './exportDiagnosticArtifact';
 import { applyVoiceDiagnosticsMachinePolicy } from './runtimeRevocation';
 import { useVoiceDiagnosticsRuntimeStatus } from './runtimeStatus';
 import { VoiceDiagnosticsIndicator } from './VoiceDiagnosticsIndicator';
+import { applyVoiceDiagnosticsCaptureDirection } from './diagnosticsSettings';
 
 type DiagnosticsClient = ReturnType<typeof createVoiceDiagnosticsClientForMachine>;
 type DiagnosticsStatus = Awaited<ReturnType<DiagnosticsClient['status']>>;
+
+function DiagnosticsExportRows(props: Readonly<{
+  status: DiagnosticsStatus | null;
+  showEmpty: boolean;
+  busy: boolean;
+  onExport: (artifact: NonNullable<DiagnosticsStatus>['artifacts'][number]) => void;
+  showDivider?: boolean;
+}>) {
+  const artifacts = props.status?.artifacts ?? [];
+  if (artifacts.length === 0 && !props.showEmpty) return null;
+  return <SettingAnchor setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsExport}>
+    <>
+    {props.status?.artifacts.map((artifact, index) => (
+      <Item
+        key={artifact.id}
+        testID={`settings-voice-diagnostics-artifact-${artifact.id}`}
+        showDivider={index === 0 ? props.showDivider : true}
+        disabled={props.busy}
+        loading={props.busy}
+        title={artifact.direction === 'stt_input'
+          ? tLoose('settingsVoice.diagnostics.exportSttArtifact')
+          : tLoose('settingsVoice.diagnostics.exportTtsArtifact')}
+        subtitle={`${artifact.format.toUpperCase()} · ${Math.max(1, Math.ceil(artifact.byteLength / 1024))} KB`}
+        accessibilityLabel={tLoose('settingsVoice.diagnostics.exportArtifactAccessibility')}
+        onPress={() => props.onExport(artifact)}
+      />
+    ))}
+    {props.showEmpty ? <Item
+      showDivider={props.showDivider}
+      mode="info"
+      title={tLoose('settingsVoice.diagnostics.exportTitle')}
+      subtitle={props.status ? tLoose('settingsVoice.diagnostics.noArtifacts') : tLoose('settingsVoice.diagnostics.unavailable')}
+    /> : null}
+    </>
+  </SettingAnchor>;
+}
 
 export function VoiceDiagnosticsSettingsSection(props: Readonly<{
   voice: VoiceSettings;
@@ -107,37 +146,18 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
   };
 
   const toggleDirection = (direction: 'captureSttInput' | 'captureTtsOutput', enabled: boolean) => {
-    const next = { ...diagnostics, [direction]: enabled };
-    if (!next.captureSttInput && !next.captureTtsOutput) {
-      next.enabled = false;
-      next.consentVersion = null;
-    }
+    const next = applyVoiceDiagnosticsCaptureDirection(diagnostics, direction, enabled);
     fireAndForget(commit(next), { tag: `VoiceDiagnosticsSettingsSection.${direction}` });
   };
 
   const exportArtifact = React.useCallback(async (artifact: NonNullable<DiagnosticsStatus>['artifacts'][number]) => {
     if (busy || !client) return;
-    const confirmed = await Modal.confirm(
-      tLoose('settingsVoice.diagnostics.exportConfirmTitle'),
-      tLoose('settingsVoice.diagnostics.exportConfirmBody'),
-      { confirmText: tLoose('settingsVoice.diagnostics.exportAction') },
-    );
-    if (!confirmed) return;
-    const name = `voice-diagnostic-${artifact.createdAtMs}-${artifact.direction}.${artifact.format}`;
-    const targetResult = await createVoiceDiagnosticArtifactExportTarget({ name, sizeBytes: artifact.byteLength });
-    if (!targetResult.ok) {
-      await Modal.alert(tLoose('common.error'), tLoose('settingsVoice.diagnostics.exportFailed'));
-      return;
-    }
     setBusy(true);
     try {
-      const result = await client.downloadArtifact({ artifactId: artifact.id, destination: targetResult.target.destination });
-      if (!result.ok) throw new Error(result.error);
-      await targetResult.target.complete(result.name);
+      await exportVoiceDiagnosticArtifact({ client, artifact });
     } catch {
       await Modal.alert(tLoose('common.error'), tLoose('settingsVoice.diagnostics.exportFailed'));
     } finally {
-      await targetResult.target.cleanup();
       setBusy(false);
     }
   }, [busy, client]);
@@ -162,13 +182,14 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
   }, [busy, client, diagnostics, machineId]);
 
   return (
+    <SettingSection section={VOICE_PRIVACY_SETTINGS.sectionRefs.diagnostics}>
     <ItemGroup
       title={tLoose('settingsVoice.diagnostics.title')}
       description={tLoose('settingsVoice.diagnostics.footer')}
     >
-      <Item
+      <SettingRow
+        setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsEnabled}
         testID="settings-voice-diagnostics-enabled"
-        title={tLoose('settingsVoice.diagnostics.enabled')}
         subtitle={tLoose('settingsVoice.diagnostics.enabledSubtitle')}
         disabled={busy}
         rightElementOutsidePressable
@@ -185,9 +206,9 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
       />
       {diagnostics.enabled ? (
         <>
-          <Item
+          <SettingRow
+            setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsSttInput}
             testID="settings-voice-diagnostics-stt-input"
-            title={tLoose('settingsVoice.diagnostics.sttInput')}
             disabled={busy}
             rightElementOutsidePressable
             rightElement={(
@@ -200,9 +221,9 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
               />
             )}
           />
-          <Item
+          <SettingRow
+            setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsTtsOutput}
             testID="settings-voice-diagnostics-tts-output"
-            title={tLoose('settingsVoice.diagnostics.ttsOutput')}
             disabled={busy}
             rightElementOutsidePressable
             rightElement={(
@@ -217,48 +238,40 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
           />
         </>
       ) : null}
-          <Item
+          <SettingRow
+            setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsLocation}
             testID={status?.settings.enabled && status.settings.consentVersion === 1
               ? 'settings-voice-diagnostics-status-active'
               : status
                 ? 'settings-voice-diagnostics-status-inactive'
                 : 'settings-voice-diagnostics-status-unavailable'}
             mode="info"
-            title={tLoose('settingsVoice.diagnostics.location')}
             subtitle={status?.root ?? tLoose('settingsVoice.diagnostics.unavailable')}
             subtitleTestID="settings-voice-diagnostics-root"
             subtitleLines={2}
           />
-          <Item
+          <SettingRow
+            setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsRetention}
             mode="info"
-            title={tLoose('settingsVoice.diagnostics.retention')}
             detail={t('settingsVoice.diagnostics.retentionDetail', {
               hours: Math.round(diagnostics.maxAgeMs / 3_600_000),
               files: diagnostics.maxFiles,
               megabytes: Math.round(diagnostics.maxBytes / (1024 * 1024)),
             })}
           />
-          <Item
+          <SettingRow
+            setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsBackupPolicy}
             mode="info"
-            title={tLoose('settingsVoice.diagnostics.backupPolicy')}
             subtitle={status?.backupPolicy.status === 'best_effort'
               ? tLoose('settingsVoice.diagnostics.backupPolicyBestEffort')
               : tLoose('settingsVoice.diagnostics.unavailable')}
           />
-          {status?.artifacts.map((artifact) => (
-            <Item
-              key={artifact.id}
-              testID={`settings-voice-diagnostics-artifact-${artifact.id}`}
-              disabled={busy}
-              loading={busy}
-              title={artifact.direction === 'stt_input'
-                ? tLoose('settingsVoice.diagnostics.exportSttArtifact')
-                : tLoose('settingsVoice.diagnostics.exportTtsArtifact')}
-              subtitle={`${artifact.format.toUpperCase()} · ${Math.max(1, Math.ceil(artifact.byteLength / 1024))} KB`}
-              accessibilityLabel={tLoose('settingsVoice.diagnostics.exportArtifactAccessibility')}
-              onPress={() => { fireAndForget(exportArtifact(artifact), { tag: 'VoiceDiagnosticsSettingsSection.exportArtifact' }); }}
-            />
-          ))}
+          <DiagnosticsExportRows
+            status={status}
+            showEmpty={!status || (healthPresentation?.severity === 'healthy' && status.artifacts.length === 0)}
+            busy={busy}
+            onExport={(artifact) => { fireAndForget(exportArtifact(artifact), { tag: 'VoiceDiagnosticsSettingsSection.exportArtifact' }); }}
+          />
           {captureFailure ? (
             <Item
               mode="info"
@@ -274,28 +287,21 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
             />
           ) : null}
           {cleanupObligation ? (
-            <Item
+            <SettingRow
+              setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsCleanup}
               disabled={busy || !client}
               loading={busy}
-              title={tLoose('settingsVoice.diagnostics.retryCleanup')}
               subtitle={tLoose('settingsVoice.diagnostics.retryCleanupSubtitle')}
               onPress={() => {
                 fireAndForget(retryCleanup(), { tag: 'VoiceDiagnosticsSettingsSection.retryCleanup' });
               }}
             />
           ) : null}
-          {!status || (healthPresentation?.severity === 'healthy' && status.artifacts.length === 0) ? (
-            <Item
-              mode="info"
-              title={tLoose('settingsVoice.diagnostics.exportTitle')}
-              subtitle={status ? tLoose('settingsVoice.diagnostics.noArtifacts') : tLoose('settingsVoice.diagnostics.unavailable')}
-            />
-          ) : null}
-          <Item
+          <SettingRow
+            setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsDelete}
             testID="settings-voice-diagnostics-delete-all"
             destructive
             disabled={busy || !canDelete}
-            title={tLoose('settingsVoice.diagnostics.deleteAll')}
             subtitle={tLoose('settingsVoice.diagnostics.deleteAllSubtitle')}
             onPress={() => {
               fireAndForget((async () => {
@@ -322,9 +328,13 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
             }}
           />
           <VoiceDiagnosticsIndicator
+            wrapAction={(action, operation) => <SettingAnchor setting={operation === 'retry_shutdown'
+              ? VOICE_PRIVACY_SETTINGS.settings.diagnosticsRetryShutdown
+              : VOICE_PRIVACY_SETTINGS.settings.diagnosticsSessionOptOut}>{action}</SettingAnchor>}
             sessionId={activeVoiceAttempt.sessionId}
             focusFallbackRef={diagnosticsEnabledSwitchRef}
           />
     </ItemGroup>
+    </SettingSection>
   );
 }

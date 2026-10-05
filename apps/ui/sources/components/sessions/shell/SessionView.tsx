@@ -13,8 +13,11 @@ import {
     SessionCollaborationHeaderEntry,
 } from '@/components/sessions/collaboration/SessionCollaborationHeaderEntry';
 import { useOpenSessionCollaboration } from '@/components/sessions/collaboration/useOpenSessionCollaboration';
+import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
+import { PendingNavigationSettledNotice } from '@/components/sessions/pendingNavigation/PendingNavigationSettledNotice';
 import { useSessionCollaborationDestinationAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import {
     AgentInput,
     type AgentInputSendOptions,
@@ -80,6 +83,7 @@ import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView'
 import { PhoneOpenTabsRail } from '@/components/appShell/workspace/PhoneOpenTabsRail';
 import { SessionAllTabsOpenerBridge } from '@/components/sessions/shell/useSessionAllTabsOpener';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
+import { useWorkflowMakeRepeatable } from '@/components/workflows/authoring/useWorkflowMakeRepeatable';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { CurrentSessionPresentationSurface } from '@/components/sessions/presentation/CurrentSessionPresentationSurface';
@@ -151,7 +155,6 @@ import { sendTranscriptSelectionToSession } from '@/components/sessions/transcri
 import { useTranscriptSelectionEligibleMessageIds } from '@/components/sessions/transcript/messageSelection/useTranscriptSelectionEligibleMessageIds';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import {
     SessionDraftConflictResolution,
@@ -576,7 +579,7 @@ import { SessionCompanionRevealOwner } from '@/components/sessions/companion/pre
 import { useSessionCompanionPreference } from '@/components/sessions/companion/state/useSessionCompanionPreference';
 import { useResolveSessionCompanionPlacementForDensity } from '@/components/sessions/companion/layout/useSessionCompanionPlacement';
 import type { SessionCompanionEdge } from '@/components/sessions/companion/state/sessionCompanionPreference';
-import type { SessionSummaryDestinationHandlers } from '@/components/sessions/companion/summary/SessionSummaryCard';
+import { createSessionSummaryDestinations } from '@/components/sessions/companion/summary/sessionSummaryDestinations';
 import {
     SessionCompanionPresentationBridge,
     type SessionPresentationIntentApplier,
@@ -1314,6 +1317,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
     onEditPendingMessage,
     routeHydrationPending,
 }: SessionTranscriptContentProps) {
+    const transcriptSource = useSessionTranscriptSource();
     const openToTranscriptTelemetryRef = React.useRef<{
         recorded: boolean;
         sessionId: string;
@@ -1385,8 +1389,11 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
     ]);
 
     const handleTranscriptJumpLanded = React.useCallback<NonNullable<ChatListProps['onJumpLanded']>>((result) => {
-        applyTranscriptJumpHighlightForJumpResult(sessionId, result);
-    }, [sessionId]);
+        const address = transcriptSource.sessionId === sessionId
+            ? normalizeSessionAddress(transcriptSource.serverId, sessionId)
+            : null;
+        if (address) applyTranscriptJumpHighlightForJumpResult(address, result);
+    }, [sessionId, transcriptSource.serverId, transcriptSource.sessionId]);
 
     return (
         <>
@@ -2143,7 +2150,12 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
     // The same exact-Home `sessions.board` decision the sidebar tab, the Details
     // destination, the Companion surfaces and the mobile Cockpit apply.
     const boardDestinationAvailable = useSessionBoardFeatureEnabled(currentSessionRouteServerId);
+    const repeatableWorkflow = useWorkflowMakeRepeatable({ sessionId, serverId: currentSessionRouteServerId });
     const handleHeaderExtraItemSelect = React.useCallback((actionId: string) => {
+        if (actionId === 'header.makeRepeatable') {
+            repeatableWorkflow.openRepeatable();
+            return true;
+        }
         if (actionId === 'header.openCollaboration') {
             openSessionCollaboration();
             return true;
@@ -2191,6 +2203,7 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
         }
         return false;
     }, [
+        repeatableWorkflow.openRepeatable,
         openSessionCollaboration,
         openSessionBoard,
         attachedSessionTerminal,
@@ -2203,6 +2216,14 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
 
     const headerMenuExtraItems = React.useMemo(() => {
         const items: DropdownMenuItem[] = [];
+        if (repeatableWorkflow.available) {
+            items.push({
+                id: 'header.makeRepeatable',
+                title: t('workflows.authoring.repeatable'),
+                subtitle: t('workflows.authoring.repeatableDescription'),
+                icon: <Icon name="arrows-clockwise" size={16} color={theme.colors.text.secondary} />,
+            });
+        }
         if (attachedSessionTerminal.available) {
             items.push({
                 id: 'header.openAttachedSessionTerminal',
@@ -2225,7 +2246,7 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
             });
         }
         return items.length > 0 ? items : undefined;
-    }, [attachedSessionTerminal.available, mobileWorkspaceExperience, showAutomations, showWorkspaceExperienceToggle, stableSessionForHeader, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
+    }, [attachedSessionTerminal.available, mobileWorkspaceExperience, repeatableWorkflow.available, showAutomations, showWorkspaceExperienceToggle, stableSessionForHeader, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
 
     const headerWorkspaceDisplay = React.useMemo(() => resolveSessionWorkspaceDisplayPresentation({
         serverId: currentSessionRouteServerId,
@@ -2866,6 +2887,7 @@ function SessionViewLoadedContent({
     const composerInputFocusedRef = React.useRef(false);
     const composerActionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
+    const promptPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
     const composerPresentationAccountLifetime = sessionAccountLifetime;
     const presentationPaneRef = React.useRef(pane);
     presentationPaneRef.current = pane;
@@ -3131,6 +3153,9 @@ function SessionViewLoadedContent({
         composerFocusRequestRef.current = request;
         if (request) flushPendingRegisteredSessionComposerFocus(sessionComposerAddress);
     }, [sessionComposerAddress]);
+    const onPromptPickerOpenRequestChange = React.useCallback((request: (() => boolean) | null) => {
+        promptPickerOpenRequestRef.current = request;
+    }, []);
     const providersFeatureEnabled = useFeatureEnabled('providers', { scopeKind: 'spawn', serverId: sessionRouteServerId });
     const teamCredentialResourcesEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn',
@@ -3442,6 +3467,19 @@ function SessionViewLoadedContent({
         surfaceFocused,
     ]);
     composerReferenceHostRef.current = composerReferenceHost;
+    const composerDropReferenceHostRef = React.useRef<ComposerReferenceSearchHost | null>(null);
+    const composerDropReferenceHost = React.useMemo<ComposerReferenceSearchHost | null>(() => {
+        const projection = daemonMergedProjection.inputs?.pluginProjectionV2;
+        if (daemonMergedProjection.phase !== 'ready' || !projection || !machineId) return null;
+        const host: ComposerReferenceSearchHost = {
+            machineId, serverId: sessionRouteServerId, projection,
+            isCurrent: () => composerDropReferenceHostRef.current === host
+                && isActiveComposerPresentationCurrent() && surfacePresented,
+        };
+        return host;
+    }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase,
+        isActiveComposerPresentationCurrent, machineId, sessionRouteServerId, surfacePresented]);
+    composerDropReferenceHostRef.current = composerDropReferenceHost;
     const isSessionComposerPluginScopeCurrent = React.useCallback(() => (
         composerPresentationMountedRef.current
         && composerRefV1Key(activeComposerRefRef.current)
@@ -3528,7 +3566,6 @@ function SessionViewLoadedContent({
         return sessionAgentCatalogEntries.find((entry) => entry.backendTargetKey === selectedTargetKey) ?? null;
     }, [sessionActionDefaultBackend, sessionAgentCatalogEntries]);
     // The embedded arm never mounts a voice surface or affordance, whatever the account enables.
-    const voiceEnabled = useFeatureEnabled('voice') && embedded === null;
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
     const usageLimitRecoveryFeatureEnabled = useFeatureEnabled('sessions.usageLimitRecovery', { scopeKind: 'spawn', serverId: sessionRouteServerId });
@@ -5093,6 +5130,7 @@ function SessionViewLoadedContent({
             router.push(buildScopedSessionRouteHref({
                 sessionId: sid,
                 serverId: options?.serverId ?? resolveNavigationServerIdForSessionId(sid),
+                query: options?.query,
             }) as any);
         },
     });
@@ -6775,8 +6813,8 @@ function SessionViewLoadedContent({
     // mounted Session's local Board/Companion port through the incumbent target.
     const sessionPresentationApplierRef = React.useRef<SessionPresentationIntentApplier | null>(null);
     const applySessionPresentationIntentFromCommand = React.useCallback(
-        (intent: Parameters<SessionPresentationIntentApplier>[0]) => (
-            sessionPresentationApplierRef.current?.(intent) ?? { status: 'unavailable' as const }
+        (intent: Parameters<SessionPresentationIntentApplier>[0], onCompanionMutation?: Parameters<SessionPresentationIntentApplier>[1]) => (
+            sessionPresentationApplierRef.current?.(intent, onCompanionMutation) ?? { status: 'unavailable' as const }
         ),
         [],
     );
@@ -6791,6 +6829,7 @@ function SessionViewLoadedContent({
         return true;
     };
     const activeComposerPresentationTarget = useStableComposerPresentationTarget(activeComposerRef, {
+        readScope: () => composerPresentationAccountLifetime?.scope ?? null,
         readRevision: readActiveComposerPresentationRevision,
         replace: (text, expectedRevision) => {
             const currentRevision = readActiveComposerPresentationRevision();
@@ -6843,9 +6882,16 @@ function SessionViewLoadedContent({
             return true;
         },
         openActionChip: requestComposerActionChipOpen,
+        openPromptPicker: () => promptPickerOpenRequestRef.current?.() ?? false,
+        openAttachmentPicker: () => {
+            if (!attachmentsUploadsEnabled || isUploadingAttachments || activeComposerRefRef.current.kind !== 'session' || !filePickerRef.current) return false;
+            openAttachmentFilePickerFiles(filePickerRef.current);
+            return true;
+        },
         hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
+        readScope: () => composerPresentationAccountLifetime?.scope ?? null,
         readRevision: () => existingSessionComposerOwner.read().revision,
         replace: (text, expectedRevision) => {
             const snapshot = readSessionComposerSnapshot();
@@ -6898,6 +6944,13 @@ function SessionViewLoadedContent({
             return true;
         },
         openActionChip: requestComposerActionChipOpen,
+        openPromptPicker: () => activeComposerRefRef.current.kind === 'session'
+            && (promptPickerOpenRequestRef.current?.() ?? false),
+        openAttachmentPicker: () => {
+            if (!attachmentsUploadsEnabled || isUploadingAttachments || activeComposerRefRef.current.kind !== 'session' || !filePickerRef.current) return false;
+            openAttachmentFilePickerFiles(filePickerRef.current);
+            return true;
+        },
         hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
     });
     React.useEffect(() => activeComposerRef.kind === 'session'
@@ -7936,21 +7989,6 @@ function SessionViewLoadedContent({
     const input = shouldShowInput ? (
         <PluginContextualResourceStoreProvider>
             <View>
-            {/*
-              * Feature gate and hidden-system-session exclusion only. Which
-              * provider the surface presents — and whether it presents at all —
-              * belongs to `resolveVoicePresentedProviderId`, which follows the
-              * RUNNING attempt rather than the configured next-start provider.
-              * Re-deriving that here from the configured provider unmounted a
-              * live attempt's transport the moment the user selected Off.
-              */}
-            {voiceEnabled && !isHiddenSystemSessionSession ? (
-                <VoiceSurface
-                    variant="session"
-                    sessionAddress={companionAddress}
-                    isPresented={surfacePresented}
-                />
-            ) : null}
             {authSurfaceState && !authRecoveryBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <SessionAuthRecoveryBanner message={authSurfaceState.message} />
@@ -8236,7 +8274,12 @@ function SessionViewLoadedContent({
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
+            <PendingNavigationSettledNotice address={companionAddress} />
+            <PendingNavigationPill address={companionAddress} presentation="composer" />
             <SessionComposerAgentInput
+                composerRef={activeComposerRef}
+                composerReferenceHost={composerDropReferenceHost}
+                composerFileScope={resolveWorkspaceTargetForSession(companionAddress)}
                 textStore={composerTextStore}
                 pendingText={pendingComposerDocument?.text ?? null}
                 placeholder={isReadOnly
@@ -8247,6 +8290,7 @@ function SessionViewLoadedContent({
                 onChangeText={setVisibleComposerDraftValue}
                 onComposerFocusChange={onComposerFocusChange}
                 onComposerFocusRequestChange={onComposerFocusRequestChange}
+                onPromptPickerOpenRequestChange={onPromptPickerOpenRequestChange}
                 onComposerActionBarLayoutChange={onComposerActionBarLayoutChange}
                 composerDecorations={composerInputEffects.composerDecorations}
                 composerInputLock={composerInputEffects.composerInputLock}
@@ -9513,6 +9557,7 @@ function SessionViewLoadedContent({
                     const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
                     const resolved = resolveSessionComposerSend({
                         input: composerMessage,
+                        sessionId,
                         executionRunsEnabled,
                         goalControlsAvailable: providerSupportsEditableSessionGoals,
                         promptInvocationsV1,
@@ -9775,25 +9820,13 @@ function SessionViewLoadedContent({
             },
         };
     }, []);
-    const openCompanionApproval = React.useCallback(() => {
-        const approvalId = approvalRequests[0]?.artifact.id;
-        if (!approvalId) return;
-        router.push(`/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(sessionRouteServerId)}` as never);
-    }, [approvalRequests, router, sessionRouteServerId]);
-    const companionSummaryDestinations = React.useMemo<SessionSummaryDestinationHandlers>(() => ({
-        sessionInfo: () => router.push(buildCurrentSessionHref('/info') as never),
-        approvals: openCompanionApproval,
-        work: () => setActiveStatusBadgeKey(SESSION_WORK_STATE_STATUS_BADGE_KEY),
-        workTab: () => {
-            pane.openRight({ tabId: 'agents' });
-            pane.setRightTab('agents');
-        },
-        git: () => {
-            pane.openRight({ tabId: 'git' });
-            pane.setRightTab('git');
-        },
-        usage: () => router.push(buildCurrentSessionHref('/usage') as never),
-    }), [buildCurrentSessionHref, openCompanionApproval, pane, router]);
+    const companionSummaryDestinations = React.useMemo(() => createSessionSummaryDestinations({
+        address: { sessionId, serverId: sessionRouteServerId },
+        navigate: href => router.push(href as never),
+        approvalId: approvalRequests[0]?.artifact.id,
+        openWorkStatus: () => setActiveStatusBadgeKey(SESSION_WORK_STATE_STATUS_BADGE_KEY),
+        openPane: tabId => { pane.openRight({ tabId }); pane.setRightTab(tabId); },
+    }), [approvalRequests, pane, router, sessionId, sessionRouteServerId]);
     // The rail is a flex sibling of Chat, and only the row that holds both can
     // seat it on the viewer's chosen side on every platform. This is the one
     // Companion fact the shell reads: the edge, not the Companion's content.

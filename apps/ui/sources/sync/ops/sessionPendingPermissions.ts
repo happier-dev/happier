@@ -5,6 +5,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { listPendingPermissionRequests } from '@/utils/sessions/sessionUtils';
+import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
 
 import {
     resolveSessionPermissionAnswerPolicy,
@@ -39,13 +40,14 @@ export type SessionPendingPermission = Readonly<{
 export function listSessionPendingPermissions(
     session: Session,
     accountScope: ServerAccountScope | null | undefined,
+    permissionRequests: readonly SessionPendingRequest[] = listPendingPermissionRequests(session),
 ): readonly SessionPendingPermission[] {
     const canApprove = deriveTranscriptInteractionFromSession({
         access: session.access,
         active: session.active,
     }).canApprovePermissions;
     const metadata = session.metadata as Readonly<{ flavor?: string | null }> | null | undefined;
-    return listPendingPermissionRequests(session).map((request): SessionPendingPermission => {
+    return permissionRequests.map((request): SessionPendingPermission => {
         const policy = resolveSessionPermissionAnswerPolicy({
             permissionBehavior: resolveSessionPermissionBehavior({
                 agentId: resolveAgentIdForPermissionUi({

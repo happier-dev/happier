@@ -7,6 +7,9 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import type { AgentInputAttachmentsRowItem } from './agentInputContracts';
 
+// Exercise the installed color codec used by the real composer surface.
+vi.unmock('color');
+
 type MultiTextInputSelection = { start: number; end: number };
 // Cold imports belong to fixture setup, not the timeout of the first selected interaction test.
 beforeAll(async () => { await import('./AgentInput'); }, 600_000);
@@ -120,7 +123,7 @@ installAgentInputCommonModuleMocks({
         });
     },
     storageStore: async () => {
-        const state = { sessionMessages: {}, artifacts: {}, localSettings: { uiFontScale: 1, uiContentWidthMode: null } };
+        const state = { sessionMessages: {}, artifacts: {}, localSettings: { uiFontScale: 1, uiContentWidthMode: null, uiItemDensity: 'cozy' } };
         const store = Object.assign(
             (selector: any) => selector(state),
             {
@@ -245,7 +248,8 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
     applySuggestion: (text: string) => ({ text, cursorPosition: text.length }),
 }));
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/ui/popover')>(),
     Popover: () => null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
     MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: {},
@@ -303,6 +307,102 @@ describe('AgentInput (send button accessibility)', () => {
         dictationState.status = 'idle';
         dictationState.failure = null;
         vi.clearAllMocks();
+    });
+
+    it.each(['agent', 'wait'] as const)('reads the full frozen %s document through the real composer without writing, voice or submit', async (kind) => {
+        const { WorkflowStepEditor } = await import('@/components/workflows/editor/WorkflowStepEditor');
+        const { WorkflowWaitBlockEditor } = await import('@/components/workflows/editor/WorkflowWaitBlockEditor');
+        const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');
+        const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
+        const { createWorkflowAuthoringComposerCustody } = await import('@/components/sessions/authoring/authoringComposerCustody');
+        const { readComposerPresentationSnapshot, applyComposerPresentationTransaction } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+        const document = {
+            text: `Review @issue\n${'Full frozen paragraph\n'.repeat(40)}The final line`,
+            references: [{ kind: 'partner.reference', ref: 'partner:issue-42', token: '@issue', label: 'Frozen issue #42' }],
+            attachments: [{
+                v: 1 as const,
+                instanceId: 'frozen-attachment',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                key: 'issue-42',
+                value: { issueId: 42 },
+                presentation: { label: 'Attached issue #42', typeLabel: 'Issue' },
+            }],
+        };
+        const result = { kind: 'text' as const };
+        const step = { kind: 'step' as const, id: 'frozen-step', document, input: [], result };
+        const wait = { kind: 'wait' as const, id: 'frozen-step', document, result };
+        const draft = createWorkflowEditorDraft({ draftId: `frozen-${kind}`, name: 'Frozen workflow', blocks: [kind === 'agent' ? step : wait] });
+        const composerCustody = createWorkflowAuthoringComposerCustody(draft.draftId);
+        const onWrite = vi.fn();
+        const common = {
+            draft, ordinal: 1, total: 1, actions: [], composerCustody,
+            composerScope: { kind: 'machine' as const, machineId: null },
+            editable: false, onSelect: () => {}, testIDPrefix: 'frozen',
+        };
+        const screen = await renderScreen(kind === 'agent'
+            ? <WorkflowStepEditor {...common} step={step} validation={validateWorkflowEditorDraft(draft)} onChangeDocument={onWrite} onChangeInput={onWrite} onCustomize={() => {}} />
+            : <WorkflowWaitBlockEditor {...common} block={wait} onChangeBlock={onWrite} />);
+
+        // These are real rendered content nodes, not a mocked AgentInput prop inspection.
+        const textNodes = screen.root.findAll((node) => String(node.type) === 'Text');
+        expect(textNodes.some((node) => node.props.selectable === true && node.children.includes(document.text))).toBe(true);
+        expect(textNodes.some((node) => node.children.includes('Frozen issue #42'))).toBe(true);
+        expect(textNodes.some((node) => node.children.includes('Attached issue #42'))).toBe(true);
+        expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
+        expect(screen.root.findAll((node) => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer|attachment-remove)/u.test(node.props.testID))).toHaveLength(0);
+        const ref = composerCustody.entryFor(step.id).ref;
+        const snapshot = readComposerPresentationSnapshot(ref);
+        expect(snapshot).toMatchObject({
+            text: document.text,
+            references: [{ ...document.references[0], start: 7, end: 13 }],
+            attachments: [{ instanceId: 'frozen-attachment' }],
+            state: { editable: false, submittable: false },
+        });
+        if (!snapshot) throw new Error('Frozen document must retain its canonical composer identity');
+        await act(async () => {
+            expect(applyComposerPresentationTransaction({
+                ref, transaction: { expectedRevision: snapshot.revision, operations: [{ kind: 'text.set', text: 'Changed' }] },
+            })).toEqual({ status: 'notEditable' });
+        });
+        expect(onWrite).not.toHaveBeenCalled();
+        expect(readComposerPresentationSnapshot(ref)?.text).toBe(document.text);
+        await screen.unmount();
+    });
+
+    it('reads built-in catalog prompts through the same non-editable document owner', async () => {
+        const { WorkflowBuiltinSourceScreen } = await import('@/components/workflows/screens/WorkflowPluginSourceScreen');
+        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
+        const { walkWorkflowBlocks } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
+        const entry = getBuiltinWorkflowCatalogV1().find((candidate) => candidate.requiresOriginSession !== true);
+        if (!entry) throw new Error('The shipped built-in catalog must contain a workflow');
+        const step = walkWorkflowBlocks(entry.definition.blocks).find((block) => block.kind === 'step');
+        if (!step || step.kind !== 'step') throw new Error('The built-in fixture must contain an Agent prompt');
+        const screen = await renderScreen(<WorkflowBuiltinSourceScreen workflow={entry.id} />);
+        expect(screen.root.findAll((node) => String(node.type) === 'Text' && node.props.selectable === true && node.children.includes(step.document.text))).not.toHaveLength(0);
+        expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
+        expect(screen.root.findAll((node) => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
+        await screen.unmount();
+    });
+
+    it('keeps contributed chips in a reading composer and suppresses a supplied submit callback without a writer', async () => {
+        const { ScopedAuthoringComposer } = await import('@/components/sessions/authoring/ScopedAuthoringComposer');
+        const { createWorkflowAuthoringComposerCustody } = await import('@/components/sessions/authoring/authoringComposerCustody');
+        const { Text } = await import('@/components/ui/text/Text');
+        const onSubmit = vi.fn();
+        const screen = await renderScreen(<ScopedAuthoringComposer
+            custody={createWorkflowAuthoringComposerCustody('read-only-chips').entryFor('step')}
+            scope={{ kind: 'machine', machineId: null }}
+            document={{ text: 'Frozen text', references: [], attachments: [] }}
+            attachmentsEnabled
+            placeholder="Read"
+            onSubmit={onSubmit}
+            extraActionChips={[{ key: 'contribution', render: () => <Text>Contributed context</Text> }]}
+        />);
+        expect(screen.root.findAll((node) => String(node.type) === 'Text' && node.children.includes('Contributed context'))).not.toHaveLength(0);
+        expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
+        expect(screen.root.findAll((node) => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
+        expect(onSubmit).not.toHaveBeenCalled();
+        await screen.unmount();
     });
 
     it('does not request autocomplete suggestions before focus, then follows focused text state', async () => {

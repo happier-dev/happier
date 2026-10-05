@@ -23,8 +23,6 @@ import type {
 import type { SessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
 import { openSessionSystemRecord, type OpenSessionSystemRecordResult } from '@/sync/domains/sessionSystemRecords/codec';
 import { sealSessionStoredContent, type SessionStoredContentContext } from '@happier-dev/sync-client';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { selectWidgetPlacementsBySurface } from '@/sync/domains/plugins/ui/widgetContract';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
@@ -42,7 +40,6 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
     repository: SessionSystemRecordRepository;
     contentContext: SessionStoredContentContext | null;
     capabilities: SessionBoardGetResultV1['capabilities'];
-    resolveInstalledSurfaceProjection?: (session: SessionAddress, signal?: AbortSignal) => Promise<PluginUiProjectionModel | null>;
     /** Retain the exact sealed request before dispatch for post-dispatch scope-retirement recovery. */
     onMutationPrepared?: (details: ReturnType<typeof createSessionBoardOutcomeUnknownFailureV1>['details']) => void;
     /** Observe the canonical HTTP issue boundary; preparation alone is not dispatch. */
@@ -248,13 +245,6 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
             const opened = await open(current.value, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: args.itemId }, SessionSurfaceItemV1Schema);
             if (opened.status !== 'ready') return createSessionBoardFailureV1(opened.status);
             if (!isSessionSurfaceItemSourceCompatible(opened.value, args.item)) return createSessionBoardFailureV1('session_board_source_conflict');
-        }
-        // New installed references require PEP admission. Existing items may
-        // update their content/chrome after the source-identity check above.
-        if (args.item.source.kind === 'installedSurface' && current.status === 'not_found') {
-            const projection = await options.resolveInstalledSurfaceProjection?.(session, signal);
-            const placements = projection ? selectWidgetPlacementsBySurface(projection, args.item.source.surface, 'session') : [];
-            if (placements.length !== 1 || placements[0]!.availability.state !== 'available') return createSessionBoardFailureV1('unsupported_action');
         }
         let layout: SessionBoardLayoutV1 | null = null;
         let expectedLayoutRevision: string | null = null;

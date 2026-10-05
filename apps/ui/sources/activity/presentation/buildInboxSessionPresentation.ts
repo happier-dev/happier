@@ -1,5 +1,6 @@
 import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol';
 import type { Message } from "@happier-dev/session-core/messages";
+import { comparePendingRequestsByAge } from '@happier-dev/session-core/pending';
 import type {
     ActivityOverviewSnapshot,
     SessionActivityAttention,
@@ -106,10 +107,10 @@ export function buildInboxSessionPresentation(params: Readonly<{
             sessionsNeedingAttention.push({
                 candidate,
                 pendingPermissions: reasons.includes('permission_required')
-                    ? listPendingPermissionRequests(candidate.session, messages)
+                    ? listPendingPermissionRequests(candidate.session, messages).sort(comparePendingRequestsByAge)
                     : [],
                 pendingUserActions: reasons.includes('user_action_required')
-                    ? listPendingUserActionRequests(candidate.session, messages)
+                    ? listPendingUserActionRequests(candidate.session, messages).sort(comparePendingRequestsByAge)
                     : [],
             });
             continue;

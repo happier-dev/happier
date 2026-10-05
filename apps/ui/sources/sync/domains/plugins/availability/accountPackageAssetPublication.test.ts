@@ -102,8 +102,9 @@ describe('exact daemon package-asset publication', () => {
         }]);
         const payload = JSON.parse(String(current.request.mock.calls[0]![1]?.body));
         const envelope = await openAccountArtifactStoredEnvelope({ mode: 'plain', envelope: payload.artifact });
+        if (typeof envelope?.body.body !== 'string') throw new Error('Expected text Package Asset archive');
         const opened = openPackageAssetArchiveV1({ expectedDescriptor: current.archive.descriptor,
-            header: envelope?.header, body: decodePackageAssetArchiveBodyV1(envelope?.body.body ?? '') });
+            header: envelope.header, body: decodePackageAssetArchiveBodyV1(envelope.body.body) });
         expect(opened?.resources.get('image')).toEqual(current.bytes);
     });
 

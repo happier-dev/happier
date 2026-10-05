@@ -413,6 +413,11 @@ describe('SessionAuthoringControls', () => {
         await act(async () => {});
         expect(screen.findByTestId('session-authoring-control-mcpSelection-unavailable')).toBeNull();
         expect(screen.findByTestId('new-session-mcp-chip')).toBeTruthy();
+        expect(mcpPreviewSpy).not.toHaveBeenCalled();
+        // Native/web press intent precedes onPress; the render harness only
+        // dispatches onPress automatically, so deliver its genuine event too.
+        await act(async () => { screen.findByTestId('new-session-mcp-chip')?.props.onPressIn(); });
+        await act(async () => { screen.pressByTestId('new-session-mcp-chip'); });
         // The preview is asked for this Agent on this exact Machine and folder,
         // with the controlled selection — the same request New Session makes.
         expect(mcpPreviewSpy).toHaveBeenCalledWith(
@@ -425,7 +430,6 @@ describe('SessionAuthoringControls', () => {
             expect.objectContaining({ serverId: 'server-a' }),
         );
 
-        await act(async () => { screen.pressByTestId('new-session-mcp-chip'); });
         expect(screen.findByTestId('mcp-content-stub')).toBeTruthy();
         const onSelectionChange = mcpContentProps.value?.onSelectionChange as (selection: unknown) => void;
         await act(async () => {

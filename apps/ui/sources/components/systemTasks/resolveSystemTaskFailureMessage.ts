@@ -3,10 +3,10 @@ import { resolveCliAcquisitionFailureMessage } from './cliAcquisitionPresentatio
 
 /**
  * Failure codes whose daemon sentence the app replaces with its own copy.
- * These are setup decisions the user declined in an app prompt, so the
- * remedy must name the app's controls, in the user's language.
+ * Setup decisions and admission failures name their remedy in the user's language.
  */
 const SYSTEM_TASK_FAILURE_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>> = {
+    system_task_setup_in_progress: 'machine.thisComputer.setupAlreadyRunning',
     service_reconciliation_declined: 'machine.backgroundServicePrompt.replaceDeclined',
     release_channel_switch_declined: 'machine.backgroundServicePrompt.channelSwitchDeclined',
     // R12: the one-CLI question was dismissed (or Keep was not possible), or the kept CLI is gone.

@@ -69,7 +69,9 @@ export function createPluginSurfaceLiveStreamOwner(input: Readonly<{
                     payload: { action: 'capture.view', input: { sourceId: source.sourceId, sourceOccurrenceId: source.sourceOccurrenceId } },
                 }, { signal: controller.signal });
                 if (!approved || typeof approved !== 'object' || Array.isArray(approved)
-                    || approved.admitted !== true || approved.sourceId !== source.sourceId || approved.sourceOccurrenceId !== source.sourceOccurrenceId) {
+                    || !('admitted' in approved) || approved.admitted !== true
+                    || !('sourceId' in approved) || approved.sourceId !== source.sourceId
+                    || !('sourceOccurrenceId' in approved) || approved.sourceOccurrenceId !== source.sourceOccurrenceId) {
                     finish();
                     return createPluginSurfaceHostApiError('unavailable', ['capture_source_denied']);
                 }

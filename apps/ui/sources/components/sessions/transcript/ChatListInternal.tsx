@@ -206,7 +206,7 @@ import {
     resolveInitialTranscriptRowWidthBucket,
     resolveTranscriptRowWidthBucket,
 } from '@/components/sessions/transcript/measurement/rowRenderKeys';
-import type { TranscriptLiveTailAnchorReason } from '@/components/sessions/transcript/viewport/lifecycle/transcriptRowClassification';
+import { collectTranscriptNavigationMessageIdsForItem, type TranscriptLiveTailAnchorReason } from '@/components/sessions/transcript/viewport/lifecycle/transcriptRowClassification';
 import {
     createEntryRestoreOwner,
     type EntryRestoreOwner,
@@ -219,6 +219,9 @@ import { useTranscriptFirstPaintState, useTranscriptItemsPipeline, useTranscript
 import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { useTranscriptItemRenderer, useTranscriptItemsEdgeSlots } from '@/components/sessions/transcript/rowHost/useTranscriptRowHost';
 import { useTranscriptExpansionState } from '@/components/sessions/transcript/rowHost/useTranscriptExpansionState';
+import { TranscriptFindSurface } from '@/components/sessions/transcript/find/TranscriptFindSurface';
+import { useTranscriptFind, type TranscriptFindCorpus } from '@/components/sessions/transcript/find/useTranscriptFind';
+import { revealTranscriptFindMatch } from '@/components/sessions/transcript/find/revealTranscriptFindMatch';
 export type { TranscriptViewportChangeState } from '@/components/sessions/transcript/chatListTypes';
 type ExplicitJumpTakeoverApplyEffect = TranscriptLifecycleHostExplicitJumpPlan['explicitJumpTakeoverEffects'][number];
 type FollowBottomIntentTakeoverApplyEffect = TranscriptLifecycleHostFollowBottomIntentPlan['followBottomIntentTakeoverEffects'][number];
@@ -1836,6 +1839,41 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         promotePendingJumpSeqViewportSnapshot,
         shouldSuppressGenericViewportStateForProtectedJumpSeq,
     } = jumpHost;
+    const findLoadedMessages = React.useMemo(() => {
+        const ids = new Set(props.items.flatMap(collectTranscriptNavigationMessageIdsForItem));
+        return [...ids].flatMap((id) => props.messagesById[id] ? [props.messagesById[id]] : []);
+    }, [props.items, props.messagesById]);
+    const findCorpusRef = React.useRef<TranscriptFindCorpus>({ messages: findLoadedMessages,
+        history: { isLoaded: props.isLoaded, hasOlder: true, isLoadingOlder: false } });
+    const publishFindCorpus = React.useCallback((corpus: TranscriptFindCorpus) => { findCorpusRef.current = corpus; }, []);
+    // Find's overview ruler reads where a matched message's row sits from the list's own layout. The
+    // message → row index is built lazily (only while the ruler asks) and reused until the data changes.
+    const findRowIndexRef = React.useRef<Readonly<{ data: readonly ChatTranscriptListItem[]; byMessageId: ReadonlyMap<string, number> }> | null>(null);
+    const measureFindMessage = React.useCallback((messageId: string) => {
+        const data = listDataRef.current;
+        if (findRowIndexRef.current?.data !== data) {
+            const byMessageId = new Map<string, number>();
+            data.forEach((item, index) => {
+                for (const id of collectTranscriptNavigationMessageIdsForItem(item)) if (!byMessageId.has(id)) byMessageId.set(id, index);
+            });
+            findRowIndexRef.current = { data, byMessageId };
+        }
+        const index = findRowIndexRef.current.byMessageId.get(messageId);
+        const layout = index === undefined ? undefined : listRef.current?.getLayout?.(index);
+        return layout ? { y: layout.y, height: layout.height } : null;
+    }, []);
+    const transcriptFind = useTranscriptFind({
+        readCorpus: () => findCorpusRef.current,
+        loadPage: transcriptSource.history.loadFindPage
+            ? (direction) => transcriptSource.history.loadFindPage!(direction)
+            : transcriptSource.history.loadOlder ? () => transcriptSource.history.loadOlder!() : null,
+        afterLoad: waitForNextTranscriptVisualUpdate,
+        jumpToTarget: (target, context) => jumpToTranscriptTarget(target, { preferTargetWindow: true, signal: context.signal }),
+        reveal: (match, context) => revealTranscriptFindMatch(match, {
+            items: props.items, setToolCallsGroupExpanded, setThinkingExpanded,
+            waitForVisualUpdate: waitForNextTranscriptVisualUpdate, jumpToTarget: jumpToTranscriptTarget,
+        }, context),
+    });
     useCommittedTranscriptRef(
         shouldSuppressGenericViewportStateForProtectedJumpSeqRef,
         shouldSuppressGenericViewportStateForProtectedJumpSeq,
@@ -2070,6 +2108,10 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                 ref={transcriptViewportFocusRef}
                 style={{ flex: 1 }}
               >
+                <TranscriptFindSurface model={transcriptFind} source={transcriptSource} sessionId={props.sessionId}
+                    serverId={props.sessionServerId ?? transcriptSource.serverId} focused={sessionScreenFocused}
+                    viewportRef={transcriptViewportFocusRef} loadedMessages={findLoadedMessages} publishCorpus={publishFindCorpus}
+                    measureMessage={measureFindMessage} contentHeight={listContentHeight}>
                 <TranscriptListShell<ChatTranscriptListItem>
                     ref={commitListRef}
                     frame={mainTranscriptListShellFrame}
@@ -2139,6 +2181,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                         />
                     </ComposerKeyboardFloatingInset>
                 ) : null}
+                </TranscriptFindSurface>
               </View>
             </InitialPresentationReadinessProvider>
         </TranscriptMotionProvider>

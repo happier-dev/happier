@@ -261,7 +261,7 @@ function messagesRequestPaths(): string[] {
 }
 
 async function seedLoadedHistorySession(historyLength = 20, withStreamSegment = false): Promise<{ sync: typeof import('./sync').sync }> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     const syncForTest = sync as unknown as SyncStaleReopenTestAccess;
     sync.disconnectServer();
 

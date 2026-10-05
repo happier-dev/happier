@@ -47,6 +47,7 @@ export type DaemonServiceListEntry = Readonly<{
   name: string;
   relayUrl?: string | null;
   installed: boolean;
+  verification: 'verified' | 'candidate';
   path: string;
   platform: SupportedPlatform;
   mode?: DaemonServiceMode;
@@ -71,6 +72,7 @@ export type DaemonServiceInventoryEntry = Readonly<{
   ring: PublicReleaseRingId;
   targetMode: DaemonServiceTargetMode;
   installed: boolean;
+  verification: 'verified' | 'candidate';
   running: boolean;
   configuredCliVersion: string | null;
   runningCliVersion: string | null;

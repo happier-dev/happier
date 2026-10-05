@@ -7,6 +7,7 @@ import {
     BrowserAutomationErrorCodeV1Schema,
     BrowserAutomationActionKindV1Schema,
     isBrowserAutomationMutatingActionKind,
+    redactBrowserAutomationActionResultDetails,
     redactBrowserAutomationTimelineDetails,
     type BrowserAutomationCancelActiveResultV1,
     type BrowserAutomationErrorCodeV1,
@@ -48,6 +49,7 @@ export type BrowserAutomationResult = Readonly<{
     automationRequestId?: string;
     durationMs?: number;
     resultSummary?: Readonly<Record<string, unknown>>;
+    actionResult?: BrowserAutomationActionResultV1;
 }>;
 
 export type BrowserAutomationOwner = Readonly<{
@@ -139,7 +141,7 @@ export type BrowserAutomationControlService = Readonly<{
     recordHumanInput: (
         input: Readonly<{ browserSessionId: string; viewId: string; inputKind: string; occurredAtMs: number }>,
     ) => void;
-    releaseHumanControl: (input: Readonly<{ browserSessionId: string; viewId: string }>) => void;
+    releaseHumanControl: (input: Readonly<{ browserSessionId: string; viewId: string }>) => boolean;
     getActionTimeline: (
         input: Readonly<{ browserSessionId: string; viewId: string }>,
     ) => readonly BrowserAutomationTimelineEntry[];
@@ -227,6 +229,24 @@ export function createBrowserAutomationControlService(
         return next;
     }
 
+    function projectActionResult(active: ActiveAction, result: BrowserAutomationResult): BrowserAutomationActionResultV1 {
+        return BrowserAutomationActionResultV1Schema.parse({
+            v: 1,
+            automationRequestId: active.request.automationRequestId,
+            status: result.status,
+            durationMs: Math.max(0, now() - active.startedAtMs),
+            adapterKind: active.owner.adapterKind,
+            fidelity: active.owner.fidelity,
+            trustedInput: active.owner.trustedInput,
+            navigationGenerationBefore: active.navigationGenerationBefore,
+            navigationGenerationAfter: active.owner.navigationGeneration,
+            controlEpochBefore: active.controlEpochBefore,
+            controlEpochAfter: controllerFor(browserViewKey(active.request)).controlEpoch,
+            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+            resultSummary: redactBrowserAutomationActionResultDetails(result.resultSummary ?? {}),
+        });
+    }
+
     function appendTimeline(active: ActiveAction, result: BrowserAutomationResult): void {
         const viewKey = browserViewKey(active.request);
         const controller = controllerFor(viewKey);
@@ -290,6 +310,7 @@ export function createBrowserAutomationControlService(
         if (result.status === 'succeeded' && (active.request.actionKind === 'snapshot' || active.request.actionKind === 'semanticSnapshot')
             && controller.controlEpoch === active.controlEpochBefore
             && ownersByViewKey.get(viewKey)?.navigationGeneration === active.request.navigationGeneration) controller.requiresObservation = false;
+        const actionResult = projectActionResult(active, result);
         if (!active.viewClosed) {
             appendTimeline(active, result);
         } else if (!ownersByViewKey.has(viewKey)
@@ -302,6 +323,7 @@ export function createBrowserAutomationControlService(
             ...result,
             automationRequestId: active.request.automationRequestId,
             durationMs: Math.max(0, now() - active.startedAtMs),
+            actionResult,
         });
         emitChange();
     }
@@ -350,7 +372,7 @@ export function createBrowserAutomationControlService(
             resolve: () => undefined,
         };
         appendTimeline(syntheticActive, { status, errorCode });
-        return unavailableResult(status, errorCode);
+        return { ...unavailableResult(status, errorCode), actionResult: projectActionResult(syntheticActive, { status, errorCode }) };
     }
 
     /**
@@ -563,12 +585,13 @@ export function createBrowserAutomationControlService(
 
         releaseHumanControl(view) {
             const controller = controllerFor(browserViewKey(view));
-            if (controller.activeAutomationRequestId) return;
+            if (controller.activeAutomationRequestId) return false;
             if (controller.humanHeld) controller.controlEpoch += 1;
             controller.humanHeld = false;
             controller.controller = 'none';
             controller.requiresObservation = true;
             emitChange();
+            return true;
         },
 
         getActionTimeline(inputValue) {

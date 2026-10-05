@@ -18,6 +18,7 @@ const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { createSessionReportsToAction } = await import('./sessionReportsToAction');
+const { loadSessionReportsToEligibility } = await import('@/sync/ops/relations/sessionReportsToEligibility');
 const { dispatchSessionSpawnNewWithReportsToPreparation } = await import('@/sync/ops/actions/sessionSpawnNewAction');
 
 let testHomeId: string | null = null;
@@ -61,6 +62,39 @@ const input = { sessionId: 'child/id', leadSessionId: 'lead', expectedLeadSessio
 const context = { surface: 'ui', authority: 'present_user' } as const;
 
 describe('reportsTo captured Home Action transport', () => {
+    it('loads one qualified read-only eligibility batch and retires it with the captured credential', async () => {
+        const env = await setup();
+        try {
+            const projection = { sessionId: input.sessionId, currentLeadSessionId: null, candidates: [
+                { sessionId: 'lead', allowed: false, reason: 'pairwise' },
+            ] };
+            env.request.mockResolvedValue(new Response(JSON.stringify(projection), { status: 200 }));
+            const evidence = await loadSessionReportsToEligibility({ serverId: env.home.id, sessionId: input.sessionId,
+                candidateSessionIds: ['lead', 'lead'] });
+            expect(evidence).toMatchObject({ ...projection, serverId: env.home.id, accountId: 'account' });
+            expect(evidence?.isCurrent()).toBe(true);
+            const call = env.request.mock.calls.find(([url]) => url.endsWith('/reports-to/options'));
+            expect(JSON.parse(String(call?.[1]?.body))).toEqual({ candidateSessionIds: ['lead'] });
+            await TokenStorage.removeCredentialsForServerUrl('https://reports.example', { serverId: env.home.id });
+            expect(evidence?.isCurrent()).toBe(false);
+            evidence?.dispose();
+        } finally { env.account.dispose(); }
+    });
+
+    it('withholds unavailable or mismatched eligibility instead of inventing a refusal', async () => {
+        const env = await setup();
+        try {
+            for (const response of [
+                new Response('{}', { status: 404 }),
+                new Response(JSON.stringify({ sessionId: 'foreign', currentLeadSessionId: null, candidates: [] }), { status: 200 }),
+                new Response(JSON.stringify({ sessionId: input.sessionId, currentLeadSessionId: null, candidates: [] }), { status: 200 }),
+            ]) {
+                env.request.mockResolvedValue(response);
+                expect(await loadSessionReportsToEligibility({ serverId: env.home.id, sessionId: input.sessionId,
+                    candidateSessionIds: ['lead'] })).toBeNull();
+            }
+        } finally { env.account.dispose(); }
+    });
     it.each(['plain', 'e2ee'] as const)('prepares a spawn-time reportsTo attachment from the real %s scoped source reader', async (encryptionMode) => {
         const env = await setup();
         const committed = { type: 'success', disposition: 'created', sessionId: input.sessionId,

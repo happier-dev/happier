@@ -10,7 +10,7 @@ import {
 } from '@/components/navigation/mobile/chrome/lateralSwipe/sessionSwitcherRows';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
+import { buildServerScopedSessionKey, moveSessionMruEntryToFront } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { resolveSessionSwitcherRecentPool } from '@/sync/domains/session/navigation/sessionSwitcherOrder';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -67,9 +67,17 @@ export function readSessionAllTabs(params: Readonly<{
         sessionKey: tab.session ? buildServerScopedSessionKey(tab.session.sessionId, tab.session.serverId) : null,
     }));
     const mru = state.localSettings.sessionMruOrderV1;
+    const extra = [
+        ...(session.serverId ? [{ sessionId: session.sessionId, serverId: session.serverId }] : []),
+        ...tabs.flatMap(tab => tab.session?.serverId ? [{ sessionId: tab.session.sessionId, serverId: tab.session.serverId }] : []),
+    ];
+    const addressByKey = buildSessionSwitcherAddressIndex(state as never, extra);
+    const normalizedMru = moveSessionMruEntryToFront({ order: Array.isArray(mru) ? mru : [], activeSessionKey: null,
+        maxEntries: Array.isArray(mru) ? mru.length : 0,
+        knownSessionEntries: Array.from(addressByKey, ([sessionKey, address], index) => ({ index, sessionKey, ...address })) });
     const entries = resolveSessionSwitcherRecentPool({
         currentKey,
-        mruSessionKeys: Array.isArray(mru) ? mru : [],
+        mruSessionKeys: normalizedMru,
         openTabs,
     });
     const tabsById = new Map<string, SessionSwitcherTabPresentation>(tabs.map((tab) => [tab.id, {
@@ -82,11 +90,10 @@ export function readSessionAllTabs(params: Readonly<{
             ? { sessionId: tab.session.sessionId, serverId: tab.session.serverId }
             : null,
     }]));
-    const extra = session.serverId ? [{ sessionId: session.sessionId, serverId: session.serverId }] : [];
     const rows = readSessionSwitcherRows({
         entries,
         state: state as never,
-        addressByKey: buildSessionSwitcherAddressIndex(state as never, extra),
+        addressByKey,
         tabsById,
         draftScope: getActiveServerAccountScope(),
         nowMs: Date.now(),

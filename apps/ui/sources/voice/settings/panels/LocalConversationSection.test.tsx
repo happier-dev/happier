@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import {
   readLocalConversationVoiceSettings,
   voiceSettingsDefaults,
@@ -10,11 +11,21 @@ import {
   type VoiceLocalConversationSettings,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
-import { renderSettingsView, type SettingsViewHarness } from '@/dev/testkit';
+import { createDeferred, renderSettingsView, type SettingsViewHarness } from '@/dev/testkit';
 import { t } from '@/text';
 import { PluginProjectionV2Schema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
+import { storage } from '@/sync/domains/state/storage';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
+import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 
 (
@@ -24,43 +35,19 @@ import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceCon
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
+const routeParams = vi.hoisted(() => ({ value: {} as Record<string, string> }));
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  return createExpoRouterMock({ params: () => routeParams.value }).module;
+});
 // The daemon registry RPC is the system boundary; settings normalization,
 // catalog resolution, and the selected execution target stay real.
-const registryDescribe = vi.hoisted(() => vi.fn());
+const registryDescribe = vi.hoisted(() => vi.fn<
+  typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe
+>());
 vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>(),
   machineContributionRegistryProjectionDescribe: registryDescribe,
-}));
-const daemonProjectionState = vi.hoisted((): { current: any } => ({
-  current: {
-    phase: 'ready' as const,
-    inputs: {
-      mergedProviderProjectionById: {
-        'com.acme.voice.agent': {
-          agentId: 'com.acme.voice.agent',
-          qualifiedId: 'com.acme.voice.agent',
-          identity: { pluginId: 'com.acme.voice', localId: 'agent' },
-          installedPackage: null,
-          projectionGeneration: 7,
-          title: 'Acme Voice',
-          subtitle: 'External conversation Agent',
-          channel: 'plugin' as const,
-          isBuiltIn: false,
-          settingsBackendId: null,
-          catalogAgentId: null,
-          iconAgentId: null,
-          cli: null,
-          connectedAccounts: null,
-          ui: null,
-        },
-      },
-      mergedBackendProjectionById: {},
-      discoveredBackendIds: [],
-      pluginProjectionById: {},
-      pluginProjectionV2: null,
-      registryDiagnostics: [],
-    },
-  },
 }));
 
 vi.mock('react-native', async () => {
@@ -112,60 +99,16 @@ vi.mock('@/components/ui/forms/Switch', () => ({
   Switch: (props: any) => React.createElement('Switch', props),
 }));
 
-vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-  useEnabledAgentIds: () => ['codex', 'claude'],
-}));
-
-vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-  useDaemonMergedProjectionInputs: () => daemonProjectionState.current,
-}));
-
-vi.mock('@/sync/domains/models/modelOptions', () => ({
-    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
-        options?.find?.((option: any) => option.value === effectiveModelId)
-            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
-            ?? null,
-  getModelOptionsForAgentType: () => [
-    { value: 'default', label: 'Default', description: '' },
-    { value: 'm1', label: 'Model 1', description: 'Fast' },
-  ],
-}));
-
-const settingsState: { current: { recentMachinePaths: any[] } } = {
-  current: { recentMachinePaths: [{ machineId: 'machine-1', path: '/tmp/repo' }] },
-};
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-    useSettings: () => settingsParse({}),
-    useSetting: (key: string) => {
-      if (key === 'recentMachinePaths') return settingsState.current.recentMachinePaths;
-      return null;
-    },
-});
-});
-
-const preflightModelsCallSpy = vi.fn();
-vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
-  useNewSessionPreflightModelsState: (args: any) => {
-    preflightModelsCallSpy(args);
-    return {
-    preflightModels: {
-      availableModels: [{ id: 'codex-dynamic-1', name: 'Codex Dynamic 1', description: 'Dynamic list' }],
-      supportsFreeform: true,
-    },
-    modelOptions: [
-      { value: 'default', label: 'Default', description: '' },
-      { value: 'm1', label: 'Model 1', description: 'Fast' },
-      { value: 'codex-dynamic-1', label: 'Codex Dynamic 1', description: 'Dynamic list' },
-    ],
-    probe: { phase: 'idle', refreshedAt: 1, refresh: () => {} },
-    };
-  },
+// Model discovery crosses the daemon RPC boundary; model/preflight owners remain real.
+const capabilitiesInvoke = vi.hoisted(() => vi.fn<typeof import('@/sync/ops/capabilities').machineCapabilitiesInvoke>());
+vi.mock('@/sync/ops/capabilities', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/ops/capabilities')>(),
+  machineCapabilitiesInvoke: capabilitiesInvoke,
 }));
 
 vi.mock('@/voice/settings/panels/localStt/LocalVoiceSttGroup', () => ({
-  LocalVoiceSttGroup: () => null,
+  // The recognizer picker is its own suite; the Hear rows it hosts (hands-free, interrupting) stay real.
+  LocalVoiceSttGroup: (props: { children?: React.ReactNode }) => props.children ?? null,
 }));
 vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({
   LocalVoiceTtsGroup: () => null,
@@ -175,19 +118,6 @@ vi.mock('@/agents/runtime/resumeCapabilities', () => ({
 }));
 vi.mock('@/voice/agent/resetGlobalVoiceAgentPersistence', () => ({
   resetGlobalVoiceAgentPersistence: vi.fn(),
-}));
-
-vi.mock('@/sync/store/hooks', () => ({
-  useAllMachines: () => [
-    { id: 'machine-1', active: true, createdAt: 1, updatedAt: 1, activeAt: 1, seq: 1, metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/h', homeDir: '/u' }, metadataVersion: 1, daemonState: null, daemonStateVersion: 1 },
-    { id: 'machine-2', active: false, createdAt: 2, updatedAt: 2, activeAt: 2, seq: 1, metadata: { host: 'm2', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/h', homeDir: '/u' }, metadataVersion: 1, daemonState: null, daemonStateVersion: 1 },
-  ],
-  useLocalSetting: () => 1,
-}));
-
-const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
 type LocalConversationAgentOverrides = Partial<VoiceLocalConversationSettings['agent']> & {
@@ -252,7 +182,21 @@ function findChoiceByTitle(
   return findDropdownByItemTriggerTitle(screen, title) ?? findSegmentedChoiceByTitle(screen, title);
 }
 
-beforeEach(() => {
+/** Opens "Advanced agent behaviour", the disclosure that holds the Voice agent's lifecycle, commit and streaming rows. */
+function openAdvancedAgent(screen: Pick<SettingsViewHarness, 'findAll'>) {
+  const disclosure = screen.findAll((node) => node.props?.testID === 'settings.voice.local.advancedAgent'
+    && typeof node.props?.onExpandedChange === 'function')[0];
+  if (!disclosure) throw new Error('Expected the advanced agent disclosure');
+  act(() => disclosure.props.onExpandedChange(true));
+}
+
+beforeEach(async () => {
+  routeParams.value = {};
+  await upsertAndActivateServer({ serverUrl: 'https://voice-selection.example.test', scope: 'tab' });
+  // Secure credential storage and registry RPC are boundaries; projection and catalog hooks stay real.
+  vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+    token: 'header.eyJzdWIiOiJ2b2ljZS1hY2NvdW50In0.signature',
+  });
   clearDaemonMergedProjectionCacheForTests();
   registryDescribe.mockResolvedValue({
     supported: true,
@@ -264,28 +208,183 @@ beforeEach(() => {
           id: 'com.acme.voice.agent',
           identity: { pluginId: 'com.acme.voice', localId: 'agent' },
           title: 'Acme Voice',
+          subtitle: 'External conversation Agent',
           capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
         },
-      },
-      backendsById: {
-        'com.acme.voice.agent': { id: 'com.acme.voice.agent', agentId: 'com.acme.voice.agent' },
       },
       familiesById: {},
     }),
   });
   platformOsMock.value = 'ios';
-  featureEnabledState['voice.agent'] = true;
-  daemonProjectionState.current.phase = 'ready';
-  settingsState.current.recentMachinePaths = [{ machineId: 'machine-1', path: '/tmp/repo' }];
-  preflightModelsCallSpy.mockClear();
+  resetServerFeaturesClientForTests();
+  setRuntimeFetch(vi.fn(async () => new Response(JSON.stringify(buildServerFeaturesResponse({ voiceEnabled: true })), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  })));
+  storage.setState({
+    settings: settingsParse({ experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true } }),
+    machines: {
+      'machine-1': createMachineFixture({ activeAt: Date.now() }),
+      'machine-2': createMachineFixture({ id: 'machine-2', active: false, createdAt: 2, updatedAt: 2, activeAt: 2 }),
+    },
+  });
+  storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-1', path: '/tmp/repo' }] });
+  resetDynamicModelProbeCacheForTests();
+  capabilitiesInvoke.mockReset();
+  capabilitiesInvoke.mockResolvedValue({ supported: true, response: { ok: true, result: {
+    availableModels: [{ id: 'm1', name: 'Model 1' }, { id: 'codex-dynamic-1', name: 'Codex Dynamic 1' }],
+    supportsFreeform: true,
+  } } });
 });
+afterEach(() => { vi.restoreAllMocks(); });
 
+// Collect the real renderer graph before timed interactions (cold transforms are not behavior).
+const localConversationModule = await import('@/voice/settings/panels/LocalConversationSection');
 async function loadLocalConversationSection() {
-  const mod = await import('@/voice/settings/panels/LocalConversationSection');
-  return mod.LocalConversationSection;
+  return localConversationModule.LocalConversationSection;
 }
 
 describe('LocalConversationSection', () => {
+  it('shows Hear timing in seconds but saves milliseconds through the existing owner', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const defaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const voice = createLocalConversationVoice({ handsFree: {
+      ...defaults.handsFree, enabled: true, endpointing: { silenceMs: 800, minSpeechMs: 300 },
+    } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const silence = screen.findAll((node) => node.props.fieldTestID === 'settings.voice.local.handsFree.silenceMs.field')[0]!;
+    expect(silence.props.value).toBe('0.8');
+    act(() => silence.props.onCommit('1.2'));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).handsFree.endpointing).toEqual({ silenceMs: 1200, minSpeechMs: 300 });
+  });
+  it.each(['permissionIntent', 'idleTtlSeconds', 'chatModelId', 'commitModelId'] as const)(
+    'reveals the real %s row and inline editor without changing settings', async (id) => {
+      const LocalConversationSection = await loadLocalConversationSection();
+      const setVoice = vi.fn();
+      const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+        agentSource: 'agent', chatModelSource: 'custom', chatModelId: 'unlisted-chat',
+        commitModelSource: 'custom', commitModelId: 'unlisted-commit',
+      } });
+      const render = () => <LocalConversationSection voice={voice} setVoice={setVoice} />;
+      const screen = await renderSettingsView(render());
+      const setting = VOICE_CONVERSATIONS_SETTINGS.settings[id];
+      routeParams.value = { setting: setting.anchor };
+      await act(async () => screen.update(render()));
+      expect(screen.findAllByProps({ nativeID: `setting-${setting.anchor}` }).length).toBeGreaterThan(0);
+      expect(screen.findAllByProps({ testID: `setting-reveal.${setting.anchor}` }).length).toBeGreaterThan(0);
+      if (id === 'idleTtlSeconds' || id === 'commitModelId') {
+        expect(screen.findAll((node) => node.props.testID === 'settings.voice.local.advancedAgent'
+          && node.props.expanded === true).length).toBeGreaterThan(0);
+      }
+      if (id === 'chatModelId' || id === 'commitModelId') {
+        const field = screen.findAll((node) => node.props.fieldTestID === `settings.voice.local.${id}.custom.field`)[0];
+        expect(field?.props.value).toBe(id === 'chatModelId' ? 'unlisted-chat' : 'unlisted-commit');
+      }
+      expect(setVoice).not.toHaveBeenCalled();
+    },
+  );
+  it('refuses an unavailable Agent choice, preserves it, and allows leaving or enabling it', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    storage.getState().applySettingsLocal({ featureToggles: { 'voice.agent': false, 'execution.runs': true } });
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({ conversationMode: 'direct_session' });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const choice = () => findSegmentedChoiceByTitle(screen, t('settingsVoice.pages.conversations.talkToTitle'));
+    expect(choice()?.props.options.find((option: { id: string }) => option.id === 'agent').unavailableReason).toBeTruthy();
+    act(() => choice()?.props.onChange('agent'));
+    expect(setVoice).not.toHaveBeenCalled();
+    const stored = createLocalConversationVoice({ conversationMode: 'agent' });
+    await act(async () => screen.update(<LocalConversationSection voice={stored} setVoice={setVoice} />));
+    expect(choice()?.props.value).toBe('agent');
+    act(() => choice()?.props.onChange('direct_session'));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]?.[0]).conversationMode).toBe('direct_session');
+    setVoice.mockClear();
+    await act(async () => storage.getState().applySettingsLocal({ featureToggles: { 'voice.agent': true, 'execution.runs': true } }));
+    await act(async () => screen.update(<LocalConversationSection voice={voice} setVoice={setVoice} />));
+    expect(choice()?.props.options.find((option: { id: string }) => option.id === 'agent').unavailableReason).toBeUndefined();
+    act(() => choice()?.props.onChange('agent'));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]?.[0]).conversationMode).toBe('agent');
+  });
+  it.each(['sticky', 'replacement', 'unavailable'] as const)('keeps the %s execution target for Agent identities and models', async (kind) => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'com.a.voice.agent', chatModelSource: 'custom',
+      ...(kind === 'replacement' ? { machineTargetMode: 'fixed', machineTargetId: 'old-a' }
+        : { autoTargetMachineId: 'a' }),
+    } });
+    storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
+    expect(storage.getState().settings.voice.executionMachine).toEqual(voice.executionMachine);
+    storage.setState({ machines: {
+      a: createMachineFixture({ id: 'a', active: kind !== 'unavailable', activeAt: kind === 'unavailable' ? 1 : Date.now() }),
+      b: createMachineFixture({ id: 'b', activeAt: Date.now() }),
+      ...(kind === 'replacement' ? { 'old-a': createMachineFixture({ id: 'old-a', active: false, replacedByMachineId: 'a' }) } : {}),
+    } });
+    storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'b', path: '/recent' }] });
+    registryDescribe.mockImplementation(async (machineId) => ({ supported: true, projection: PluginProjectionV2Schema.parse({
+      v: 2, generation: machineId === 'a' ? 10 : 20, familiesById: {},
+      agentsById: { [`com.${machineId}.voice.agent`]: { id: `com.${machineId}.voice.agent`,
+        identity: { pluginId: `com.${machineId}.voice`, localId: 'agent' }, title: `Agent ${machineId}`,
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      } },
+    }) }));
+    capabilitiesInvoke.mockImplementation(async (machineId) => ({ supported: true, response: { ok: true, result: {
+      availableModels: [{ id: `model-${machineId}`, name: `Model ${machineId}` }], supportsFreeform: true,
+    } } }));
+    const setVoice = vi.fn();
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
+    const models = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    if (kind === 'unavailable') {
+      expect(picker?.props.selectedId).toBe('com.a.voice.agent');
+      expect(picker?.props.items.some((item: { id: string }) => item.id === 'com.b.voice.agent')).toBe(false);
+      expect(capabilitiesInvoke).not.toHaveBeenCalled();
+      expect(setVoice).not.toHaveBeenCalled();
+    } else {
+      expect(picker?.props.items.map((item: { id: string }) => item.id)).toContain('com.a.voice.agent');
+      expect(models?.props.items.map((item: { id: string }) => item.id)).toContain('model-a');
+      act(() => picker?.props.onSelect('com.a.voice.agent'));
+      expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]?.[0]).agent).toMatchObject({
+        agentIdentity: { pluginId: 'com.a.voice', localId: 'agent' }, agentProjectionGeneration: 10,
+      });
+    }
+  });
+  it('reveals the requested custom Agent editor without changing the selected Agent', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        agentSource: 'agent',
+        agentId: 'com.acme.voice.agent',
+        agentTargetKey: 'agent:com.acme.voice/agent',
+        agentIdentity: { pluginId: 'com.acme.voice', localId: 'agent' },
+        agentProjectionGeneration: 7,
+      },
+    });
+    const render = () => <LocalConversationSection voice={voice} setVoice={setVoice} />;
+    const screen = await renderSettingsView(render());
+    expect(screen.findAll((node) => node.props.fieldTestID === 'settings.voice.local.agentId.custom.field')).toHaveLength(0);
+
+    routeParams.value = { setting: VOICE_CONVERSATIONS_SETTINGS.settings.customAgent.anchor };
+    await act(async () => screen.update(render()));
+
+    const field = screen.findAll((node) => node.props.fieldTestID === 'settings.voice.local.agentId.custom.field')[0];
+    expect(field).toBeDefined();
+    expect(field?.props.value).toBe('com.acme.voice.agent');
+    expect(screen.findAllByProps({ nativeID: `setting-${VOICE_CONVERSATIONS_SETTINGS.settings.customAgent.anchor}` }).length).toBeGreaterThan(0);
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
+  it('does not select a fixed Agent to reveal a custom Agent request', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    routeParams.value = { setting: VOICE_CONVERSATIONS_SETTINGS.settings.customAgent.anchor };
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: { agentSource: 'session' } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    expect(screen.findAll((node) => node.props.fieldTestID === 'settings.voice.local.agentId.custom.field')).toHaveLength(0);
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
   it('offers the current machine external Agent with its exact projected identity', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
@@ -426,7 +525,6 @@ describe('LocalConversationSection', () => {
   });
 
   it('does not offer an external Agent from a retained non-current projection', async () => {
-    daemonProjectionState.current.phase = 'loading';
     const LocalConversationSection = await loadLocalConversationSection();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
@@ -434,6 +532,13 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const refresh = createDeferred<Awaited<ReturnType<typeof registryDescribe>>>();
+    registryDescribe.mockImplementationOnce(() => refresh.promise);
+    await act(async () => {
+      publishMachineContributionRegistryProjectionInvalidation({
+        machineId: 'machine-1', serverId: getActiveServerSnapshot().serverId,
+      });
+    });
     const agentPicker = findDropdownByItemTriggerTitle(
       screen,
       t('settingsVoice.local.mediatorAgentId'),
@@ -442,6 +547,35 @@ describe('LocalConversationSection', () => {
     expect(agentPicker?.props.items).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'com.acme.voice.agent' }),
     ]));
+    await act(async () => { refresh.resolve({ supported: false, reason: 'not-supported' }); });
+  });
+
+  it('preserves exact catalog facts when a custom commit leaves the normalized Agent id unchanged', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        agentSource: 'agent',
+        agentId: 'com.acme.voice.agent',
+        agentTargetKey: 'agent:com.acme.voice/agent',
+        agentIdentity: { pluginId: 'com.acme.voice', localId: 'agent' },
+        agentProjectionGeneration: 7,
+      },
+    });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    act(() => {
+      findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'))?.props.onSelect('__custom__');
+    });
+    const field = screen.findAll((node) => node.props?.fieldTestID === 'settings.voice.local.agentId.custom.field')[0];
+    act(() => { field.props.onCommit('  com.acme.voice.agent  '); });
+    expect(setVoice).not.toHaveBeenCalled();
+    expect(readLocalConversationVoiceSettings(voice).agent).toMatchObject({
+      agentId: 'com.acme.voice.agent',
+      agentTargetKey: 'agent:com.acme.voice/agent',
+      agentIdentity: { pluginId: 'com.acme.voice', localId: 'agent' },
+      agentProjectionGeneration: 7,
+    });
   });
 
   it('does not expose the retired Voice-owned Chat endpoint or credential controls', async () => {
@@ -547,6 +681,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    openAdvancedAgent(screen);
     for (const title of [
       t('settingsVoice.local.mediatorAgentSource'),
       t('settingsVoice.local.mediatorAgentId'),
@@ -560,11 +695,11 @@ describe('LocalConversationSection', () => {
 
     expect(findSegmentedChoiceByTitle(
       screen,
-      t('settingsVoice.local.mediatorPermissionPolicy'),
+      t('settingsVoice.pages.conversations.itMayTitle'),
     )).not.toBeNull();
     expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeTruthy();
     expect(screen.findRowByTitle(t('settingsVoice.local.mediatorIdleTtl'))).toBeTruthy();
-    expect(preflightModelsCallSpy).toHaveBeenLastCalledWith(expect.objectContaining({ backendTarget: null }));
+    expect(capabilitiesInvoke).not.toHaveBeenCalled();
   });
 
   it('offers the default session Agent model catalog while following the current session', async () => {
@@ -612,7 +747,7 @@ describe('LocalConversationSection', () => {
 
     const screen = await renderSettingsView(<LocalConversationSection voice={localVoice} setVoice={() => {}} />);
 
-    expect(findSegmentedChoiceByTitle(screen, t('settingsVoice.local.conversationMode'))).toBeTruthy();
+    expect(findSegmentedChoiceByTitle(screen, t('settingsVoice.pages.conversations.talkToTitle'))).toBeTruthy();
 
     act(() => {
       screen.tree.update(
@@ -623,7 +758,7 @@ describe('LocalConversationSection', () => {
       );
     });
 
-    expect(findChoiceByTitle(screen, t('settingsVoice.local.conversationMode'))).toBeFalsy();
+    expect(findChoiceByTitle(screen, t('settingsVoice.pages.conversations.talkToTitle'))).toBeFalsy();
   });
 
   it('renders the fixed Agent dropdown when agentSource=agent', async () => {
@@ -704,6 +839,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    openAdvancedAgent(screen);
     const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.commitModelId.title'));
     expect(modelDropdown?.props.selectedId).toBe('m1');
   });
@@ -744,12 +880,9 @@ describe('LocalConversationSection', () => {
 
     await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
 
-    expect(preflightModelsCallSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'backend', backendId: 'acme-agent' },
-      // Without naming the Agent, the preflight resolves a non-bundled backend id to
-      // no Agent at all and probes nothing.
-      runtimeCarrierAgentId: 'acme-agent',
-    }));
+    expect(capabilitiesInvoke).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+      params: expect.objectContaining({ backendTarget: { kind: 'backend', backendId: 'acme-agent' } }),
+    }), expect.anything());
   });
 
   it('uses the fixed voice agent machine id when preflighting models', async () => {
@@ -769,7 +902,7 @@ describe('LocalConversationSection', () => {
 
     await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
 
-    expect(preflightModelsCallSpy).toHaveBeenCalledWith(expect.objectContaining({ selectedMachineId: 'machine-1' }));
+    expect(capabilitiesInvoke.mock.calls.map(([machineId]) => machineId)).toEqual(['machine-1']);
   });
 
   it('uses the resolved auto machine id when preflighting models', async () => {
@@ -788,7 +921,7 @@ describe('LocalConversationSection', () => {
 
     await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
 
-    expect(preflightModelsCallSpy).toHaveBeenCalledWith(expect.objectContaining({ selectedMachineId: 'machine-1' }));
+    expect(capabilitiesInvoke.mock.calls.map(([machineId]) => machineId)).toEqual(['machine-1']);
   });
 
   it('does not render a second agent-only execution-machine owner', async () => {
@@ -832,9 +965,9 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    openAdvancedAgent(screen);
     const switchTitles = [
       t('settingsVoice.local.conversation.handsFree.enableTitle'),
-      t('settingsVoice.local.conversation.providerResumeFallback.title'),
       t('settingsVoice.local.conversation.prewarm.title'),
       t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle'),
       t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle'),
@@ -882,6 +1015,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    openAdvancedAgent(screen);
     const policyChoice = findSegmentedChoiceByTitle(screen, t('settingsVoice.local.conversation.rootSessionPolicy.title'));
     expect(policyChoice?.props.value).toBe('keep_warm');
     expect(policyChoice?.props.options.map((option: { id: string }) => option.id)).toEqual(['single', 'keep_warm']);
@@ -889,7 +1023,7 @@ describe('LocalConversationSection', () => {
 
   it('hides Agent-only commit isolation when voice.agent is disabled', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    featureEnabledState['voice.agent'] = false;
+    storage.getState().applySettingsLocal({ featureToggles: { 'voice.agent': false, 'execution.runs': true } });
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
@@ -900,6 +1034,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    openAdvancedAgent(screen);
     expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeFalsy();
   });
 
@@ -915,26 +1050,30 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    openAdvancedAgent(screen);
     expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeTruthy();
   });
-  it('edits the network timeout in place, moved to its bounds', async () => {
+  it('offers hands-free for every endpoint-driven recognizer and keeps it visible, locked, for a batch recognizer', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    const setVoice = vi.fn();
-    const voice = createLocalConversationVoice();
-    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const defaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const handsFreeTitle = t('settingsVoice.local.conversation.handsFree.enableTitle');
 
-    // `Item` is mocked in this file, so the field is reached through the row's right-hand control.
-    const field = () => screen.findAll((node) => String(node.type) === 'Item'
-      && node.props?.rightElement?.props?.testID === 'settings.voice.local.networkTimeoutMs.field')[0]?.props.rightElement;
-    expect(field()?.props.value).toBe(String(readLocalConversationVoiceSettings(voice).networkTimeoutMs));
-    await act(async () => {
-      field()!.props.onChangeText('100');
-    });
-    await act(async () => {
-      field()!.props.onBlur();
-    });
+    const neural = await renderSettingsView(<LocalConversationSection
+      voice={createLocalConversationVoice({ stt: { ...defaults.stt, provider: 'local_neural' } })}
+      setVoice={() => {}}
+    />);
+    const neuralRow = neural.findRowByTitle(handsFreeTitle);
+    expect(neuralRow).toBeTruthy();
+    expect(neuralRow?.props.rightElement?.props.disabled).not.toBe(true);
 
-    const written = setVoice.mock.calls.at(-1)?.[0] as VoiceSettings;
-    expect(readLocalConversationVoiceSettings(written).networkTimeoutMs).toBe(1000);
+    const batch = await renderSettingsView(<LocalConversationSection
+      voice={createLocalConversationVoice({ stt: { ...defaults.stt, provider: 'happier.voice.openai-compat/stt' } })}
+      setVoice={() => {}}
+    />);
+    const batchRow = batch.findRowByTitle(handsFreeTitle);
+    expect(batchRow).toBeTruthy();
+    expect(batchRow?.props.rightElement?.props.disabled).toBe(true);
+    expect(typeof batchRow?.props.subtitle).toBe('string');
   });
+
 });

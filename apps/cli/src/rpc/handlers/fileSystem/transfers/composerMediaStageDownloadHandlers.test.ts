@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';

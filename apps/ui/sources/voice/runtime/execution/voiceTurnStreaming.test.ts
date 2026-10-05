@@ -139,9 +139,13 @@ function createHandle(client: VoiceAgentClient): VoiceAgentHandle {
     };
 }
 
+// Initialize the boundary snapshot before loading the real owner graph once at collection.
+// Each case below replaces that snapshot; module reloads are not state isolation.
+stateRef.current = createState();
+await import('./voiceTurnStreaming');
+
 describe('createVoiceTurnStreaming', () => {
     beforeEach(() => {
-        vi.resetModules();
         vi.clearAllMocks();
         stateRef.current = createState();
         storageListeners.clear();

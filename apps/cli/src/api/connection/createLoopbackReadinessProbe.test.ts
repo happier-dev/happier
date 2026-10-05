@@ -84,6 +84,29 @@ describe('createLoopbackReadinessProbe', () => {
     }
   });
 
+  it('accepts authenticated readiness beyond the old five-second phase cutoff', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_expected' } },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })));
+      axiosGet.mockImplementation(async (_url: string, options: { timeout: number }) => await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('authentication probe timed out')), options.timeout);
+        setTimeout(() => {
+          clearTimeout(timeout);
+          resolve({ status: 200 });
+        }, 6_000);
+      }));
+      const readiness = createLoopbackReadinessProbe({
+        serverUrl: 'http://127.0.0.1:48123', token: 'account-token', expectedServerIdentityId: 'srv_expected',
+      })();
+      await vi.advanceTimersByTimeAsync(6_000);
+      await expect(readiness).resolves.toEqual({ status: 'ready' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('consumes only the bounded feature stream before rejecting an oversized Home identity payload', async () => {
     let chunksRead = 0;
     const cancel = vi.fn();

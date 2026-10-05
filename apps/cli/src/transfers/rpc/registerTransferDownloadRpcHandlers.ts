@@ -1,9 +1,9 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { parseTransferRecipientPublicKeyBase64 } from '@/machines/transfer/transferChunkEncryption';
+import { parseTransferRecipientPublicKeyBase64 } from '@happier-dev/transfers/node';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionAttachmentDownloadInitRequestV1Schema, type SessionAttachmentDownloadInitRequestV1 } from '@happier-dev/protocol';
 
-import { TransferSessionStore } from '../core/transferSessionStore';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import {
   resolveComposerMediaStageDownloadSource,
   type ComposerMediaStageDownloadInitRequest,

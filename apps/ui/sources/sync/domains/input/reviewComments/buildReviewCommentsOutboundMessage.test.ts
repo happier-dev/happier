@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildReviewCommentsOutboundMessage as buildCanonicalReviewCommentsOutboundMessage, withParticipantRecipientV1 } from '@happier-dev/protocol';
 
 import { buildReviewCommentsOutboundMessage } from './buildReviewCommentsOutboundMessage';
 
@@ -23,6 +24,17 @@ const draft = {
 };
 
 describe('buildReviewCommentsOutboundMessage', () => {
+    it('materializes the same exact review input for the host Action and canonical Run recipient', () => {
+        const params = { sessionId: 'session-1', drafts: [draft, { ...draft, id: 'detached', includeInPrompt: false }],
+            additionalMessage: 'Saved stop explanation at revision 3' };
+        const canonical = buildCanonicalReviewCommentsOutboundMessage(params);
+        expect(canonical).toEqual(buildReviewCommentsOutboundMessage(params));
+        expect(canonical.text).toContain(draft.snapshot.selectedLines[0]);
+        expect(canonical.text).toContain(params.additionalMessage);
+        expect(withParticipantRecipientV1(canonical.metaOverrides, { kind: 'execution_run', runId: 'writer' })).toMatchObject({
+            happier: { kind: 'review_comments.v1', payload: { comments: [expect.objectContaining({ id: draft.id })] } },
+        });
+    });
     it('preserves attachment metadata alongside review comment metadata', () => {
         const outbound = buildReviewCommentsOutboundMessage({
             sessionId: 'session-1',

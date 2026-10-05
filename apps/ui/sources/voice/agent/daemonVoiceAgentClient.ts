@@ -107,8 +107,11 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
             modelSelection: chatModelSelection,
           }
         : {}),
-      ...(commitModelSelection
-        ? { intentInput: { commitModelSelection } }
+      ...(commitModelSelection || params.voicePolicy
+        ? { intentInput: {
+            ...(commitModelSelection ? { commitModelSelection } : {}),
+            ...(params.voicePolicy ? { voicePolicy: params.voicePolicy } : {}),
+          } }
         : {}),
       ...(params.sessionConfigOptionOverrides
         ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
@@ -219,6 +222,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     voiceAgentId: string;
     userText: string;
     displayUserText?: string;
+    speechSegmentTargetChars?: number;
     resume?: boolean;
     userTranscript?: ExecutionRunUserTranscriptDirective;
   }>): Promise<{ streamId: string }> {
@@ -231,6 +235,9 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       payload: {
         runId: params.voiceAgentId,
         message: params.userText,
+        ...(params.speechSegmentTargetChars !== undefined
+          ? { speechSegmentTargetChars: params.speechSegmentTargetChars }
+          : {}),
         ...(typeof params.displayUserText === 'string' && params.displayUserText.trim().length > 0
           ? { displayMessage: params.displayUserText }
           : {}),

@@ -25,7 +25,7 @@ import {
     SESSION_HEADER_PULL_ARM_PX,
     resolveSessionHeaderPullFrame,
     resolveSessionHeaderPullRelease,
-} from './sessionHeaderPull';
+} from './sessionHeaderPullGesture';
 
 /**
  * The session-title pull (lab round 2b, frame P): press the header's identity or title, drag down,

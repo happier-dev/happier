@@ -48,6 +48,13 @@ export function buildActiveTerminalHostHandleFromMetadata(
   terminal: NonNullable<Metadata['terminal']>,
 ): TerminalHostHandle | null {
   if (terminal.controlServiceabilityV1?.retired === true) return null;
+  return buildTerminalHostHandleFromMetadata(terminal);
+}
+
+/** Historical placement is a restoration hint, never an active ownership proof. */
+export function buildTerminalHostHandleFromMetadata(
+  terminal: NonNullable<Metadata['terminal']>,
+): TerminalHostHandle | null {
   const attachmentId = terminal.controlServiceabilityV1?.attachmentId?.trim();
   const common = {
     ...(attachmentId ? { attachmentId: attachmentId as NonNullable<TerminalHostHandle['attachmentId']> } : {}),

@@ -5,17 +5,7 @@ import {
   buildBackendTargetKeyV2,
   FeaturesResponseSchema,
 } from '@happier-dev/protocol';
-import {
-  primeServerFeaturesSnapshot,
-  resetServerFeaturesClientForTests,
-  type ServerFeaturesSnapshot,
-} from '@/sync/api/capabilities/serverFeaturesClient';
-import {
-  readDynamicModelProbeCache,
-  writeDynamicModelProbeCacheSuccess,
-  DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
-  resetDynamicModelProbeCacheForTests,
-} from '@/sync/domains/models/dynamicModelProbeCache';
+import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import type { MachineContributionRegistryProjectionDescribeResult } from '@/sync/ops/machineContributionRegistryProjection';
@@ -112,13 +102,12 @@ installVoiceToolActionImplCommonModuleMocks({
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
       storage: {
-        getState: () => state,
+        getState: () => ({ ...state }),
       } as typeof import('@/sync/domains/state/storage').storage,
     });
   },
 });
 
-import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://voice-test.invalid', runtimeOrigin: 'https://voice-test.invalid', generation: 1 }),
   getActiveServerHomeCarrier: () => null,
@@ -143,6 +132,17 @@ vi.mock('@/sync/ops/capabilities', () => ({
 vi.mock('@/providers/rpc/client', () => ({
   describeProviderModels: (...args: any[]) => describeProviderModelsMock(...args),
 }));
+
+// These owners reach the storage graph; initialize after the fixture installer
+// has registered its options rather than selecting its default storage branch.
+const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+const {
+  readDynamicModelProbeCache,
+  writeDynamicModelProbeCacheSuccess,
+  DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
+  resetDynamicModelProbeCacheForTests,
+} = await import('@/sync/domains/models/dynamicModelProbeCache');
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 
 describe('agent catalog voice tools', () => {
   beforeEach(() => {
@@ -308,7 +308,7 @@ describe('agent catalog voice tools', () => {
   it('uses daemon merged projection titles for discovered/plugin backend labels when machineId is provided', async () => {
     state.settings.backendEnabledByTargetKey = {
       ...state.settings.backendEnabledByTargetKey,
-      'backend:plugin-review-bot': true,
+      'agent:acme.review/review-bot': true,
     };
 
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -317,8 +317,9 @@ describe('agent catalog voice tools', () => {
         v: 2,
         generation: 1,
         agentsById: {
-          'plugin:review-bot': {
-            id: 'plugin:review-bot',
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            identity: { pluginId: 'acme.review', localId: 'review-bot' },
             title: 'Review Bot Plugin',
             // V2 addresses the plugin backend through its Agent.
             settingsBackendId: 'plugin-review-bot',
@@ -333,7 +334,7 @@ describe('agent catalog voice tools', () => {
 
     const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
     const res: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
-    const pluginItem = (res?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
+    const pluginItem = (res?.items ?? []).find((i: any) => i.targetKey === 'agent:acme.review/review-bot');
     expect(pluginItem).toBeTruthy();
     expect(pluginItem.label).toBe('Review Bot Plugin');
   });
@@ -341,7 +342,7 @@ describe('agent catalog voice tools', () => {
   it('returns a coherent plugin backend item and model-list roundtrip when a runtime carrier is projected', async () => {
     state.settings.backendEnabledByTargetKey = {
       ...state.settings.backendEnabledByTargetKey,
-      'backend:plugin-review-bot': true,
+      'agent:acme.review/review-bot': true,
     };
 
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -350,8 +351,9 @@ describe('agent catalog voice tools', () => {
         v: 2,
         generation: 1,
         agentsById: {
-          'plugin:review-bot': {
-            id: 'plugin:review-bot',
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            identity: { pluginId: 'acme.review', localId: 'review-bot' },
             title: 'Review Bot Plugin',
             // V2 addresses the plugin backend through its Agent.
             settingsBackendId: 'plugin-review-bot',
@@ -382,7 +384,7 @@ describe('agent catalog voice tools', () => {
 
     const { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } = await import('./agentCatalogList');
     const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
-    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:plugin-review-bot');
+    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'agent:acme.review/review-bot');
     expect(pluginItem).toBeTruthy();
     expect(pluginItem.agentId).toBe('claude');
 
@@ -400,7 +402,6 @@ describe('agent catalog voice tools', () => {
         method: 'probeModels',
         params: {
           timeoutMs: 15_000,
-          backendTarget: { kind: 'builtInAgent', agentId: 'plugin-review-bot' },
         },
       },
       { serverId: 'server-a' },
@@ -420,7 +421,7 @@ describe('agent catalog voice tools', () => {
   it('lists models for an externally installed Agent that has no bundled carrier', async () => {
     state.settings.backendEnabledByTargetKey = {
       ...state.settings.backendEnabledByTargetKey,
-      'backend:acme-review': true,
+      'agent:acme.review/agents/reviewer': true,
     };
 
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -431,6 +432,7 @@ describe('agent catalog voice tools', () => {
         agentsById: {
           'acme-review': {
             id: 'acme-review',
+            identity: { pluginId: 'acme.review', localId: 'agents/reviewer' },
             title: 'Acme Review',
             subtitle: undefined,
             channel: 'plugin',
@@ -457,7 +459,7 @@ describe('agent catalog voice tools', () => {
 
     const { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } = await import('./agentCatalogList');
     const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, machineId: 'm1' } as any);
-    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'backend:acme-review');
+    const pluginItem = (backends?.items ?? []).find((i: any) => i.targetKey === 'agent:acme.review/agents/reviewer');
     expect(pluginItem).toBeTruthy();
     expect(pluginItem.agentId).toBe('acme-review');
 
@@ -474,7 +476,6 @@ describe('agent catalog voice tools', () => {
         method: 'probeModels',
         params: {
           timeoutMs: 15_000,
-          backendTarget: { kind: 'builtInAgent', agentId: 'acme-review' },
         },
       },
       { serverId: 'server-a' },
@@ -532,18 +533,7 @@ describe('agent catalog voice tools', () => {
     });
   });
 
-  it('lists models for an externally installed Agent named only by its backend target', async () => {
-    machineCapabilitiesInvoke.mockResolvedValue({
-      supported: true,
-      response: {
-        ok: true,
-        result: {
-          availableModels: [{ id: 'acme-large', name: 'Acme Large' }],
-          supportsFreeform: false,
-        },
-      },
-    });
-
+  it('rejects an external backend target without an explicit runtime carrier', async () => {
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
 
     const models: any = await listAgentModelsForVoiceTool({
@@ -551,27 +541,12 @@ describe('agent catalog voice tools', () => {
       machineId: 'm1',
     });
 
-    expect(models).not.toMatchObject({ ok: false });
-    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
-      'm1',
-      {
-        id: 'cli.acme-review',
-        method: 'probeModels',
-        params: {
-          timeoutMs: 15_000,
-          backendTarget: { kind: 'builtInAgent', agentId: 'acme-review' },
-        },
-      },
-      { serverId: 'server-a' },
-    );
-    expect(models).toMatchObject({
-      agentId: 'acme-review',
-      source: 'preflight',
-      items: [
-        { modelId: 'default', label: 'Default' },
-        { modelId: 'acme-large', label: 'Acme Large' },
-      ],
+    expect(models).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      errorMessage: 'invalid_parameters',
     });
+    expect(machineCapabilitiesInvoke).not.toHaveBeenCalled();
   });
 
   it('filters disabled backends by default (includeDisabled=false)', async () => {
@@ -648,7 +623,7 @@ describe('agent catalog voice tools', () => {
       'agent:happier.agent.pi/pi': false,
       'agent:happier.agent.copilot/copilot': false,
       'backend:team-review:configured:team-review': false,
-      'backend:plugin-review-bot': true,
+      'agent:acme.review/review-bot': true,
     };
 
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -657,8 +632,9 @@ describe('agent catalog voice tools', () => {
         v: 2,
         generation: 1,
         agentsById: {
-          'plugin:review-bot': {
-            id: 'plugin:review-bot',
+          'plugin-review-bot': {
+            id: 'plugin-review-bot',
+            identity: { pluginId: 'acme.review', localId: 'review-bot' },
             title: 'Review Bot Plugin',
             // V2 addresses the plugin backend through its Agent.
             settingsBackendId: 'plugin-review-bot',
@@ -675,10 +651,10 @@ describe('agent catalog voice tools', () => {
 
     const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
     const backends: any = await listAgentBackendsForVoiceTool({ includeDisabled: true, limit: 200, machineId: 'm1' } as any);
-    const pluginIndex = backends?.items?.findIndex((item: any) => item.targetKey === 'backend:plugin-review-bot') ?? -1;
+    const pluginIndex = backends?.items?.findIndex((item: any) => item.targetKey === 'agent:acme.review/review-bot') ?? -1;
     const firstDisabledIndex = backends?.items?.findIndex((item: any) => item.enabled === false) ?? -1;
     expect(backends?.items?.[pluginIndex]).toMatchObject({
-      targetKey: 'backend:plugin-review-bot',
+      targetKey: 'agent:acme.review/review-bot',
       label: 'Review Bot Plugin',
       agentId: 'claude',
       enabled: true,
@@ -711,7 +687,7 @@ describe('agent catalog voice tools', () => {
 
     expect(res).toMatchObject({
       source: 'static',
-      supportsFreeform: true,
+      supportsFreeform: false,
       items: [
         { modelId: 'default', label: 'Default' },
       ],

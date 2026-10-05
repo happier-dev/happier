@@ -7,12 +7,12 @@ export type EmbeddedTerminalDockLocation = 'sidebar' | 'details' | 'bottom';
 export const SESSION_PRIMARY_TERMINAL_INSTANCE_ID = 'embedded';
 export const SESSION_DETAILS_TERMINAL_TAB_KEY = buildTerminalDetailsTabKey(SESSION_PRIMARY_TERMINAL_INSTANCE_ID);
 
-export function createSessionDetailsTerminalTab(params?: Readonly<{
-    terminalInstanceId?: string | null;
+export function createSessionDetailsTerminalTab(params: Readonly<{
+    terminalInstanceId: string;
 }>) {
     return createTerminalDetailsTab({
         title: t('settings.terminal'),
-        terminalInstanceId: params?.terminalInstanceId ?? undefined,
+        terminalInstanceId: params.terminalInstanceId,
     });
 }
 
@@ -21,13 +21,6 @@ export function createPrimarySessionDetailsTerminalTab() {
         title: t('settings.terminal'),
         terminalInstanceId: SESSION_PRIMARY_TERMINAL_INSTANCE_ID,
     });
-}
-
-export function openNewSessionDetailsTerminalTab(pane: AppPaneScopeApi): void {
-    pane.openDetailsTab(
-        createSessionDetailsTerminalTab(),
-        { intent: 'pinned' },
-    );
 }
 
 /** Move an existing terminal's view, never its PTY, into pinned Details. */
@@ -69,16 +62,11 @@ export function closeEmbeddedTerminalOutsideDockLocation(params: Readonly<{
 
 export function openEmbeddedTerminalInDockLocation(params: Readonly<{
     pane: AppPaneScopeApi;
-    dockLocation: EmbeddedTerminalDockLocation;
+    dockLocation: 'sidebar' | 'bottom';
 }>): void {
     if (params.dockLocation === 'bottom') {
         params.pane.openBottom({ tabId: 'terminal' });
         params.pane.setBottomTab('terminal');
-        return;
-    }
-
-    if (params.dockLocation === 'details') {
-        params.pane.openDetailsTab(createPrimarySessionDetailsTerminalTab(), { intent: 'pinned' });
         return;
     }
 

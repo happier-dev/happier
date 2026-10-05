@@ -181,11 +181,12 @@ describe('bundledSpeechRuntime', () => {
     await expect(runtime.transcribeRecordedAudio(CATALOG_STT_ID, {
       uri: 'file:///recording.wav',
       providerConfig: { catalogModel: 'gemini-test', language: 'fr' },
-      fallbackLanguage: 'en',
+      capturePurpose: 'dictation',
     })).resolves.toBe('hello from package');
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: CATALOG_STT_ID }),
       mimeType: 'audio/wav',
+      capturePurpose: 'dictation',
       source: { kind: 'native', uri: 'file:///recording.wav' },
     }));
     expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('model');
@@ -203,7 +204,6 @@ describe('bundledSpeechRuntime', () => {
     await expect(runtime.transcribeRecordedAudio(CATALOG_STT_ID, {
       uri: 'file:///recording.wav',
       providerConfig: null,
-      fallbackLanguage: 'en',
     })).rejects.toMatchObject({ code: 'provider_settings_invalid' });
     expect(transcribe).not.toHaveBeenCalled();
   });
@@ -346,7 +346,6 @@ describe('bundledSpeechRuntime', () => {
     await expect(runtime.transcribeRecordedAudio(CATALOG_STT_ID, {
       uri: 'file:///recording.wav',
       providerConfig: { catalogModel: 'acme-v2', language: '' },
-      fallbackLanguage: 'de',
     })).resolves.toBe('acme result');
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: CATALOG_STT_ID }),
@@ -383,7 +382,6 @@ describe('bundledSpeechRuntime', () => {
     await expect(runtime.transcribeRecordedAudio(fake.providerId('text-stt'), {
       uri: 'file:///recording.wav',
       providerConfig: { model: 'whisper-custom' },
-      fallbackLanguage: 'en',
     })).resolves.toBe('openai-compatible result');
     expect(transcribe).toHaveBeenCalledOnce();
     expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('model');

@@ -10,6 +10,8 @@ import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
+import { ToolFindText } from '../core/ToolFindText';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 
 
 type HistoryPreviewItem = { role?: string; text?: string };
@@ -19,7 +21,7 @@ function asPreviewList(input: unknown): HistoryPreviewItem[] {
   return input
     .filter((v) => v && typeof v === 'object')
     .map((v) => {
-      const obj = v as any;
+      const obj = v as Record<string, unknown>;
       return {
         role: typeof obj.role === 'string' ? obj.role : undefined,
         text: typeof obj.text === 'string' ? obj.text : undefined,
@@ -27,7 +29,41 @@ function asPreviewList(input: unknown): HistoryPreviewItem[] {
     });
 }
 
-export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
+function readHistoryImportDisplay(tool: ToolViewProps['tool']) {
+  const input = tool.input && typeof tool.input === 'object' ? tool.input as Record<string, unknown> : null;
+  const provider = typeof input?.provider === 'string' ? input.provider : 'acp';
+  const remoteSessionId = typeof input?.remoteSessionId === 'string' ? input.remoteSessionId : undefined;
+  const previewText = (item: HistoryPreviewItem) => `${item.role ?? t('tools.acpHistoryImport.preview.unknownRole')}: ${item.text ?? ''}`;
+  return {
+    title: t('tools.acpHistoryImport.title'),
+    subtitle: `${provider}${remoteSessionId ? ` • ${remoteSessionId}` : ''}`,
+    note: typeof input?.note === 'string' ? input.note : t('tools.acpHistoryImport.defaultNote'),
+    localCount: typeof input?.localCount === 'number' ? t('tools.acpHistoryImport.counts.local', { count: input.localCount }) : null,
+    remoteCount: typeof input?.remoteCount === 'number' ? t('tools.acpHistoryImport.counts.remote', { count: input.remoteCount }) : null,
+    localHeader: t('tools.acpHistoryImport.preview.localTail'),
+    remoteHeader: t('tools.acpHistoryImport.preview.remoteTail'),
+    localTail: asPreviewList(input?.localTail).map(previewText),
+    remoteTail: asPreviewList(input?.remoteTail).map(previewText),
+  };
+}
+
+export const projectAcpHistoryImportDisplayText: ToolDisplayTextProjector = (tool) => {
+  if (!resolvePermissionRequestId(tool)) return [];
+  const display = readHistoryImportDisplay(tool);
+  return [
+    ...toolTextBlock('tool-history-title', display.title),
+    ...toolTextBlock('tool-history-subtitle', display.subtitle),
+    ...toolTextBlock('tool-history-note', display.note),
+    ...toolTextBlock('tool-history-local-count', display.localCount),
+    ...toolTextBlock('tool-history-remote-count', display.remoteCount),
+    ...toolTextBlock('tool-history-local-header', display.localTail.length ? display.localHeader : null),
+    ...display.localTail.flatMap((text, index) => toolTextBlock(`tool-history-local-${index}`, text)),
+    ...toolTextBlock('tool-history-remote-header', display.remoteTail.length ? display.remoteHeader : null),
+    ...display.remoteTail.flatMap((text, index) => toolTextBlock(`tool-history-remote-${index}`, text)),
+  ];
+};
+
+export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId, interaction, messageId }) => {
   const source = useSessionTranscriptSource();
   const sourceInteraction = source.useInteraction();
   const actions = source.actions;
@@ -42,14 +78,8 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   const disabledMessage =
     resolvePermissionDisabledMessage(interaction?.permissionDisabledReason ?? sourceInteraction.permissionDisabledReason);
 
-  const input = tool.input as any;
-  const provider = typeof input?.provider === 'string' ? input.provider : 'acp';
-  const remoteSessionId = typeof input?.remoteSessionId === 'string' ? input.remoteSessionId : undefined;
-  const localCount = typeof input?.localCount === 'number' ? input.localCount : undefined;
-  const remoteCount = typeof input?.remoteCount === 'number' ? input.remoteCount : undefined;
-  const localTail = asPreviewList(input?.localTail);
-  const remoteTail = asPreviewList(input?.remoteTail);
-  const note = typeof input?.note === 'string' ? input.note : undefined;
+  const display = readHistoryImportDisplay(tool);
+  const { localTail, remoteTail } = display;
 
   const isPending =
     tool.permission?.status === 'pending'
@@ -84,13 +114,9 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   return (
     <ToolSectionView>
       <View style={styles.container}>
-        <Text style={styles.title}>{t('tools.acpHistoryImport.title')}</Text>
-        <Text style={styles.subtitle}>
-          {provider}{remoteSessionId ? ` • ${remoteSessionId}` : ''}
-        </Text>
-        <Text style={styles.body}>
-          {note ?? t('tools.acpHistoryImport.defaultNote')}
-        </Text>
+        <ToolFindText text={display.title} blockId="tool-history-title" messageId={messageId} style={styles.title} />
+        <ToolFindText text={display.subtitle} blockId="tool-history-subtitle" messageId={messageId} style={styles.subtitle} />
+        <ToolFindText text={display.note} blockId="tool-history-note" messageId={messageId} style={styles.body} />
 
         {isPending && !canApprovePermissions ? (
           <Text style={[styles.body, { color: theme.colors.text.secondary }]}>
@@ -98,10 +124,10 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
           </Text>
         ) : null}
 
-        {(typeof localCount === 'number' || typeof remoteCount === 'number') && (
+        {(display.localCount !== null || display.remoteCount !== null) && (
           <View style={styles.countRow}>
-            {typeof localCount === 'number' && <Text style={styles.countText}>{t('tools.acpHistoryImport.counts.local', { count: localCount })}</Text>}
-            {typeof remoteCount === 'number' && <Text style={styles.countText}>{t('tools.acpHistoryImport.counts.remote', { count: remoteCount })}</Text>}
+            {display.localCount !== null && <ToolFindText text={display.localCount} blockId="tool-history-local-count" messageId={messageId} style={styles.countText} />}
+            {display.remoteCount !== null && <ToolFindText text={display.remoteCount} blockId="tool-history-remote-count" messageId={messageId} style={styles.countText} />}
           </View>
         )}
 
@@ -109,21 +135,17 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
           <View style={styles.previewContainer}>
             {localTail.length > 0 && (
               <View style={styles.previewBlock}>
-                <Text style={styles.previewHeader}>{t('tools.acpHistoryImport.preview.localTail')}</Text>
+                <ToolFindText text={display.localHeader} blockId="tool-history-local-header" messageId={messageId} style={styles.previewHeader} />
                 {localTail.map((m, idx) => (
-                  <Text key={idx} style={styles.previewLine} numberOfLines={2}>
-                    {(m.role ?? t('tools.acpHistoryImport.preview.unknownRole'))}: {m.text ?? ''}
-                  </Text>
+                  <ToolFindText key={idx} text={m} blockId={`tool-history-local-${idx}`} messageId={messageId} style={styles.previewLine} numberOfLines={2} />
                 ))}
               </View>
             )}
             {remoteTail.length > 0 && (
               <View style={styles.previewBlock}>
-                <Text style={styles.previewHeader}>{t('tools.acpHistoryImport.preview.remoteTail')}</Text>
+                <ToolFindText text={display.remoteHeader} blockId="tool-history-remote-header" messageId={messageId} style={styles.previewHeader} />
                 {remoteTail.map((m, idx) => (
-                  <Text key={idx} style={styles.previewLine} numberOfLines={2}>
-                    {(m.role ?? t('tools.acpHistoryImport.preview.unknownRole'))}: {m.text ?? ''}
-                  </Text>
+                  <ToolFindText key={idx} text={m} blockId={`tool-history-remote-${idx}`} messageId={messageId} style={styles.previewLine} numberOfLines={2} />
                 ))}
               </View>
             )}

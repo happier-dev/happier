@@ -32,6 +32,8 @@ function makeSettings(account: Readonly<Record<string, unknown>> = {}) {
     return attachAgentPluginSettings(makeHostSettings(), { account });
 }
 
+const makeAccountScopedAgentSettings = makeSettings;
+
 describe('buildSpawnSessionExtrasFromUiState', () => {
     it('projects OpenCode settings into strict configuration without a raw spawn environment', () => {
         const settings = makeSettings({

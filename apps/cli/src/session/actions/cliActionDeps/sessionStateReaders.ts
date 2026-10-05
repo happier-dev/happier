@@ -11,6 +11,7 @@ import {
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { normalizeSessionMetadataForRead } from '@happier-dev/protocol';
+import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 
 export function normalizeLimit(value: unknown): number | null {
   const parsed = Number(value);
@@ -42,11 +43,13 @@ function readStoredSessionRecord(
   }
 }
 
-export function readSessionMetadata(
+/** Opens released layout-0 snapshots; layout-1 owner facts require the Account reader. */
+export function readSessionLegacyMetadata(
   params: Readonly<{
-    rawSession?: Readonly<{ metadata?: unknown }> | null;
+    rawSession?: Readonly<{ metadata?: unknown; metadataLayoutVersion?: unknown }> | null;
   }> & SessionStoredContentCryptoContext,
 ): Record<string, unknown> | null {
+  if (readSessionMetadataLayoutVersion(params.rawSession?.metadataLayoutVersion) !== 0) return null;
   try {
     return normalizeSessionMetadataForRead(readStoredSessionRecord({
       ...params,

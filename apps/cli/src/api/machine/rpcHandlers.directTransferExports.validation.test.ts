@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { deriveWorkspaceSyncConflictOperationId } from '@happier-dev/protocol';
 
 import { registerMachineDirectTransferExportRpcHandlers } from './rpcHandlers.directTransferExports';
 import type { RpcHandlerRegistrar } from '../rpc/types';
+import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
 
 type Handler = (data: unknown) => Promise<unknown>;
 
@@ -24,6 +28,32 @@ function createRpcHandlerRegistrar(): {
 }
 
 describe('direct transfer export request validation', () => {
+    it('admits publication confinement to the real file source and preserves ordinary exports', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'artifact-export-admission-'));
+        try {
+            const workspace = join(root, 'workspace');
+            await mkdir(workspace);
+            await writeFile(join(workspace, 'inside.txt'), 'inside');
+            await writeFile(join(root, 'outside.txt'), 'outside');
+            const registrar = createRpcHandlerRegistrar();
+            registerMachineDirectTransferExportRpcHandlers({ rpcHandlerManager: registrar.registrar,
+                prepareExportSession: async request => {
+                    if (request.t !== 'workspace_file_download_v1') throw new Error('Unexpected export');
+                    const source = await resolveWorkspaceFileDownloadSource({ ...request,
+                        confinedToWorkingDirectory: Reflect.get(request, 'confinedToWorkingDirectory') === true });
+                    if (!source.success) throw new Error(source.error);
+                    return { transferId: source.source.name, endpointCandidates: [], expiresAt: 9000, sizeBytes: source.source.sizeBytes };
+                } });
+            const handler = registrar.handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)!;
+            const request = { t: 'workspace_file_download_v1', workingDirectory: workspace, asZip: false };
+            await expect(handler({ ...request, path: 'inside.txt', confinedToWorkingDirectory: true }))
+                .resolves.toMatchObject({ success: true, transferId: 'inside.txt', sizeBytes: 6 });
+            await expect(handler({ ...request, path: '../outside.txt', confinedToWorkingDirectory: true }))
+                .resolves.toMatchObject({ success: false });
+            await expect(handler({ ...request, path: '../outside.txt' }))
+                .resolves.toMatchObject({ success: true, transferId: 'outside.txt', sizeBytes: 7 });
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it('accepts a valid workspace file export when reviewed resolution export is also registered', async () => {
         const prepareExportSession = vi.fn(async () => ({ transferId: 'workspace-export', endpointCandidates: [], expiresAt: 9_000 }));
         const registrar = createRpcHandlerRegistrar();

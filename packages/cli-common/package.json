@@ -223,6 +223,16 @@
       "import": "./dist/componentArtifacts/index.js",
       "default": "./dist/componentArtifacts/index.js"
     },
+    "./firstPartyRuntime/componentCatalog": {
+      "types": "./dist/firstPartyRuntime/componentCatalog.d.ts",
+      "import": "./dist/firstPartyRuntime/componentCatalog.js",
+      "default": "./dist/firstPartyRuntime/componentCatalog.js"
+    },
+    "./firstPartyRuntime/selfHostServerEnv": {
+      "types": "./dist/firstPartyRuntime/selfHostServerEnv.d.ts",
+      "import": "./dist/firstPartyRuntime/selfHostServerEnv.js",
+      "default": "./dist/firstPartyRuntime/selfHostServerEnv.js"
+    },
     "./firstPartyRuntime": {
       "types": "./dist/firstPartyRuntime/index.d.ts",
       "import": "./dist/firstPartyRuntime/index.js",

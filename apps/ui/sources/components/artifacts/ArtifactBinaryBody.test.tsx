@@ -104,7 +104,10 @@ describe('ArtifactBinaryBody', () => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
         const source = binarySource('image/png');
         const urls: Blob[] = [];
-        vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { urls.push(blob); return 'blob:private-image'; });
+        vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+            if (!(blob instanceof Blob)) throw new Error('Expected binary preview Blob');
+            urls.push(blob); return 'blob:private-image';
+        });
         const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         try {
             const screen = await renderScreen(<ArtifactBinaryBody artifactId="image" name="image.png" {...source} />);
@@ -131,7 +134,10 @@ describe('ArtifactBinaryBody', () => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
         const source = binarySource('text/html');
         const downloaded: Blob[] = [];
-        vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { downloaded.push(blob); return 'blob:download'; });
+        vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+            if (!(blob instanceof Blob)) throw new Error('Expected binary download Blob');
+            downloaded.push(blob); return 'blob:download';
+        });
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         const anchor = { href: '', download: '', rel: '', style: {}, click: vi.fn(), remove: vi.fn() };
         vi.stubGlobal('document', { createElement: () => anchor, body: { appendChild: () => {} } });

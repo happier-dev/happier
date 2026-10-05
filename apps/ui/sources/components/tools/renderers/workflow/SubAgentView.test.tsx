@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import type { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
-import { renderScreen } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit';
+import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 import {
     installWorkflowRendererCommonModuleMocks,
 } from './workflowRendererTestHelpers';
@@ -91,14 +93,29 @@ describe('SubAgentView', () => {
     ) {
         const { SubAgentView } = await import('./SubAgentView');
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(
+        tree = (await renderWithSessionTranscriptSource(React.createElement(
                     SubAgentView,
                     makeToolViewProps(tool, { messages, ...(detailLevel ? { detailLevel } : {}) }),
-                ))).tree;
+                ), createTestSessionTranscriptSource({ messages }))).tree;
         return tree;
     }
 
     describe('Summary Rendering', () => {
+        it('projects and reveals a background result and full sidechain text without hidden metadata', async () => {
+            const { SubAgentView, projectSubAgentDisplayText } = await import('./SubAgentView');
+            const tool = makeTaskTool({ input: { prompt: 'Explore', subagent_type: 'worker', hidden: 'private needle' },
+                result: { content: [{ type: 'text', text: 'Result needle' }], hidden: 'private needle' } });
+            const messages = [makeAgentTextMessage('Working needle', 1)];
+            const blocks = projectSubAgentDisplayText(tool, null, { messages });
+            expect(blocks.map((block) => block.text)).toEqual(['Explore', 'Result needle', 'Working needle']);
+            const store = createTranscriptFindRowStore();
+            store.publish(new Map([['parent', { blocks: [{ id: 'tool-thread-text-0', sourceRanges: [{ start: 8, end: 14, current: true }] }] }]]));
+            const { tree } = await renderWithSessionTranscriptSource(<TranscriptFindProvider store={store}>
+                <SubAgentView {...makeToolViewProps(tool, { messageId: 'parent', messages })} />
+            </TranscriptFindProvider>, createTestSessionTranscriptSource({ messages }));
+            expect(collectHostText(tree).join(' ')).toContain('Result needle');
+            expect(tree.findByTestId('find-match-current')?.props.children).toBe('needle');
+        });
         it('renders a summary even when there are no sub-tools', async () => {
             const tree = await renderView(
                 makeTaskTool({ input: { operation: 'create', subject: 'Validate tool testing' } }),

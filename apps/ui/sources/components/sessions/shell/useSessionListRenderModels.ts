@@ -388,14 +388,14 @@ export function useSessionListRenderModels(input: Readonly<{
     }, [input.headerFilters, input.searchOtherMatches, visibleListItems]);
     const listItems = (filteredListItems ?? []) as Array<SessionListIndexItem>;
     const existingDraftBySessionKey = React.useMemo(() => {
+        if (!draftScope) return EMPTY_SESSION_LIST_RENDER_MODELS.existingDraftBySessionKey;
         const drafts = new Map<string, ExistingSessionDraftProjection>();
-        if (!draftScope) return drafts;
         for (const item of listItems) {
             if (item.type !== 'session' || (item.serverId && item.serverId !== draftScope.serverId)) continue;
             const projection = getExistingSessionDraftProjection(draftScope, item.sessionId);
             if (projection?.listed) drafts.set(sessionTagKey(draftScope.serverId, item.sessionId), projection);
         }
-        return drafts;
+        return drafts.size === 0 ? EMPTY_SESSION_LIST_RENDER_MODELS.existingDraftBySessionKey : drafts;
     }, [draftListRevision, draftScope, listItems]);
     const selectionScopeListItems = React.useMemo(() => {
         const items = input.paneState.visibleSessionListIndex;

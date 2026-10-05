@@ -191,7 +191,7 @@ function expectOnlyMainMessagesRequest(params: {
 }
 
 async function seedLargeGapLoadedSession(): Promise<{ sync: typeof import('./sync').sync }> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     const syncForTest = sync as unknown as SyncCatchUpTestAccess;
     sync.disconnectServer();
 
@@ -243,7 +243,7 @@ describe('sync catch-up visibility gate', () => {
     });
 
     it('catches up hidden Claude Unified persisted transcript updates when returning to the session', async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const syncForTest = sync as unknown as SyncCatchUpTestAccess & {
             markSessionTranscriptDeferred: (sessionId: string, marker: { updateType: 'new-message'; seq: number; messageId: string }) => void;
         };

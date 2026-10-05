@@ -19,6 +19,8 @@ function machineProjection(input: Readonly<{
     generation: number;
     entriesById: Readonly<Record<string, unknown>>;
     actionsById?: Readonly<Record<string, unknown>>;
+    resourcesById?: Readonly<Record<string, unknown>>;
+    inputTypesById?: Readonly<Record<string, unknown>>;
     installedPackagesById?: Readonly<Record<string, unknown>>;
 }>) {
     return normalizePluginUiProjection({
@@ -29,10 +31,11 @@ function machineProjection(input: Readonly<{
         actionsById: input.actionsById ?? {},
         toolsById: {},
         commandsById: {},
-        resourcesById: {},
+        resourcesById: input.resourcesById ?? {},
         settingsById: {},
         familiesById: {
             pluginUi: { family: 'pluginUi', entriesById: input.entriesById },
+            inputTypes: { family: 'inputTypes', entriesById: input.inputTypesById ?? {} },
         },
         diagnostics: [],
     } as never);
@@ -107,6 +110,7 @@ function member(input: Readonly<{
     generation?: number;
     entriesById?: Readonly<Record<string, unknown>>;
     actionsById?: Readonly<Record<string, unknown>>;
+    resourcesById?: Readonly<Record<string, unknown>>;
     installedPackagesById?: Readonly<Record<string, unknown>>;
     producerOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     phase?: PluginUiProjectionUnionMember['phase'];
@@ -130,6 +134,7 @@ function member(input: Readonly<{
                     input.producerOriginsByPluginId,
                 ),
                 installedPackagesById: input.installedPackagesById,
+                resourcesById: input.resourcesById,
         }),
         phase: input.phase ?? (input.interactionEnabled === false ? 'retainedOffline' : 'current'),
         interactionEnabled: input.interactionEnabled ?? true,
@@ -152,6 +157,57 @@ function selectedOrigins(...origins: readonly PluginMachineExecutionOriginV1[]):
 }
 
 describe('unionPluginUiProjections', () => {
+    it('retains a schema-only input type from its selected serving occurrence without a UI sibling', () => {
+        const pluginId = 'acme.types';
+        const origin = selectedOrigin(pluginId, 'machine-a');
+        const type = { id: `${pluginId}/repository`, pluginId, pluginVersion: '1.0.0', occurrenceId: 'current',
+            definition: { id: 'repository', title: 'Repository', semantic: 'repository', valueSchema: { type: 'string' as const } },
+            ...origin };
+        const projection = machineProjection({ generation: 3, entriesById: {},
+            inputTypesById: { [type.id]: type }, installedPackagesById: {
+                [pluginId]: { id: pluginId, displayName: 'Types', version: '1.0.0', enabled: true,
+                    occurrenceId: 'current', source: { kind: 'bundled', locator: pluginId } },
+            } });
+        const source = { machineId: 'machine-a', serverId: 'server-1', projection,
+            phase: 'current', interactionEnabled: true } as const;
+        const admitted = unionPluginUiProjections([source], selectedOrigins(origin)).pluginUiProjection?.inputTypesById[type.id];
+        expect(admitted).toMatchObject({ occurrenceId: 'current', definition: type.definition });
+        expect(readPluginUiContributionOrigin(admitted)).toMatchObject({ executionOrigin: origin, machineId: 'machine-a' });
+        expect(unionPluginUiProjections([source], selectedOrigins({ ...origin,
+            materializationRef: { ...origin.materializationRef, materializationId: 'another-materialization' },
+        })).pluginUiProjection?.inputTypesById[type.id]).toBeUndefined();
+        const retired = { ...projection, inputTypesById: { [type.id]: { ...type, occurrenceId: 'retired' } } };
+        expect(unionPluginUiProjections([{ ...source, projection: retired }], selectedOrigins(origin))
+            .pluginUiProjection?.inputTypesById[type.id]).toBeUndefined();
+        const originless = { ...projection, inputTypesById: { [type.id]: { ...type,
+            serverIdentityId: undefined, materializationRef: undefined } } };
+        expect(unionPluginUiProjections([{ ...source, projection: originless }], new Map())
+            .pluginUiProjection?.inputTypesById[type.id]).toMatchObject({ occurrenceId: 'current' });
+    });
+    it('admits a Resource-only plugin from its exact selected producer origin and current occurrence', () => {
+        const pluginId = 'acme.data';
+        const selected = selectedOrigin(pluginId, 'machine-a');
+        const resource = (machineId: string, occurrenceId: string) => ({
+            id: 'report', pluginId, resourceKind: 'config', scope: 'global',
+            contentType: 'application/json', digest: null, occurrenceId,
+            ...selectedOrigin(pluginId, machineId),
+        });
+        const source = (machineId: string, occurrenceId: string, resourceOccurrenceId = occurrenceId) => member({
+            machineId, generation: machineId === 'machine-a' ? 3 : 99,
+            resourcesById: { [`${pluginId}/report`]: resource(machineId, resourceOccurrenceId) },
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Data', version: '1.0.0',
+                enabled: true, occurrenceId, source: { kind: 'bundled', locator: pluginId } } },
+        });
+        const union = unionPluginUiProjections([source('machine-b', 'b'), source('machine-a', 'a')], selectedOrigins(selected));
+        const admitted = union.pluginUiProjection?.resourcesById[`${pluginId}/report`];
+        expect(admitted).toMatchObject({ occurrenceId: 'a' });
+        expect(readPluginUiContributionOrigin(admitted)).toMatchObject({ machineId: 'machine-a', executionOrigin: selected });
+        expect(union.pluginUiProjection?.installedPackagesById[pluginId]).toMatchObject({ occurrenceId: 'a' });
+        expect(union.pluginUiProjection?.surfacePlacementsById).toEqual({});
+        expect(unionPluginUiProjections([source('machine-b', 'b')], selectedOrigins(selected)).pluginUiProjection).toBeNull();
+        expect(unionPluginUiProjections([source('machine-a', 'a', 'retired')], selectedOrigins(selected)).pluginUiProjection).toBeNull();
+        expect(unionPluginUiProjections([source('machine-a', 'a')], new Map()).pluginUiProjection).toBeNull();
+    });
     it('keeps Composer maps empty in the app union instead of becoming a Composer catalog owner', () => {
         const selected = selectedOrigin('acme.inspector', 'machine-a');
         const source = member({
@@ -180,7 +236,7 @@ describe('unionPluginUiProjections', () => {
         expect(union.pluginUiProjection?.composerRegionsById).toEqual({});
     });
 
-    it('publishes one frozen empty Resource scope rather than unioning or origin-stamping Resources', () => {
+    it('retains Resources only from the same selected member as the plugin contribution', () => {
         const selected = selectedOrigin('acme.inspector', 'machine-a');
         const source = member({
             machineId: 'machine-a',
@@ -191,25 +247,39 @@ describe('unionPluginUiProjections', () => {
         });
         if (!source.projection) throw new Error('fixture must produce a projection');
 
+        const resource = {
+            id: 'report', pluginId: 'acme.inspector', resourceKind: 'asset' as const,
+            scope: 'global' as const, contentType: 'application/json',
+        };
         const union = unionPluginUiProjections([{
             ...source,
             projection: {
                 ...source.projection,
-                // A machine projection carries admitted Resources. App scope has
-                // no Resource consumer and no per-Resource producer stamp to
-                // select an origin from, so it must publish none rather than
-                // inventing one.
                 resourcesById: {
-                    'acme.inspector/report': { id: 'report', pluginId: 'acme.inspector' } as never,
+                    'acme.inspector/report': resource,
                 },
             },
-        }], selectedOrigins(selected));
+        }, member({
+            machineId: 'machine-b', generation: 99,
+            entriesById: { placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }) },
+            resourcesById: { 'acme.inspector/report': { ...resource, scope: 'session' } },
+        })], selectedOrigins(selected));
 
-        // The model shape stays complete: consumers read an empty scope, never
-        // `undefined`.
-        expect(union.pluginUiProjection?.resourcesById).toEqual({});
+        expect(union.pluginUiProjection?.resourcesById['acme.inspector/report']).toMatchObject(resource);
+        expect(readPluginUiContributionOrigin(union.pluginUiProjection?.resourcesById['acme.inspector/report']))
+            .toMatchObject({ machineId: 'machine-a', executionOrigin: selected });
         expect(Object.isFrozen(union.pluginUiProjection?.resourcesById)).toBe(true);
         expect(union.pluginUiProjection?.surfacePlacementsById).not.toEqual({});
+        expect(unionPluginUiProjections([source], selectedOrigins(selectedOrigin('acme.inspector', 'machine-b')))
+            .pluginUiProjection).toBeNull();
+        const originless = machineProjection({ generation: 4,
+            entriesById: { placement: placementEntry({ pluginId: 'acme.inspector', localId: 'panel' }) },
+            resourcesById: { 'acme.inspector/report': resource },
+        });
+        const originlessUnion = unionPluginUiProjections([{ ...source, projection: originless }], new Map());
+        expect(originlessUnion.pluginUiProjection?.resourcesById['acme.inspector/report']).toMatchObject(resource);
+        expect(readPluginUiContributionOrigin(originlessUnion.pluginUiProjection?.resourcesById['acme.inspector/report']))
+            .toMatchObject({ machineId: 'machine-a', executionOrigin: null });
     });
 
     it('keeps a package brand fact from the Administration-selected materialization', () => {

@@ -13,6 +13,7 @@ import {
     updateArtifact as updateArtifactApi,
     fetchArtifactRevisions,
     fetchArtifactBlob,
+    fetchArtifactHtmlPreviewLocation,
     restoreArtifactRevision,
 } from '@/sync/api/artifacts/apiArtifacts';
 import type { Encryption } from '@/sync/encryption/encryption';
@@ -41,6 +42,9 @@ import {
     withArtifactExcerptV1,
     prepareArtifactHeaderForRevisionV1,
     type ArtifactRevisionV1,
+    isArtifactHtmlHeaderV1,
+    artifactHtmlBundleFromBodyV1,
+    buildArtifactHtmlPreviewUrlV1,
 } from '@happier-dev/protocol';
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 
@@ -257,11 +261,20 @@ export async function decryptArtifactListItems(params: {
     artifacts: readonly Artifact[];
     encryption: Encryption | null;
     artifactDataKeys: ArtifactDataKeyCache;
+    includeBody?: boolean;
 }): Promise<Array<DecryptedArtifact | null>> {
     const keys = await resolveArtifactDataKeys(params);
-    return await Promise.all(params.artifacts.map((artifact) => buildDecryptedArtifactListItem({
-        artifact, encryption: params.encryption, dataKey: keys.get(artifact.id) ?? null,
-    })));
+    return await Promise.all(params.artifacts.map(async (artifact) => {
+        const dataKey = keys.get(artifact.id) ?? null;
+        if (params.includeBody) {
+            const opened = await decryptArtifactWithBody({
+                artifact, encryption: params.encryption, artifactDataKeys: params.artifactDataKeys, resolvedDataKey: dataKey,
+            });
+            if (opened?.isDecrypted) return opened;
+        }
+        // A bad body must not erase its readable identity or the other list rows.
+        return await buildDecryptedArtifactListItem({ artifact, encryption: params.encryption, dataKey });
+    }));
 }
 
 async function buildDecryptedArtifactListItem(params: {
@@ -360,6 +373,8 @@ export async function decryptArtifactWithBody(params: {
     artifact: Artifact;
     encryption: Encryption | null;
     artifactDataKeys: ArtifactDataKeyCache;
+    /** The list's batch result, including a failed unwrap; never retry it per record. */
+    resolvedDataKey?: Uint8Array | null;
 }): Promise<DecryptedArtifact | null> {
     const { artifact, encryption, artifactDataKeys } = params;
 
@@ -403,7 +418,8 @@ export async function decryptArtifactWithBody(params: {
     }
 
     try {
-        const decryptedKey = await resolveArtifactDataKey({ artifact, encryption, artifactDataKeys });
+        const decryptedKey = params.resolvedDataKey !== undefined ? params.resolvedDataKey
+            : await resolveArtifactDataKey({ artifact, encryption, artifactDataKeys });
         if (!decryptedKey) {
             return createLockedArtifactView({
                 artifact,
@@ -575,13 +591,38 @@ export async function fetchArtifactBinaryFromApi(params: Readonly<{
     if (!artifact?.isDecrypted || !artifact.storageMode) {
         throw new HappyError('Artifact file changed or is unavailable', false, { code: 'artifact_content_unavailable' });
     }
-    const stored = await fetchArtifactBlob(params.credentials, params.artifactId, params.reference.blobId, artifact.storageMode,
+    return openFetchedArtifactBinary(params, artifact.storageMode);
+}
+
+async function openFetchedArtifactBinary(params: Readonly<{
+    credentials: AuthCredentials; request?: ArtifactApiOptions['request']; artifactId: string;
+    reference: ArtifactBlobReferenceV1; artifactDataKeys: ArtifactDataKeyCache; signal?: AbortSignal;
+}>, mode: 'plain' | 'e2ee'): Promise<Uint8Array> {
+    const stored = await fetchArtifactBlob(params.credentials, params.artifactId, params.reference.blobId, mode,
         { request: params.request, signal: params.signal });
     const dataKey = params.artifactDataKeys.get(params.artifactId)?.dataKey;
-    const bytes = await openArtifactBinaryContent({ reference: params.reference, content: stored.content, mode: artifact.storageMode,
+    const bytes = await openArtifactBinaryContent({ reference: params.reference, content: stored.content, mode,
         encryption: dataKey ? new ArtifactEncryption(dataKey) : null });
     params.signal?.throwIfAborted();
     return bytes;
+}
+
+export async function fetchArtifactHtmlPreviewFromApi(params: Readonly<{
+    credentials: AuthCredentials; request?: ArtifactApiOptions['request']; artifactId: string;
+    encryption: Encryption | null; artifactDataKeys: ArtifactDataKeyCache; signal?: AbortSignal;
+    forbiddenOrigins?: readonly string[];
+    /** A row already opened by the same captured keyholding operation. */
+    artifact?: DecryptedArtifact;
+}>): Promise<string> {
+    const artifact = params.artifact ?? await fetchArtifactWithBodyFromApi(params);
+    if (!artifact?.isDecrypted || !artifact.storageMode || !isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)
+        || artifact.body === null || artifact.body === undefined)
+        throw new HappyError('HTML preview is unavailable', false, { code: 'artifact_html_preview_unavailable' });
+    const body = typeof artifact.body === 'string' ? artifact.body
+        : await openFetchedArtifactBinary({ ...params, reference: artifact.body }, artifact.storageMode);
+    const bundle = artifactHtmlBundleFromBodyV1(body, typeof artifact.body === 'string' ? undefined : artifact.body.mime);
+    const url = await fetchArtifactHtmlPreviewLocation(params.credentials, params.artifactId, params);
+    return buildArtifactHtmlPreviewUrlV1({ url, bundle, forbiddenOrigins: params.forbiddenOrigins });
 }
 
 type ArtifactRevisionReadParams = Readonly<{
@@ -693,6 +734,10 @@ export async function createArtifactWithHeaderViaApi(params: {
     addArtifact: (artifact: DecryptedArtifact) => void;
 }): Promise<string> {
     const { credentials, header, encryption, artifactDataKeys, addArtifact } = params;
+    // A retained reference belongs to an existing Artifact; only update/restore can reuse it.
+    if (params.body !== null && typeof params.body === 'object' && !('bytes' in params.body)) {
+        throw new HappyError('A new Artifact file requires its bytes', false, { code: 'artifact_invalid_body' });
+    }
     const body = prepareArtifactBody(params.body);
     requireArtifactBodyKind(header, body);
     const rawHeader = withArtifactExcerptV1(header, body);
@@ -944,8 +989,11 @@ export async function updateArtifactWithHeaderViaApi(params: {
         updateRequest.expectedHeaderVersion = headerVersion;
     }
 
-    // Only update body if it changed
-    if (params.expectedRevision || body !== currentArtifact.body) {
+    // Strict refs are schema-cloned on input; equal file metadata is not a body edit.
+    const bodyChanged = body !== null && typeof body === 'object'
+        ? stableStringifyJsonValue(body) !== stableStringifyJsonValue(currentArtifact.body)
+        : body !== currentArtifact.body;
+    if (params.expectedRevision || bodyChanged) {
         updateRequest.body = storageMode === 'plain'
             ? encodePlainArtifactStoredContent({ body })
             : await artifactEncryption!.encryptBody({ body });
@@ -955,6 +1003,8 @@ export async function updateArtifactWithHeaderViaApi(params: {
                 ...(params.body !== null && typeof params.body === 'object' && 'bytes' in params.body
                     ? { content: await sealArtifactBinaryContent(params.body.bytes, storageMode, artifactEncryption) } : {}),
             };
+        } else if (currentArtifact.body !== null && typeof currentArtifact.body === 'object') {
+            updateRequest.blob = null;
         }
     }
 

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
     AutomationV3SettingsSchema,
+    SettingsDeclarationActionOutputSchemasV1,
     type AutomationV3Settings,
 } from '@happier-dev/protocol';
 
@@ -18,6 +19,7 @@ import { Modal } from '@/modal';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { formatAutomationErrorMessage } from '@/components/automations/automationErrorFormatting';
 import { WORKFLOW_RUN_SETTINGS } from '@/components/automations/settings/workflowRunSettings';
@@ -38,6 +40,10 @@ export function AutomationSettingsScreen(): React.ReactElement {
     // remounts this route-local projection even when the route itself stays put.
     useActiveServerAccountScope();
     const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const executeAction = React.useMemo(() => createFrontDoorUiActionExecutor(undefined, accountLifetime ? {
+        serverId: accountLifetime.scope.serverId,
+        expectedAccountId: accountLifetime.scope.accountId,
+    } : undefined), [accountLifetime]);
     const [settings, setSettings] = React.useState<AutomationV3Settings | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [loadFailed, setLoadFailed] = React.useState(false);
@@ -91,14 +97,15 @@ export function AutomationSettingsScreen(): React.ReactElement {
         };
     }, [accountLifetime, refresh]);
 
-    const applySettings = React.useCallback(async (next: AutomationV3Settings) => {
+    const applySetting = React.useCallback(async (anchor: string, value: number | AutomationV3Settings['runRetention']) => {
         if (saving) return;
         const requestAccountLifetime = accountLifetime;
         const requestEpoch = requestEpochRef.current + 1;
         requestEpochRef.current = requestEpoch;
         setSaving(true);
         try {
-            const updated = await sync.updateAutomationSettings(next);
+            SettingsDeclarationActionOutputSchemasV1['settings.set'].parse(await executeAction('settings.set', { anchor, value }));
+            const updated = await sync.getAutomationSettings();
             if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
             setSettings(updated);
         } catch (error) {
@@ -112,7 +119,7 @@ export function AutomationSettingsScreen(): React.ReactElement {
                 setSaving(false);
             }
         }
-    }, [accountLifetime, saving]);
+    }, [accountLifetime, executeAction, saving]);
 
     // The limit is typed in place (`FieldValueItem`). A value the settings contract rejects is not
     // written, and the field says why until the draft changes.
@@ -134,16 +141,13 @@ export function AutomationSettingsScreen(): React.ReactElement {
             return;
         }
         setMaxActiveRunsInvalid(false);
-        void applySettings(candidate.data);
-    }, [applySettings, saving, settings]);
+        void applySetting(WORKFLOW_RUN_SETTINGS.settings.maxActiveRunsPerMachine.anchor, candidate.data.maxActiveRunsPerMachine);
+    }, [applySetting, saving, settings]);
 
     const handleRetentionChange = React.useCallback((keepForever: boolean) => {
         if (settings === null || saving) return;
-        void applySettings({
-            ...settings,
-            runRetention: keepForever ? 'keepForever' : 'thirtyDays',
-        });
-    }, [applySettings, saving, settings]);
+        void applySetting(WORKFLOW_RUN_SETTINGS.settings.runRetention.anchor, keepForever ? 'keepForever' : 'thirtyDays');
+    }, [applySetting, saving, settings]);
 
     // The page keeps its header through loading and failure, so nothing above the settings moves
     // when they arrive.

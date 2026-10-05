@@ -154,7 +154,7 @@ export type BackendExecutionSurfaces = Readonly<{
     ) => ReturnType<NonNullable<AgentSessionRuntimeFactory['resolveTerminalPresentation']>>;
     terminalRuntime: AnyTerminalRuntimeOps | null;
     externalSession: ExternalSessionExecutionSurface | null;
-    attach: (AttachSurfaceV1 & Partial<Pick<HostProviderCliAttachSurface, 'attachManaged'>>) | null;
+    attach: (AttachSurfaceV1 & Partial<Pick<HostProviderCliAttachSurface, 'attachManaged' | 'prepareInvocation'>>) | null;
     handoff: HandoffSurfaceV1 | null;
     fork: ForkSurfaceV1 | null;
     checkpoint: CheckpointSurfaceV1 | null;

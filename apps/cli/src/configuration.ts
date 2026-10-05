@@ -24,7 +24,7 @@ import {
   resolveServerSelection,
 } from './configuration/serverSelection'
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS, type ClientEncryptionRequirement } from '@happier-dev/protocol'
-import { FILES_TRANSFER_CHUNK_CONFIG_MAX_BYTES } from './configuration/fileTransferLimits'
+import { readFiniteTransferConfig } from '@happier-dev/transfers/node'
 import { TerminalPresentUserPolicySchema, type TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 
 export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 100_000_000;
@@ -402,15 +402,9 @@ class Configuration {
       min: 1, max: 10_000_000, default: 2_500_000,
     });
 
-    // Default: 256KB. Defensive min: 1KB; max: 5MB.
-    this.filesTransferChunkBytes = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_CHUNK_BYTES', {
-      min: 1024, max: FILES_TRANSFER_CHUNK_CONFIG_MAX_BYTES, default: 256_000,
-    });
-
-    // Default: 10 minutes. Defensive min: 1s; max: 60 minutes.
-    this.filesTransferSessionTtlMs = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_SESSION_TTL_MS', {
-      min: 1000, max: 60 * 60_000, default: 10 * 60_000,
-    });
+    const fileTransferConfig = readFiniteTransferConfig(process.env);
+    this.filesTransferChunkBytes = fileTransferConfig.chunkSizeBytes;
+    this.filesTransferSessionTtlMs = fileTransferConfig.ttlMs;
 
     // Default: 50MB. Defensive minimum: 1 byte.
     this.filesUploadMaxFileBytes = resolveIntEnvWithBounds('HAPPIER_FILES_UPLOAD_MAX_FILE_BYTES', {

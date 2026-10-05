@@ -194,7 +194,7 @@ import {
     resolveFilesystemAccessPolicy,
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
+import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { Socket } from 'socket.io-client';
@@ -939,6 +939,7 @@ export class ApiMachineClient {
         // even when no session is currently active.
         registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             accessPolicy: this.filesystemAccessPolicy,
+            machineId: this.machine.id,
         });
     }
 
@@ -1582,13 +1583,25 @@ export class ApiMachineClient {
     async callConnectedClientRpc<TResult = unknown>(
         method: string,
         params: unknown,
-        options?: Readonly<{ timeoutMs?: number; signal?: AbortSignal; onIssued?: () => void }>,
+        options?: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void }>,
     ): Promise<Readonly<{ ok: true; result: TResult }> | Readonly<{ ok: false; error?: string; errorCode?: string }>> {
         const socket = this.socket;
         if (!socket) {
             return { ok: false, errorCode: 'machine_socket_unavailable' };
         }
-        const timeoutMs = options?.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 20_000;
+        const timeoutMs = options?.timeoutMs === null ? null
+            : options?.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 20_000;
+        // Caller-lifetime reverse operations have no shorter ACK deadline. The
+        // existing server advertisement retires their last answering handler.
+        const handlerRetirement = timeoutMs === null ? new AbortController() : null;
+        const signal = handlerRetirement
+            ? options?.signal ? AbortSignal.any([options.signal, handlerRetirement.signal]) : handlerRetirement.signal
+            : options?.signal;
+        const onUnregistered = (data: unknown): void => {
+            const retiredMethod = data && typeof data === 'object' && 'method' in data ? data.method : undefined;
+            if (this.normalizeConnectedClientRpcAvailabilityMethod(retiredMethod)
+                === this.normalizeMachineScopedRpcMethod(method)) handlerRetirement?.abort();
+        };
         const codec = this.machineContentCodec;
         let resultDecodeFailed = false;
         const content: SocketRpcContent = codec.mode === 'plain' ? { mode: 'plain' } : {
@@ -1601,6 +1614,7 @@ export class ApiMachineClient {
                 },
             },
         };
+        if (handlerRetirement) socket.on(SOCKET_RPC_EVENTS.UNREGISTERED, onUnregistered);
         try {
             const result = await callSocketRpc<TResult>({
                 socket,
@@ -1609,7 +1623,7 @@ export class ApiMachineClient {
                 params,
                 content,
                 timeoutMs,
-                signal: options?.signal,
+                signal,
                 onIssued: options?.onIssued,
             });
             if (socket.connected === false) return { ok: false, errorCode: 'machine_socket_unavailable' };
@@ -1622,6 +1636,8 @@ export class ApiMachineClient {
                 error: isSocketIoAckTimeoutError(error) ? 'RPC call timeout' : error instanceof Error ? error.message : 'RPC call failed',
                 ...(errorCode ? { errorCode } : {}),
             };
+        } finally {
+            if (handlerRetirement) socket.off(SOCKET_RPC_EVENTS.UNREGISTERED, onUnregistered);
         }
     }
 

@@ -8,6 +8,7 @@ import { createOnChildExited } from './onChildExited';
 import { spawnInlineNodeParentWithChild } from '@/testkit/process/spawn';
 import { once } from 'node:events';
 import type { TrackedSession } from '../types';
+import { readProcessIdentityByPid } from '../processIdentity';
 
 let temporaryHome: string | undefined;
 
@@ -46,23 +47,40 @@ it('preserves marker evidence when an exit notification has no tracked custody',
   ]);
 });
 
+it('preserves a replacement birth-only marker when exiting custody has a different start witness', async () => {
+  temporaryHome = await mkdtemp(join(tmpdir(), 'happier-birth-only-exit-'));
+  vi.stubEnv('HAPPIER_HOME_DIR', temporaryHome);
+  reloadConfiguration();
+  const pid = 54321;
+  await writeSessionMarker({ pid, happySessionId: `PID-${pid}`, startedBy: 'terminal', processStartTimeMs: 2000 });
+  const tracked: TrackedSession = { pid, happySessionId: `PID-${pid}`, startedBy: 'terminal', processStartTimeMs: 1000 };
+  const onChildExited = createOnChildExited({ pidToTrackedSession: new Map([[pid, tracked]]),
+    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  await onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+  expect(await listSessionMarkers()).toEqual([expect.objectContaining({ pid, processStartTimeMs: 2000 })]);
+});
+
 it.skipIf(process.platform === 'win32').each([false, true])('joins held accepted wrapper marker custody before live promotion or real final retirement (runner dies %s)', async (runnerDies) => {
   temporaryHome = await mkdtemp(join(tmpdir(), 'happier-wrapper-acceptance-'));
   vi.stubEnv('HAPPIER_HOME_DIR', temporaryHome);
   reloadConfiguration();
   const { parent, childPid } = await spawnInlineNodeParentWithChild();
   const pid = parent.pid!;
+  const identity = await readProcessIdentityByPid(pid);
+  expect(identity).not.toBeNull();
+  const processCommand = identity!.command;
+  const processCommandHash = processCommand ? hashProcessCommand(processCommand) : undefined;
   let acceptMarker!: (accepted: boolean) => void;
   const acceptedSpawnMarkerGate = new Promise<boolean>((resolve) => { acceptMarker = resolve; });
   let releaseCommit!: () => void;
   const commit = new Promise<void>((resolve) => { releaseCommit = resolve; });
   const tracked: TrackedSession = { pid, sessionRunnerPid: childPid, childProcess: parent,
-    happySessionId: `PID-${pid}`, startedBy: 'daemon', acceptedSpawnMarkerGate };
+    happySessionId: `PID-${pid}`, startedBy: 'daemon', acceptedSpawnMarkerGate,
+    processCommand, processCommandHash, processStartTimeMs: identity!.processStartTimeMs };
   const sessions = new Map([[pid, tracked]]);
   const accepted = commit.then(async () => {
-    const processCommand = parent.spawnargs.join(' ');
     await writeSessionMarker({ pid, happySessionId: `PID-${pid}`, startedBy: 'daemon',
-      processCommand, processCommandHash: hashProcessCommand(processCommand) });
+      processCommand, processCommandHash, processStartTimeMs: identity!.processStartTimeMs });
     acceptMarker(true);
   });
   const exit = createOnChildExited({ pidToTrackedSession: sessions,

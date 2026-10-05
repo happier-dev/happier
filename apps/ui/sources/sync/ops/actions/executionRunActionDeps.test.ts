@@ -30,7 +30,7 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunAction: sessionExecutionRunActionMock,
 }));
 
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createUiExecutionRunActionDeps } from './executionRunActionDeps';
 
 const V2_EXECUTION_RUN_CAPABILITY = {
@@ -53,6 +53,38 @@ const V2_EXECUTION_RUN_CAPABILITY = {
 describe('UI execution.run Action dependencies', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('preserves the exact Home, Account, Machine and issuance witness when answering a detached request', async () => {
+        const controller = new AbortController();
+        const onTransportIssued = vi.fn();
+        machineRpcWithServerScopeMock.mockImplementation(async (params) => {
+            params.onIssued?.();
+            return { ok: false, errorCode: 'permission_request_not_found', error: 'Not found' };
+        });
+        const request = { runId: 'run-1', requestId: 'request-1', answers: { branch: ['dev'] } };
+        expect(await createUiExecutionRunActionDeps().executionRunPermissionRespond?.(request, {
+            serverId: 'home-1', runtimeAccountId: 'account-1', executionRunTargetMachineId: 'machine-1',
+            signal: controller.signal, onTransportIssued, authority: 'present_user',
+        })).toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
+            method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND, payload: request,
+            preferScoped: true, signal: controller.signal, onIssued: onTransportIssued,
+        });
+        expect(onTransportIssued).toHaveBeenCalledOnce();
+    });
+
+    it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' } }])
+    ('keeps detached exact get observation under caller lifecycle: %j', async (wait) => {
+        machineRpcWithServerScopeMock.mockResolvedValue({ run: { runId: 'run-1' } });
+        const controller = new AbortController();
+        await createUiExecutionRunActionDeps().executionRunGet(null, { runId: 'run-1', ...wait }, {
+            targetMachineId: 'machine-1', serverId: 'server-1', signal: controller.signal,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            method: SESSION_RPC_METHODS.EXECUTION_RUN_GET, operationTimeoutMs: null, signal: controller.signal,
+        }));
     });
 
     it('keeps detached start, get, stop, and wait on the one exact machine selected by V2 preflight', async () => {

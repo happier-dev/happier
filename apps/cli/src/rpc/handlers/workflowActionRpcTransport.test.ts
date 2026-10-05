@@ -9,10 +9,13 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { updateSettings } from '@/persistence';
+import { configuration } from '@/configuration';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
@@ -88,7 +91,13 @@ async function createBoundaryHarness() {
     });
     // CLI's canonical test setup gives persistence its own per-process home.
     // Generate the real installation publisher key there instead of faking crypto.
-    await updateSettings((settings) => ({ ...settings, machineId: project.machineId }));
+    await updateSettings((settings) => ({
+        ...settings,
+        machineIdByServerId: {
+            ...settings.machineIdByServerId,
+            [configuration.activeServerId]: project.machineId,
+        },
+    }));
     const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
     let acceptedEnvelope: string | undefined;
     const storageOperations: Readonly<Record<string, unknown>>[] = [];
@@ -194,12 +203,18 @@ describe('UI Workflow targeted Action RPC boundary', () => {
     let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
 
     beforeAll(async () => {
-        // Workspace preparation uses the daemon-applied registry. Activate the
-        // real first-party Git contribution through its canonical runtime host.
+        // This fixture uses the real Git runtime. Scope its source catalog and
+        // admitted custody together so workspace resolution cannot request
+        // unrelated SCM hosting providers from an unscoped catalog.
+        const pluginId = 'happier.scm.backend.git';
+        const builtIn = resolveBuiltInContributions();
+        const contributes = createResolvedContributionRegistry({
+            scmBackends: builtIn.scmBackends?.filter((entry) => entry.pluginId === pluginId),
+            managedDependencies: builtIn.managedDependencies?.filter((entry) => entry.pluginId === pluginId),
+            activationTargets: builtIn.activationTargets?.filter((entry) => entry.pluginId === pluginId),
+        });
         runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
-            resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
-                pluginIds: ['happier.scm.backend.git'],
-            }),
+            resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ contributes, pluginIds: [pluginId] }),
         });
     });
 

@@ -22,7 +22,23 @@ const args: RuntimeActionExecuteArgs = { actionId: 'browser.automation.click', i
   context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'happier-session' } };
 
 describe('daemon browser reverse dispatch protocol boundary', () => {
-  it('preserves interrupted unknown through composed daemon and public Action settlement after an issued abort', async () => {
+  it.each(['takeControl', 'handBack'] as const)('routes %s to a client-owned slot without provisioning', async kind => {
+    const uiAutomation = createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
+      hasConnectedClientRpcHandler: method => method === uiBrowserAutomationDispatchMethod(view),
+      callConnectedClientRpc: async (_method, payload) => {
+        const wire = UiBrowserAutomationDispatchRequestV1Schema.parse(payload);
+        expect(wire.sessionId).toBe(args.context.defaultSessionId);
+        return { ok: true, result: { v: 1, status: 'dispatched', commandId: kind, adapterKind: 'localPreview', events: [],
+        } };
+      },
+    }) });
+    const execute = createBrowserDaemonRuntimeActionExecutor({ featureGate: { isEnabled: () => true, refresh: async () => {} },
+      ownsAutomationView: () => false, uiAutomation, provisionAutomationRuntime: async () => { throw new Error('UI view must not provision'); } });
+    expect(await execute({ ...args, actionId: `browser.control.${kind}`, input: { ...view, kind, commandId: kind } }))
+      .toMatchObject({ status: 'dispatched', commandId: kind });
+  });
+
+  it.each(['browser.automation.click', 'browser.control.takeControl', 'browser.control.handBack'] as const)('preserves %s interrupted unknown through composed daemon and public Action settlement after an issued abort', async actionId => {
     const abort = new AbortController();
     let began!: () => void;
     const issued = new Promise<void>(resolve => { began = resolve; });
@@ -53,8 +69,11 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
       agentsModelsList: unused, sessionSendMessage: unused, sessionPermissionRespond: unused, sessionUserActionAnswer: unused,
       sessionModeSet: unused, sessionModesList: unused, sessionTargetPrimarySet: unused, sessionTargetTrackedSet: unused,
       sessionList: unused, sessionActivityGet: unused, sessionRecentMessagesGet: unused, resetGlobalVoiceAgent: unused,
+      // Unrelated host effects fail loudly if this browser boundary fixture reaches them.
+      daemonMemorySearch: unused, daemonMemoryGetWindow: unused, daemonMemoryEnsureUpToDate: unused,
     });
-    const running = executor.execute(args.actionId, request, { ...args.context, bypassApprovals: true, signal: abort.signal });
+    const input = actionId === 'browser.automation.click' ? request : { ...view, kind: actionId === 'browser.control.takeControl' ? 'takeControl' : 'handBack', commandId: actionId };
+    const running = executor.execute(actionId, input, { ...args.context, bypassApprovals: true, signal: abort.signal });
     await issued;
     abort.abort();
     finish();

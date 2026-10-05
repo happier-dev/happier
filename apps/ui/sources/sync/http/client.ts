@@ -26,6 +26,7 @@ import {
 import { resolveActiveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 import { getActiveServerHomeCarrier } from '@/sync/domains/server/serverRuntime';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
+import { normalizeRequestBodyHeaders } from './requestBodyHeaders';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -330,6 +331,7 @@ async function requestAtEndpoint(
     const headers = compatibility?.status === 'available'
         ? compatibility.headers
         : stripAccountStoredContentCompatibilityHeader(init?.headers);
+    normalizeRequestBodyHeaders(headers, init?.body);
     const rejectedFirstKeyBearerKey =
         resolveRejectedFirstKeyBearerKey({
             serverId: context.serverId,

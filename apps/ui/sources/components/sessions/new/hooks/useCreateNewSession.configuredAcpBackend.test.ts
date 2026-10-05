@@ -101,7 +101,7 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
         return Response.json({ error: 'not_found' }, { status: 404 });
     });
     const { storage } = await import('@/sync/domains/state/storageStore');
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     configuredBackendHarnessModuleState.sync = sync;
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url')}.signature`;
     await sync.switchServer({ token });

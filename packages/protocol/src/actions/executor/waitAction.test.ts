@@ -16,15 +16,23 @@ afterEach(() => vi.useRealTimers());
 
 describe('generic wait observation', () => {
   const target = { kind: 'execution_run', serverId: 'home', machineId: 'machine', runId: 'run' } as const;
-  it('returns already-terminal evidence through the execution owner', async () => {
-    const result = await executeWaitActionV1({ target, condition: { kind: 'terminal' } }, {
+  it('returns terminal evidence only after the execution owner completes custody', async () => {
+    let release!: () => void;
+    const completion = new Promise<void>(resolve => { release = resolve; });
+    const waiting = executeWaitActionV1({ target, condition: { kind: 'terminal' } }, {
       execution: async (_target, options) => waitForExecutionRunTerminal({
         runId: target.runId, timeoutMs: options.timeoutMs, signal: options.signal,
         readRun: async () => ({ ok: true, data: { run: run('failed') } }),
-        waitForTerminal: async () => { throw new Error('Already terminal must not arm'); },
+        waitForTerminal: async () => completion,
       }),
     });
-    expect(result).toMatchObject({ disposition: 'matched', target, snapshot: { status: 'failed' } });
+    let settled = false;
+    void waiting.then(() => { settled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    expect(await waiting).toMatchObject({ disposition: 'matched', target, snapshot: { status: 'failed' } });
   });
   it('times out without stopping the admitted work', async () => {
     vi.useFakeTimers();

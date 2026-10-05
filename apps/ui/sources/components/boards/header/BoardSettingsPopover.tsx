@@ -19,6 +19,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
+import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -59,12 +60,14 @@ export const BoardSettingsButton = React.memo(function BoardSettingsButton(props
                 iconName="dots-three"
                 variant="plain"
                 accessibilityLabel={t('boards.header.settings')}
-                tooltip={t('boards.header.settings')}
+                tooltip={props.open ? undefined : t('boards.header.settings')}
                 onPress={() => onOpenChange(!props.open)}
             />
             {props.open ? (
                 <Popover
                     open
+                    phonePresentation="sheet"
+                    accessibilityLabel={t('boards.settings.title')}
                     anchorRef={anchorRef}
                     autoFocusOnOpen
                     placement="bottom"
@@ -75,16 +78,20 @@ export const BoardSettingsButton = React.memo(function BoardSettingsButton(props
                     maxHeightCap={POPOVER_MAX_HEIGHT_PX}
                     onRequestClose={close}
                 >
-                    {({ maxHeight, maxWidth }) => (
+                    {({ maxHeight, maxWidth, presentation }) => (
                         <View testID="board-settings.popover">
                             <FloatingOverlay
                                 maxHeight={Math.min(maxHeight, POPOVER_MAX_HEIGHT_PX)}
+                                scrollEnabled={false}
                                 edgeFades={{ top: true, bottom: true, size: 18 }}
                                 surfaceChrome="theme"
                                 keyboardShouldPersistTaps="always"
                                 containerStyle={{ width: Math.min(maxWidth, POPOVER_WIDTH_PX) }}
                             >
                                 <BoardSettingsContent
+                                    maxHeight={Math.min(maxHeight, POPOVER_MAX_HEIGHT_PX)}
+                                    showTitle={presentation !== 'sheet'}
+                                    onRequestClose={close}
                                     board={props.board}
                                     homes={props.homes}
                                     pickedCards={props.pickedCards}
@@ -114,6 +121,9 @@ export const BoardSettingsButton = React.memo(function BoardSettingsButton(props
 });
 
 const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Readonly<{
+    maxHeight: number;
+    showTitle: boolean;
+    onRequestClose: () => void;
     board: WorkBoardV1;
     homes: BoardHomes;
     pickedCards: readonly BoardCard[];
@@ -125,32 +135,80 @@ const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Rea
 }>) {
     const { board, dispatch } = props;
     const [name, setName] = React.useState(board.name);
+    const [managingPicks, setManagingPicks] = React.useState(false);
     const commitName = () => {
         const next = name.trim();
         if (next && next !== board.name) dispatch({ kind: 'update', boardId: board.id, patch: { name: next } });
         else setName(board.name);
     };
     const sections = new Set(board.source.sections ?? []);
-    const setSource = (next: Readonly<{ sections: readonly WorkBoardSectionV1[]; filter: boolean }>) => dispatch({
+    const toggleSection = (section: WorkBoardSectionV1) => dispatch({
         kind: 'update',
         boardId: board.id,
         patch: {
             source: {
-                ...(next.sections.length > 0 ? { sections: next.sections } : {}),
-                // "All active sessions" is the default inline filter.
-                ...(next.filter ? { filter: board.source.filter ?? normalizeSessionListFilterV1() } : {}),
+                sections: SECTIONS.filter((candidate) => (candidate === section ? !sections.has(candidate) : sections.has(candidate))),
             },
         },
     });
-    const toggleSection = (section: WorkBoardSectionV1) => setSource({
-        sections: SECTIONS.filter((candidate) => (candidate === section ? !sections.has(candidate) : sections.has(candidate))),
-        filter: board.source.filter !== undefined,
+    const toggleFilter = () => dispatch({
+        kind: 'update',
+        boardId: board.id,
+        patch: {
+            // "All active sessions" is the default inline filter; null explicitly disables it.
+            source: { filter: board.source.filter === undefined ? normalizeSessionListFilterV1() : null },
+        },
     });
-    const toggleFilter = () => setSource({ sections: [...sections], filter: board.source.filter === undefined });
 
+    const pickedStep: SelectionListStep = {
+        id: 'picked',
+        title: t('boards.settings.addedByHand'),
+        backLabel: t('boards.settings.title'),
+        inputPlaceholder: t('common.search'),
+        sections: [{ kind: 'static', id: 'picked', options: props.pickedCards.map(card => ({
+            id: card.key,
+            label: card.title,
+            subtitle: t(`boards.kinds.${card.ref.kind}`),
+            rightAccessoryOutsidePressable: true,
+            rightAccessory: <IconButton testID={`board-settings.remove.${card.key}`} iconName="x"
+                variant="plain" accessibilityLabel={t('boards.card.remove')}
+                onPress={() => props.onRemoveItem(card.ref)} />,
+        })) }],
+    };
+    const rootStep: SelectionListStep = {
+        id: 'settings',
+        ...(props.showTitle ? { title: t('boards.settings.title') } : {}),
+        ...(managingPicks ? { inputPlaceholder: t('common.search') } : {}),
+        autoFocusFirstOption: false,
+        sections: [{ kind: 'static', id: 'picks', title: t('boards.settings.addedByHand'), options: [{
+            id: 'picks',
+            label: props.pickedCards.length ? t('boards.meta.items', { count: props.pickedCards.length }) : t('boards.settings.addedByHandNone'),
+            subtitle: props.pickedCards.slice(0, 2).map(card => card.title).join(', '),
+            disabled: props.pickedCards.length === 0,
+            keepChevronWithAccessory: true,
+            rightAccessoryOutsidePressable: true,
+            rightAccessory: <IconButton testID="board-settings.add" iconName="plus" variant="plain"
+                accessibilityLabel={t('boards.settings.add')} onPress={props.onAddByHand} />,
+            openStep: pickedStep,
+        }] }],
+    };
     return (
-        <View style={styles.content}>
-            <ItemGroup title={t('boards.settings.title')}>
+        <SelectionList
+            testID="board-settings.picks"
+            rootStep={rootStep}
+            syncActiveStep={managingPicks ? pickedStep : undefined}
+            onActiveStepChange={step => setManagingPicks(step.id === 'picked')}
+            selection={managingPicks ? { kind: 'multiple', selectedIds: new Set(props.pickedCards.map(card => card.key)) } : undefined}
+            selectionMark={managingPicks ? 'check' : 'none'}
+            onSelect={id => {
+                const card = props.pickedCards.find(card => card.key === id);
+                if (managingPicks && card) props.onRemoveItem(card.ref);
+            }}
+            onRequestClose={props.onRequestClose}
+            maxHeight={props.maxHeight}
+            heightBehavior="content"
+            bodyHeader={!managingPicks ? <View style={styles.content}>
+            <ItemGroup surface="none">
                 <View style={styles.field}>
                     <FieldItem label={t('boards.settings.name')}>
                         <FieldTextInput
@@ -165,7 +223,7 @@ const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Rea
                     </FieldItem>
                 </View>
             </ItemGroup>
-            <ItemGroup title={t('boards.settings.whatsOn')}>
+            <ItemGroup surface="none" title={t('boards.settings.whatsOn')}>
                 {SECTIONS.map((section) => (
                     <Item
                         key={section}
@@ -207,35 +265,9 @@ const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Rea
                     />
                 ) : null}
             </ItemGroup>
-            <ItemGroup
-                title={t('boards.settings.addedByHand')}
-                action={<IconButton testID="board-settings.add" iconName="plus" variant="plain" accessibilityLabel={t('boards.settings.add')} onPress={props.onAddByHand} />}
-            >
-                {props.pickedCards.length === 0 ? (
-                    <Item title={t('boards.settings.addedByHandNone')} mode="info" showChevron={false} />
-                ) : props.pickedCards.map((card) => (
-                    <Item
-                        key={card.key}
-                        testID={`board-settings.picked.${card.key}`}
-                        title={card.title}
-                        subtitle={t(`boards.kinds.${card.ref.kind}`)}
-                        showChevron={false}
-                        mode="info"
-                        rightElementOutsidePressable
-                        rightElement={(
-                            <IconButton
-                                testID={`board-settings.remove.${card.key}`}
-                                iconName="x"
-                                variant="plain"
-                                accessibilityLabel={t('boards.card.remove')}
-                                tooltip={t('boards.card.remove')}
-                                onPress={() => props.onRemoveItem(card.ref)}
-                            />
-                        )}
-                    />
-                ))}
-            </ItemGroup>
-            <ItemGroup>
+            </View> : undefined}
+            bodyFooter={!managingPicks ? <View style={styles.content}>
+            <ItemGroup surface="none">
                 {props.canvasAvailable ? (
                     <Item
                         title={t('boards.settings.layout')}
@@ -247,7 +279,6 @@ const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Rea
                             <SegmentedTabBar
                                 testIDPrefix="board-settings.layout"
                                 accessibilityLabel={t('boards.header.layoutA11y')}
-                                compact
                                 segmentSizing="content"
                                 tabs={[
                                     { id: 'canvas' as const, label: t('boards.header.canvas') },
@@ -285,7 +316,7 @@ const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Rea
                     )}
                 />
             </ItemGroup>
-            <ItemGroup>
+            <ItemGroup surface="none">
                 <Item
                     testID="board-settings.delete"
                     title={t('boards.settings.delete')}
@@ -294,7 +325,8 @@ const BoardSettingsContent = React.memo(function BoardSettingsContent(props: Rea
                     onPress={props.onDelete}
                 />
             </ItemGroup>
-        </View>
+            </View> : undefined}
+        />
     );
 });
 

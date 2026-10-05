@@ -283,7 +283,8 @@ type ProtocolNormalizedParser<TOutput> = (
   value: ProtocolJsonValue,
 ) => ProtocolSchemaSafeParseResult<TOutput>;
 
-function createProtocolComposableSchema<TInput, TOutput>(
+/** Internal construction seam for canonical owners projecting an incumbent parser. */
+export function createProtocolComposableSchema<TInput, TOutput>(
   projection: object,
   parseNormalized: ProtocolNormalizedParser<TOutput>,
   allowsUndefined = false,

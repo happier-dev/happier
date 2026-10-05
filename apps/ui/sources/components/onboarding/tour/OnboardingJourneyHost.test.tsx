@@ -24,6 +24,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { discardMachineAddFlowDraft, updateMachineAddFlowDraft } from '@/components/machines/add/machineAddFlowStore';
 import { createAwaitedMachineArrivalBaseline } from '@/components/onboarding/detection/useAwaitedMachineArrival';
+import { useOnboardingJourneySessionActive } from './state/journeySession';
 
 import type { StageFrame } from './stage/stageFrames';
 
@@ -1050,37 +1051,106 @@ describe('OnboardingJourneyHost', () => {
         expect(goToStep).toHaveBeenCalledWith('relay_select');
     });
 
-    it('persists the A7 promoted attention choice through the real settings writer when the journey completes', async () => {
-        const onExit = vi.fn();
+    it.each([1280, 390])('settles the completed journey before handing off once without a second attention write at width %s', async (width) => {
+        windowDimensionsState.width = width;
+        let journeyActive = false;
+        const onExit = vi.fn(() => {
+            expect(isDemoModeActive()).toBe(false);
+            expect(isServerProfilePersistenceSuspendedForDemo()).toBe(false);
+        });
         setupIntentState.current = { branch: 'thisComputer', phase: 'post_auth', relayUrl: 'https://relay.example.test' };
         const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
 
+        function JourneySessionObserver() {
+            journeyActive = useOnboardingJourneySessionActive();
+            return null;
+        }
         const screen = await renderScreen(
-            <OnboardingJourneyHost
-                surface="desktop"
-                isDesktopShell
-                initialBeatId="S5"
-                initialAttentionChoice="promote_attention_and_working"
-                preAuthController={createPreAuthController()}
-                wizardSurfaceProps={createWizardSurfaceProps()}
-                onExit={onExit}
-                testID="journey-host"
-            />,
+            <>
+                <JourneySessionObserver />
+                <OnboardingJourneyHost
+                    surface="desktop"
+                    isDesktopShell
+                    initialBeatId="S5"
+                    preAuthController={createPreAuthController()}
+                    wizardSurfaceProps={createWizardSurfaceProps()}
+                    onExit={onExit}
+                    testID="journey-host"
+                />
+            </>
         );
 
-        await screen.pressByTestIdAsync('journey-host-desktop-config-primary');
+        const done = screen.findByTestId(width === 390 ? 'journey-host-mobile-config-primary' : 'journey-host-desktop-config-primary');
+        await act(async () => {
+            done?.props.onPress();
+            done?.props.onPress();
+        });
         await flushJourneyEffects();
 
-        expect(syncSingletonState.applySettings).toHaveBeenCalledWith({
-            sessionListAttentionPromotionModeV1: 'global',
-            sessionListWorkingPlacementModeV1: 'global',
-        }, { expectedSettingsScope: null, source: 'ui' });
+        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
             branch: 'thisComputer',
             phase: 'dismissed',
             relayUrl: 'https://relay.example.test',
         });
         expect(onExit).toHaveBeenCalledTimes(1);
+        expect(onExit).toHaveBeenCalledWith({ completedBeatId: 'S5' });
+        expect(journeyActive).toBe(false);
+    });
+
+    it('keeps the A7 story without duplicating the Personalize attention decision', async () => {
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const screen = await renderScreen(<OnboardingJourneyHost
+            surface="desktop"
+            isDesktopShell
+            initialBeatId="A7"
+            preAuthController={createPreAuthController()}
+            wizardSurfaceProps={createWizardSurfaceProps()}
+            testID="journey-host"
+        />);
+        await flushJourneyEffects();
+        expect(screen.findByTestId('journey-host-desktop-current-beat:A7')).not.toBeNull();
+        expect(screen.findByTestId('journey-host-attention-choice')).toBeNull();
+        await screen.pressByTestIdAsync('journey-host-desktop-config-primary');
+        expect(screen.findByTestId('journey-host-desktop-current-beat:A8')).not.toBeNull();
+        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
+    });
+
+    it('exits skipped setup without requesting the Personalize completion handoff', async () => {
+        const onExit = vi.fn();
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const screen = await renderScreen(<OnboardingJourneyHost
+            surface="desktop"
+            isDesktopShell
+            initialBeatId="S4"
+            preAuthController={createPreAuthController()}
+            wizardSurfaceProps={createWizardSurfaceProps()}
+            onExit={onExit}
+            testID="journey-host"
+        />);
+        await screen.pressByTestIdAsync('journey-host-desktop-config-skip');
+        await flushJourneyEffects();
+        expect(onExit).toHaveBeenCalledExactlyOnceWith(undefined);
+        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
+    });
+
+    it('does not hand off a completion whose demo settlement failed', async () => {
+        demoWorldState.clearFailures.push(new Error('forced final teardown failure'));
+        const onExit = vi.fn();
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const screen = await renderScreen(<OnboardingJourneyHost
+            surface="desktop"
+            isDesktopShell
+            initialBeatId="S5"
+            preAuthController={createPreAuthController()}
+            wizardSurfaceProps={createWizardSurfaceProps()}
+            onExit={onExit}
+            testID="journey-host"
+        />);
+        await screen.pressByTestIdAsync('journey-host-desktop-config-primary');
+        await flushJourneyEffects();
+        expect(onExit).not.toHaveBeenCalled();
+        expect(setPendingSetupIntentMock).not.toHaveBeenCalled();
     });
 
     it('warms the surfaces the journey reaches next while a planet-hero beat mounts no stage', async () => {

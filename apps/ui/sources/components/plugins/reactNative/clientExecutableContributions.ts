@@ -10,8 +10,11 @@ import {
     type PluginContributionRegistrationRight,
     type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
+    type PluginProjectedDragSourceEntryV1,
+    type PluginProjectedDropTargetEntryV1,
 } from '@happier-dev/protocol';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
     createPluginRegistrationScope,
@@ -1068,4 +1071,60 @@ export function usePluginUiClientExecutableRegistrationRevision(
         composition.revision,
         composition.revision,
     );
+}
+
+type ProjectedEntityContribution = (PluginProjectedDragSourceEntryV1 | PluginProjectedDropTargetEntryV1) & Partial<PluginMachineExecutionOriginV1>;
+
+function resolvePluginUiClientEntityRegistration(input: Readonly<{
+    family: 'dragSources' | 'dropTargets';
+    contribution: ProjectedEntityContribution;
+    platform: PluginContributionClientPlatform;
+    reader?: PluginUiClientExecutableRegistrationReader;
+}>): PluginUiClientExecutableRegistration | null {
+    const { contribution, platform, family } = input;
+    if (!contribution.occurrenceId || contribution.id !== `${contribution.pluginId}/${contribution.definition.id}`
+        || !contribution.definition.platforms.includes(platform)) return null;
+    const originless = contribution.serverIdentityId === undefined && contribution.materializationRef === undefined;
+    const origin = originless ? null : PluginMachineExecutionOriginV1Schema.safeParse({
+        serverIdentityId: contribution.serverIdentityId, materializationRef: contribution.materializationRef,
+    });
+    if (origin && (!origin.success || origin.data.materializationRef.pluginId !== contribution.pluginId)) return null;
+    let registration: PluginUiClientExecutableRegistration | null;
+    try {
+        registration = (input.reader ?? getInstalledPluginUiClientExecutableComposition()).read({
+            family, pluginId: contribution.pluginId, localId: contribution.definition.id,
+            occurrenceId: contribution.occurrenceId,
+            target: freezeTarget({ ...contribution.definition.client, platform }),
+            executionOrigin: origin?.success ? freezeExecutionOrigin(origin.data) : null,
+        });
+    } catch { return null; }
+    return registration && registration.right.family === family && registration.registration.family === family
+        && registration.contribution.pluginId === contribution.pluginId && registration.contribution.localId === contribution.definition.id
+        && registration.occurrenceId === contribution.occurrenceId && registration.pluginVersion === contribution.pluginVersion
+        && registration.lifecycle.isCurrent() && !registration.lifecycle.signal.aborted
+        ? registration : null;
+}
+
+export type PluginUiClientDragSourceRegistration = Readonly<{
+    registration: PluginUiClientExecutableRegistration; pluginVersion: string; runtime: PluginDragSourceRuntime;
+}>;
+export function resolvePluginUiClientDragSourceRegistration(input: Readonly<{
+    source: PluginProjectedDragSourceEntryV1 & Partial<PluginMachineExecutionOriginV1>;
+    platform: PluginContributionClientPlatform; reader?: PluginUiClientExecutableRegistrationReader;
+}>): PluginUiClientDragSourceRegistration | null {
+    const registration = resolvePluginUiClientEntityRegistration({ ...input, family: 'dragSources', contribution: input.source });
+    return registration?.registration.family === 'dragSources'
+        ? { registration, pluginVersion: input.source.pluginVersion, runtime: registration.registration.value } : null;
+}
+
+export type PluginUiClientDropTargetRegistration = Readonly<{
+    registration: PluginUiClientExecutableRegistration; pluginVersion: string; runtime: PluginDropTargetRuntime;
+}>;
+export function resolvePluginUiClientDropTargetRegistration(input: Readonly<{
+    target: PluginProjectedDropTargetEntryV1 & Partial<PluginMachineExecutionOriginV1>;
+    platform: PluginContributionClientPlatform; reader?: PluginUiClientExecutableRegistrationReader;
+}>): PluginUiClientDropTargetRegistration | null {
+    const registration = resolvePluginUiClientEntityRegistration({ ...input, family: 'dropTargets', contribution: input.target });
+    return registration?.registration.family === 'dropTargets'
+        ? { registration, pluginVersion: input.target.pluginVersion, runtime: registration.registration.value } : null;
 }

@@ -19,9 +19,9 @@ function card(kind: BoardItemRefV1['kind'], bucket: BoardCard['status']['bucket'
 describe('resolveBoardCardOpenTarget', () => {
     it('sends needs-you work to its Inbox item, never to the session or run where a card could answer it', () => {
         expect(resolveBoardCardOpenTarget(card('session', 'needs_you'), { inboxAvailable: true }))
-            .toEqual({ kind: 'inbox', item: { kind: 'session', id: 'x' } });
+            .toEqual({ kind: 'inbox', item: { kind: 'session', serverId: 'home-a', id: 'x' } });
         expect(resolveBoardCardOpenTarget(card('workflow_run', 'needs_you'), { inboxAvailable: true }))
-            .toEqual({ kind: 'inbox', item: { kind: 'workflow_run', id: 'x' } });
+            .toEqual({ kind: 'inbox', item: { kind: 'workflow_run', serverId: 'home-a', id: 'x' } });
     });
 
     it('opens other work where it lives', () => {

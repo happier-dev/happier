@@ -30,6 +30,7 @@ type CandidateFixture = Readonly<{
     imported?: boolean;
     materializedThrough?: number;
     thread?: Readonly<{ kind: 'reviewer' | 'subagent'; parentRemoteSessionId: string | null }>;
+    match?: Readonly<{ snippet: string; sourceItemId: string; messageIndex: number }>;
 }>;
 
 function page(
@@ -73,6 +74,92 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('does not send content requests to sources without a positive capability', async () => {
+        candidatesListSpy.mockResolvedValue(page([{ remoteSessionId: 'title-only', title: 'Query', updatedAtMs: 1 }], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params, searchTerm: 'Query', searchTarget: 'content',
+        }));
+        expect(candidatesListSpy).not.toHaveBeenCalled();
+        expect(hook.getCurrent().candidates).toEqual([]);
+        expect(hook.getCurrent().contentCoverage).toBe('unsupported');
+        expect(hook.getCurrent().loading).toBe(false);
+    });
+
+    it('publishes decoded content matches page by page without metadata augmentation', async () => {
+        const match = { snippet: 'Hello\n"世界"', sourceItemId: 'message-1', messageIndex: 3 };
+        candidatesListSpy.mockResolvedValue({
+            ...page([{ remoteSessionId: 'hit', title: 'Other title', updatedAtMs: 1, match }], 'content-next'),
+            searchIncomplete: true, contentCoverage: 'partial',
+        });
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params, searchTerm: '世界', searchTarget: 'content', contentSearchSupported: true,
+        }));
+        expect(candidatesListSpy).toHaveBeenCalledTimes(1);
+        expect(candidatesListSpy).toHaveBeenCalledWith(expect.objectContaining({ searchTarget: 'content' }), expect.anything());
+        expect(candidatesListSpy.mock.calls[0][0]).not.toHaveProperty('searchMode');
+        expect(hook.getCurrent().candidates[0]?.match).toEqual(match);
+        expect(hook.getCurrent().contentCoverage).toBe('partial');
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(candidatesListSpy).toHaveBeenCalledTimes(2);
+        expect(candidatesListSpy.mock.calls[1][0]).toMatchObject({ cursor: 'content-next', searchTarget: 'content' });
+    });
+
+    it('preserves the literal content phrase for its request and published Find query', async () => {
+        const searchTerm = '  literal body  ';
+        candidatesListSpy.mockResolvedValueOnce(page([{ remoteSessionId: 'literal-hit', updatedAtMs: 1,
+            match: { snippet: searchTerm, sourceItemId: 'message-1', messageIndex: 0 } }], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params, searchTerm, searchTarget: 'content', contentSearchSupported: true,
+        }));
+        await flushHookEffects();
+        expect(candidatesListSpy.mock.calls[0][0].searchTerm).toBe(searchTerm);
+        expect(hook.getCurrent().publishedSearchTerm).toBe(searchTerm);
+        expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['literal-hit']);
+    });
+
+    it('resets content rows and cursors when query or target changes', async () => {
+        const pending = createDeferred<ReturnType<typeof page>>();
+        candidatesListSpy.mockResolvedValueOnce(page([{ remoteSessionId: 'old', updatedAtMs: 1 }], 'old-cursor'))
+            .mockImplementationOnce(() => pending.promise)
+            .mockResolvedValueOnce(page([{ remoteSessionId: 'title', updatedAtMs: 2 }], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        let searchTerm = 'one';
+        let searchTarget: 'metadata' | 'content' = 'content';
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params, searchTerm, searchTarget, contentSearchSupported: true,
+        }));
+        searchTerm = 'two';
+        await hook.rerender();
+        expect(hook.getCurrent().candidates).toEqual([]);
+        expect(hook.getCurrent().nextCursor).toBeNull();
+        searchTarget = 'metadata';
+        await hook.rerender();
+        pending.resolve(page([{ remoteSessionId: 'late-content', updatedAtMs: 1 }], 'late-cursor'));
+        await flushHookEffects();
+        expect(hook.getCurrent().candidates.map((row) => row.remoteSessionId)).toEqual(['title']);
+        expect(candidatesListSpy.mock.calls[1][0]).not.toHaveProperty('cursor');
+        expect(candidatesListSpy.mock.calls[2][0]).not.toHaveProperty('searchTarget');
+    });
+
+    it('Stop aborts the content RPC and retains partial coverage without late rows', async () => {
+        const pending = createDeferred<ReturnType<typeof page>>();
+        candidatesListSpy.mockImplementation(() => pending.promise);
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params, searchTerm: 'body', searchTarget: 'content', contentSearchSupported: true,
+        }));
+        await act(async () => { hook.getCurrent().cancelPreparation(); });
+        expect(candidatesListSpy.mock.calls[0][1].signal.aborted).toBe(true);
+        expect(hook.getCurrent().contentCoverage).toBe('partial');
+        pending.resolve(page([{ remoteSessionId: 'late', updatedAtMs: 1 }], null));
+        await flushHookEffects();
+        expect(hook.getCurrent().candidates).toEqual([]);
+        expect(hook.getCurrent().cancelled).toBe(true);
     });
 
     it('admits only one same-tick request for each scope and cursor', async () => {

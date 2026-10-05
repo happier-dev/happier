@@ -3,7 +3,7 @@ import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
 import { applyBrowserControlEvent, createBrowserControlState } from './reducer';
 import { dispatchBrowserControlCommand } from './commands';
 
-it('routes controller commands only to daemon-owned views and never applies a navigation intent', () => {
+it('routes daemon controller commands and refuses client commands without their controller', () => {
     const view = { browserSessionId: 'browser', viewId: 'view' };
     const state = applyBrowserControlEvent(createBrowserControlState(), { ...view, kind: 'viewOpened', eventId: 'open', occurredAt: 1,
         target: { kind: 'externalUrl', targetId: 'target', url: 'https://example.test/' }, platform: 'web',

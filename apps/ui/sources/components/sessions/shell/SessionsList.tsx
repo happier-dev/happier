@@ -32,6 +32,9 @@ import {
     type SessionListSurfaceOwnership,
 } from './surface/sessionListSurfaceOwnership';
 import { SessionListSelectionStoreProvider } from './selection/SessionListSelectionContext';
+import { SessionListOrganizeModeProvider, useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
+import { SessionListOrganizeBar } from './organize/SessionListOrganizeBar';
+import { SessionListStagedMoveDock, SessionListStagedMoveProvider } from './keyboardMove/SessionListStagedMoveDock';
 import { SessionListSelectionActionBarHost } from './selection/SessionListSelectionActionBar';
 import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance/KeyboardAwareScreen';
 import {
@@ -479,6 +482,8 @@ function VisibleSessionsListViewContent(
 
     return (
         <SessionListSelectionStoreProvider store={viewState.sessionListSelectionStore}>
+        <SessionListOrganizeModeProvider>
+        <SessionListStagedMoveProvider handleRowKey={viewState.stagedMove.handleRowKey}>
             <SessionListExternalStatusDemandPublisher {...viewState.externalStatusDemand} />
         <KeyboardAwareScreen
             testID="sessions-list-keyboard-frame"
@@ -491,8 +496,8 @@ function VisibleSessionsListViewContent(
                 onLayout={handleTreeViewportLayout}
                 style={contentContainerStyle}
             >
-                <SessionListSearchChrome
-                    {...viewState.searchChrome}
+                <SessionListTitleChrome
+                    searchChrome={viewState.searchChrome}
                     filterSummary={filterSummary}
                 />
                 {queryVisibleSessionCount > 0 ? (
@@ -542,6 +547,7 @@ function VisibleSessionsListViewContent(
                     shared={viewState.dropOverlayShared}
                     testID="session-list-drop-overlay"
                 />
+                <SessionListStagedMoveDock runtime={viewState.entityDragDrop.runtime} view={viewState.stagedMove.view} />
                 <SessionListSelectionActionBarHost
                     targetsByKey={viewState.sessionListSelectionTargetsByKey}
                     bulkActionContext={viewState.sessionListBulkActionContext}
@@ -550,6 +556,18 @@ function VisibleSessionsListViewContent(
                 />
             </View>
         </KeyboardAwareScreen>
+        </SessionListStagedMoveProvider>
+        </SessionListOrganizeModeProvider>
         </SessionListSelectionStoreProvider>
     );
 }
+
+/** The list's title row: search chrome normally, the Organize bar while a phone list is organizing. */
+const SessionListTitleChrome = React.memo(function SessionListTitleChrome(props: Readonly<{
+    searchChrome: React.ComponentProps<typeof SessionListSearchChrome>;
+    filterSummary: React.ComponentProps<typeof SessionListSearchChrome>['filterSummary'];
+}>) {
+    const organize = useSessionListOrganizeMode();
+    if (organize.active) return <SessionListOrganizeBar onDone={organize.exit} />;
+    return <SessionListSearchChrome {...props.searchChrome} filterSummary={props.filterSummary} />;
+});

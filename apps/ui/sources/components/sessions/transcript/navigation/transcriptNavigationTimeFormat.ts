@@ -10,7 +10,7 @@ function resolveDayStartMs(atMs: number): number {
 
 /** "10:18" in the reader's locale: the turn stamp, the "Back to" target. */
 export function formatTranscriptNavigationClockTime(atMs: number): string {
-    return new Date(atMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return new Date(atMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 }
 
 /** A day header: the relative name when there is one ("Today"), and always the date ("Tue 30 Sep"). */

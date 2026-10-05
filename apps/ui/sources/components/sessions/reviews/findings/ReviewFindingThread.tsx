@@ -15,7 +15,9 @@ import {
     ReviewFollowUpComposer,
     type ReviewFollowUpRecipient,
 } from '@/components/sessions/reviews/findings/ReviewFollowUpComposer';
-import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { formatReviewFindingThreadQuote, formatReviewFindingThreadUpdate, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { useStructuredFindState, StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
+import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 
 /** One question about a finding with the answer of the reviewer it went to. */
 export type ReviewFindingThreadEntryView = ReviewFindingThreadEntry & Readonly<{ reviewerLabel: string }>;
@@ -42,36 +44,34 @@ export function ReviewFindingThread(props: Readonly<{
     pendingQuestion: string | null;
     askContext: ReviewFindingAskContext;
     onAsk: (messageMarkdown: string) => Promise<boolean>;
+    findBlockPrefix?: string;
 }>) {
     const { theme } = useUnistyles();
-    const location = formatReviewFindingLocation(props.finding);
+    const find = useStructuredFindState();
+    const quote = formatReviewFindingThreadQuote(props.finding);
+    const severity = reviewSeverityLabel(props.finding.severity);
+    const quoteRanges = find.ranges(`${props.findBlockPrefix}:quote`);
     return (
         <View testID={`review-finding-thread:${props.rowId}`} style={styles.thread}>
             <View style={styles.quote}>
                 <Text style={styles.quoteText}>
-                    <Text style={styles.quoteStrong}>{reviewSeverityLabel(props.finding.severity)}</Text>
-                    {` · ${props.finding.title}`}
-                    {location ? ` · ${location}` : ''}
+                    <Text style={styles.quoteStrong}><FindHighlightedText text={severity} ranges={sliceFindRanges(quoteRanges, 0, severity.length)} /></Text>
+                    <FindHighlightedText text={quote.slice(severity.length)} ranges={sliceFindRanges(quoteRanges, severity.length, quote.length - severity.length)} />
                 </Text>
             </View>
             {props.entries.map((entry, index) => (
                 <View key={`${entry.threadId}:${entry.generatedAtMs}:${index}`} style={styles.entry}>
                     <View style={styles.question}>
-                        <MarkdownView markdown={entry.requestMarkdown} textStyle={styles.questionText} />
+                        <MarkdownView markdown={entry.requestMarkdown} textStyle={styles.questionText} findSourceRanges={find.ranges(`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:request`)} findActive={find.findActive} />
                     </View>
                     <View style={styles.answer}>
-                        <Text style={styles.answerAuthor}>{entry.reviewerLabel}</Text>
-                        <MarkdownView markdown={entry.answerMarkdown} textStyle={styles.answerText} agentTexMath />
+                        <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:reviewer`} text={entry.reviewerLabel} style={styles.answerAuthor} />
+                        <MarkdownView markdown={entry.answerMarkdown} textStyle={styles.answerText} agentTexMath findSourceRanges={find.ranges(`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:answer`)} findActive={find.findActive} />
                     </View>
                     {entry.updatedFinding && entry.previousFinding ? (
                         <View style={styles.change}>
                             <Icon name="arrows-clockwise" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-                            <Text style={styles.changeText}>
-                                {t('runPage.review.reviewerUpdated', { reviewer: entry.reviewerLabel })}
-                                {entry.updatedFinding.severity !== entry.previousFinding.severity
-                                    ? `: ${reviewSeverityLabel(entry.previousFinding.severity)} → ${reviewSeverityLabel(entry.updatedFinding.severity)}`
-                                    : ''}
-                            </Text>
+                            <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:updated`} text={formatReviewFindingThreadUpdate(entry.reviewerLabel, entry.previousFinding, entry.updatedFinding)} style={styles.changeText} />
                         </View>
                     ) : null}
                 </View>

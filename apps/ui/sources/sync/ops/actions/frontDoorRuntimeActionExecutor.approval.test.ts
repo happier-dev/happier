@@ -12,6 +12,10 @@ import {
 } from '@happier-dev/protocol';
 
 import { createFrontDoorRuntimeActionExecutor } from './frontDoorRuntimeActionExecutor';
+import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
+import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
+import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/session/types';
+import { getVoiceSessionEndedAttempt, resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 
 /**
  * End-to-end proof (FINALIZATION-PLAN §3.4 / §4.2 / §12.8): once a runtime action is routed
@@ -120,6 +124,71 @@ function createTestExecutor(overrides: Partial<ActionExecutorDeps>) {
 }
 
 describe('front door approval default (agent vs ui)', () => {
+    it('keeps a permission pending after a spoken decision and Voice End, then admits its present-user tap once', async () => {
+        let pending = true;
+        let permissionWrites = 0;
+        const executor = createTestExecutor({
+            // The permission RPC is a genuine process boundary. Its pending state
+            // changes only when the real executor admits the present-user call.
+            sessionPermissionRespond: async () => {
+                permissionWrites += 1;
+                pending = false;
+                return { ok: true };
+            },
+        });
+        const request = { sessionId: 'coding-session', requestId: 'permission', turnId: 'turn', decision: 'allow' } as const;
+        const spoken = await executor.execute('session.permission.respond', request, { surface: 'voice' });
+        expect(spoken.ok).toBe(false);
+        expect(pending).toBe(true);
+
+        let snapshot: VoiceSessionSnapshot = { adapterId: 'provider-boundary', sessionId: null,
+            status: 'disconnected', mode: 'idle', canStop: false };
+        const listeners = new Set<() => void>();
+        // Only the provider/media boundary is synthetic. Registry and local End
+        // admission/cleanup beneath the canonical lifecycle owner remain real.
+        const adapter: VoiceAdapterController = { id: 'provider-boundary', engineKind: 'realtime',
+            start: async ({ sessionId }) => {
+                snapshot = { ...snapshot, sessionId, status: 'connected', mode: 'listening', canStop: true };
+                for (const listener of listeners) listener();
+            }, toggle: async () => {}, interrupt: async () => {}, setMuted: async () => {},
+            sendContextUpdate: () => {}, getSnapshot: () => snapshot,
+            subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            stop: async () => {
+                snapshot = { ...snapshot, status: 'disconnected', mode: 'idle', canStop: false };
+                for (const listener of listeners) listener();
+            } };
+        registerVoiceAdapters([adapter]);
+        const lifecycle = createVoiceSessionLifecycleController();
+        const conversationSessionAddress = { serverId: 'home-a', sessionId: 'voice-conversation' };
+        const continuation = { v: 1 as const, deviceId: 'other-device', deviceDisplayName: 'Alice’s phone', conversation: conversationSessionAddress };
+        const publish = () => setVoiceSessionSnapshot(lifecycle.getSnapshot(), {
+            adapterId: adapter.id, controlSessionId: 'voice-control', conversationSessionId: conversationSessionAddress.sessionId,
+            conversationSessionAddress, targetSessionAddress: null, transcriptMode: 'synthetic', updatedAt: 1,
+        });
+        publish();
+        const unsubscribe = lifecycle.subscribe(publish);
+        try {
+            lifecycle.setConfiguredProviderId(adapter.id);
+            await lifecycle.toggle({ serverId: 'home-a', sessionId: 'voice-control' });
+            expect(lifecycle.getSnapshot()).toMatchObject({ sessionId: 'voice-control', canStop: true });
+            await lifecycle.stop('voice-control', { kind: 'continued_elsewhere', continuation });
+            expect(lifecycle.getSnapshot().canStop).toBe(false);
+            expect(getVoiceSessionEndedAttempt()).toMatchObject({
+                reason: { kind: 'continued_elsewhere', continuation }, conversationSessionAddress, targetSessionAddress: null,
+            });
+            expect(pending).toBe(true);
+            expect(permissionWrites).toBe(0);
+            const tapped = await executor.execute('session.permission.respond', request, { surface: 'ui', authority: 'present_user' });
+            expect(tapped).toEqual({ ok: true, result: { ok: true } });
+            expect(pending).toBe(false);
+            expect(permissionWrites).toBe(1);
+        } finally {
+            unsubscribe();
+            await lifecycle.dispose();
+            resetVoiceAdapterRegistryForTests();
+            resetVoiceSessionStoreForTests();
+        }
+    });
     it('classifies the agent-initiated dangerous subset as approval-required and user forms as not (policy contract)', () => {
         // The surface-keyed default that the front door consults. This is the contract Phase 3.2
         // activates end-to-end once the runtime family is surfaced-on for `agent`.

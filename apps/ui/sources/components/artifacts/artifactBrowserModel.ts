@@ -1,4 +1,4 @@
-import { deriveArtifactExcerptV1, getArtifactUseTargetV1 } from '@happier-dev/protocol';
+import { deriveArtifactExcerptV1, getArtifactUseTargetV1, isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
 
 import { readBoardArtifactRoute } from '@/components/boards/boardsRoutes';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
@@ -106,6 +106,7 @@ export type ArtifactPreview =
     | Readonly<{ kind: 'markdown'; text: string }>
     | Readonly<{ kind: 'code'; text: string; language: string }>
     | Readonly<{ kind: 'image'; name: string }>
+    | Readonly<{ kind: 'html'; name: string }>
     | Readonly<{ kind: 'file'; name: string; mime: string; sizeBytes: number }>
     | Readonly<{ kind: 'none' }>;
 
@@ -130,7 +131,8 @@ export function readArtifactCodeLanguage(artifact: Pick<DecryptedArtifact, 'head
     return null;
 }
 
-export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'header' | 'title' | 'body'>): ArtifactPreview {
+export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'header' | 'rawHeader' | 'title' | 'body'>): ArtifactPreview {
+    if (isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) return { kind: 'html', name: artifact.title ?? '' };
     if (artifact.body !== null && typeof artifact.body === 'object') {
         const reference = artifact.body;
         return reference.mime.startsWith('image/') ? { kind: 'image', name: artifact.title ?? '' }

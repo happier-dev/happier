@@ -8,6 +8,46 @@ import { useConnectedServiceGroupsRefreshSignal } from '@/sync/domains/connected
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import * as machineRpc from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+
+it.each([
+    ['acknowledged conflict', 'connect_group_generation_conflict'],
+    ['pre-dispatch loss', 'action_failed'],
+    ['post-dispatch loss', 'outcome_unknown'],
+    ['unreadable acknowledgement', 'outcome_unknown'],
+    ['post-commit internal error', 'outcome_unknown'],
+    ['pre-dispatch read internal error', 'Internal Server Error'],
+] as const)('preserves the %s disposition of a semantic pool move', async (disposition, errorCode) => {
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'life', displayName: null,
+        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null, generation: 2, runtimeStateRevision: 1,
+        state: {}, createdAt: 0, updatedAt: 0, members: [
+            { v: 1, connectedAccountId: 'personal', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+            { v: 1, connectedAccountId: 'work', priority: 200, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+        ],
+    });
+    // The authenticated HTTP adapter is the only substituted boundary; parsing,
+    // anchored order, CAS request production and Action settlement stay real.
+    const account = {
+        credentials: { token: 'transport-boundary' }, assertCurrent() {},
+        async request(_path: string, init: RequestInit, options?: Readonly<{ onIssued?: () => void }>) {
+            if (init.method === 'GET') return disposition === 'pre-dispatch read internal error'
+                ? Response.json({ error: 'Internal Server Error', message: 'An unexpected error occurred', statusCode: 500 }, { status: 500 })
+                : Response.json({ group });
+            if (disposition !== 'pre-dispatch loss') options?.onIssued?.();
+            if (disposition === 'acknowledged conflict') return Response.json({ error: 'connect_group_generation_conflict', generation: 3 }, { status: 409 });
+            // The server can commit the member transaction, then fail its
+            // awaited Home-settings response projection and emit this 500 envelope.
+            if (disposition === 'post-commit internal error') return Response.json({ error: 'Internal Server Error', message: 'An unexpected error occurred', statusCode: 500 }, { status: 500 });
+            if (disposition === 'unreadable acknowledgement') return new Response('unreadable', { status: 200 });
+            throw new TypeError('Network request failed');
+        },
+    } as unknown as LazyActionAccountContext;
+    const executor = createActionExecutor({ connectedServiceAction: createUiConnectedServiceAction(account) } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('connectedServices.pools.reorder', {
+        group: group.ref, move: { accountId: 'work', position: { anchorId: 'personal', placement: 'before' } },
+    }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: false, errorCode });
+});
 
 it('admits quota refresh through the exact Home machine before requesting the selected account refresh', async () => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };

@@ -26,6 +26,7 @@ export type RunScmRemoteOperationOptions = Readonly<{
      * decide overlap; rebase or merge when the branch and origin have both moved. Omitted: refuse / fast-forward only.
      */
     policy?: Readonly<ScmRemotePolicy>;
+    pushAfterPull?: boolean;
 }>;
 
 const SCM_REMOTE_POST_OPERATION_REFRESH_TIMEOUT_MS = 5_000;
@@ -139,6 +140,8 @@ export function useScmRemoteOperations(input: {
             surface,
             tracking,
             policy: options?.policy,
+            pushAfterPull: options?.pushAfterPull,
+            readSnapshotAfterSuccess: () => storage.getState().getSessionProjectScmSnapshot(sessionId, serverId),
             setScmOperationBusy: setScmRemoteOperationBusySafe,
             setScmOperationStatus: setScmRemoteOperationStatusSafe,
             runWithOperationLock: async (operation, run) => {

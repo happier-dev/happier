@@ -62,6 +62,19 @@ const readOrigin = (value: InboxSessionAttentionEntry) => (
 );
 
 describe('buildInboxWorkGroups (ORC R-10)', () => {
+    it('orders pending sessions by the oldest question or permission inside each existing work group', () => {
+        const olderQuestion = { ...entry(grandchild), pendingPermissions: [], pendingUserActions: [{ id: 'question', kind: 'user_action' as const, tool: 'AskUserQuestion', arguments: {}, createdAt: 100 }] };
+        const newerPermission = { ...entry(worker), pendingPermissions: [{ id: 'permission', kind: 'permission' as const, tool: 'Bash', arguments: {}, createdAt: 200 }] };
+        const oldestLoose = { ...entry(loose), pendingPermissions: [{ id: 'loose', kind: 'permission' as const, tool: 'Bash', arguments: {}, createdAt: 1 }] };
+        const groups = buildInboxWorkGroups({
+            ...EMPTY, sessionEntries: [newerPermission, oldestLoose, olderQuestion], workflowRuns: [], resolveSession, resolveOriginRunId: readOrigin,
+        });
+        expect(shape(groups)).toEqual([
+            { root: 'lead:lead', items: ['session:home-a:grandchild', 'session:home-a:worker'] },
+            { root: 'other', items: ['session:home-a:loose'] },
+        ]);
+    });
+
     it('groups a whole reportsTo tree under its work root and puts loose sessions last under Other', () => {
         const groups = buildInboxWorkGroups({
             ...EMPTY,

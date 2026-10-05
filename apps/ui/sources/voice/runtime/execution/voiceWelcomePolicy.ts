@@ -7,6 +7,7 @@ import {
 import { readVoiceAgentRunMetadataFromSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
 
 function readPersistedWelcomedEpoch(metadataSessionId: string | null, serverId: string): number | undefined {
     if (!metadataSessionId) return undefined;
@@ -22,21 +23,21 @@ export function createVoiceWelcomePolicy(args: Readonly<{
 }> {
     return {
         ensureRunningAndMaybeWelcome: async (sessionId: string) => {
-            const settings: any = storage.getState().settings;
+            const settings = storage.getState().settings;
             const agentCfg = readLocalConversationSettingsFromAccountSettings(settings).agent;
-            const welcomeCfg = voiceSettingsParse(settings?.voice).welcome;
+            const handle = await args.getVoiceAgentHandle(sessionId);
+            if (!handle.accountLifetime.isCurrent()) return null;
+            const policy = handle.voicePolicy ?? voiceSettingsParse(settings.voice);
+            const welcomeCfg = policy.welcome;
             const welcomeEnabled = welcomeCfg?.enabled === true;
             const welcomeMode = welcomeCfg?.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
             if (!welcomeEnabled || welcomeMode !== 'immediate') {
-                await args.getVoiceAgentHandle(sessionId);
                 return null;
             }
 
             const epochRaw = Number(agentCfg?.transcript?.epoch ?? 0);
             const epoch = Number.isFinite(epochRaw) && epochRaw >= 0 ? Math.floor(epochRaw) : 0;
 
-            const handle = await args.getVoiceAgentHandle(sessionId);
-            if (!handle.accountLifetime.isCurrent()) return null;
             const metadataSessionId = handle.metadataSessionId;
             const persistedWelcomedEpoch =
                 handle.backend === 'daemon'
@@ -47,7 +48,12 @@ export function createVoiceWelcomePolicy(args: Readonly<{
             }
 
             try {
-                const res = await handle.client.welcome({ sessionId: handle.rpcSessionId, voiceAgentId: handle.voiceAgentId });
+                const welcomeText = resolveVoiceWelcomeText(policy.assistantLanguage);
+                const res = await handle.client.welcome({
+                    sessionId: handle.rpcSessionId,
+                    voiceAgentId: handle.voiceAgentId,
+                    ...(welcomeText ? { welcomeText } : {}),
+                });
                 const assistantText = String(res?.assistantText ?? '').trim();
                 if (!assistantText) return null;
                 if (handle.backend === 'daemon') {

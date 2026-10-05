@@ -29,6 +29,8 @@ export type UseServicesOpenInBrowserInput = Readonly<{
      * never invoked for an unmappable target so the surface does not navigate to nothing.
      */
     onAfterOpen?: () => void;
+    /** After the pane owner commits an in-app tab, never an external-browser handoff. */
+    onAfterDetailsOpen?: () => void;
 }>;
 
 /**
@@ -53,10 +55,14 @@ export function useServicesOpenInBrowser(
         serverId: input.serverId,
     });
     const onAfterOpen = input.onAfterOpen;
+    const onAfterDetailsOpen = input.onAfterDetailsOpen;
 
     return React.useCallback(async (target: LocalServiceLaunchTargetV1): Promise<ServicesOpenInBrowserResult> => {
         const openService = bindServicesOpenInBrowser({
-            openDetailsTab,
+            openDetailsTab: (tab, options) => {
+                openDetailsTab(tab, options);
+                onAfterDetailsOpen?.();
+            },
             scope: input.scope,
             platform,
             localServicePreviewState,
@@ -66,5 +72,5 @@ export function useServicesOpenInBrowser(
         const result = await openService(target);
         if (result.status === 'succeeded') onAfterOpen?.();
         return result;
-    }, [input.scope, input.serverId, input.sessionId, localServicePreviewState, onAfterOpen, openDetailsTab, platform]);
+    }, [input.scope, input.serverId, input.sessionId, localServicePreviewState, onAfterOpen, onAfterDetailsOpen, openDetailsTab, platform]);
 }

@@ -18,6 +18,7 @@ import { VoiceExecutionMachineSection } from '@/voice/settings/panels/VoiceExecu
 import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 import { useDaemonVoiceModelCatalogState } from '@/voice/settings/panels/modelCatalog/useDaemonVoiceModelCatalogState';
 import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
+import { VoiceSettingsSearchPrerequisite } from '@/voice/settings/VoiceSettingsSearchPrerequisite';
 import {
   resolveVoiceSettingsRecoveryFocus,
   resolveVoiceSettingsRouteFocus,
@@ -123,7 +124,20 @@ export function VoiceDictationSettingsScreen() {
           onScroll={focusRegistry.onScroll}
           scrollEventThrottle={16}
         >
-          <SettingsPageHeader description={t('settingsVoice.intents.dictation.subtitle')} />
+          <SettingsPageHeader
+            description={t('settingsVoice.pages.dictation.description')}
+            actions={(
+              <View testID="settings.voice.section.executionMachine" onLayout={onExecutionMachineSectionLayout}>
+                <VoiceExecutionMachineSection
+                  voice={voice}
+                  setVoice={setVoice}
+                  intent="dictation"
+                  presentation="chip"
+                  popoverBoundaryRef={popoverBoundaryRef}
+                />
+              </View>
+            )}
+          />
           <View onLayout={onProviderSectionLayout}>
             <DictationSettingsSection
               voice={voice}
@@ -136,14 +150,7 @@ export function VoiceDictationSettingsScreen() {
               onRecoveryAction={focusRecovery}
             />
           </View>
-          <View testID="settings.voice.section.executionMachine" onLayout={onExecutionMachineSectionLayout}>
-            <VoiceExecutionMachineSection
-              voice={voice}
-              setVoice={setVoice}
-              intent="dictation"
-              popoverBoundaryRef={popoverBoundaryRef}
-            />
-          </View>
+          <VoiceSettingsSearchPrerequisite intent="dictation" voice={voice} />
         </ItemList>
       </DaemonVoiceModelCatalogProvider>
     </View>

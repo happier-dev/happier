@@ -154,6 +154,7 @@ describe('createCliActionExecutorHarness', () => {
       {
         token: 'token',
         serverHttpBaseUrl: 'https://approval-home.example.test',
+        serverId: 'approval-home',
         sessionId: 'sess_1',
         mode: 'e2ee',
         ctx: {
@@ -200,6 +201,7 @@ describe('createCliActionExecutorHarness', () => {
       {
         token: 'token',
         serverHttpBaseUrl: 'https://approval-home.example.test',
+        serverId: 'approval-home',
         sessionId: 'sess_1',
         mode: 'e2ee',
         ctx: {

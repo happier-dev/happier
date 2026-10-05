@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/agents';
 import {
   compareMachineHosts,
+  createSessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
@@ -22,7 +23,7 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function buildAttachSessionMetadata(metadata: Readonly<Record<string, unknown>>): AttachSessionMetadataV1 {
+export function buildAttachSessionMetadata(metadata: Readonly<Record<string, unknown>>): AttachSessionMetadataV1 {
   const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
   return Object.freeze({
     ...(readString(metadata.path) !== undefined ? { path: readString(metadata.path) } : {}),
@@ -43,6 +44,14 @@ export type CliSessionAttachEligibilityReasonCode =
   | 'terminal_not_attachable';
 
 export type CliSessionAttachEligibility =
+  | Readonly<{
+      eligible: true;
+      agentId: CatalogAgentId;
+      attachStrategy: 'managed_provider_attach';
+      attachScope: 'local';
+      terminal: NonNullable<Metadata['terminal']>;
+      metadata: Record<string, unknown>;
+    }>
   | Readonly<{
       eligible: true;
       agentId: CatalogAgentId;
@@ -255,6 +264,18 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
     });
     if (hosted.eligible) return hosted;
+  }
+  const owner = createSessionOwnerMetadataV1({ metadata });
+  const localControl = owner.ok ? owner.ownerMetadata.runtime?.agentRuntimeCapabilitiesV1?.localControl : null;
+  const selectedTerminal = owner.ok ? owner.ownerMetadata.runtime?.terminal : null;
+  const selectedHost = selectedTerminal?.mode === 'plain' ? selectedTerminal.requested : selectedTerminal?.mode;
+  if (agentId && selectedTerminal && localControl?.supported === true && localControl.topology === 'shared'
+    && localControl.attachStrategy === 'provider_attach' && metadata.startedBy === 'daemon' && sameMachineIdentity
+    && (selectedHost === 'tmux' || selectedHost === 'zellij' || selectedHost === 'herdr')) {
+    // The controller's Switch owner prepares the selected presentation. Merely
+    // having an independent native attach surface is not managed custody.
+    return { eligible: true, agentId, attachStrategy: 'managed_provider_attach', attachScope: 'local',
+      terminal: selectedTerminal, metadata };
   }
   const backendId = resolveCliSessionAttachBackendId(metadata);
   const backendExecutionSurfaces = backendId

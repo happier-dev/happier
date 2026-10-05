@@ -46,10 +46,12 @@ it('preserves a Home-stamped Session Action origin and rejects malformed or user
   expect(await rpc.handleRequest(request)).toEqual({ authority: 'account_automation', origin });
   for (const refused of [
     { ...request, callerAuthority: 'present_user' as const },
-    { ...request, sessionActionOrigin: { ...origin, caller: { kind: 'session', sessionId: 'lead' } } },
     { ...request, sessionActionOrigin: { ...origin, caller: { ...origin.caller, turnDepth: -1 } } },
     { ...request, method: 'child:session.message.send' },
   ]) expect(await rpc.handleRequest(refused)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  const malformed = { ...request, sessionActionOrigin: { ...origin, caller: { kind: 'session' as const, sessionId: 'lead' } } };
+  // @ts-expect-error The transport boundary must reject a Session origin without host-stamped depths.
+  expect(await rpc.handleRequest(malformed)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
 });
 
 it('binds the Home-issued input proof to the exact opaque RPC before opening it', async () => {
@@ -139,6 +141,54 @@ function createSocketEventBoundary() {
 }
 
 describe('RpcHandlerManager registration receipts', () => {
+  it('logs one safe correlated rejection after repeated reconnects and retries only recoverable registrations', () => {
+    const logger = vi.fn();
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger });
+    rpc.registerHandler('session.unlisted', () => null);
+    rpc.registerHandler('daemon.connectedAccounts.control.command', () => null);
+    const boundary = createSocketEventBoundary();
+    for (let reconnect = 0; reconnect < 3; reconnect++) {
+      rpc.onSocketConnect(boundary.socket);
+      rpc.onSocketDisconnect();
+    }
+    rpc.onSocketConnect(boundary.socket);
+    boundary.trigger(SOCKET_RPC_EVENTS.ERROR, {
+      type: 'register', method: 'machine-1:session.unlisted',
+      error: 'RPC method not available', retryable: false, secret: 'must-not-log',
+    });
+    expect(logger.mock.calls).toEqual([['[RPC] [ERROR] Handler registration rejected', {
+      method: 'machine-1:session.unlisted', error: 'RPC method not available', retryable: false,
+    }]]);
+    boundary.trigger(SOCKET_RPC_EVENTS.ERROR, {
+      type: 'register', method: 'machine-1:daemon.connectedAccounts.control.command',
+      error: 'Machine unavailable', retryable: true,
+    });
+    expect(rpc.replayUnacknowledgedHandlerRegistrations()).toEqual(['daemon.connectedAccounts.control.command']);
+    rpc.onSocketDisconnect();
+    boundary.emit.mockClear();
+    rpc.onSocketConnect(boundary.socket);
+    expect(boundary.emit.mock.calls.map(([, payload]) => payload.method)).toEqual([
+      'machine-1:session.unlisted', 'machine-1:daemon.connectedAccounts.control.command',
+    ]);
+    expect(rpc.replayUnacknowledgedHandlerRegistrations()).toEqual([
+      'session.unlisted', 'daemon.connectedAccounts.control.command',
+    ]);
+    boundary.emit.mockClear();
+    rpc.registerHandler('session.unlisted', () => null);
+    expect(boundary.emit.mock.calls).toEqual([[SOCKET_RPC_EVENTS.REGISTER, { method: 'machine-1:session.unlisted' }]]);
+    // An older relay has no retry classification; an uncorrelated refusal
+    // cannot turn a legitimate registration into a permanent denial.
+    boundary.trigger(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Forbidden' });
+    boundary.trigger(SOCKET_RPC_EVENTS.ERROR, { type: 'register', method: 'other:session.unlisted', retryable: false, error: 'secret response' });
+    expect(JSON.stringify(logger.mock.calls)).not.toContain('secret response');
+    rpc.onSocketDisconnect();
+    boundary.emit.mockClear();
+    rpc.onSocketConnect(boundary.socket);
+    expect(boundary.emit.mock.calls.map(([, payload]) => payload.method)).toEqual([
+      'machine-1:session.unlisted', 'machine-1:daemon.connectedAccounts.control.command',
+    ]);
+  });
+
   it('surfaces registration errors from only the active socket epoch', () => {
     const onRegistrationError = vi.fn();
     const config = {

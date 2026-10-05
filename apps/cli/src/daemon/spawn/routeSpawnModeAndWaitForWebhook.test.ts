@@ -88,6 +88,9 @@ function createParams() {
   delete processEnv.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT;
   delete processEnv.HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH;
   return {
+    // Routing consumes placement captured by the admitted runtime, rather than
+    // selecting it again from the Agent id or current account defaults.
+    terminalPresentation: { kind: 'runner' as const, startingMode: 'remote' as const },
     terminalRequest: { requested: null },
     directory: '/tmp/happier-project',
     options: { directory: '/tmp/happier-project' },
@@ -258,6 +261,7 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
 
     await expect(routeSpawnModeAndWaitForWebhook({
       ...createParams(),
+      terminalPresentation: { kind: 'none' },
       effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: agentId },
       terminalRequest: { requested: 'herdr', herdr: { sessionName: 'default' } },
       options: {
@@ -275,6 +279,7 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
 
     await expect(routeSpawnModeAndWaitForWebhook({
       ...createParams(),
+      terminalPresentation: { kind: 'none' },
       effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: agentId },
       terminalRequest: { requested: 'herdr', herdr: { sessionName: 'default' } },
     })).resolves.toEqual(successResult);
@@ -282,23 +287,36 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
     expect(mocks.spawnAdapterHostedSessionAndWaitForWebhook.mock.calls[0]?.[0].terminalRequest).toEqual({ requested: 'plain' });
   }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
 
-  it.each(['claude', 'codex', 'opencode'])('preserves native terminal presentation for %s', async (agentId) => {
+  it.each([
+    ['claude', 'runner'],
+    ['codex', 'provider_attach'],
+    ['opencode', 'provider_attach'],
+  ] as const)('consumes captured %s %s placement without selecting another controller host', async (agentId, kind) => {
     const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
     const terminalRequest = { requested: 'herdr' as const, herdr: { sessionName: 'default' } };
 
     await expect(routeSpawnModeAndWaitForWebhook({
       ...createParams(),
+      terminalPresentation: { kind, startingMode: kind === 'runner' ? 'remote' : 'terminal' },
       effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: agentId },
       terminalRequest,
     })).resolves.toEqual(successResult);
 
-    expect(mocks.spawnAdapterHostedSessionAndWaitForWebhook.mock.calls[0]?.[0].terminalRequest).toEqual(terminalRequest);
+    expect(mocks.spawnAdapterHostedSessionAndWaitForWebhook.mock.calls[0]?.[0].terminalRequest)
+      .toEqual(kind === 'runner' ? terminalRequest : { requested: 'plain' });
+    if (kind === 'provider_attach') {
+      expect(mocks.spawnRegularProcessAndWaitForWebhook.mock.calls[0]?.[0].args).toEqual(expect.arrayContaining([
+        '--happy-starting-mode', 'terminal', '--happy-terminal-mode', 'plain',
+        '--happy-terminal-requested', 'herdr',
+      ]));
+    }
   }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
 
   it.each(['codex', 'opencode'])('honors the %s config-selected ACP runtime without a descriptor', async (agentId) => {
     const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
     await expect(routeSpawnModeAndWaitForWebhook({
       ...createParams(),
+      terminalPresentation: { kind: 'none' },
       effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: agentId },
       terminalRequest: { requested: 'herdr', herdr: { sessionName: 'default' } },
       options: {
@@ -315,6 +333,7 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
     const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
     await expect(routeSpawnModeAndWaitForWebhook({
       ...createParams(),
+      terminalPresentation: { kind: 'none' },
       effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'configured', backendId: 'codex', configuredBackendId: 'codex' },
       terminalRequest: { requested: 'herdr', herdr: { sessionName: 'default' } },
     })).resolves.toEqual(successResult);

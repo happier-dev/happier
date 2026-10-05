@@ -211,6 +211,8 @@ export interface NewSessionWizardFooterProps {
     machineName?: string;
     promptStore: NewSessionPromptStore;
     composerDocument?: NewSessionComposerDocument;
+    composerReferenceHost?: React.ComponentProps<typeof AgentInput>['composerReferenceHost'];
+    composerFileScope?: React.ComponentProps<typeof AgentInput>['composerFileScope'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     /** Registers this footer's Send as the Temporary-computer replacement owner. */
@@ -689,6 +691,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onStructuredInputMentionsChange={props.footer.composerDocument?.onStructuredInputMentionsChange}
                                         onComposerFocusChange={props.footer.composerDocument?.onComposerFocusChange}
                                         onComposerFocusRequestChange={props.footer.composerDocument?.onComposerFocusRequestChange}
+                                        onPromptPickerOpenRequestChange={props.footer.composerDocument?.onPromptPickerOpenRequestChange}
+                                        composerRef={props.footer.composerDocument?.ref}
+                                        composerReferenceHost={props.footer.composerReferenceHost}
+                                        composerFileScope={props.footer.composerFileScope}
                                         onComposerActionBarLayoutChange={props.footer.composerDocument?.onComposerActionBarLayoutChange}
                                         inputPersistence={props.footer.composerDocument?.inputPersistence}
                                         composerDecorations={props.footer.composerDocument?.composerDecorations ?? []}

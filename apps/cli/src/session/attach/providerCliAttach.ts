@@ -18,10 +18,11 @@ import type {
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { logger } from '@/ui/logger';
-import { launchBorrowedTerminalProcess, type TerminalSpawnProcess } from '@/terminal/host/borrowedTerminalProcess';
+import { launchBorrowedTerminalProcess, type TerminalSpawnProcess, type BorrowedTerminalProcessIdentity } from '@/terminal/host/borrowedTerminalProcess';
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
 import type { TerminalHostHandle, TerminalHostPreference } from '@happier-dev/agents';
 import type { PreparedTerminalHostOwner } from '@/plugins/runtime/context/terminalHost';
+import { SessionProviderCliAttachPrepareResultV1Schema, type SessionProviderCliAttachPrepareRequestV1 } from '@happier-dev/protocol';
 
 const PROVIDER_ATTACH_STOP_GRACE_MS = 3_000;
 
@@ -40,6 +41,11 @@ export type ProviderCliAttachManagedServiceAccess = Readonly<{
 /** Host-owned managed custody, not a public Agent AttachSurface extension. */
 export type HostProviderCliAttachRequest = Parameters<AttachSurface['attach']>[0] & Readonly<{
     onAttached(): Promise<void>;
+    /** Strict controller observation owns custody; ordinary AttachSurface never publishes it. */
+    terminalClient?: Readonly<{
+        onStarted(identity: BorrowedTerminalProcessIdentity): Promise<void>;
+        onExited(identity: BorrowedTerminalProcessIdentity): Promise<void>;
+    }>;
     /** Captured host placement, supplied only by the admitted Session mode owner. */
     hostPresentation?: Readonly<{
         owner: PreparedTerminalHostOwner;
@@ -61,11 +67,47 @@ export type HostProviderCliAttachRequest = Parameters<AttachSurface['attach']>[0
 
 export type HostProviderCliAttachSurface = AttachSurface & Readonly<{
     attachManaged(request: HostProviderCliAttachRequest): ReturnType<AttachSurface['attach']>;
+    prepareInvocation(request: HostProviderCliAttachPreparationRequest): Promise<HostProviderCliAttachPreparation>;
 }>;
+
+export type HostProviderCliAttachPreparationRequest = Omit<HostProviderCliAttachRequest, 'onAttached' | 'hostPresentation' | 'terminalClient'>;
+export type HostProviderCliAttachPreparation =
+    | Extract<Awaited<ReturnType<AttachSurface['attach']>>, { ok: false }>
+    | Readonly<{ ok: true; value: Readonly<{
+        invocation: ReturnType<typeof resolveWindowsCommandInvocation>;
+        childEnv: NodeJS.ProcessEnv;
+        managedServiceAccess: ProviderCliAttachManagedServiceAccess | undefined;
+    }> }>;
 
 export function isHostProviderCliAttachSurface(surface: unknown): surface is HostProviderCliAttachSurface {
     return typeof surface === 'object' && surface !== null
-        && 'attachManaged' in surface && typeof surface.attachManaged === 'function';
+        && 'attachManaged' in surface && typeof surface.attachManaged === 'function'
+        && 'prepareInvocation' in surface && typeof surface.prepareInvocation === 'function';
+}
+
+/** Existing public Attach delegates managed observations to the controller, never writes its state. */
+export async function attachObservedNativeClient(params: Readonly<{
+    surface: HostProviderCliAttachSurface;
+    request: Parameters<AttachSurface['attach']>[0];
+    providerSessionId: string;
+    herdr: NonNullable<SessionProviderCliAttachPrepareRequestV1['terminalClient']>['herdr'];
+    observe: (request: SessionProviderCliAttachPrepareRequestV1) => Promise<unknown>;
+}>): Promise<Awaited<ReturnType<AttachSurface['attach']>>> {
+    const observe = async (terminalClient?: SessionProviderCliAttachPrepareRequestV1['terminalClient']) => {
+        const parsed = SessionProviderCliAttachPrepareResultV1Schema.safeParse(await params.observe({
+            providerSessionId: params.providerSessionId, ...(terminalClient ? { terminalClient } : {}),
+        }));
+        if (!parsed.success || !parsed.data.ok || parsed.data.providerSessionId !== params.providerSessionId) {
+            throw new Error('Managed native terminal observation was not admitted');
+        }
+    };
+    await observe();
+    return await params.surface.attachManaged({ ...params.request, onAttached: async () => {},
+        terminalClient: {
+            onStarted: async launcher => await observe({ attached: true, herdr: params.herdr, launcher }),
+            onExited: async launcher => await observe({ attached: false, herdr: params.herdr, launcher }),
+        },
+    });
 }
 
 async function readProviderCliVersion(params: Readonly<{
@@ -241,7 +283,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
     const resolveExactManagedServiceAccess = async (
         sessionId: string,
         target: TTarget,
-        hostRequest?: HostProviderCliAttachRequest,
+        hostRequest?: HostProviderCliAttachPreparationRequest,
     ): Promise<ProviderCliAttachManagedServiceAccess | null | undefined> => {
         const targetBaseUrl = params.managedServiceTargetBaseUrl?.(target);
         if (!targetBaseUrl) return undefined;
@@ -341,14 +383,9 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             }
             return { available: true };
     };
-    const attach = async (request: Parameters<AttachSurface['attach']>[0] | HostProviderCliAttachRequest): Promise<Awaited<ReturnType<AttachSurface['attach']>>> => {
+    const prepareInvocation = async (request: HostProviderCliAttachPreparationRequest): Promise<HostProviderCliAttachPreparation> => {
             const { metadata, sessionId, signal } = request;
-            const onAttached = 'onAttached' in request ? request.onAttached : undefined;
-            const hostPresentation = 'onAttached' in request ? request.hostPresentation : undefined;
-            const startupDeadline = hostPresentation?.startupDeadline();
-            if (signal?.aborted) {
-                return { ok: true, value: { exitCode: 0 } };
-            }
+            signal?.throwIfAborted();
             const target = await resolveTargetWithFallback({
                 metadata,
                 sessionId,
@@ -367,7 +404,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             const managedServiceAccess = await resolveExactManagedServiceAccess(
                 sessionId,
                 target.value,
-                'onAttached' in request ? request : undefined,
+                request,
             );
             if (managedServiceAccess === null) {
                 return {
@@ -410,10 +447,27 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 ],
                 env: childEnv,
             });
-            if (signal?.aborted) return { ok: true, value: { exitCode: 0 } };
+            signal?.throwIfAborted();
             if (managedServiceAccess?.isCurrent?.() === false) {
                 return { ok: false, code: 'attach_failed', message: 'Provider attach managed-service access is unavailable.' };
             }
+            return { ok: true, value: { invocation, childEnv, managedServiceAccess } };
+    };
+    const attach = async (request: Parameters<AttachSurface['attach']>[0] | HostProviderCliAttachRequest): Promise<Awaited<ReturnType<AttachSurface['attach']>>> => {
+            const { metadata, sessionId, signal } = request;
+            const onAttached = 'onAttached' in request ? request.onAttached : undefined;
+            const terminalClient = 'onAttached' in request ? request.terminalClient : undefined;
+            const hostPresentation = 'onAttached' in request ? request.hostPresentation : undefined;
+            const startupDeadline = hostPresentation?.startupDeadline();
+            if (signal?.aborted) return { ok: true, value: { exitCode: 0 } };
+            let prepared: HostProviderCliAttachPreparation;
+            try { prepared = await prepareInvocation(request); }
+            catch (error) {
+                if (signal?.aborted) return { ok: true, value: { exitCode: 0 } };
+                throw error;
+            }
+            if (!prepared.ok) return prepared;
+            const { invocation, childEnv, managedServiceAccess } = prepared.value;
             if (hostPresentation) {
                 const localAbort = new AbortController();
                 const retiredAbort = new AbortController();
@@ -498,6 +552,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             }
 
             let startupFailed = false;
+            let clientAdmitted = false;
             const exitCode = await new Promise<number>((resolve, reject) => {
                 let stopTimer: NodeJS.Timeout | null = null;
                 let startupPublication: Promise<void> | null = null;
@@ -510,7 +565,10 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                         stopTimer = null;
                     }
                     signal?.removeEventListener('abort', stop);
-                    void Promise.resolve(startupPublication).then(() => resolve(code));
+                    void Promise.resolve(startupPublication).then(async () => {
+                        if (clientAdmitted && child.launcherIdentity) await terminalClient?.onExited(child.launcherIdentity);
+                        resolve(code);
+                    }).catch(reject);
                 };
                 const stop = (): void => {
                     void child.signal('SIGINT').catch(() => {
@@ -530,10 +588,15 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                     }, PROVIDER_ATTACH_STOP_GRACE_MS);
                     stopTimer.unref?.();
                 };
-                if (onAttached) {
+                if (onAttached || terminalClient) {
                     startupPublication = Promise.resolve().then(async () => {
                         if (signal?.aborted) throw new Error('Managed attach startup cancelled');
-                        await onAttached();
+                        if (terminalClient) {
+                            if (!child.launcherIdentity) throw new Error('Native launcher custody is unavailable');
+                            await terminalClient.onStarted(child.launcherIdentity);
+                            clientAdmitted = true;
+                        }
+                        await onAttached?.();
                     }).catch(() => {
                         startupFailed = true;
                         if (!finished) stop();
@@ -555,5 +618,5 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 ? { ok: false, code: 'attach_failed', message: 'Managed provider attach startup failed.' }
                 : { ok: true, value: { exitCode } };
     };
-    return { evaluateAvailability, attach, attachManaged: attach };
+    return { evaluateAvailability, attach, attachManaged: attach, prepareInvocation };
 }

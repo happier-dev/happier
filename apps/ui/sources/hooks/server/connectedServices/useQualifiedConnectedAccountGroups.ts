@@ -10,6 +10,7 @@ import {
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import {
     createQualifiedConnectedAccountGroupsClient,
+    isQualifiedConnectedAccountGroupRevisionCurrent as isCurrentGroupRevision,
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiPeerTransport,
     type QualifiedConnectedAccountUiSource,
@@ -118,34 +119,6 @@ function upsertGroup(
     const next = [...groups];
     next[index] = group;
     return next;
-}
-
-function sameGroupRevision(
-    left: QualifiedConnectedAccountUiGroup,
-    right: QualifiedConnectedAccountUiGroup,
-): boolean {
-    const leftRevision = left.revision;
-    const rightRevision = right.revision;
-    return leftRevision.generation === rightRevision.generation
-        && leftRevision.incarnation === rightRevision.incarnation
-        && leftRevision.runtimeStateRevision === rightRevision.runtimeStateRevision;
-}
-
-/**
- * Group actions are fenced by the revision they sent to the peer. A freshly
- * listed group with the same id but a different generation/revision is a newer
- * authority (or a recreated group), so a late response must not replace it.
- */
-function isCurrentGroupRevision(params: Readonly<{
-    state: State;
-    basis: LoadBasis | null;
-    group: QualifiedConnectedAccountUiGroup;
-}>): boolean {
-    return params.state.basis === params.basis
-        && params.state.groups.some((candidate) => (
-            sameQualifiedConnectedAccountGroupRef(candidate.ref, params.group.ref)
-            && sameGroupRevision(candidate, params.group)
-        ));
 }
 
 function isGroupRevisionConflict(error: unknown): boolean {
@@ -399,6 +372,7 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                         state: stateRef.current,
                         basis: operationBasis,
                         group,
+                        allowAbsent: true,
                     })
                 ) return false;
                 const defaults = removeAgentConnectedAccountDefaultsForDeletedTarget({

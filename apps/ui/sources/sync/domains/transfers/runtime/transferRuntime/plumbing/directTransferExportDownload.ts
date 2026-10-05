@@ -53,6 +53,7 @@ type DirectTransferExportPrepareRequest =
         workingDirectory: string;
         path: string;
         asZip: boolean;
+        confinedToWorkingDirectory?: boolean;
     }>
     | Readonly<{
         t: 'composer_media_stage_inspect_v1';

@@ -1,6 +1,8 @@
 import { getVoiceAdapterRegistry } from './voiceAdapterRegistry';
-import { getVoiceSessionSnapshot } from './voiceSessionStore';
+import { canDismissVoiceSessionFailedAttempt, getVoiceSessionSnapshot, recordVoiceSessionEndReason, type VoiceSessionEndReason } from './voiceSessionStore';
 import type { VoiceAdapterController, VoiceAdapterId, VoiceSessionSnapshot } from './types';
+import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
+import type { Message } from '@happier-dev/session-core/messages';
 import type {
     VoiceOutputFocusApplication,
     VoiceOutputFocusState,
@@ -23,12 +25,16 @@ import {
 } from '@/sync/domains/session/sessionAddress';
 
 export type VoiceSessionLifecycleController = Readonly<{
+    observeSyncedConversationMessages: (address: SessionAddress, messages: readonly Message[]) => void;
     bargeIn: (sessionId: string) => Promise<void>;
     dispose: () => Promise<void>;
     getConfiguredProviderId: () => VoiceAdapterId | 'off' | null;
     getSnapshot: () => VoiceSessionSnapshot;
+    getAttemptTargetSessionAddress: () => SessionAddress | null;
     interrupt: (sessionId: string) => Promise<void>;
     commitInput: (sessionId: string) => Promise<void>;
+    beginHoldToTalk: (sessionId: string) => VoiceHeldInput | null;
+    finishHoldToTalk: (sessionId: string, outcome: 'release' | 'cancel') => Promise<boolean>;
     rearmAfterCredentialAuthorityChange: (options?: Readonly<{
         exactSessionAccountScopeChanged?: boolean;
         globalBindingAuthorityChanged?: boolean;
@@ -41,11 +47,12 @@ export type VoiceSessionLifecycleController = Readonly<{
         release(): Promise<void>;
     }> | null>;
     retry: (sessionId: string) => Promise<void>;
+    dismissFailedAttempt: (sessionId: string | null) => Promise<void>;
     setOutputFocusState?: (
         sessionId: string,
         state: VoiceOutputFocusState,
     ) => Promise<VoiceOutputFocusApplication>;
-    stop: (sessionId: string) => Promise<void>;
+    stop: (sessionId: string, reason?: Exclude<VoiceSessionEndReason, { kind: 'disconnected' }>) => Promise<void>;
     subscribe: (listener: () => void) => () => void;
     toggle: (targetSessionAddress: SessionAddress | null) => Promise<void>;
 }>;
@@ -153,6 +160,7 @@ function requiresCurrentUiContextToolSetReplacement(adapter: VoiceAdapterControl
 }
 
 export function createVoiceSessionLifecycleController(deps?: Readonly<{
+    onSyncedConversationMessages?: (address: SessionAddress, messages: readonly Message[]) => void;
     captureAdmission?: VoiceCaptureAdmissionController;
     acquireConnectivityLease?: () => () => void;
     getRegistry?: () => ReturnType<typeof getVoiceAdapterRegistry>;
@@ -169,7 +177,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     let recoveryBinding: VoiceRecoveryBinding | null = null;
     let publishedSnapshot = getVoiceSessionSnapshot();
     let pendingAdapterSwitch: PendingAdapterSwitch | null = null;
-    let suppressedProviderAuthFailureAdapterId: string | null = null;
+    let suppressedTerminalFailureAdapterId: string | null = null;
     let startingAdapter: StartingAdapter | null = null;
     let realtimeCaptureAdmission: Readonly<{
         adapter: VoiceAdapterController;
@@ -185,6 +193,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     }> | null = null;
     let retiredAttemptStopStarted = false;
     let muteAttemptOwner: MuteAttemptOwner | null = null;
+    let heldInput: Readonly<{ sessionId: string; adapter: VoiceAdapterController; handle: VoiceHeldInput }> | null = null;
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
     const listeners = new Set<() => void>();
@@ -278,6 +287,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         requestedTargetSessionAddress: SessionAddress | null,
         startAttempt = createStartingAdapter(adapter, sessionId, requestedTargetSessionAddress),
     ): Promise<void> => {
+        heldInput = null;
         const ownedSessionId = startAttempt.expectedSnapshotSessionId;
         if (adapter.engineKind !== 'realtime') {
             recoveryBinding = { providerId: adapter.id, sessionId: ownedSessionId, requestedTargetSessionAddress };
@@ -376,6 +386,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             try {
                 await adapter.stop({ sessionId });
             } finally {
+                if (heldInput?.adapter === adapter && heldInput.sessionId === sessionId) heldInput = null;
                 releaseRealtimeCaptureAdmission({
                     adapterId: adapter.id,
                     sessionId,
@@ -468,6 +479,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 return false;
             }
             const effectiveMuted = owner.userMuted || owner.suspensions.size > 0;
+            // A hold can temporarily open capture even while user Mute remains true.
+            // Retire that admission before the unchanged-policy fast path as well.
+            if (effectiveMuted) {
+                await owner.adapter.cancelHoldToTalk?.({ sessionId: owner.sessionId });
+                if (muteAttemptOwner !== owner) return false;
+            }
             if (effectiveMuted === owner.appliedMuted) return true;
             await owner.adapter.setMuted({ sessionId: owner.sessionId, muted: effectiveMuted });
             if (muteAttemptOwner !== owner) return false;
@@ -543,8 +560,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             (snapshot) => snapshot.adapterId === configuredProviderId
                 && (snapshot.status !== 'disconnected' || Boolean(snapshot.errorCode?.trim()))
                 && !(
-                    snapshot.adapterId === suppressedProviderAuthFailureAdapterId
-                    && isTerminalProviderAuthFailure(snapshot)
+                    snapshot.adapterId === suppressedTerminalFailureAdapterId
+                    && canDismissVoiceSessionFailedAttempt(snapshot)
                 ),
         );
         return preferred ?? createDisconnectedSnapshot();
@@ -821,6 +838,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         const owned = resolveOwnedAdapter();
         if (owned) {
             recoveryBinding = null;
+            recordVoiceSessionEndReason(owned.adapter.id, owned.snapshot.sessionId ?? sessionId, { kind: 'stopped' });
             await stopAdapter(
                 owned.adapter,
                 owned.snapshot.sessionId ?? sessionId,
@@ -878,8 +896,8 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             }
             return;
         }
-        if (suppressedProviderAuthFailureAdapterId === adapter.id) {
-            suppressedProviderAuthFailureAdapterId = null;
+        if (suppressedTerminalFailureAdapterId === adapter.id) {
+            suppressedTerminalFailureAdapterId = null;
         }
         const startAttempt = createStartingAdapter(adapter, sessionId, requestedTargetSessionAddress);
         try {
@@ -936,6 +954,9 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     });
 
     return {
+        observeSyncedConversationMessages: (address, messages) => {
+            if (!disposed) deps?.onSyncedConversationMessages?.(address, messages);
+        },
         bargeIn: async (sessionId) => {
             if (disposed) return;
             const owned = resolveOwnedAdapter();
@@ -972,6 +993,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             disposed = true;
             recoveryBinding = null;
             muteAttemptOwner = null;
+            heldInput = null;
             pendingAdapterSwitch = null;
             unsubscribeRegistry?.();
             for (const unsub of adapterUnsubs.values()) {
@@ -1001,6 +1023,9 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return disposal;
         },
         getSnapshot: () => publishedSnapshot,
+        getAttemptTargetSessionAddress: () => startingAdapter?.requestedTargetSessionAddress
+            ?? attemptConnectivityLease?.requestedTargetSessionAddress
+            ?? recoveryBinding?.requestedTargetSessionAddress ?? null,
         getConfiguredProviderId: () => configuredProviderId,
         interrupt: async (sessionId) => {
             if (disposed) return;
@@ -1015,6 +1040,28 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 || owned.snapshot.status !== 'connected'
                 || owned.snapshot.canCommitInput !== true) return;
             await owned.adapter.commitInput?.({ sessionId });
+        },
+        beginHoldToTalk: (sessionId) => {
+            if (disposed) return null;
+            const owned = resolveOwnedAdapter();
+            if (!owned || owned.snapshot.sessionId !== sessionId
+                || owned.snapshot.status !== 'connected' || owned.snapshot.canHoldToTalk !== true
+                || resolveMuteAttemptOwner(owned).suspensions.size > 0) return null;
+            const handle = owned.adapter.beginHoldToTalk?.({ sessionId }) ?? null;
+            if (!handle) return null;
+            const finish = async (outcome: 'release' | 'cancel') => {
+                try { await handle[outcome](); }
+                finally { if (heldInput?.handle === wrapper) heldInput = null; }
+            };
+            const wrapper: VoiceHeldInput = Object.freeze({ ready: handle.ready, release: () => finish('release'), cancel: () => finish('cancel') });
+            heldInput = { sessionId, adapter: owned.adapter, handle: wrapper };
+            return wrapper;
+        },
+        finishHoldToTalk: async (sessionId, outcome) => {
+            const held = heldInput;
+            if (!held || held.sessionId !== sessionId || resolveOwnedAdapter()?.adapter !== held.adapter) return false;
+            await held.handle[outcome]();
+            return true;
         },
         rearmAfterCredentialAuthorityChange: (options) => {
             if (disposed) return;
@@ -1078,7 +1125,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 return;
             }
             if (!isTerminalProviderAuthFailure(publishedSnapshot)) return;
-            suppressedProviderAuthFailureAdapterId = publishedSnapshot.adapterId;
+            suppressedTerminalFailureAdapterId = publishedSnapshot.adapterId;
             publishSnapshot();
         },
         sendContextUpdate: (sessionId, update) => {
@@ -1096,7 +1143,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         setConfiguredProviderId: (providerId) => {
             if (disposed) return;
             if (providerId !== configuredProviderId) {
-                suppressedProviderAuthFailureAdapterId = null;
+                suppressedTerminalFailureAdapterId = null;
                 recoveryBinding = null;
             }
             configuredProviderId = providerId;
@@ -1225,6 +1272,20 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 },
             });
         },
+        dismissFailedAttempt: async (sessionId) => {
+            if (disposed || startingAdapter || pendingAdapterSwitch) return;
+            const failed = publishedSnapshot;
+            if (!canDismissVoiceSessionFailedAttempt(failed) || failed.sessionId !== sessionId || !failed.adapterId) return;
+            const adapter = resolveAttemptAdapter(failed.adapterId);
+            const failedBinding = recoveryBinding;
+            // Reuse terminal rearming and Stop cleanup; acknowledgement does not fabricate a clean End.
+            if (adapter) await stopAdapter(adapter, sessionId ?? '');
+            // A later Start or authority change owns its own recovery; old cleanup cannot acknowledge it.
+            if (disposed || recoveryBinding !== failedBinding) return;
+            recoveryBinding = null;
+            suppressedTerminalFailureAdapterId = failed.adapterId;
+            publishSnapshot();
+        },
         retry: async (sessionId) => {
             if (disposed) return;
             const owned = resolveOwnedAdapter();
@@ -1287,7 +1348,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             await stopAdapter(owned.adapter, ownedSessionId).catch(() => undefined);
             return 'unsupported';
         },
-        stop: async (sessionId) => {
+        stop: async (sessionId, reason = { kind: 'stopped' }) => {
             if (disposed) return;
             recoveryBinding = null;
             const cancelledRestartStart = cancelPendingCurrentUiContextToolSetRestart();
@@ -1304,7 +1365,13 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 return;
             }
             const ownedSessionId = owned.snapshot.sessionId ?? sessionId;
-            await stopAdapter(owned.adapter, ownedSessionId);
+            recordVoiceSessionEndReason(owned.adapter.id, ownedSessionId, reason);
+            try {
+                await stopAdapter(owned.adapter, ownedSessionId);
+            } catch (error) {
+                recordVoiceSessionEndReason(owned.adapter.id, ownedSessionId, null);
+                throw error;
+            }
         },
         subscribe: (listener) => {
             listeners.add(listener);

@@ -1,12 +1,44 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { AccountSettingsV2UpdateRequestSchema, accountSettingsParse, buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { StoredCredentials } from '@/persistence';
 import { createCliConnectedServiceAction } from './connectedServiceActionDeps';
 
 describe('native connected-service Action adapter', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+  it('settles a pool mutation with unknown outcome when the server never replies', async () => {
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_API_TIMEOUT_MS', '1000');
+    let accepted = false;
+    const server = createServer((request) => {
+      request.resume();
+      request.on('end', () => { accepted = true; });
+      // The HTTP boundary accepts the mutation but deliberately withholds its acknowledgement.
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    const action = createCliConnectedServiceAction({
+      credentials: { token: 'boundary-token', encryption: null },
+      serverHttpBaseUrl: `http://127.0.0.1:${address.port}`,
+      resolveHeaders: () => ({ Authorization: 'Bearer boundary-token' }),
+      callMachineAction: async () => { throw new Error('pool_creation_is_http'); },
+    });
+    try {
+      await expect(action({ actionId: 'connectedServices.pools.create',
+        input: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, group: { groupId: 'pool-boundary' } },
+        context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
+      })).rejects.toMatchObject({ code: 'outcome_unknown' });
+      expect(accepted).toBe(true);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 4000);
 
   it('admits a qualified quota refresh on the selected Home machine and preserves an HTTP refusal', async () => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };

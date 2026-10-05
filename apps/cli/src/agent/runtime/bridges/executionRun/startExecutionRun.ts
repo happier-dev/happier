@@ -634,6 +634,7 @@ export async function startExecutionRun(args: Readonly<{
       }
       const chatModelSelection = args.params.modelSelection;
       const commitModelSelection = voiceIntentInput.data.commitModelSelection;
+      const voicePolicy = voiceIntentInput.data.voicePolicy;
       const commitIsolation = args.params.commitIsolation === true;
       const idleTtlSeconds = typeof args.params.idleTtlSeconds === 'number' ? args.params.idleTtlSeconds : 600;
       const initialContextMode = args.params.initialContextMode === 'first_turn' ? 'first_turn' : 'bootstrap';
@@ -686,6 +687,7 @@ export async function startExecutionRun(args: Readonly<{
         idleTtlSeconds,
         initialContext,
         initialContextMode,
+        ...(voicePolicy ? { voicePolicy } : {}),
         verbosity,
         bootstrapMode,
         ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
@@ -771,6 +773,7 @@ export async function startExecutionRun(args: Readonly<{
             idleTtlSeconds,
             initialContext,
             initialContextMode,
+            ...(voicePolicy ? { voicePolicy } : {}),
             verbosity,
             ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
             disabledActionIds,

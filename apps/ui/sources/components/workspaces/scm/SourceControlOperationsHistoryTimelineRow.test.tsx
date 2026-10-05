@@ -10,6 +10,13 @@ vi.mock('react-native-unistyles', async () => {
 import { SourceControlOperationsHistoryTimelineRow } from './SourceControlOperationsHistoryTimelineRow';
 
 describe('SourceControlOperationsHistoryTimelineRow', () => {
+    it('projects an explicitly named merged pull request as a chip without changing the commit destination', async () => {
+        const onOpenCommit = vi.fn();
+        const screen = await renderScreen(<SourceControlOperationsHistoryTimelineRow theme={theme} entry={{ sha: 'merged', shortSha: 'merged', authorName: '', authorEmail: '', timestamp: 1, subject: 'Merge pull request #432 from feature', body: '' }} isHead={false} showTrailingLine={false} onOpenCommit={onOpenCommit} />);
+        expect(screen.findAllByTestId('scm-commit-entry-merged-pr-432').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('scm-commit-entry-merged');
+        expect(onOpenCommit).toHaveBeenCalledWith('merged');
+    });
     const theme = {
         colors: {
             text: { primary: '#fff', secondary: '#aaa', link: '#09f' },
@@ -59,7 +66,6 @@ describe('SourceControlOperationsHistoryTimelineRow', () => {
         const gutter = screen.findByTestId('scm-commit-entry-def456-when');
         expect(gutter).not.toBeNull();
         const text = screen.getTextContent();
-        expect(text.indexOf(new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf(new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }))).toBeGreaterThanOrEqual(0);
     });
 });
-

@@ -7,7 +7,11 @@ import type {
   Settings,
   SettingsWriteDelta,
 } from '../domains/settings/settings';
-import { settingsDefaults } from '../domains/settings/settings';
+import { settingsDefaults, settingsParse } from '../domains/settings/settings';
+import type { VoiceSettings } from '../domains/settings/voiceSettings';
+import { normalizeVoiceSettingsLocalDelta } from '../domains/settings/voiceSettingsPersistence';
+import { rebaseVoiceSettingsEdit, voiceSettingsEditRegistry } from '@/voice/settings/voiceSettingsEdit';
+import { captureConversationLanguagePreferenceOwner } from '@/voice/settings/language/conversationLanguage';
 import {
   mergeCurrentSecretBindingsIntoRawBindings,
   readRetainedSecretBindingsByProfileId,
@@ -82,6 +86,35 @@ export function useApplySettings(): (delta: SettingsWriteDelta) => void {
       source: 'ui' satisfies SettingsAnalyticsSource,
     });
   }, [expectedSettingsScope]);
+}
+
+/** Voice editors submit their change, not a stale replacement of the Account-owned profile. */
+export function useApplyVoiceSettingsEdit(): (before: VoiceSettings, next: VoiceSettings) => Promise<void> {
+  const expectedScope = useAccountSettingsScope();
+  const providerId = getStorage()((state) => state.settings.voice.providerId);
+  const registryRevision = React.useSyncExternalStore(
+    voiceSettingsEditRegistry.subscribe ?? (() => () => {}),
+    voiceSettingsEditRegistry.getRevision ?? (() => 0),
+    voiceSettingsEditRegistry.getRevision ?? (() => 0),
+  );
+  const languageOwnerIsCurrent = React.useMemo(
+    () => captureConversationLanguagePreferenceOwner(providerId, voiceSettingsEditRegistry),
+    [providerId, registryRevision],
+  );
+  return React.useCallback(async (before: VoiceSettings, next: VoiceSettings) => {
+    const current = getStorage().getState();
+    if (!expectedScope || !areAccountSettingsScopesEqual(expectedScope, current.settingsScope)) {
+      throw new Error('Account settings scope changed');
+    }
+    await persistAccountSettingsOnce(expectedScope, requireSettingsVersion(current.settingsVersion), (raw) => {
+      const settings = settingsParse(raw);
+      if (before.assistantLanguage !== next.assistantLanguage && !languageOwnerIsCurrent(settings.voice)) {
+        throw new Error('voice_settings_provider_changed');
+      }
+      const voice = rebaseVoiceSettingsEdit(settings.voice, before, next);
+      return { ...raw, ...normalizeVoiceSettingsLocalDelta({ voice }, settings) };
+    });
+  }, [expectedScope, languageOwnerIsCurrent]);
 }
 
 export function useApplyAuthoringMemoryDelta(): (delta: AuthoringMemoryDelta) => Promise<void> {

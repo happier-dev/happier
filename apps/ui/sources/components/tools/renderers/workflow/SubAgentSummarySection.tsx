@@ -15,11 +15,18 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { Icon } from '@/components/ui/icons/Icon';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
 
-function inferOperation(input: any): TaskOperation {
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function inferOperation(value: unknown): TaskOperation {
+    const input = asRecord(value);
     const op = typeof input?.operation === 'string' ? input.operation : null;
     if (op === 'run' || op === 'create' || op === 'list' || op === 'update') return op;
     if (typeof input?.subject === 'string') return 'create';
@@ -29,7 +36,7 @@ function inferOperation(input: any): TaskOperation {
 }
 
 function formatTaskLikeSummary(tool: ToolCall): string | null {
-    const input = tool.input as any;
+    const input = asRecord(tool.input);
     const op = inferOperation(input);
     if (op === 'create') {
         const subject = typeof input?.subject === 'string' ? input.subject : null;
@@ -65,8 +72,9 @@ function coerceTaskResultText(result: unknown): string | null {
     const chunks: string[] = [];
     for (const item of content) {
         if (!item || typeof item !== 'object') continue;
-        if ((item as any).type !== 'text') continue;
-        const text = (item as any).text;
+        const record = asRecord(item);
+        if (record?.type !== 'text') continue;
+        const text = record.text;
         if (typeof text === 'string' && text.trim().length > 0) {
             chunks.push(text);
         }
@@ -74,6 +82,15 @@ function coerceTaskResultText(result: unknown): string | null {
     const joined = chunks.join('\n').trim();
     return joined.length > 0 ? joined : null;
 }
+
+export const projectSubAgentSummaryDisplayText: ToolDisplayTextProjector = (tool, metadata, context) => [
+    ...toolTextBlock('tool-summary', formatTaskLikeSummary(tool)),
+    ...toolTextBlock('tool-result', coerceTaskResultText(tool.result)),
+    ...collectSubAgentSummaryTools({ tool, metadata: metadata ?? null, messages: context?.messages ?? [] })
+        .flatMap((item, index) => toolTextBlock(`tool-child-title-${index}`, item.title)),
+    ...(context?.messages ?? []).filter((message) => message.kind === 'user-text' || message.kind === 'agent-text')
+        .flatMap((message, index) => toolTextBlock(`tool-thread-text-${index}`, message.text)),
+];
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -135,10 +152,12 @@ export const SubAgentSummarySection = React.memo<{
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const transcriptSource = useSessionTranscriptSource();
+    const find = useToolFindState(messageId);
+    const effectiveDetailLevel = find.active ? 'full' : detailLevel;
 
     const filtered = React.useMemo(
-        () => (detailLevel === 'title' ? [] : collectSubAgentSummaryTools({ tool, messages, metadata })),
-        [detailLevel, tool, messages, metadata],
+        () => (effectiveDetailLevel === 'title' ? [] : collectSubAgentSummaryTools({ tool, messages, metadata })),
+        [effectiveDetailLevel, tool, messages, metadata],
     );
     const routeMessageId = React.useMemo(() => {
         return buildToolCallMessageRouteId({
@@ -161,13 +180,13 @@ export const SubAgentSummarySection = React.memo<{
         });
     }, [routeMessageId, transcriptSource, serverId, sessionId]);
 
-    if (detailLevel === 'title') return null;
+    if (effectiveDetailLevel === 'title') return null;
 
-    const isFullView = detailLevel === 'full';
+    const isFullView = effectiveDetailLevel === 'full';
     const inferredOperation = inferOperation(tool.input);
     const isBackgroundRun =
         inferredOperation === 'run' &&
-        ((tool.input as any)?.run_in_background === true || typeof (tool.input as any)?.subagent_type === 'string');
+        (asRecord(tool.input)?.run_in_background === true || typeof asRecord(tool.input)?.subagent_type === 'string');
     const shouldShowResultInline = isFullView || !(opts?.hideResultInlineWhenBackgroundRun ?? true) || !isBackgroundRun;
     const taskResultContent = shouldShowResultInline ? coerceTaskResultText(tool.result) : null;
 
@@ -184,16 +203,12 @@ export const SubAgentSummarySection = React.memo<{
         <View style={styles.container}>
             {summary ? (
                 <View style={styles.summaryItem}>
-                    <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
-                        {summary}
-                    </Text>
+                    <ToolFindText messageId={messageId} blockId="tool-summary" text={summary} style={styles.summaryText} numberOfLines={isFullView ? undefined : 3} />
                 </View>
             ) : null}
             {taskResultContent ? (
                 <View style={styles.summaryItem}>
-                    <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
-                        {taskResultContent}
-                    </Text>
+                    <ToolFindText messageId={messageId} blockId="tool-result" text={taskResultContent} style={styles.summaryText} numberOfLines={isFullView ? undefined : 3} />
                 </View>
             ) : null}
             {remainingCount > 0 ? (
@@ -218,7 +233,7 @@ export const SubAgentSummarySection = React.memo<{
             ) : null}
             {visibleTools.map((item, index) => (
                 <View key={`${item.tool.name}-${index}`} testID="task-like-summary-tool-item" style={styles.toolItem}>
-                    <Text style={styles.toolTitle}>{item.title}</Text>
+                    <ToolFindText messageId={messageId} blockId={`tool-child-title-${isFullView ? index : filtered.length - visibleTools.length + index}`} text={item.title} style={styles.toolTitle} />
                     <View style={styles.statusContainer}>
                         {item.state === 'running' && (
                             <ActivitySpinner size={Platform.OS === 'ios' ? 'small' : 14} color={theme.colors.state.neutral.foreground} />
@@ -235,13 +250,14 @@ export const SubAgentSummarySection = React.memo<{
             {threadTextMessages.length > 0 && (
                 <View style={styles.summaryItem}>
                     {threadTextMessages.map((m, idx) => (
-                        <Text
+                        <ToolFindText
                             key={`thread-text-${idx}`}
+                            messageId={messageId}
+                            blockId={`tool-thread-text-${idx}`}
+                            text={m.text}
                             style={styles.summaryText}
                             numberOfLines={isFullView ? undefined : 3}
-                        >
-                            {m.text}
-                        </Text>
+                        />
                     ))}
                 </View>
             )}

@@ -1,3 +1,4 @@
+import { uploadInChunks as uploadFiniteChunks } from "@happier-dev/transfers";
 import {
     createEncryptedTransferChunkEnvelope,
     decryptEncryptedTransferChunkEnvelope,
@@ -37,119 +38,23 @@ export async function uploadInChunks<
     onProgress?: ((progress: ChunkUploadProgress) => void) | null;
     signal?: AbortSignal | null;
 }>): Promise<TFinalize | { success: false; error: string; errorCode?: string }> {
-    let uploadId: string | null = null;
-
-    try {
-        const init = await params.init();
-        if (!init || typeof init !== 'object' || init.success !== true) {
-            const error = typeof (init as any)?.error === 'string' ? (init as any).error : 'Upload init failed';
-            const errorCode = typeof (init as any)?.errorCode === 'string' ? (init as any).errorCode : undefined;
-            return { success: false, error, ...(errorCode ? { errorCode } : {}) };
-        }
-
-        const initUploadId = (init as any)?.uploadId;
-        const chunkSizeBytes = (init as any)?.chunkSizeBytes;
-        const recipientPublicKeyBase64 = (init as any)?.recipientPublicKeyBase64;
-        if (typeof initUploadId !== 'string' || !initUploadId.trim()) {
-            return { success: false, error: 'Upload init returned no uploadId' };
-        }
-        if (typeof chunkSizeBytes !== 'number' || !Number.isFinite(chunkSizeBytes) || chunkSizeBytes <= 0) {
-            return { success: false, error: 'Upload init returned invalid chunkSizeBytes' };
-        }
-        if (typeof recipientPublicKeyBase64 !== 'string' || !recipientPublicKeyBase64.trim()) {
-            return { success: false, error: 'Upload init returned no recipientPublicKeyBase64' };
-        }
-
-        const initialChunkIndex = params.initialChunkIndex ?? 0;
-        const maxChunkCount = Math.ceil(params.totalBytes / chunkSizeBytes);
-        if (!Number.isSafeInteger(initialChunkIndex) || initialChunkIndex < 0 || initialChunkIndex > maxChunkCount) {
-            return { success: false, error: 'Upload resume state is invalid' };
-        }
-        const initialUploadedBytes = Math.min(params.totalBytes, initialChunkIndex * chunkSizeBytes);
-
-        uploadId = initUploadId;
-        const emitProgress = (uploadedBytes: number) => {
-            if (!params.onProgress) return;
-            try {
-                params.onProgress({ uploadedBytes, totalBytes: params.totalBytes });
-            } catch {
-                // ignore
+    return await uploadFiniteChunks({
+        ...params,
+        init: async () => {
+            const init = await params.init();
+            if (init.success === true && (!init.recipientPublicKeyBase64 || !init.recipientPublicKeyBase64.trim())) {
+                return { ...init, success: false, error: "Upload init returned no recipientPublicKeyBase64" };
             }
-        };
-
-        let index = initialChunkIndex;
-        let uploadedBytes = initialUploadedBytes;
-        for (let offset = initialUploadedBytes; offset < params.totalBytes; offset += chunkSizeBytes) {
-            if (params.signal?.aborted) {
-                return { success: false, error: 'Upload canceled' };
-            }
-
-            const length = Math.min(chunkSizeBytes, params.totalBytes - offset);
-            const chunkBytes = await params.readBytes(offset, length);
-            if (chunkBytes.byteLength !== length) {
-                return { success: false, error: 'Failed to read upload chunk' };
-            }
-            let encryptedChunk: Awaited<ReturnType<typeof createEncryptedTransferChunkEnvelope>>;
-            try {
-                encryptedChunk = await createEncryptedTransferChunkEnvelope({
-                    transferId: uploadId,
-                    sequence: index,
-                    payload: chunkBytes,
-                    recipientPublicKeyBase64,
-                });
-            } catch {
-                return { success: false, error: 'Upload chunk encryption failed' };
-            }
-
-            const chunkRequest = {
-                uploadId,
-                index,
-                payloadBase64: encryptedChunk.payloadBase64,
-                encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
-            } as const;
-            const chunk = params.signal
-                ? await params.sendChunk(chunkRequest, params.signal)
-                : await params.sendChunk(chunkRequest);
-            if (!chunk || typeof chunk !== 'object' || (chunk as any).success !== true) {
-                const error = typeof (chunk as any)?.error === 'string' ? (chunk as any).error : 'Upload chunk failed';
-                const errorCode = typeof (chunk as any)?.errorCode === 'string' ? (chunk as any).errorCode : undefined;
-                return { success: false, error, ...(errorCode ? { errorCode } : {}) };
-            }
-
-            uploadedBytes += chunkBytes.byteLength;
-            emitProgress(uploadedBytes);
-            index += 1;
-        }
-
-        if (params.signal?.aborted) {
-            return { success: false, error: 'Upload canceled' };
-        }
-
-        const finalized = params.signal
-            ? await params.finalize({ uploadId }, params.signal)
-            : await params.finalize({ uploadId });
-        if (params.retainUploadAfterFinalize?.(finalized)) {
-            // The finalize owner retained staged custody and supplied recovery.
-            uploadId = null;
-            return finalized;
-        }
-        if (!finalized || typeof finalized !== 'object' || (finalized as any).success !== true) {
-            const error = typeof (finalized as any)?.error === 'string' ? (finalized as any).error : 'Upload finalize failed';
-            const errorCode = typeof (finalized as any)?.errorCode === 'string' ? (finalized as any).errorCode : undefined;
-            return { success: false, error, ...(errorCode ? { errorCode } : {}) };
-        }
-
-        uploadId = null;
-        return finalized;
-    } finally {
-        if (uploadId) {
-            try {
-                await params.abort?.({ uploadId });
-            } catch {
-                // Best-effort only.
-            }
-        }
-    }
+            return init;
+        },
+        prepareChunk: async ({ uploadId, index, bytes, init }) => {
+            const encrypted = await createEncryptedTransferChunkEnvelope({
+                transferId: uploadId, sequence: index, payload: bytes,
+                recipientPublicKeyBase64: init.recipientPublicKeyBase64!,
+            });
+            return { uploadId, index, ...encrypted };
+        },
+    });
 }
 
 export type ChunkDownloadProgress = Readonly<{

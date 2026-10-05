@@ -71,8 +71,10 @@ export function speechTextEndAtOrBefore(text: string, end: number): number {
 export function resolveVoiceSpeechSegmentLength(text: string, options: Readonly<{
   force: boolean;
   firstSegment: boolean;
+  /** Admitted speech latency preference, independent of provider input limits. */
+  targetChars?: number;
 }>): number {
-  const target = 320;
+  const target = options.targetChars ?? 320;
   const maximum = 1_024;
   const limit = speechTextEndAtOrBefore(text, Math.min(text.length, maximum));
   if (options.force) return limit;
@@ -83,7 +85,7 @@ export function resolveVoiceSpeechSegmentLength(text: string, options: Readonly<
     if (options.firstSegment || end >= target) return end;
     index = end - 1;
   }
-  if (text.length < target) return 0;
+  if (text.length < Math.min(target, maximum)) return 0;
   for (let index = limit - 1; index >= target - 1; index -= 1) {
     if (/\s/u.test(text[index]!) || isSpeechClauseBoundary(text, index, { streaming: true })) return index + 1;
   }

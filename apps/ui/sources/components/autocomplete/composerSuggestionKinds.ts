@@ -3,7 +3,6 @@ import * as React from 'react';
 import {
     DaemonPluginComposerReferenceSearchResponseSchema,
     MENTION_KIND_V1,
-    buildComposerReferenceMentionPayloadV1,
     buildMentionRefForKindV1,
     type PluginContributionIdentityV1,
     type PluginContributionIntrospectionPresentationV1,
@@ -50,6 +49,7 @@ import {
     type ComposerSuggestionTrigger,
 } from './composerSuggestionGrammar';
 import { COMPOSER_SUGGESTION_KIND_DEADLINE_MS } from './composerSuggestionDeadlines';
+import { buildComposerFileReferenceSelection, buildComposerSessionReferenceSelection, buildContributedComposerReferenceSelection } from '@/sync/domains/input/composerReferenceSelection';
 
 /**
  * Composer suggestion registry — one owner for each kind's candidate resolution,
@@ -244,15 +244,12 @@ export type ComposerSuggestionKindDefinition = Readonly<{
 }>;
 
 function buildFileSuggestion(file: FileItem): AutocompleteSuggestion {
+    const selection = buildComposerFileReferenceSelection(file.fullPath, file.fileName);
     return {
         kind: 'file',
         key: `file-${file.fullPath}`,
-        text: formatComposerSuggestionToken('@', file.fullPath),
-        structuredInput: {
-            kind: MENTION_KIND_V1.file,
-            ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, file.fullPath),
-            label: file.fileName,
-        },
+        text: selection.token,
+        structuredInput: selection.payload,
         component: () => React.createElement(FileMentionSuggestion, {
             fileName: file.fileName,
             filePath: file.filePath,
@@ -337,6 +334,7 @@ async function resolveSessionSuggestions(
     for (const item of sessions) {
         if (out.length >= context.limit) break;
         const slug = buildComposerSessionTokenSlug(item);
+        const selection = buildComposerSessionReferenceSelection(item);
         if (
             !matchesComposerSuggestionQuery(item.title, context.scopedQuery)
             && !matchesComposerSuggestionQuery(slug, context.scopedQuery)
@@ -347,7 +345,7 @@ async function resolveSessionSuggestions(
         out.push({
             kind: 'session',
             key: `session-${item.id}`,
-            text: formatComposerSuggestionToken('@', `${SESSION_SUGGESTION_SCOPE}:${slug}`),
+            text: selection.token,
             label: item.title,
             description: item.workspaceLabel ?? item.agentLabel ?? item.id,
             // Which agent is running in a session is what a user scans this list for, so the
@@ -367,11 +365,7 @@ async function resolveSessionSuggestions(
                     }),
                 }
                 : {}),
-            structuredInput: {
-                kind: MENTION_KIND_V1.session,
-                ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, item.id),
-                label: item.title,
-            },
+            structuredInput: selection.payload,
         });
     }
     return out;
@@ -397,7 +391,7 @@ type CurrentComposerReference = Readonly<{
     presentation: PluginContributionIntrospectionPresentationV1;
 }>;
 
-function listCurrentComposerReferences(
+export function listCurrentComposerReferences(
     projection: PluginProjectionV2,
 ): readonly CurrentComposerReference[] {
     const seen = new Set<string>();
@@ -481,6 +475,7 @@ function buildComposerReferenceRows(params: Readonly<{
     const rows: AutocompleteSuggestion[] = [];
     for (const candidate of params.page) {
         if (rows.length >= params.limit) break;
+        const selection = buildContributedComposerReferenceSelection({ reference: contribution.reference, candidate, trigger: params.trigger });
         rows.push({
             kind: 'composerReference',
             key: `composer-reference-${JSON.stringify([
@@ -488,7 +483,7 @@ function buildComposerReferenceRows(params: Readonly<{
                 contribution.reference.localId,
                 candidate.id,
             ])}`,
-            text: formatComposerSuggestionToken(params.trigger, candidate.label),
+            text: selection.token,
             label: candidate.label,
             group: readPluginLocalizedText(contribution.presentation.title),
             icon: React.createElement(Icon, {
@@ -500,10 +495,7 @@ function buildComposerReferenceRows(params: Readonly<{
                 providerDescription,
                 candidateDescription: candidate.description,
             }),
-            structuredInput: buildComposerReferenceMentionPayloadV1({
-                reference: contribution.reference,
-                candidate,
-            }),
+            structuredInput: selection.payload,
         });
     }
     return rows;

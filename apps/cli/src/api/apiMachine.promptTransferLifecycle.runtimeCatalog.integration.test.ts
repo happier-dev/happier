@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/api/types';
-import { createTransferRecipientKeyPair } from '@/machines/transfer/transferChunkEncryption';
+import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ApiMachineClient } from './apiMachine';

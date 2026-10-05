@@ -64,6 +64,11 @@ export type HappierService = Readonly<{
   verification: HappierServiceVerification;
   ring: PublicReleaseRingLabel | null;
   instanceId: string | null;
+  /** Definition-owned relay profile; separate from the pinned service instance identity. */
+  activeServerId?: string | null;
+  /** Physical daemon instance encoded in its installed service label, before relay projection. */
+  serviceInstanceId?: string | null;
+  startupSource?: string | null;
   scope: 'user' | 'system';
   definitionPath: string;
   executablePath: string | null;
@@ -77,7 +82,8 @@ export type HappierService = Readonly<{
    */
   managedBy?: 'desktop' | null;
   installed: boolean;
-  running: boolean;
+  /** null when the service manager could not establish activity. */
+  running: boolean | null;
   /**
    * Whether its service manager starts it at login/boot (systemd `UnitFileState`, the launchd
    * override database, Task Scheduler's task state). `null` when it could not be read; absent from

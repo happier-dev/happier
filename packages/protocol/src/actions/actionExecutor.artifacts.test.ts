@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
@@ -12,7 +12,33 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
-  it('keeps public-link secrets out of Action input and results and requires approval by default', () => {
+  it('offers owner public-link audit as an approval-default egress read', () => {
+    const actionId = 'artifact.public_link.audit' as ActionId;
+    expect(ActionIdSchema.safeParse(actionId).success).toBe(true);
+    const spec = getActionSpec(actionId);
+    expect(spec.sideEffectClass).toBe('read');
+    expect(spec.safety).toBe('safe');
+    expect(spec.inputSchema.safeParse({ artifactId: 'artifact', shareId: 'share' }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ artifactId: 'artifact', shareId: 'share', accountId: 'foreign' }).success).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId, spec, context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, context: { surface: 'ui', authority: 'present_user' } }).required).toBe(false);
+  });
+  it.each(['artifact.create', 'artifact.update', 'artifact.publish_from_file', 'artifact.get'] as const)('returns %s private HTML preview only to the caller, not shared observations', async actionId => {
+    const artifactId = '11111111-1111-4111-8111-111111111111';
+    const revision = { headerVersion: 1, bodyVersion: 1 };
+    const previewUrl = 'https://isolated.example/a/document#d=PRIVATE_HTML_SENTINEL';
+    const artifact = { artifactId, header: { kind: 'html' }, body: '<p>HTML</p>', revision, ownerAccountId: 'owner', access: 'owner', seq: 1, createdAt: 1, updatedAt: 1 };
+    const output = actionId === 'artifact.get' ? { artifact, previewUrl } : { artifactId, revision, previewUrl };
+    const input = actionId === 'artifact.create' ? { artifactId, header: artifact.header, body: artifact.body }
+      : actionId === 'artifact.update' ? { artifactId, header: artifact.header, body: artifact.body, expectedRevision: revision }
+      : actionId === 'artifact.get' ? { artifactId } : { path: 'document.html' };
+    const observeActionExecution = vi.fn(async () => {});
+    const executor = createActionExecutor({ artifactAction: async () => output, isActionApprovalRequired: () => false,
+      interceptActionExecution: async ({ input }) => ({ status: 'continue', input }), observeActionExecution });
+    expect(await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } })).toEqual({ ok: true, result: output });
+    expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain('PRIVATE_HTML_SENTINEL');
+  });
+  it('keeps public-link material out of Action inputs and requires approval by default', () => {
     for (const id of ['artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke'] as const) {
       expect(ActionIdSchema.safeParse(id).success).toBe(true);
       const spec = getActionSpec(id as ActionId);
@@ -25,6 +51,21 @@ describe('ordinary Artifact Actions', () => {
         context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
       expect(spec.outputSchema.safeParse({ publicShare: { secret: 'must-remain-local' } }).success).toBe(false);
     }
+  });
+  it.each(['artifact.public_link.create', 'session.public_link.create'] as const)('returns %s URL to the caller while redacting shared observations', async actionId => {
+    const settings = { id: 'share', expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+    const output = actionId === 'artifact.public_link.create'
+      ? { publicShare: { ...settings, subject: { kind: 'artifact', id: 'artifact' } }, url: 'https://public.example/s/lookup#k=SECRET_FOR_CALLER' }
+      : { id: settings.id, expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, updatedAt: 1, url: 'https://public.example/s/lookup#k=SECRET_FOR_CALLER' };
+    const observeActionExecution = vi.fn(async () => {});
+    const executor = createActionExecutor({ artifactAction: async () => output, sessionAccessAction: async () => output,
+      isActionApprovalRequired: () => false, interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
+      observeActionExecution });
+    const result = await executor.execute(actionId, actionId === 'artifact.public_link.create' ? { artifactId: 'artifact' } : { sessionId: 'session' },
+      { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } });
+    expect(result).toEqual({ ok: true, result: output });
+    expect(observeActionExecution).toHaveBeenCalled();
+    expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain('SECRET_FOR_CALLER');
   });
   it('offers reads and approval-based writes to Agents, MCP and CLI through the canonical catalog', () => {
     for (const id of ids) {

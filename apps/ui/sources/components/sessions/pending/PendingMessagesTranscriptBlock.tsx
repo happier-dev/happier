@@ -367,23 +367,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         });
     }, [props.onEditPendingMessage]);
 
-    const handleReorderIds = React.useCallback(async (ids: string[]) => {
-        if (ids.length <= 1) return;
-        const current = pendingMessages.map((m) => m.id);
-        if (ids.length === current.length && ids.every((id, idx) => id === current[idx])) {
-            return;
-        }
-        try {
-            if (exactPendingQueueOwner) {
-                await sync.reorderPendingMessages(props.sessionId, ids, props.recipient, exactPendingQueueOwner);
-            } else {
-                await sync.reorderPendingMessages(props.sessionId, ids, ...(props.recipient ? [props.recipient] : []));
-            }
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.reorderFailed'));
-        }
-    }, [exactPendingQueueOwner, pendingMessages, props.sessionId, props.recipient]);
-
     const handleRemove = React.useCallback(async (pendingId: string) => {
         const confirmed = await Modal.confirm(
             t('session.pendingMessages.removeConfirm.title'),
@@ -1026,12 +1009,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 ) : null}
                                 {paintsMessageActionRow && pendingMessages.length > 1 && !hasEffectPossibleDelivery ? (
                                     renderDragHandle({
-                                        children: (
-                                            <ReorderDragHandleAffordance
-                                                testID={`pendingMessages.reorder:${message.id}`}
-                                                accessibilityLabel={t('common.reorder')}
-                                            />
-                                        ),
+                                        children: null,
+                                        testID: `pendingMessages.reorder:${message.id}`,
                                         accessibilityLabel: t('common.reorder'),
                                     })
                                 ) : null}
@@ -1146,12 +1125,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         ) : paintsMessageActionRow ? (
                             <View style={styles.messageActionContainer}>
                                 {renderDragHandle({
-                                    children: (
-                                        <ReorderDragHandleAffordance
-                                            testID={`pendingMessages.reorder:${message.id}`}
-                                            accessibilityLabel={t('common.reorder')}
-                                        />
-                                    ),
+                                    children: null,
+                                    testID: `pendingMessages.reorder:${message.id}`,
                                     accessibilityLabel: t('common.reorder'),
                                 })}
                             </View>
@@ -1532,12 +1507,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 }}
                             >
                                 <PendingMessagesDragReorderList
+                                    scope={accountActorViewerScope}
+                                    sessionId={props.sessionId}
+                                    recipient={props.recipient ?? null}
                                     messages={pendingMessages}
-                                    longPressMs={200}
                                     scrollRef={scrollRef}
                                     viewportHeightPx={scrollViewportHeightPx}
+                                    contentHeightPx={scrollContentHeightPx}
                                     scrollOffsetY={scrollOffsetY}
-                                    onReorderIds={handleReorderIds}
                                     renderItem={({ message, index, renderDragHandle }) => renderMessage({ message, index, renderDragHandle })}
                                 />
                                 {displayedDiscarded.length > 0 ? (
@@ -1635,33 +1612,6 @@ function IconAction(props: {
         >
             <Icon name={props.icon} size={14} color={tint} />
         </Pressable>
-    );
-}
-
-function ReorderDragHandleAffordance(props: {
-    accessibilityLabel: string;
-    testID?: string;
-}) {
-    const { theme } = useUnistyles();
-    const isWeb = Platform.OS === 'web';
-    return (
-        <View
-            testID={props.testID}
-            accessibilityLabel={props.accessibilityLabel}
-            {...(!isWeb ? { pointerEvents: 'none' as const } : null)}
-            style={[
-                {
-                    padding: 2,
-                    borderRadius: 6,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    opacity: 0.65,
-                },
-                isWeb ? ({ pointerEvents: 'none' } as const) : null,
-            ]}
-        >
-            <Icon name="list" size={14} color={theme.colors.text.secondary} />
-        </View>
     );
 }
 

@@ -1,4 +1,4 @@
-import { createScmOperationUnknownOutcome, SCM_OPERATION_ERROR_CODES, ScmOperationOutcomeSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmOperationReconciliation } from '@happier-dev/protocol/scm';
+import { createScmOperationUnknownOutcome, SCM_OPERATION_ERROR_CODES, ScmOperationOutcomeSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmOperationReconciliation } from '@happier-dev/protocol/scm';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -69,7 +69,8 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
             success: false,
             error: SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN,
             errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN,
-            outcome: createScmOperationUnknownOutcome(reconciliationFor(context)),
+            // Saved analysis revisions are not repository mutations and have no Git reconciliation outcome.
+            ...(context.method.startsWith('scm.diffSummary.') ? {} : { outcome: createScmOperationUnknownOutcome(reconciliationFor(context)) }),
         };
     }
     if (error instanceof Error && error.message === SCM_UNSUPPORTED_RESPONSE_ERROR) {
@@ -84,7 +85,21 @@ export function assertScmResponse<T extends { success: boolean; error?: string; 
     }
     const outcome = (value as { outcome?: unknown }).outcome;
     // The machine RPC is an untyped transport boundary; validate its envelope and rich outcome here.
-    const response = value as T;
+    let response = value as T;
+    for (const field of ['publication', 'commitPublication'] as const) {
+        const publication = (value as Record<string, unknown>)[field];
+        if (publication !== undefined) {
+            const parsed = ScmCommitPublicationSchema.safeParse(publication);
+            if (!parsed.success) throw new Error(SCM_UNSUPPORTED_RESPONSE_ERROR);
+            response = { ...response, [field]: parsed.data };
+        }
+    }
+    const hookContentChanges = (value as { hookContentChanges?: unknown }).hookContentChanges;
+    if (hookContentChanges !== undefined) {
+        const parsed = ScmCommitHookContentChangesSchema.safeParse(hookContentChanges);
+        if (!parsed.success) throw new Error(SCM_UNSUPPORTED_RESPONSE_ERROR);
+        response = { ...response, hookContentChanges: parsed.data };
+    }
     if (outcome !== undefined) {
         const parsed = ScmOperationOutcomeSchema.safeParse(outcome);
         if (!parsed.success) throw new Error(SCM_UNSUPPORTED_RESPONSE_ERROR);

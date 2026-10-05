@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 
 import {
     normalizePluginDeclarativeDocumentV1,
@@ -386,6 +387,8 @@ function normalizeLiveDocument(input: Readonly<{
         occurrenceId: input.occurrenceId,
         document,
         actions: [...bindings.actions.values()].map(({ identity }) => identity),
+        dragSources: [...bindings.dragSources.values()].map(({ identity, referenceSchema }) => ({ identity, referenceSchema })),
+        dropTargets: [...bindings.dropTargets.values()].map(({ identity }) => identity),
         destinations: [...bindings.destinations.values()].map(({ identity }) => identity),
         settings: bindings.settings,
         uiQueries: [...bindings.uiQueries.values()],
@@ -422,6 +425,7 @@ export function useDeclarativeDocumentSource(input: DeclarativeDocumentSourceInp
     }
     const hostApi = usePluginHostApi();
     const { resource, refresh } = useLivePluginResource(sourceId);
+    useWidgetFrameResourceActivity(resource.pending === 'refresh');
     const identity = readRecord(input.staticModel.identity);
     const occurrenceId = readString(identity?.occurrenceId);
     const matchedMountScope = hasMatchingMountScope({

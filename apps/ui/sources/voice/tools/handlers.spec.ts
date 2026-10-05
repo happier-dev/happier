@@ -7,6 +7,7 @@ import {
   unbindVoiceRuntimeAttemptBindingIfOwned,
 } from '@/voice/binding/voiceConversationBindingStore';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
@@ -17,6 +18,8 @@ import {
 } from '@/components/sessions/shell/sessionListPaneRetention';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import type { AuthContextType } from '@/auth/context/AuthContext';
+import { getCurrentAuth, setCurrentAuth } from '@/auth/context/currentAuth';
 
 import { createVoiceToolHandlers, serializeVoiceActionExecuteResult } from './handlers';
 
@@ -44,11 +47,6 @@ const createArtifactWithHeader = vi.fn();
 const artifactCreateRequests = vi.fn();
 const voiceSessionStop = vi.hoisted(() => vi.fn(async () => {}));
 const runtimeFetchWithServerReachability = vi.hoisted(() => vi.fn());
-// Rendering is outside this Voice custody test. Keep the third-party native/
-// browser renderer boundary inert while exercising the actual host and Actions.
-vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
-  splitStreamingRevealTextParts() { throw new Error('unexpected markdown rendering'); },
-}));
 const readOrdinarySessionListCoverage = vi.fn<() => {
   serverId: string | null;
   coverage: 'complete' | 'incomplete';
@@ -246,7 +244,9 @@ function createBaseState(): any {
           shareDeviceInventory: true,
         },
       },
-    recentMachinePaths: [
+    },
+    authoringMemory: {
+      recentMachinePaths: [
         { machineId: 'm1', path: '/tmp/s1' },
         { machineId: 'm1', path: '/tmp/s2' },
       ],
@@ -259,6 +259,9 @@ const readMockStorageState = () => ({ ...state, applySettingsLocal });
 
 async function createElevenLabsToolHarness() {
   const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
+  // UI interactions leave the runtime under test and are not part of tool custody.
+  // Refuse unexpected use while keeping the current public UI boundary shape.
+  const unavailableUi = (): never => { throw new Error('unexpected Voice UI interaction'); };
   let incoming!: (event: unknown) => Promise<void>;
   const sent: Array<Record<string, unknown>> = [];
   const network = {
@@ -277,7 +280,7 @@ async function createElevenLabsToolHarness() {
   const lifetime = new AbortController();
   const directEffect = vi.fn(async () => { throw new Error('voice_effect_call_custody_unavailable'); });
   const connection = await runtime.createConnection({
-    session: { config: { textOnly: true, dynamicVariables: { sessionId: 's1' } } },
+    session: { config: { textOnly: true, dynamicVariables: { sessionId: 's1' } }, safeMetadata: null },
     attemptId: 1,
     execution: { kind: 'direct_media' },
     mic: {
@@ -295,7 +298,31 @@ async function createElevenLabsToolHarness() {
       name: 'sendSessionMessage', description: 'Message a session',
       parameters: { type: 'object' }, execute: directEffect,
     }],
-    ui: { alert() {} },
+    ui: {
+      version: () => ({ apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, methods: [] }),
+      context: async () => unavailableUi(), watchContext: unavailableUi,
+      widgetArea: async () => unavailableUi(),
+      readEntityDragItem: async () => unavailableUi(),
+      updateEntityDragDrop: async () => unavailableUi(),
+      watchEntityDragDrop: async () => unavailableUi(),
+      publishCurrentUiContext: unavailableUi,
+      activeComposer: async () => unavailableUi(), readComposer: async () => unavailableUi(),
+      watchComposer: async () => unavailableUi(), applyComposer: async () => unavailableUi(),
+      focusComposer: async () => unavailableUi(), setComposerDecorations: async () => unavailableUi(),
+      acquireComposerInputLock: async () => unavailableUi(), pickComposerMedia: async () => unavailableUi(),
+      inspectComposerContent: async () => unavailableUi(), releaseComposerContent: async () => unavailableUi(),
+      readSession: async () => unavailableUi(), watchSession: async () => unavailableUi(),
+      respondToSessionPermission: async () => unavailableUi(), executeAction: async () => unavailableUi(),
+      selectActionInput: async () => unavailableUi(), openNewSession: async () => unavailableUi(),
+      openConnectedAccounts: async () => unavailableUi(), settleEphemeralInput: async () => unavailableUi(),
+      readResource: async () => unavailableUi(), statOpenableContent: async () => unavailableUi(),
+      readOpenableContent: async () => unavailableUi(), watchResource: async () => unavailableUi(),
+      readStoredImage: async () => unavailableUi(), watchLiveStream: async () => unavailableUi(),
+      openSurface: async () => unavailableUi(), replacePageLocation: async () => unavailableUi(),
+      notify: async () => unavailableUi(), confirm: async () => unavailableUi(), diagnostic: unavailableUi,
+      readClipboard: async () => unavailableUi(), writeClipboard: async () => unavailableUi(),
+      openExternalLink: async () => unavailableUi(),
+    },
     credentials: { phase: 'connection', mediated: null, raw: null },
     signal: lifetime.signal,
   });
@@ -445,6 +472,15 @@ function retainOrdinaryVoiceSessionReferenceCorpus(input: Readonly<{
   });
 }
 
+// The mounted Sessions pane, not retained lookup rows, owns Voice membership.
+function retainFixtureSessionListCorpus(): void {
+  retainVoiceSessionReferenceCorpus({
+    addresses: Object.entries(state.sessionListIndexByServerId).flatMap(([serverId, entries]) =>
+      (entries as Array<{ sessionId: string }>).map(({ sessionId }) => ({ serverId, sessionId }))),
+    complete: true,
+  });
+}
+
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
@@ -549,9 +585,16 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
   });
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-  getCurrentAuth: () => ({ refreshFromActiveServer }),
-}));
+const authFixture = {
+  isAuthenticated: true,
+  credentials: { token: 'account-token' },
+  credentialAuthorityKind: 'account',
+  login: async () => ({ kind: 'completed' as const }),
+  loginWithCredentials: async () => ({ kind: 'completed' as const }),
+  logout: async () => ({ kind: 'completed' as const }),
+  refreshFromActiveServer,
+} satisfies AuthContextType;
+let previousAuth: AuthContextType | null;
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -637,6 +680,8 @@ describe('voice tool handlers', () => {
     expect(replacement.connection.state()).toBe('open');
   });
   beforeEach(() => {
+    previousAuth = getCurrentAuth();
+    setCurrentAuth(authFixture);
     state = createBaseState();
     resetServerFeaturesClientForTests();
     resetSessionListPaneRetentionForTests();
@@ -718,6 +763,7 @@ describe('voice tool handlers', () => {
   });
 
   afterEach(() => {
+    setCurrentAuth(previousAuth);
     resetRuntimeFetch();
   });
 
@@ -890,7 +936,7 @@ describe('voice tool handlers', () => {
 
     const result = JSON.parse(await tools[searchToolName]!({ query: '', limit: 100 }));
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(result.actionSpecs).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'ui.current_context.read' }),
       expect.objectContaining({ id: 'ui.current_context.command.invoke' }),
@@ -1180,7 +1226,7 @@ describe('voice tool handlers', () => {
         serverId: 'server-a',
         machineId: 'm1',
       },
-      directory: '/tmp/s1',
+      directory: { kind: 'path', path: '/tmp/s1' },
       agentTarget: {
         kind: 'agent',
         identity: {
@@ -1213,16 +1259,23 @@ describe('voice tool handlers', () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
-    const response = JSON.parse(await tools.spawnSession(spawnInput));
+    const { getActionSpec } = await import('@happier-dev/protocol');
+    const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
+    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(true);
+    const response = JSON.parse(await tools.spawnSession(spawnInput, {
+      serverId: 'server-a',
+      callId: 'voice-spawn-call',
+      effectId: 'voice-spawn-effect',
+    }));
 
     expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
-    expect(machineRpcWithServerScope).toHaveBeenCalledWith({
+    expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
       serverId: 'server-a',
       machineId: 'm1',
       method: RPC_METHODS.SESSION_SPAWN_NEW,
       payload: spawnInput,
       signal: undefined,
-    });
+    }));
     expect(response).toEqual({ ok: true, ...spawnResult });
   });
 
@@ -1251,7 +1304,7 @@ describe('voice tool handlers', () => {
   });
 
   it('disambiguates duplicate path labels with human-readable path tails', async () => {
-    state.settings.recentMachinePaths = [
+    state.authoringMemory.recentMachinePaths = [
       { machineId: 'm1', path: '/Users/leeroy/workspaces/apps/leeroy' },
       { machineId: 'm1', path: '/Users/leeroy/workspaces/docs/leeroy' },
     ];
@@ -1290,7 +1343,7 @@ describe('voice tool handlers', () => {
 
   it('lists only the requested machine paths when another machine shares the same collapsed label', async () => {
     state.settings.voice.privacy.shareDeviceInventory = true;
-    state.settings.recentMachinePaths = [
+    state.authoringMemory.recentMachinePaths = [
       { machineId: 'm1', path: '/Users/leeroy' },
       { machineId: 'm1_alias', path: '/Users/leeroy' },
     ];
@@ -1618,7 +1671,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
-  it('answers a pending AskUserQuestion request with structured answers', async () => {
+  it('requires present-user authority for a pending AskUserQuestion despite structured spoken answers', async () => {
     state.sessions.s1.agentState.requests = {
       req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
       req_permission: { id: 'req_permission', tool: 'Bash', kind: 'permission' },
@@ -1632,16 +1685,11 @@ describe('voice tool handlers', () => {
       answers: [{ question: 'Continue?', values: ['Yes'] }],
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: true });
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-      sessionId: 's1',
-      serverId: 'server-a',
-      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-      payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] } },
-    });
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
-  it('reports approval custody truthfully before answering a pending user-action request', async () => {
+  it('does not turn an approval-required setting into present-user authority for a spoken answer', async () => {
     state.settings.actionsSettingsV1 = {
       v: 1,
       actions: {
@@ -1664,16 +1712,16 @@ describe('voice tool handlers', () => {
     ));
 
     expect(result, JSON.stringify(result)).toMatchObject({
-      ok: true,
-      kind: 'approval_request_created',
-      artifactId: expect.any(String),
+      ok: false,
+      errorCode: 'present_user_required',
       actionId: 'session.user_action.answer',
     });
     expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
     expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(artifactCreateRequests).not.toHaveBeenCalled();
   });
 
-  it('maps allow-or-deny decisions onto AskUserQuestion option labels when no structured answers are provided', async () => {
+  it('does not grant present-user authority to a spoken reject decision for a permission-labelled question', async () => {
     state.sessions.s1.agentState.requests = {
       req_question: {
         id: 'req_question',
@@ -1702,21 +1750,11 @@ describe('voice tool handlers', () => {
       decision: 'reject',
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_question' });
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-        payload: {
-          id: 'req_question',
-          approved: false,
-          answers: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
-        },
-      }),
-    );
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
-  it('responds to ExitPlanMode through the generalized user-action response action', async () => {
+  it('requires present-user authority for ExitPlanMode even when Voice requests changes', async () => {
     state.sessions.s1.agentState.requests = {
       req_exit_plan: { id: 'req_exit_plan', tool: 'ExitPlanMode', kind: 'user_action' },
     };
@@ -1730,20 +1768,11 @@ describe('voice tool handlers', () => {
       reason: 'The plan needs another pass before exiting plan mode.',
     });
 
-    expect(JSON.parse(result), result).toMatchObject({ ok: true });
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-      sessionId: 's1',
-      serverId: 'server-a',
-      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-      payload: {
-        id: 'req_exit_plan',
-        approved: false,
-        reason: 'The plan needs another pass before exiting plan mode.',
-      },
-    });
+    expect(JSON.parse(result), result).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
-  it('surfaces a user-action response failure when the scoped RPC returns ok false', async () => {
+  it('rejects a spoken user-action answer before entering the scoped RPC', async () => {
     state.sessions.s1.agentState.requests = {
       req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
     };
@@ -1756,10 +1785,11 @@ describe('voice tool handlers', () => {
       answers: [{ question: 'Continue?', values: ['Yes'] }],
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
-  it('answers a transcript-backed user-action request in the resolved session', async () => {
+  it('retains present-user authority requirements for a transcript-backed user-action request', async () => {
     state.sessions.sys_voice.agentState.requests = {};
     state.sessions.s1.agentState.requests = {};
     state.sessions.s2.agentState.requests = {};
@@ -1792,13 +1822,8 @@ describe('voice tool handlers', () => {
       answers: [{ question: 'Continue?', values: ['Yes'] }],
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_question' });
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-      sessionId: 's1',
-      serverId: 'server-a',
-      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-      payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] } },
-    });
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
   it('refreshes the resolved target session messages before failing a user-action response', async () => {
@@ -1837,7 +1862,8 @@ describe('voice tool handlers', () => {
     });
 
     expect(refreshSessionMessages).toHaveBeenCalledWith('s1');
-    expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_question_after_refresh' });
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question_after_refresh' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
   it('forces a session refresh before failing a user-action response when the known session state is stale', async () => {
@@ -1864,7 +1890,8 @@ describe('voice tool handlers', () => {
     });
 
     expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('s1', { forceRefresh: true });
-    expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_question_after_force_refresh' });
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question_after_force_refresh' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
   it('routes sendSessionMessage to an explicit sessionId through canonical Voice admission', async () => {
@@ -1892,26 +1919,6 @@ describe('voice tool handlers', () => {
 
     expect(JSON.parse(result), result).toMatchObject({ ok: true });
     expect(useVoiceTargetStore.getState().primaryActionSessionAddress).toEqual({ serverId: 'server-a', sessionId: 's2' });
-  });
-
-  it('can set tracked sessions (deduped and normalized)', async () => {
-    retainVoiceSessionReferenceCorpus({
-      addresses: [
-        { serverId: 'server-a', sessionId: 's1' },
-        { serverId: 'server-a', sessionId: 's2' },
-      ],
-      complete: true,
-    });
-    const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
-
-    const result = await tools.setTrackedSessions({ sessionIds: ['s2', ' s1 ', 's2'] });
-
-    expect(JSON.parse(result), result).toMatchObject({ ok: true });
-    expect(useVoiceTargetStore.getState().voiceLiveContextSessionAddresses).toEqual([
-      { serverId: 'server-a', sessionId: 's1' },
-      { serverId: 'server-a', sessionId: 's2' },
-    ]);
   });
 
   it('does not serialize a partial tracked-set Action result as full success', () => {
@@ -1942,6 +1949,7 @@ describe('voice tool handlers', () => {
   });
 
   it('lists sessions as JSON', async () => {
+    retainFixtureSessionListCorpus();
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
 
@@ -1971,6 +1979,7 @@ describe('voice tool handlers', () => {
   });
 
   it('includes cached sessions from other servers in listSessions (with serverId)', async () => {
+    retainFixtureSessionListCorpus();
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
@@ -1983,6 +1992,7 @@ describe('voice tool handlers', () => {
   });
 
   it('includes sessions that only exist in the current visible session list', async () => {
+    retainFixtureSessionListCorpus();
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
@@ -1999,6 +2009,7 @@ describe('voice tool handlers', () => {
   });
 
   it('omits the location label from listSessions results because file-path sharing is hardened off', async () => {
+    retainFixtureSessionListCorpus();
     // `voiceSettingsParse` force-disables shareFilePaths over the voice transport, so the
     // workspace location label must not be surfaced to the provider.
     const { createVoiceToolHandlers } = await import('./handlers');
@@ -2013,6 +2024,7 @@ describe('voice tool handlers', () => {
   });
 
   it('prefers the visible human title over a stale raw session title for the same session id', async () => {
+    retainFixtureSessionListCorpus();
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
@@ -2028,6 +2040,7 @@ describe('voice tool handlers', () => {
   });
 
   it('uses session list renderables as a fallback human title source when raw sessions are stale', async () => {
+    retainFixtureSessionListCorpus();
     state.sessionListViewData = null;
 
     const { createVoiceToolHandlers } = await import('./handlers');
@@ -2068,6 +2081,15 @@ describe('voice tool handlers', () => {
       },
     ];
 
+    state.sessionListRowsByServerId['server-a'] = Object.fromEntries(
+      state.sessionListViewData.map((entry: { session: { id: string } }) => [entry.session.id, entry.session]),
+    );
+    retainVoiceSessionReferenceCorpus({
+      addresses: state.sessionListViewData.map((entry: { session: { id: string } }) => ({
+        serverId: 'server-a', sessionId: entry.session.id,
+      })),
+      complete: true,
+    });
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
@@ -2081,6 +2103,7 @@ describe('voice tool handlers', () => {
   });
 
   it('redacts tool args in previews when shareToolArgs is false', async () => {
+    retainFixtureSessionListCorpus();
     state.settings.voice.privacy.shareToolArgs = false;
 
     const { createVoiceToolHandlers } = await import('./handlers');
@@ -2095,6 +2118,7 @@ describe('voice tool handlers', () => {
   });
 
   it('does not include user/assistant text previews in listSessions when shareRecentMessages is false', async () => {
+    retainFixtureSessionListCorpus();
     state.settings.voice.privacy.shareRecentMessages = false;
 
     const { createVoiceToolHandlers } = await import('./handlers');

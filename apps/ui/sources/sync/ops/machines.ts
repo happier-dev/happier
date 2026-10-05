@@ -1073,7 +1073,7 @@ export async function machineReadSessionLogTail(
     try {
         return await apiSocket.machineRPC<MachineReadSessionLogTailResult, { path: string; maxBytes?: number }>(
             machineId,
-            RPC_METHODS.SESSION_LOG_TAIL,
+            RPC_METHODS.DAEMON_SESSION_LOG_TAIL,
             {
                 path: params.path,
                 maxBytes: params.maxBytes,

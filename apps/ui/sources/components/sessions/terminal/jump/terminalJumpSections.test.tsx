@@ -14,6 +14,17 @@ import { registerSessionTerminalWorkspaceOwner } from '../sessionTerminalWorkspa
 import { openSessionTerminalInDetails } from '../embeddedTerminalDocking';
 import { buildTerminalJumpModel, readOtherSessionTerminals, type TerminalJumpModelInput } from './terminalJumpSections';
 
+// Recipient-envelope HTTP is outside this terminal journey and must remain unused.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Terminal Jump unexpectedly reached the recipient-envelope API'); };
+    return {
+        createSessionDataKeyEnvelopeClient: unused,
+        readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused,
+        prepareSessionDataKeyEnvelopesDetached: unused,
+    };
+});
+
 // The daemon terminal registry is reached over machine RPC: the one real boundary here.
 const machineRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));

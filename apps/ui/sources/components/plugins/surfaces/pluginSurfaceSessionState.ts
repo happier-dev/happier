@@ -22,6 +22,8 @@ import {
 } from '@/sync/ops/sessionPermissionAnswers';
 import { listSessionPendingPermissions } from '@/sync/ops/sessionPendingPermissions';
 import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { sessionWorkStatusFactsFromStatus } from '@/components/work/status/sessionWorkStatusFacts';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
 
@@ -61,7 +63,12 @@ type ProjectedSession = Readonly<{
 }>;
 
 function projectSession(session: Session, accountScope: ServerAccountScope | null): ProjectedSession {
-    const awareness = getSessionStatus(session, Date.now(), { workingTextMode: 'static', vibingIndex: 0 }).awareness;
+    const status = getSessionStatus(session, Date.now(), { workingTextMode: 'static', vibingIndex: 0 });
+    const { awareness } = status;
+    const workStatus = resolveWorkStatusTone({
+        kind: 'session',
+        facts: sessionWorkStatusFactsFromStatus(session, status),
+    }) satisfies PluginUiSessionStateV1['workStatus'];
     const requests = new Map<string, ProjectedPendingPermission>();
     const pendingPermissions: PluginUiSessionStateV1['pendingPermissions'][number][] = [];
     for (const pending of listSessionPendingPermissions(session, accountScope)) {
@@ -82,10 +89,12 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
     }
     const state = PluginUiSessionStateV1Schema.parse({
         sessionId: session.id,
+        ...(accountScope ? { serverId: accountScope.serverId } : {}),
         ...(awareness.title ? { title: awareness.title } : {}),
         lifecycle: awareness.lifecycle,
         runtime: awareness.runtime,
         operational: awareness.operational.primary,
+        workStatus,
         ...(awareness.workspace ? { workspace: awareness.workspace } : {}),
         pendingPermissions,
     });

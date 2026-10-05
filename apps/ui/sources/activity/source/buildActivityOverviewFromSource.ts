@@ -45,6 +45,8 @@ import { resolveSessionWorkspaceDisplayPresentation } from '@/sync/domains/sessi
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 
+const NO_SOURCE_ATTENTION_MESSAGES: readonly Message[] = [];
+
 export type ActivityOverviewSummary = Readonly<{
     totalAttentionCount: number;
     inboxContentCount: number;
@@ -246,7 +248,7 @@ export function readActivitySourceAttentionMessages(
     return readSourceSessionMessages(source, address.sessionId);
 }
 
-function collectSourceSessions(
+export function collectSourceSessions(
     source: ActivityAttentionSource,
     includeWarmSourceWhenNotReady: boolean,
     preferCurrentListProjection = false,
@@ -270,7 +272,12 @@ function collectSourceSessions(
                 && renderable.seq >= session.seq
                 && renderable.agentStateVersion >= session.agentStateVersion
                 && !summaryProjectionMatchesHydrated;
-            const projectedSession = summaryProjectionIsNewer
+            // A matching list row also carries transcript-derived pending counts.
+            // A message-free summary must consume those facts, not the hydrated
+            // agent-state copy or an ambient same-ID transcript from another Home.
+            const summaryProjectionUsesMatchingRow = summaryProjectionMatchesHydrated
+                && source.sessionMessagesById === undefined;
+            let projectedSession = (summaryProjectionIsNewer || summaryProjectionUsesMatchingRow) && renderable
                 ? buildSessionFromListRenderable(renderable, { serverId: address.serverId })
                 : renderable
                 && renderable.metadataUnavailable !== true
@@ -280,6 +287,16 @@ function collectSourceSessions(
                     serverId: address.serverId,
                 })
                 : session;
+            if (summaryProjectionUsesMatchingRow && renderable) {
+                // A matching row's unread bit is not new ready-event evidence.
+                // Keep the explicit ready fact while consuming its pending counts.
+                projectedSession = {
+                    ...projectedSession,
+                    latestReadyEventSeq: renderable.latestReadyEventSeq === undefined
+                        ? session.latestReadyEventSeq
+                        : renderable.latestReadyEventSeq,
+                };
+            }
             if (isHydratedSessionInActivityCustody(projectedSession)) {
                 sessions.push({
                     address,
@@ -517,8 +534,8 @@ export function buildActivityOverviewSummaryFromSource(params: Readonly<{
     )) {
         if (!isSessionAdmittedToPersonalActivity(entry.session)) continue;
         const messages = entry.hasHydratedMessages
-            ? readSourceSessionMessages(params.source, entry.address.sessionId)
-            : undefined;
+            ? readSourceSessionMessages(params.source, entry.address.sessionId) ?? NO_SOURCE_ATTENTION_MESSAGES
+            : NO_SOURCE_ATTENTION_MESSAGES;
         const candidate = buildSessionActivityAttention({
             session: entry.session,
             sessionMessages: messages,

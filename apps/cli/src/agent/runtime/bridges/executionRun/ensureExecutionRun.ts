@@ -203,6 +203,7 @@ export async function ensureExecutionRun(args: Readonly<{
         idleTtlSeconds: config.idleTtlSeconds,
         initialContext: config.initialContext,
         initialContextMode: config.initialContextMode,
+        ...(config.voicePolicy ? { voicePolicy: config.voicePolicy } : {}),
         verbosity: config.verbosity,
         ...(typeof config.bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs: config.bootstrapTimeoutMs } : {}),
         disabledActionIds: config.disabledActionIds,

@@ -1485,7 +1485,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
             encryption: null,
             request: async (_path, init) => {
-                requestCapture.patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+                patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
                 return new Response(null, { status: 204 });
             },
         });
@@ -1563,7 +1563,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
             encryption: null,
             request: async (_path, init) => {
-                requestCapture.patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+                patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
                 return new Response(null, { status: 204 });
             },
         });

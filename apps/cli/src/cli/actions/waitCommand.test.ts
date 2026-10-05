@@ -26,7 +26,7 @@ it('watch streams the owner baseline and Ctrl+C cancels only observation', async
         waitForChange: async () => { process.emit('SIGINT'); return false; },
       }),
     }),
-  } as unknown as ActionExecutorDeps);
+  } satisfies Pick<ActionExecutorDeps, 'sessionActivityGet' | 'sessionAwarenessWait'> as unknown as ActionExecutorDeps);
   try {
     await runCompiledActionCliCommand({ command, argv: ['watch', '--server-id', 'home', '--json', '--input-json', JSON.stringify(input)],
       deps: {

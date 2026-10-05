@@ -31,7 +31,7 @@ export type NewSessionEmbeddedHost = Readonly<{
     /** Opens another draft in place of the current one (start another, delete). */
     openDraft: (entry: NewSessionHostDraftEntry) => void;
     /** The surface handed its draft to a destination (the created session). */
-    onHandedOff: () => void;
+    onHandedOff: (destination: Parameters<ReturnType<typeof useRouter>['push']>[0]) => void;
     /**
      * Whether the person has shown intent to use the embedded composer (focus, hover, press).
      * Until then its closed chips and pickers issue no machine RPCs.
@@ -180,7 +180,7 @@ export function useNewSessionHostNavigation(): Readonly<{
             }) as RouterLike['push'],
             replace: ((href: Parameters<RouterLike['push']>[0], options?: Parameters<RouterLike['push']>[1]) => {
                 if (!presentsInPlace) router.push(href, options);
-                onHandedOff();
+                onHandedOff(href);
             }) as RouterLike['replace'],
         } as RouterLike;
         const embeddedNavigation = {

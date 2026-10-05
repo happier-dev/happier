@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import type { AgentRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { composeNativeAgentSessionRuntimeContext, createNativeAgentSessionHostServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
@@ -23,12 +24,12 @@ export function createVoiceSessionRuntimeThroughNativeFactory(params: Readonly<{
         const agent: ResolvedAgentContribution = {
             id: 'acme.voice/agents/default', pluginId: 'acme.voice', provenance: 'external', source: { kind: 'path' },
             identity: { pluginId: 'acme.voice', localId: 'default' },
-            definition: { kindVersion: 1, id: 'acme.voice/agents/default' },
-            richDefinition: { provenance: 'external', definition: {
+            definition: { kindVersion: 1, id: 'acme.voice/agents/default', ownedBackendIds: [] },
+            richDefinition: { provenance: 'external', definition: PluginAgentContributionV2Schema.parse({
                 id: 'default', title: { key: 'voice.fixture.title', fallback: 'Voice fixture' },
                 description: { key: 'voice.fixture.description', fallback: 'Voice fixture' },
                 runtime: { kind: 'custom' }, primary: 'sessions', capabilities: { sessions: params.capabilities },
-            } },
+            }) },
         };
         const backend = projectEngineRuntimeContributionFromAgent(agent, agent.id);
         const adapter = await resolveBackendRuntimeCore({

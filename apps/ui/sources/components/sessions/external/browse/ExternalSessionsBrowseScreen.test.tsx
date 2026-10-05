@@ -9,7 +9,7 @@ import {
     type ExternalSessionsCandidatesListResponse,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { createCapturingLegendListMock, createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock, createDeferred, createMachineFixture, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -17,6 +17,7 @@ import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { MachineMetadataSchema } from '@/sync/domains/state/storageTypes';
 import {
     createMachineAdministrationTargetSelectionMock,
     installMachineAdministrationTargetSelectionBoundary,
@@ -56,6 +57,12 @@ const linkEnsureSpy = vi.hoisted(() => vi.fn(async (): Promise<ExternalSessionLi
     created: true,
 })));
 const routerPushSpy = vi.hoisted(() => vi.fn());
+// Navigation may load through the destination host before the shared component
+// overrides are installed. Bind the real router boundary during module collection.
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
+});
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const accountSettingsState = vi.hoisted(() => ({
     current: {} as Record<string, unknown>,
@@ -124,6 +131,7 @@ function createExternalSessionsBrowsePluginProjection(): PluginProjectionV2 {
         instances?: readonly unknown[];
         schemaFields?: readonly unknown[];
         keySegments?: readonly unknown[];
+        contentSearch?: boolean;
     }>) => ({
         id: params.id,
         externalSessions: {
@@ -140,6 +148,7 @@ function createExternalSessionsBrowsePluginProjection(): PluginProjectionV2 {
             },
             sources: [{
                 sourceKind: params.sourceKind,
+                ...(params.contentSearch === true ? { contentSearch: true } : {}),
                 schema: {
                     fields: params.schemaFields ?? [
                         { name: 'kind', kind: 'literal', value: params.sourceKind },
@@ -170,6 +179,7 @@ function createExternalSessionsBrowsePluginProjection(): PluginProjectionV2 {
                 id: 'codex',
                 localId: 'codex',
                 sourceKind: 'codexHome',
+                contentSearch: true,
                 schemaFields: [
                     { name: 'kind', kind: 'literal', value: 'codexHome' },
                     { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
@@ -215,6 +225,28 @@ let machinesState: Array<{
     { id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
     { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
 ];
+
+async function publishMachinesState(): Promise<void> {
+    const { getStorage } = await import('@/sync/domains/state/storageStore');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const metadata = createMachineFixture().metadata;
+    if (!metadata) throw new Error('The canonical unlocked machine fixture must supply metadata');
+    const machines = machinesState.map((machine) => createMachineFixture({
+        ...machine,
+        metadata: MachineMetadataSchema.parse({ ...metadata, ...machine.metadata }),
+    }));
+    const activeServerId = getActiveServerSnapshot().serverId;
+    // These are the two Home inventories represented by the Administration fixture.
+    // Legacy locked callers without a server id still use the real active Home.
+    getStorage().setState({
+        machineListByServerId: {
+            ...getStorage().getState().machineListByServerId,
+            ...(activeServerId ? { [activeServerId]: machines } : {}),
+            'server-a': machines.filter((machine) => machine.id === 'machine-1'),
+            'server-b': machines.filter((machine) => machine.id === 'machine-2'),
+        },
+    });
+}
 
 const expoRouterMock = createExpoRouterMock({
     router: { push: routerPushSpy },
@@ -263,8 +295,9 @@ installNewSessionComponentsCommonModuleMocks({
             confirm: modalConfirmSpy,
         },
     }).module,
-    storage: () => createStorageModuleStub({
-        useAllMachines: () => machinesState,
+    storage: async () => createStorageModuleStub({
+        // Inventory is actual store state; only the existing settings boundary stays stubbed.
+        useMachineListForServer: (await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks')).useMachineListForServer,
         useSetting: (key: string) => {
             if (key === 'externalSessionsSettingsV1') {
                 return accountSettingsState.current.externalSessionsSettingsV1;
@@ -293,13 +326,12 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
     useProfile: () => profileMock,
     useSettingsVersion: () => 1,
     useLocalSetting: (key: string) => key === 'uiItemDensity' ? 'comfortable' : undefined,
-    // The Agent filter chip draws the selected Agent's brand mark, whose plugin-availability reader
-    // asks for the active Account scope; this screen test has none.
-    useActiveServerAccountScope: () => null,
+    // Scope equality remains owned by the actual store reader, not this presentation fixture.
+    useActiveServerAccountScope: (await importOriginal<typeof import('@/sync/store/hooks')>()).useActiveServerAccountScope,
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
     useDaemonMergedProjectionInputs: (params: unknown) => {
@@ -380,6 +412,7 @@ type DropdownMenuTestNode = Readonly<{
         items?: ReadonlyArray<Readonly<{
             id: string;
             icon?: React.ReactElement;
+            disabled?: boolean;
         }>>;
         itemRowProps?: {
             density?: unknown;
@@ -429,12 +462,13 @@ function findDropdownMenuByTriggerTestId(
 }
 
 describe('ExternalSessionsBrowseScreen', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.useRealTimers();
         machinesState = [
             { id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
             { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
         ];
+        await publishMachinesState();
         administrationTargetSelection.controller.reset();
         candidatesListSpy.mockReset();
         daemonProjectionHookSpy.mockClear();
@@ -472,6 +506,50 @@ describe('ExternalSessionsBrowseScreen', () => {
         modalAlertSpy.mockClear();
         mutateAccountSettingsSpy.mockClear();
         accountSettingsState.current = {};
+    });
+
+    it('scans Conversations only after explicit submit and clears rows when the query changes', async () => {
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        const metadataCalls = candidatesListSpy.mock.calls.length;
+        await screen.pressByTestIdAsync('external-sessions-search-target:content');
+        await act(async () => {
+            screen.changeTextByTestId('direct-session-candidates-search-input', 'body only');
+        });
+        await flushHookEffects();
+        expect(candidatesListSpy.mock.calls).toHaveLength(metadataCalls);
+        expect(screen.findByTestId('direct-session-candidates:content-unsearched')).not.toBeNull();
+        candidatesListSpy.mockResolvedValue({
+            ok: true,
+            candidates: [{ remoteSessionId: 'body-hit', updatedAtMs: 1, match: { snippet: 'body only', sourceItemId: 'm1', messageIndex: 0 } }],
+            nextCursor: null,
+            contentCoverage: 'complete',
+        });
+        await screen.pressByTestIdAsync('direct-session-candidates-content-submit');
+        await flushHookEffects();
+        expect(candidatesListSpy.mock.calls).toHaveLength(metadataCalls + 1);
+        expect(screen.findByTestId('direct-session-candidate:body-hit')).not.toBeNull();
+        await act(async () => {
+            screen.changeTextByTestId('direct-session-candidates-search-input', 'new query');
+        });
+        await flushHookEffects();
+        expect(candidatesListSpy.mock.calls).toHaveLength(metadataCalls + 1);
+        expect(screen.findByTestId('direct-session-candidate:body-hit')).toBeNull();
+    });
+
+    it('accepts explicit palette intent only for its locked machine and source', async () => {
+        candidatesListSpy.mockResolvedValue({ ok: true, candidates: [], nextCursor: null, contentCoverage: 'complete' });
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen
+            lockScope={{ machineId: 'machine-1', serverId: 'server-a', providerId: 'codex', source: { kind: 'codexHome', home: 'user' } }}
+            initialSearchTarget="content"
+            initialSearchQuery="body only"
+        />);
+        await flushHookEffects();
+        expect(candidatesListSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1', searchTarget: 'content', searchTerm: 'body only',
+        }), expect.objectContaining({ serverId: 'server-a' }));
+        expect(screen.findByTestId('direct-session-candidates:content-unsearched')).toBeNull();
     });
 
     it('renders cold daemon projection loading instead of an authoritative empty result', async () => {
@@ -589,6 +667,75 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(menu?.props?.items?.some((item: { id: string }) => item.id === 'auto-link')).toBe(false);
         expect(mutateAccountSettingsSpy).not.toHaveBeenCalled();
         expect(linkEnsureSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not grant foreground Account consent to a foreign locked credential scope', async () => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { upsertAndActivateServer, upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const connectionManager = await import('@/sync/runtime/orchestration/connectionManager');
+        const foreground = await upsertAndActivateServer({ serverUrl: 'https://browse-consent-foreground.test' });
+        const foreign = await upsertServerProfileOnly({ serverUrl: 'https://browse-consent-foreign.test' });
+        const foregroundScope = { serverId: foreground.id, accountId: 'foreground-account' };
+        const previous = getStorage().getState();
+        // Secure storage and applied connection identity are the genuine boundaries;
+        // credential lifetime, currentness, and settings scope readers stay real.
+        const credentialsSpy = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (_url, options) => (
+            options?.serverId === foreign.id
+                ? { token: `header.${Buffer.from(JSON.stringify({ sub: 'foreign-account' })).toString('base64')}.signature` }
+                : null
+        ));
+        const appliedSnapshotSpy = vi.spyOn(connectionManager, 'getAppliedActiveServerSnapshot').mockReturnValue({
+            serverId: foreground.id, serverUrl: foreground.serverUrl, generation: 0,
+        });
+        const appliedAvailableSpy = vi.spyOn(connectionManager, 'isAppliedActiveServerRuntimeAvailable').mockReturnValue(true);
+        try {
+            const { useServerCredentialAccountScopes } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+            const bindings = await renderHook(() => useServerCredentialAccountScopes([foreign.id]));
+            await vi.waitFor(() => expect(bindings.getCurrent().get(foreign.id)?.accountId).toBe('foreign-account'));
+            const accountLifetime = bindings.getCurrent().get(foreign.id)!;
+            getStorage().setState({ profileScope: foregroundScope, settingsScope: foregroundScope });
+            expect(getActiveServerAccountScope()).toEqual(foregroundScope);
+            expect(accountLifetime.isCurrent()).toBe(true);
+            expect(accountLifetime.scope).not.toEqual(foregroundScope);
+
+            candidatesListSpy.mockResolvedValue({
+                ok: true,
+                candidates: [{ remoteSessionId: 'foreign-consent-row', title: 'Foreign session', updatedAtMs: 1 }],
+                nextCursor: null,
+                autoLinkPolicyScopeV1: {
+                    qualifiedIdentity: {
+                        v: 1,
+                        agent: { pluginId: 'happier.external-sessions-screen-fixture', localId: 'codex' },
+                        source: { kind: 'codexHome', contractVersion: 1 },
+                    },
+                    sourcePolicyId: `es-source-policy:v1:${'a'.repeat(64)}`,
+                },
+            });
+            const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+            const screen = await renderScreen(<ExternalSessionsBrowseScreen
+                accountLifetime={accountLifetime}
+                lockScope={{ serverId: foreign.id, machineId: 'machine-1', providerId: 'codex', source: { kind: 'codexHome', home: 'user' } }}
+            />);
+            await flushHookEffects();
+            expect(screen.findByTestId('direct-session-candidate:foreign-consent-row')).not.toBeNull();
+            const menu = findDropdownMenuByTriggerTestId(screen, 'external-sessions-browse-menu');
+            const consent = menu?.props?.items?.find((item) => item.id === 'auto-link');
+            // Even a direct dispatch cannot grant a foreign policy in the foreground Account.
+            await act(async () => { await menu?.props?.onSelect?.('auto-link'); });
+            expect(mutateAccountSettingsSpy).not.toHaveBeenCalled();
+            expect(consent === undefined || consent.disabled === true).toBe(true);
+            expect(accountSettingsState.current).toEqual({});
+            expect(accountLifetime.isCurrent()).toBe(true);
+        } finally {
+            await act(async () => {
+                getStorage().setState({ profileScope: previous.profileScope, settingsScope: previous.settingsScope });
+            });
+            credentialsSpy.mockRestore();
+            appliedSnapshotSpy.mockRestore();
+            appliedAvailableSpy.mockRestore();
+        }
     });
 
 
@@ -856,6 +1003,7 @@ describe('ExternalSessionsBrowseScreen', () => {
                 { id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
                 { id: 'machine-2', active: true, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
             ];
+            await publishMachinesState();
             // Both machines serve a row under the same Agent-owned key: the id is
             // opaque and unique only inside the scope that produced it.
             const collidingKey = 'shared-agent-session';
@@ -1063,6 +1211,7 @@ describe('ExternalSessionsBrowseScreen', () => {
                 homeDir: 'C:\\Users\\alice',
             },
         }];
+        await publishMachinesState();
         candidatesListSpy.mockResolvedValueOnce({
             ok: true,
             candidates: [{
@@ -1432,11 +1581,12 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(screen.findByTestId('direct-session-candidate:codex-session-1')?.props.disabled).toBe(false);
 
         // The machine goes away while its rows stay on screen.
-        machinesState = [
-            { id: 'machine-1', active: false, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
-            { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
-        ];
         await act(async () => {
+            machinesState = [
+                { id: 'machine-1', active: false, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
+                { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
+            ];
+            await publishMachinesState();
             screen.tree.update(<ExternalSessionsBrowseScreen key="offline" />);
         });
         await flushHookEffects();
@@ -2231,6 +2381,13 @@ describe('ExternalSessionsBrowseScreen', () => {
 
     it('can be used as a locked picker that returns a remote session id without linking', async () => {
         const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const state = getStorage().getState();
+        const machineInventory = state.machineListByServerId['server-b'];
+        if (!machineInventory) throw new Error('Expected the canonical machine-2 inventory fixture');
+        getStorage().setState({
+            machineListByServerId: { ...state.machineListByServerId, 'server-1': machineInventory },
+        });
 
         const onPickRemoteSessionId = vi.fn();
 

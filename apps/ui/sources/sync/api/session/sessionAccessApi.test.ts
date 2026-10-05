@@ -17,6 +17,7 @@ async function setup(options?: Readonly<{ accountEncryption?: 'plain' | 'e2ee' }
     const target = await upsertServerProfile({ serverUrl: 'https://target.example', name: 'Target' });
     const { storage } = await import('@/sync/domains/state/storageStore');
     storage.getState().activateProfileScope({ serverId: active.id, accountId: 'active-account' });
+    storage.setState({ settingsScope: { serverId: target.id, accountId: 'target-account' } });
     const token = (sub: string) => `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { encodeBase64 } = await import('@/encryption/base64');
@@ -608,7 +609,8 @@ describe('Session access exact Account transport', () => {
                     return new Response(JSON.stringify({ publicShare: {
                         id: 'publication', sessionId: 'same', expiresAt: null, maxUses: 4,
                         useCount: 0, isConsentRequired: true, createdAt: 1, updatedAt: 5,
-                    } }));
+                        keyDerivation: 'fragment_v1',
+                    }, isolatedOrigin: 'https://public.example' }));
                 }
             }
             if (path === '/v1/sessions/same/public-share') {
@@ -624,11 +626,12 @@ describe('Session access exact Account transport', () => {
             scope: { serverId: env.target.id, accountId: 'target-account' },
             sessionId: 'same',
             availability: 'unavailable',
-            onPublicLinkIssued: () => {},
         });
         await expect(client.getPublicLink()).resolves.toBeNull();
         await expect(client.createPublicLink({ maxUses: 4, isConsentRequired: true })).resolves.toEqual({
             id: 'publication', expiresAt: null, maxUses: 4, useCount: 0, isConsentRequired: true, updatedAt: 5,
+            keyDerivation: 'fragment_v1', isolatedOrigin: 'https://public.example',
+            url: expect.stringMatching(/^https:\/\/public.example\/s\/[^#]+#k=.+$/),
         });
         await expect(client.removePublicLink()).resolves.toEqual({ changed: true });
 
@@ -672,7 +675,8 @@ describe('Session access exact Account transport', () => {
                 return new Response(JSON.stringify({ publicShare: {
                     id: 'publication', expiresAt: null, maxUses: null, useCount: 0,
                     isConsentRequired: false, createdAt: 1, updatedAt: 2,
-                } }));
+                    keyDerivation: 'fragment_v1',
+                }, isolatedOrigin: 'https://public.example' }));
             }
             throw new Error(`Unexpected path ${path}`);
         });

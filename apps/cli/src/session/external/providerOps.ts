@@ -24,6 +24,7 @@ export type ExternalSessionCandidatesPage = Readonly<{
   candidates: readonly IndexedExternalSessionCandidate[];
   nextCursor: string | null;
   searchIncomplete?: boolean;
+  contentCoverage?: 'complete' | 'partial' | 'unsupported';
   preparation?: Readonly<{
     kind: 'building_candidate_index';
     scanned: number;
@@ -74,6 +75,8 @@ export type ExternalSessionSourceValidationResult =
   | Readonly<{ ok: false; error: string }>;
 
 export type ExternalSessionProviderOps = Readonly<{
+  /** Positive source-declaration evidence; missing is unsupported. */
+  contentSearch?: boolean;
   /**
    * Static Agent-leaf evidence for continuing single-writer safety after an
    * external-linked takeover. Absence always degrades to unsupported.
@@ -98,6 +101,7 @@ export type ExternalSessionProviderOps = Readonly<{
     limit: number;
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
+    searchTarget?: 'metadata' | 'content';
     includeThreads?: boolean;
     maxBytes?: number;
     signal?: AbortSignal;

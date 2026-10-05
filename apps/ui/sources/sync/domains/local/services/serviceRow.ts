@@ -22,6 +22,9 @@ export type ServiceRow = Readonly<{
     host: string | null; // "localhost" / "127.0.0.1" / null
     workspaceLabel: string | null; // cwd / workspace path
     processLabel: string | null; // redacted command preview
+    /** Human identity/address facts projected by the inventory or launch target. */
+    serviceLabel?: string | null;
+    addressLabel?: string | null;
     sourceLabel: TranslationKey; // translation key for the source label
     status: ServiceRowStatus;
     reasonCode: string | null; // raw code for OWNER-COPY (NEVER rendered raw)
@@ -60,7 +63,9 @@ const SOURCE_LABEL_KEYS: Readonly<Record<LocalServiceLaunchTarget['source'], Tra
 };
 
 function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
-    if (target.source === 'package_script' && target.sourceClass?.kind === 'package_script') return 'stopped';
+    // Available means the script can be launched, never that a listener is running. Older
+    // launcher snapshots may omit sourceClass; source already establishes this distinction.
+    if (target.source === 'package_script') return 'stopped';
     switch (target.state) {
         case 'available':
             return 'running';
@@ -92,7 +97,7 @@ function inventoryIdFromTarget(target: LocalServiceLaunchTarget): string | null 
     if (target.sourceClass?.kind === 'inventory_entry' || target.sourceClass?.kind === 'managed_service') {
         return target.sourceClass.inventoryEntryId ?? null;
     }
-    return target.id.startsWith('inventory:') ? target.id.slice('inventory:'.length) : null;
+    return null;
 }
 
 function readWorkspaceLabel(row: LocalServiceInventoryRow | undefined): string | null {
@@ -290,6 +295,11 @@ export function buildLocalServiceRows(input: Readonly<{
             host: readHost(inventoryRow),
             workspaceLabel: readWorkspaceLabel(inventoryRow) ?? readString(target.cwd),
             processLabel,
+            serviceLabel: readString(isRecord(inventoryRow?.presentation) ? inventoryRow.presentation.displayName : null)
+                ?? readString(isRecord(inventoryRow?.classification) ? inventoryRow.classification.displayName : null)
+                ?? executableName(processLabel),
+            addressLabel: readString(isRecord(inventoryRow?.presentation) ? inventoryRow.presentation.addressLabel : null)
+                ?? readString(target.browserTarget?.display?.addressLabel),
             sourceLabel: SOURCE_LABEL_KEYS[target.source],
             status,
             reasonCode: target.source === 'package_script' && target.sourceClass?.kind === 'package_script' ? null : target.unavailableReason ?? null,

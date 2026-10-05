@@ -17,6 +17,7 @@ import {
     type SessionFolderV1,
     type SessionFolderWorkspaceRefV1,
 } from '@/sync/domains/session/folders';
+import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 
 import {
     useSessionListLayoutChoice,
@@ -117,6 +118,8 @@ function useMeasuredDropTargetRegistration(params: Readonly<{
     return { ref, onLayout };
 }
 
+const SESSION_LIST_ORGANIZE_MENU_ITEM_ID = 'organize';
+
 export const SessionListViewOptionsButton = React.memo(function SessionListViewOptionsButton(props: Readonly<{
     placement?: 'top' | 'bottom' | 'left' | 'right';
     onMenuOpenChange?: (open: boolean) => void;
@@ -149,6 +152,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
         ? { scopeKind: 'spawn', serverId: props.serverId }
         : { scopeKind: 'main_selection' });
     const [menuOpen, setMenuOpen] = React.useState(false);
+    const organize = useSessionListOrganizeMode();
     const actionIconColor = theme.colors.text.secondary;
     // The rendered arrangement is the one this menu describes, so the checkmark
     // and the dependent controls read the effective-layout owner, not the raw
@@ -278,9 +282,21 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 maxWidthCap: 320,
             },
         } satisfies DropdownMenuItem] : []),
-    ], [presentation, selectedTitle, theme.colors.text.secondary, withSelection]);
+        // Phones drag only in an intentional Organize mode (lab K1); desktop rows carry themselves.
+        ...(organize.available ? [{
+            id: SESSION_LIST_ORGANIZE_MENU_ITEM_ID,
+            title: t('entityDragDrop.organize.enter'),
+            category: t('entityDragDrop.organize.title'),
+            icon: <Icon name="dots-six-vertical" size={16} color={actionIconColor} />,
+        } satisfies DropdownMenuItem] : []),
+    ], [actionIconColor, organize.available, presentation, selectedTitle, theme.colors.text.secondary, withSelection]);
 
     const handleMenuSelect = React.useCallback((itemId: string) => {
+        if (itemId === SESSION_LIST_ORGANIZE_MENU_ITEM_ID) {
+            setMenuOpen(false);
+            organize.enter();
+            return;
+        }
         const delta = resolveSessionListViewOptionSelectionDelta(itemId, settings);
         if (!delta) return;
         // An explicit layout choice retires the host's opening intent, so the
@@ -288,7 +304,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
         if (itemId.startsWith('layout:')) yieldLayoutIntent();
         applySettings(delta);
         setMenuOpen(false);
-    }, [applySettings, settings, yieldLayoutIntent]);
+    }, [applySettings, organize, settings, yieldLayoutIntent]);
 
     return (
         <DropdownMenu

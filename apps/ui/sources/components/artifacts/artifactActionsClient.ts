@@ -6,7 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 /**
@@ -80,17 +80,19 @@ export function useArtifactActionsClient(): ArtifactActionsClient | null {
 }
 
 /**
- * The storage meter's one read per active Account in an open browser. `null` until that Account
- * answers, and when the server reports no budget the meter never appears.
+ * Read the active Account's authoritative usage on mount and whenever its canonical Artifact
+ * projection changes. Retain the last successful read during refresh; never carry it to another
+ * Account. The server, not the retained local heads, accounts for storage and revision bytes.
  */
 export function useArtifactStorageUsage(): ArtifactStorageUsageV1 | null {
     const client = useArtifactActionsClient();
+    const artifacts = getStorage()((state) => state.artifacts);
     const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; usage: ArtifactStorageUsageV1 }> | null>(null);
     React.useEffect(() => {
         if (!client) return;
         let current = true;
         void client.storageUsage().then((outcome) => { if (current && outcome.ok) setSnapshot({ client, usage: outcome.value }); });
         return () => { current = false; };
-    }, [client]);
+    }, [client, artifacts]);
     return snapshot && snapshot.client === client ? snapshot.usage : null;
 }

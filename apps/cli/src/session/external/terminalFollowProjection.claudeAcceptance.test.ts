@@ -58,6 +58,7 @@ describe('Claude terminal acceptance and host transcript ordering', () => {
             signal: new AbortController().signal, deadlineAtMs: Date.now() + 30_000,
             maxSerializedBytes: 524_288, exec: createUnavailablePluginServices().exec,
             managedEndpointRead: async () => { throw new Error('File-backed fixture'); },
+            ripgrep: { run: async () => { throw new Error('Transcript fixture has no content search'); } },
         });
         const identity = await contribution.resolveLinkIdentity({ ...invocation(),
             source: { kind: 'claudeConfig', configDir: root }, remoteSessionId: providerSessionId });

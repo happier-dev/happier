@@ -25,6 +25,7 @@ import {
   accountSettingsParse,
   createActionExecutor,
   AutomationRunCauseSchema,
+  AutomationTriggerIdSchema,
   deriveAutomationOccurrenceKeyV1,
   ActionDefinitionV1Schema,
   StrictJsonValueSchema,
@@ -58,6 +59,9 @@ import { resolveWorkflowSessionConversation } from './daemonRuntime';
 const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
 const accountId = 'account-1';
 const machineId = 'machine-1';
+// These custom HTTP boundaries never publish asynchronous changes. Control
+// journeys use the shared storage testkit's notifying subscription instead.
+const quietStorageChanges = () => ({ dispose: async () => {} });
 const now = '2026-01-01T00:00:00.000Z';
 const availability = { pause: true, resumeBoundary: false,
     restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] };
@@ -110,6 +114,7 @@ describe('production workflow coordinator', () => {
     });
     const settings = accountSettingsParse({ attentionDeliveryPolicyV1: { v: 1 } });
     const executor = createActionExecutor(createCliActionDeps({ token: 'token', sessionId: '',
+      mode: 'plain', ctx: null,
       credentials: { token: 'token', encryption: null }, serverId: 'server-1', serverHttpBaseUrl: 'https://home.example.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
       resolvePluginNotifications: () => pluginNotifications,
@@ -130,7 +135,7 @@ describe('production workflow coordinator', () => {
         const host = await productionMaterializationHost(target);
         return { ...host, effects: { ...host.effects, readActionContract: async actionId => {
           const spec = await executor.execute('action.spec.get', { id: actionId }, { surface: 'cli', authority: 'account_automation' });
-          if (!spec.ok) return null;
+          if (!spec.ok || typeof spec.result !== 'object' || spec.result === null) return null;
           const action = ActionDefinitionV1Schema.parse(Reflect.get(spec.result, 'actionSpec'));
           if (action.id !== 'notifications.notify_me') return null;
           const hostSpec = getActionSpec('notifications.notify_me');
@@ -161,7 +166,7 @@ describe('production workflow coordinator', () => {
       accountCurrentness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null },
       automation: { id: 'automation-1', name: 'Notify me', enabled: true },
       run: { id: runId, automationId: 'automation-1', attempt: 0, revision: 0, recipeKind: 'workflow-v2' as const,
-        triggerId: 'source-trigger', cause,
+        triggerId: AutomationTriggerIdSchema.parse('source-trigger'), cause,
         causeWorkDepth: 0, resultDelivery: { kind: 'none' as const }, executionInputEnvelope: definitionEnvelope },
     };
     await executeClaimedRun({ token: 'token', machineId, claimed,
@@ -1624,7 +1629,7 @@ describe('production workflow coordinator', () => {
       isAcceptedAuthorizationCurrent: async () => true,
       execution: productionExecution(),
       onCommittedTransition: vi.fn(),
-      storage: { execute },
+      storage: { observeChanges: quietStorageChanges, execute },
     });
     await expect(coordinate({ runId, attempt: 0, expectedRevision: 0,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, acceptedEnvelope,
@@ -1656,7 +1661,7 @@ describe('production workflow coordinator', () => {
         return { ok: false as const, code: 'workspace_unavailable' as const };
       },
       onCommittedTransition: vi.fn(),
-      storage: { execute: vi.fn() },
+      storage: { observeChanges: quietStorageChanges, execute: vi.fn() },
     });
     currentWorkspaceRefs = [currentRef];
 
@@ -1712,7 +1717,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
     });
     try {
       await expect(coordinate({
@@ -1793,7 +1798,7 @@ describe('production workflow coordinator', () => {
         prepareAcceptedWorkspaceTarget: async () => ({ ok: true,
           workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
         }),
-        storage: { execute: async (operation) => {
+        storage: { observeChanges: quietStorageChanges, execute: async (operation) => {
           if (operation.operation !== 'accepted-snapshot.resolve') throw new Error('unexpected_storage_effect');
           expect(operation.visibleTeamId).toBe('team-chosen');
           const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({
@@ -1865,7 +1870,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
       resolveMaterializationHost: async (input) => ({ ...await productionMaterializationHost(input),
         effects: { resolveTargetAvailability: async () => false },
       }),
@@ -1910,7 +1915,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
       resolveMaterializationHost: productionMaterializationHost,
       prepareAcceptedWorkspaceTarget: async () => ({ ok: true,
         workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
@@ -1937,7 +1942,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
     });
     const definitionEnvelope = JSON.stringify({ t: 'plain', v: {
       inlineDefinition: { version: 1, inputs: [{ name: 'repository', valueType: 'string', required: true }], defaults: {
@@ -1975,7 +1980,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
       // Account settings are a network boundary, not a second workspace resolver.
       resolveCurrentWorkspaceRefs: async () => { abort.abort(cancelled); throw cancelled; },
     });
@@ -2002,7 +2007,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
     });
     await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, automationId: 'automation-1',
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
@@ -2019,7 +2024,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
     });
     await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, automationId: 'automation-1',
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
@@ -2048,7 +2053,7 @@ describe('production workflow coordinator', () => {
       token: 'token', accountId, machineId,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       isAcceptedAuthorizationCurrent: async () => true,
-      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { execute },
+      execution: productionExecution(), onCommittedTransition: vi.fn(), storage: { observeChanges: quietStorageChanges, execute },
       prepareAcceptedWorkspaceTarget: async () => ({ ok: true, workspaceTarget: {
         project: { machineId, directory: '/repo', checkoutRootPath: '/repo' },
       } }),
@@ -2250,7 +2255,7 @@ describe('production workflow coordinator', () => {
         verifyRecordedWorkspace: async () => 'available' as const,
       },
       onCommittedTransition,
-      storage: { execute },
+      storage: { observeChanges: quietStorageChanges, execute },
     });
     const claimClient = {
       startRun: vi.fn(), heartbeatRun: vi.fn(async () => {}), succeedRun: vi.fn(), failRun: vi.fn(),

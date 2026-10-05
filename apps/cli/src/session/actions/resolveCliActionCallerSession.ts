@@ -2,13 +2,11 @@ import type { ActionExecutorContext, BackendTargetRefV2 } from '@happier-dev/pro
 import type { StoredCredentials } from '@/persistence';
 import type { ResolveSessionTransportContextResult } from '@/session/services/resolveSessionTransportContext';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
-import { readSessionMetadata } from './cliActionDeps/sessionStateReaders';
+import { readSessionLegacyMetadata } from './cliActionDeps/sessionStateReaders';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionStoredContentEncryptionMode, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
-type SessionMetadataReaderInput = Parameters<typeof readSessionMetadata>[0] & Readonly<{
-  rawSession?: Readonly<{ metadata?: unknown; metadataLayoutVersion?: unknown }> | null;
-}>;
+type SessionMetadataReaderInput = Parameters<typeof readSessionLegacyMetadata>[0];
 
 /** The bound process's live snapshot, then its cached/fetched stored metadata. */
 export function createCliBoundSessionMetadataReader(params: SessionMetadataReaderInput & Readonly<{
@@ -20,8 +18,7 @@ export function createCliBoundSessionMetadataReader(params: SessionMetadataReade
 }>): () => Promise<Record<string, unknown> | null> {
   // A layout-1 shared record is not the process's owner metadata snapshot.
   // Opening it requires the authenticated Account mode from transport resolution.
-  let currentSessionMetadata = params.rawSession?.metadataLayoutVersion == null
-    || params.rawSession.metadataLayoutVersion === 0 ? readSessionMetadata(params) : null;
+  let currentSessionMetadata = readSessionLegacyMetadata(params);
   return async () => {
     if (params.getCurrentSessionMetadata) return params.getCurrentSessionMetadata();
     if (currentSessionMetadata) return currentSessionMetadata;
@@ -35,8 +32,12 @@ export function createCliBoundSessionMetadataReader(params: SessionMetadataReade
       }
       const rawSession = await fetchSessionById({ token: params.token, sessionId: params.sessionId });
       // A Session bearer cannot open Account-private owner metadata.
-      if (!rawSession || rawSession.id !== params.sessionId || (rawSession.metadataLayoutVersion != null && rawSession.metadataLayoutVersion !== 0)) return null;
-      currentSessionMetadata = readSessionMetadata({ ...params, rawSession });
+      if (!rawSession || rawSession.id !== params.sessionId) return null;
+      const mode = resolveSessionStoredContentEncryptionMode(rawSession);
+      if (mode === 'e2ee' && params.mode !== 'e2ee') return null;
+      currentSessionMetadata = mode === 'plain'
+        ? readSessionLegacyMetadata({ mode, ctx: null, rawSession })
+        : params.mode === 'e2ee' ? readSessionLegacyMetadata({ mode, ctx: params.ctx, rawSession }) : null;
       return currentSessionMetadata;
     } catch {
       currentSessionMetadata = null;

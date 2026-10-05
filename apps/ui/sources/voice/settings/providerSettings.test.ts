@@ -3,6 +3,7 @@ import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  VoiceProviderContributionSchema,
 } from '@happier-dev/protocol';
 
 import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
@@ -117,23 +118,25 @@ describe('voice provider settings catalog', () => {
     const contribution = BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS.find(
       (entry) => entry.providerId === elevenLabsProviderId,
     );
-    if (!contribution?.declaration.settings) throw new Error('expected_elevenlabs_settings');
+    if (!contribution) throw new Error('expected_elevenlabs_contribution');
+    const declaration = VoiceProviderContributionSchema.parse(contribution.declaration);
+    if (!declaration.settings) throw new Error('expected_elevenlabs_settings');
     const defaultVoiceId = 'declaration-owned-default';
     const catalog = createVoiceProviderSettingsCatalog({
       bundledContributions: [{
         ...contribution,
-        declaration: {
-          ...contribution.declaration,
+        declaration: VoiceProviderContributionSchema.parse({
+          ...declaration,
           settings: {
-            ...contribution.declaration.settings,
-            fields: contribution.declaration.settings.fields.map((field) => field.id === 'tts'
+            ...declaration.settings,
+            fields: declaration.settings.fields.map((field) => field.id === 'tts'
               ? { ...field, default: {
                 ...(field.default && typeof field.default === 'object' && !Array.isArray(field.default) ? field.default : {}),
                 voiceId: defaultVoiceId,
               } }
               : field),
           },
-        },
+        }),
       }],
     });
     expect(catalog.get(elevenLabsProviderId)?.migrateLegacy({ tts: { voiceId: '   ' } }))

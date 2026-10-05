@@ -119,18 +119,32 @@ function createHandle(client: VoiceAgentClient): VoiceAgentHandle {
     };
 }
 
+function createClient(welcome: VoiceAgentClient['welcome']): VoiceAgentClient {
+    return {
+        start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
+        sendTurn: vi.fn(async () => ({ assistantText: '', actions: [] })),
+        welcome,
+        startTurnStream: vi.fn(),
+        readTurnStream: vi.fn(),
+        cancelTurnStream: vi.fn(),
+        commit: vi.fn(async () => ({ commitText: '' })),
+        stop: vi.fn(async () => ({ ok: true as const })),
+    };
+}
+
 describe('createVoiceWelcomePolicy', () => {
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
         shouldFailPersistRef.current = false;
         stateRef.current = createState();
+        stateRef.current.settings.voice.assistantLanguage = 'fr-FR';
     });
 
     it('retries immediate welcome when welcomedEpoch was not persisted', async () => {
         shouldFailPersistRef.current = true;
 
-        const welcome = vi.fn(async () => ({ assistantText: 'Welcome!' }));
+        const welcome = vi.fn(async (_params: Parameters<VoiceAgentClient['welcome']>[0]) => ({ assistantText: 'Welcome!' }));
         const client: VoiceAgentClient = {
             start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
             sendTurn: vi.fn(async () => ({ assistantText: '', actions: [] })),
@@ -152,6 +166,7 @@ describe('createVoiceWelcomePolicy', () => {
         await expect(welcomePolicy.ensureRunningAndMaybeWelcome('__voice_agent__')).resolves.toBe('Welcome!');
 
         expect(welcome).toHaveBeenCalledTimes(2);
+        expect(welcome.mock.calls[0]?.[0]).toMatchObject({ welcomeText: expect.stringMatching(/Bonjour/) });
         expect(stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1.welcomedEpoch).toBeUndefined();
     });
 
@@ -181,5 +196,29 @@ describe('createVoiceWelcomePolicy', () => {
         expect(stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
             welcomedEpoch: 1,
         });
+    });
+
+    it('uses the retained run reply language instead of changed preferences', async () => {
+        const welcome = vi.fn(async (_params: Parameters<VoiceAgentClient['welcome']>[0]) => ({ assistantText: 'Bonjour!' }));
+        const client = createClient(welcome);
+        const handle: VoiceAgentHandle = {
+            ...createHandle(client),
+            voicePolicy: { assistantLanguage: 'fr-FR', welcome: { enabled: true, mode: 'immediate' } },
+        };
+        stateRef.current.settings.voice.assistantLanguage = 'de-DE';
+        const { createVoiceWelcomePolicy } = await import('./voiceWelcomePolicy');
+        await createVoiceWelcomePolicy({ getVoiceAgentHandle: async () => handle, resetCachedHandle: () => {} })
+            .ensureRunningAndMaybeWelcome('__voice_agent__');
+        expect(welcome.mock.calls[0]?.[0]).toMatchObject({ welcomeText: expect.stringMatching(/Bonjour/) });
+    });
+
+    it('leaves unsupported reply languages to the run model greeting policy', async () => {
+        const welcome = vi.fn(async (_params: Parameters<VoiceAgentClient['welcome']>[0]) => ({ assistantText: 'مرحبا' }));
+        const client = createClient(welcome);
+        stateRef.current.settings.voice.assistantLanguage = 'ar-SA';
+        const { createVoiceWelcomePolicy } = await import('./voiceWelcomePolicy');
+        await createVoiceWelcomePolicy({ getVoiceAgentHandle: async () => createHandle(client), resetCachedHandle: () => {} })
+            .ensureRunningAndMaybeWelcome('__voice_agent__');
+        expect(welcome.mock.calls[0]?.[0]).not.toHaveProperty('welcomeText');
     });
 });

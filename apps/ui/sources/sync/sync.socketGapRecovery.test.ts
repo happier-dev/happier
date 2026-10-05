@@ -107,7 +107,7 @@ function loadedSeqs(): number[] {
 }
 
 async function seedSession(initialSeq = 1): Promise<SyncGapTestAccess> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     sync.disconnectServer();
     const appliedServer = getActiveServerSnapshot();
     const accountId = 'account-a';
@@ -159,7 +159,7 @@ describe('sync socket gap recovery', () => {
     });
 
     afterEach(async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         sync.resetMessageTransport();
         sync.disconnectServer();
         markSessionSurfaceHidden(SESSION_ID, getActiveServerSnapshot().serverId);

@@ -70,6 +70,7 @@ function executionRunSessionRpc<R, A>(params: Readonly<{
     scope?: ServerAccountScope;
     method: string;
     payload: A;
+    timeoutMs?: number | null;
     signal?: AbortSignal;
 }>): Promise<R> {
     return params.scope
@@ -350,6 +351,7 @@ export async function sessionExecutionRunGet(
             scope: opts?.scope,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
             payload: request,
+            ...(request.waitForInputId || request.waitForOutput ? { timeoutMs: null } : {}),
             ...(opts?.signal ? { signal: opts.signal } : {}),
         });
         const errorResponse = readErrorResponseShape(response);

@@ -509,13 +509,13 @@ export function registerSessionClientRuntimeHandlers(
         },
     } satisfies Parameters<typeof createCliActionExecutor>[0];
     const transcriptActionExecutor = createCliActionExecutor(sessionActionParams);
-    const resolveCredentialedRoleParams = async () => {
+    const resolveCredentialedRoleParams = async () => runWithServerHttpBaseUrl(approvalServerApiUrl, async () => {
         const credentials = await readOwnerAccountCredentials();
         if (!credentials || readAccountIdFromToken(credentials.token) !== runtimeAccountId) return null;
         await resolveOwnerAccountSettings();
         return { ...sessionActionParams, token: credentials.token, credentials,
             serverId: approvalServerId, serverHttpBaseUrl: approvalServerApiUrl };
-    };
+    });
 
     registerActionSpecRpcHandlers({
         rpcHandlerManager: params.rpcHandlerManager,
@@ -531,7 +531,8 @@ export function registerSessionClientRuntimeHandlers(
         readSessionMetadata: params.getSessionMetadata,
         readRoleSources: params.readRoleSources ?? parentSessionForTools?.readRoleSources,
         prepareWorkspaceWritesPolicy: params.prepareWorkspaceWritesPolicy ?? parentSessionForTools?.prepareWorkspaceWritesPolicy,
-        readSettingsOverrides: async () => (await resolveOwnerAccountSettings())?.rolesV1.overrides ?? {},
+        readSettingsOverrides: async () => runWithServerHttpBaseUrl(approvalServerApiUrl,
+            async () => (await resolveOwnerAccountSettings())?.rolesV1.overrides ?? {}),
         resolveAgentStartContext: async (context) => {
             const roleParams = await resolveCredentialedRoleParams();
             if (!roleParams) return null;
@@ -564,11 +565,12 @@ export function registerSessionClientRuntimeHandlers(
             const metadata = tryDecryptSessionOwnerMetadataView({ credentials: roleParams.credentials,
                 accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession });
             if (!metadata) return null;
-            const sources = await roleParams.readRoleSources?.(context.signal) ?? [];
+            const sources = await runWithServerHttpBaseUrl(approvalServerApiUrl,
+                async () => await roleParams.readRoleSources?.(context.signal) ?? []);
             return readSessionWorkspaceWritesV1(metadata, {
                 settingsRoles: Object.fromEntries(sources.map((entry) => [entry.roleId, entry.role])),
                 settingsOverrides: actionsSettingsProvider.getAccountSettings?.()?.rolesV1.overrides,
-            });
+            }) ?? null;
         },
         ...(params.enqueueRegisteredSessionStateFieldMutation ? {
             stageSessionStateMutation: async (mutation) => { await params.enqueueRegisteredSessionStateFieldMutation!(mutation); },

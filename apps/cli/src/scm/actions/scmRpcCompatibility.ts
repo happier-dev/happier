@@ -1,3 +1,16 @@
+import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol';
+import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm';
+
+// Clone's public Action input is strictly domain-only. Machine/session RPC
+// transports also carry validated SCM envelope fields; consume them only here.
+const ScmRepositoryCloneRpcRequestSchema = ScmRepositoryCloneInputSchema
+    .extend(ScmRequestBaseSchema.shape)
+    .transform(({ cwd: _cwd, backendPreference: _backendPreference, outcomeVersion: _outcomeVersion, ...request }) => request);
+
+export function parseScmRepositoryCloneRpcRequest(input: unknown) {
+    return ScmRepositoryCloneRpcRequestSchema.safeParse(input);
+}
+
 /**
  * Wire-only projection for ../0.2 HEAD 17ba05df68d4d3d4cad1c1241b58e63805db37ed.
  * Remove when that predecessor is no longer supported. Domain outcomes remain current.

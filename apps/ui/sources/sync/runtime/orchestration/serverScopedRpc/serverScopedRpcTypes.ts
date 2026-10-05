@@ -23,6 +23,8 @@ export type ServerScopedMachineRpcParams<A> = Readonly<{
     /** When present, scoped credentials must resolve to this exact Account. */
     accountId?: string | null;
     timeoutMs?: number;
+    /** Caller cancellation owns the admitted operation; connection setup remains bounded. */
+    operationTimeoutMs?: null;
     preferScoped?: boolean;
     skipTransferPolicyEvaluation?: boolean;
     authorization?: SocketRpcAuthorizationContext;

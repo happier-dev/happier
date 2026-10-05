@@ -6,7 +6,10 @@ import { ScrollView, View } from 'react-native';
 import { FileActionToolbar, type FileDisplayMode } from '@/components/workspaces/files/file/FileActionToolbar';
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/workspaces/files/file/FileScreenState';
 import { FileContentPanel } from '@/components/workspaces/files/file/FileContentPanel';
+import { FileViewerFindSurface } from './FileViewerFindSurface';
+import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { FileEditorPanel } from '@/components/workspaces/files/file/editor/FileEditorPanel';
+import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { WorkspaceFileDownloadButton } from '@/components/workspaces/files/file/WorkspaceFileDownloadButton';
@@ -126,6 +129,8 @@ export type WorkspaceFileDetailsViewProps = Readonly<{
     scope: WorkspaceScopeBase | null;
     filePath: string;
     deepLinkAnchor?: WorkspaceFileDeepLinkAnchor | null;
+    findSeed?: FileFindSeed | null;
+    onFindSeedConsumed?: () => void;
     sessionIdForAugmentation?: string | null;
     presentation?: 'screen' | 'panel';
     onStartEditingFile?: () => void;
@@ -518,6 +523,9 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const setDetailsTabState = pane.setDetailsTabState;
     const filePath = props.filePath;
     const scope = props.scope;
+    const findSurfaceId = `file:${props.scopeId}:${filePath}`;
+    const findRuntime = useFindSurfaceRuntime();
+    const findFocusRoot = React.useRef<View | null>(null);
 
     const sessionId = (props.sessionIdForAugmentation ?? '').trim();
     const sessionAddress = normalizeSessionAddress(scope?.serverId, sessionId);
@@ -795,6 +803,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         startEditingFile,
         cancelEditingFile,
         saveFileEdits,
+        compareFileEdits,
     } = useWorkspaceFileEditorState({
         scope: scope ?? { serverId: 'unknown', machineId: 'unknown', rootPath: '/' },
         filePath,
@@ -1013,8 +1022,13 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         && scmWriteEnabled
         && (scmSnapshot?.capabilities?.writeDiscard === true),
     );
-    const fileHeaderRightElement = showDownloadAction || showDiscardAction || props.onRevealInFilesTree || props.onOpenChanges ? (
+    const canFindText = !isBinaryFile && !useRichMarkdownEditor
+        && (displayMode === 'diff' ? typeof diffContent === 'string' : typeof fileContent?.content === 'string');
+    const fileHeaderRightElement = canFindText || showDownloadAction || showDiscardAction || props.onRevealInFilesTree || props.onOpenChanges ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+            {canFindText ? <FileBrowserToolbarIconButton testID="file-header-find" accessibilityRole="button" accessibilityLabel={t('find.open')} onPress={() => findRuntime.open(findSurfaceId)}>
+                <Icon name="magnifying-glass" size={16} color={theme.colors.text.secondary} />
+            </FileBrowserToolbarIconButton> : null}
             {props.onRevealInFilesTree ? <FileBrowserToolbarIconButton testID="file-header-reveal" accessibilityRole="button" accessibilityLabel={t('files.revealInFiles')} onPress={() => props.onRevealInFilesTree?.(filePath)}>
                 <Icon name="folder" size={16} color={theme.colors.text.secondary} />
             </FileBrowserToolbarIconButton> : null}
@@ -1046,7 +1060,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     ) : null;
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
+        <View ref={findFocusRoot} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
             <View
                 style={{
                     width: '100%',
@@ -1120,6 +1134,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                                     testID="file-editor-external-change-banner"
                                     tone="warning"
                                     reason={t('files.fileChangedExternally')}
+                                    action={{ label: t('detailsSurface.file.compare'), onPress: compareFileEdits }}
                                 />
                             ) : null}
                         </>
@@ -1172,6 +1187,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                             />
                         ) : (
                             <FileEditorPanel
+                                surfaceId={findSurfaceId}
+                                active={isActive}
+                                filePath={filePath}
+                                focusRootRef={findFocusRoot}
+                                findSeed={props.findSeed}
+                                onFindSeedConsumed={props.onFindSeedConsumed}
                                 theme={theme}
                                 resetKey={markdownResetKey}
                                 editorRef={editorHandleRef}
@@ -1187,6 +1208,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     </SlideTransitionSwitch>
                 ) : displayMode === 'file' && isEditingFile ? (
                     <FileEditorPanel
+                        surfaceId={findSurfaceId}
+                        active={isActive}
+                        filePath={filePath}
+                        focusRootRef={findFocusRoot}
+                        findSeed={props.findSeed}
+                        onFindSeedConsumed={props.onFindSeedConsumed}
                         theme={theme}
                         resetKey={isMarkdownFile ? markdownResetKey : String(editorResetKey)}
                         editorRef={editorHandleRef}
@@ -1214,7 +1241,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                         />
                     </ScrollView>
                 ) : (
+                    <FileViewerFindSurface surfaceId={findSurfaceId} active={isActive} focusRootRef={findFocusRoot}
+                        content={{ path: filePath, mode: displayMode, text: displayMode === 'diff' ? diffContent : fileContent?.isBinary ? null : fileContent?.content ?? null }}
+                        findSeed={props.findSeed} onFindSeedConsumed={props.onFindSeedConsumed}>
+                    {(find) => (
                     <FileContentPanel
+                        find={find}
                         theme={theme}
                         displayMode={displayMode}
                         sessionId={sessionId}
@@ -1242,6 +1274,8 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                         onContentSizeChange={scrollFades.onContentSizeChange}
                         onScroll={scrollFades.onScroll}
                     />
+                    )}
+                    </FileViewerFindSurface>
                 )}
 
                 {displayMode === 'file' && isEditingFile ? null : (

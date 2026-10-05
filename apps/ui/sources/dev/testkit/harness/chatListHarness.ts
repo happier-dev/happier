@@ -212,6 +212,10 @@ function createChatListHarnessMessagesSnapshot() {
     return {
         deletedSessionIds: {},
         profileScope: chatListHarnessState.activeServerAccountScope,
+        sessions: { [sessionId]: chatListHarnessState.sessionState },
+        sessionActionDraftsByAddressKey: {
+            [sessionAddressKey({ serverId: chatListHarnessState.sessionState?.serverId ?? 'test-server', sessionId })]: chatListHarnessState.sessionActionDraftsState,
+        },
         sessionCatchUpNewerInFlight: chatListHarnessState.sessionCatchingUpNewer ? { [sessionId]: 1 } : {},
         sessionMessages: {
             [sessionId]: {
@@ -669,7 +673,23 @@ export async function renderChatList(
     element: React.ReactElement,
     options: RenderWithAppProvidersOptions = {},
 ): Promise<ChatListHarness> {
-    const screen = await renderScreen(element, options);
+    const { AppSessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/appSessionTranscriptSource');
+    const { useOptionalSessionTranscriptSource } = await import('@/components/sessions/transcript/source/SessionTranscriptSourceContext');
+    const Wrapper = options.wrapper;
+    function TranscriptSourceBoundary({ children }: React.PropsWithChildren) {
+        const source = useOptionalSessionTranscriptSource();
+        if (source) return React.createElement(React.Fragment, null, children);
+        return React.createElement(AppSessionTranscriptSourceProvider, {
+            sessionId: chatListHarnessState.sessionState.id,
+            serverId: chatListHarnessState.sessionState.serverId,
+            children,
+        });
+    }
+    function ChatListProviders({ children }: React.PropsWithChildren) {
+        const transcript = React.createElement(TranscriptSourceBoundary, null, children);
+        return Wrapper ? React.createElement(Wrapper, null, transcript) : transcript;
+    }
+    const screen = await renderScreen(element, { ...options, wrapper: ChatListProviders });
 
     return {
         ...screen,

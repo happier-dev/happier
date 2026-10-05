@@ -40,6 +40,7 @@ const {
   listExecutionRuns,
   executeExecutionRunAction,
   callSessionRpc,
+  callExactMachineRpc,
   callMachineRpc,
   hostSubagentStore,
   routeSessionGoalControl,
@@ -77,6 +78,7 @@ const {
   listExecutionRuns: vi.fn(),
   executeExecutionRunAction: vi.fn(),
   callSessionRpc: vi.fn(),
+  callExactMachineRpc: vi.fn(),
   callMachineRpc: vi.fn(),
   routeSessionGoalControl: vi.fn(),
   routeSessionCatalogControl: vi.fn(),
@@ -593,6 +595,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 }));
 
 vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  callExactMachineRpc,
   callMachineRpc,
 }));
 
@@ -690,6 +693,39 @@ type MediatedPermissionResponse = Awaited<ReturnType<
 const actionContext: ActionExecutorContext = {};
 
 describe('createCliActionDeps hook dispatch', () => {
+  it('answers detached requests on the exact machine and preserves stale-request refusal', async () => {
+    const credentials = { token: 'token', encryption: null };
+    const deps = createCliActionDeps({ token: 'token', credentials,
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
+    });
+    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const signal = new AbortController().signal;
+    const request = { runId: 'run-1', requestId: 'request-1', approved: false };
+    callExactMachineRpc.mockResolvedValue({ ok: false, errorCode: 'permission_request_not_found', error: 'Not found' });
+    expect(await executor.execute('execution.run.permission.respond', request, {
+      surface: 'cli', authority: 'present_user', serverId: 'home-a', executionRunTargetMachineId: 'machine-1', signal,
+    })).toEqual({ ok: false, errorCode: 'permission_request_not_found', error: 'Not found' });
+    expect(callExactMachineRpc).toHaveBeenCalledWith({
+      credentials, machineId: 'machine-1', method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
+      request, signal, serverUrl: 'https://home-a.example.test',
+    });
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+  it('refuses a detached response whose Home differs from the captured credential scope', async () => {
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'home-a',
+      serverHttpBaseUrl: 'https://home-a.example.test',
+    });
+    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    callExactMachineRpc.mockResolvedValue({ ok: true });
+
+    expect(await executor.execute('execution.run.permission.respond', {
+      runId: 'run-1', requestId: 'request-1', approved: true,
+    }, { surface: 'cli', authority: 'present_user', serverId: 'home-b', executionRunTargetMachineId: 'machine-1' }))
+      .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+    expect(callExactMachineRpc).not.toHaveBeenCalled();
+  });
   it('refuses autonomous remote role edits and report copies without a trusted RPC origin', async () => {
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       sessionId: 'lead', mode: 'plain', ctx: null,
@@ -727,6 +763,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   beforeEach(() => {
+    callExactMachineRpc.mockReset();
     createSpawnedSession.mockReset();
     lookupSessionsByTags.mockReset();
     validateStoredAuthTokenAgainstActiveServer.mockReset();

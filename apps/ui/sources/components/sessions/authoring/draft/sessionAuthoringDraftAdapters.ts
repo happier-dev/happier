@@ -386,6 +386,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         ...(params.access !== undefined ? { access: params.access } : {}),
         ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
         ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
+        ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
         prompt: params.prompt.trim(),
         displayText: params.displayText.trim(),
         agentTarget: params.agentTarget ? AgentExecutionTargetV1Schema.parse(params.agentTarget) : null,
@@ -424,6 +425,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     access?: SessionAuthoringDraft['access'];
     primaryTeamId?: SessionAuthoringDraft['primaryTeamId'];
     teamCredentialBindings?: SessionAuthoringDraft['teamCredentialBindings'];
+    initialTriggers?: SessionAuthoringDraft['initialTriggers'];
     prompt: string;
     displayText?: string | null;
     agentTarget?: SessionAuthoringDraft['agentTarget'];
@@ -461,6 +463,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         ...(params.access !== undefined ? { access: params.access } : {}),
         ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
         ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
+        ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
         prompt: params.prompt,
         displayText: params.displayText ?? params.prompt,
         agentTarget: params.agentTarget ?? null,
@@ -543,6 +546,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         organizationPlacement: source.source.organizationPlacement ?? { folderId: null, tagIds: [] },
         ...(source.source.access !== undefined ? { access: source.source.access } : {}),
         ...(source.source.primaryTeamId !== undefined ? { primaryTeamId: source.source.primaryTeamId } : {}),
+        ...(source.source.initialTriggers !== undefined ? { initialTriggers: source.source.initialTriggers } : {}),
         // Only the persisted draft carries device-local Team credential slot
         // intents; the temp-data handoff has no such field to project.
         ...(source.kind === 'persistedDraft' && source.source.teamCredentialBindings !== undefined
@@ -1219,6 +1223,7 @@ export function buildSessionSpawnNewInputV2FromAuthoringDraft(params: Readonly<
             ...(params.draft.access?.grants.length ? { initialAccess: params.draft.access } : {}),
             ...(params.draft.primaryTeamId ? { primaryTeamId: params.draft.primaryTeamId } : {}),
             ...(params.draft.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.draft.teamCredentialBindings } : {}),
+            ...(params.draft.initialTriggers?.length ? { initialTriggers: params.draft.initialTriggers } : {}),
         }),
         creationKey,
     };
@@ -1268,6 +1273,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         ...(params.draft.access !== undefined ? { access: params.draft.access } : {}),
         ...(params.draft.primaryTeamId !== undefined ? { primaryTeamId: params.draft.primaryTeamId } : {}),
         ...(params.draft.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.draft.teamCredentialBindings } : {}),
+        ...(params.draft.initialTriggers !== undefined ? { initialTriggers: params.draft.initialTriggers } : {}),
         checkoutCreationDraft: params.draft.checkoutCreationDraft,
         ...(canonicalAgentId ? { agentType: canonicalAgentId } : {}),
         ...(persistedAgentTarget ? { agentTarget: persistedAgentTarget } : {}),
@@ -1350,6 +1356,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         ...(params.draft.directoryKind === 'managed' ? { directoryKind: 'managed' as const } : {}),
         organizationPlacement: params.draft.organizationPlacement,
         ...(params.draft.access !== undefined ? { access: params.draft.access } : {}),
+        ...(params.draft.initialTriggers !== undefined ? { initialTriggers: params.draft.initialTriggers } : {}),
         ...(targetServerId ? { targetServerId } : {}),
         ...(windowsRemoteSessionLaunchModeOverride ? { windowsRemoteSessionLaunchModeOverride } : {}),
         ...(params.entryIntent ? { entryIntent: params.entryIntent } : {}),

@@ -7,15 +7,18 @@ import {
 } from '@happier-dev/protocol';
 import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { PLUGIN_MANIFEST as OPENAI_SOURCE_MANIFEST } from '../../../../../packages/plugins/openai/src/manifest';
+import { activate as activateOpenAiVoice } from '../../../../../packages/plugins/openai/src/ui/voice/runtime';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import {
-  createSessionFixture,
   installVoiceWebRtcBrowserBoundary,
-  renderScreen,
   TestVoiceWebRtcPeer,
-} from '@/dev/testkit';
+} from '@/dev/testkit/harness/voiceWebRtcHarness';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import {
   CurrentUiContextProvider,
@@ -34,20 +37,23 @@ import { apiSocket } from '@/sync/api/session/apiSocket';
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { Encryption } from '@/sync/encryption/encryption';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
-import type {
-  ServerAccountRequestAuthority,
+import {
+  captureServerRequestAuthorityForServerAccountScope,
 } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { handleDeleteSessionSocketUpdate } from '@/sync/engine/sessions/syncSessions';
 import { createAccountVoiceOperationService } from '@/voice/credentials/accountVoiceOperationService';
 import { saveAndUseAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
@@ -93,9 +99,7 @@ import {
 } from './bundledConversationRuntimeHost';
 import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
-import {
-  BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
-} from './generatedBundledVoiceRuntimeEntries';
+import { createBundledConversationRuntimeEntries } from './bundledConversationRuntimeEntries';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -129,7 +133,7 @@ vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async (
 });
 
 function openAiEntry() {
-  const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES
+  const entry = createBundledConversationRuntimeEntries(OPENAI_SOURCE_MANIFEST, activateOpenAiVoice)
     .find((candidate) => candidate.declaration.id === 'realtime-openai');
   if (!entry) throw new Error('realtime_openai bundled entry missing');
   return entry;
@@ -289,6 +293,7 @@ function installOpenAiConnectedAccountSettings(): void {
     sessions: {
       [OPENAI_HISTORY_SESSION_ID]: createSessionFixture({
         id: OPENAI_HISTORY_SESSION_ID,
+        serverId: getActiveServerSnapshot().serverId,
         active: false,
         encryptionMode: 'plain',
         metadata: {
@@ -788,6 +793,13 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       name: 'OpenAI composed test',
     });
     await setActiveServerId(server.id, { scope: 'device' });
+    // Apply the selected Home through the real connection owner before mounting
+    // its Account. Merely selecting a server does not establish a serving runtime.
+    const credentialsForServer = vi.spyOn(
+      TokenStorage,
+      'getCredentialsForServerUrl',
+    ).mockResolvedValue(null);
+    await switchConnectionToActiveServer();
     storage.getState().activateProfileScope({
       serverId: server.id,
       accountId: 'openai-composed-account',
@@ -799,7 +811,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     };
     Reflect.set(sync, 'credentials', credentials);
     sync.encryption = await Encryption.create(secretBytes);
-    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
+    credentialsForServer.mockResolvedValue(credentials);
     resetVoiceAdapterRegistryForTests();
     resetVoiceSessionStoreForTests();
     __resetVoiceTurnInterruptions();
@@ -873,6 +885,16 @@ describe('realtime_openai source-composed WebRTC gate', () => {
 
   it('fences an Account-retired real OpenAI attempt before retained current-UI read or command tool calls can reach A or B', async () => {
     const browser = installVoiceWebRtcBrowserBoundary();
+    // The real web Home mutation owner also reaches the browser Web Locks API.
+    vi.stubGlobal('navigator', { ...globalThis.navigator });
+    const webLocks = installWebLockManagerMock();
+    storage.setState((current) => ({
+      settings: {
+        ...current.settings,
+        experiments: true,
+        featureToggles: { ...current.settings.featureToggles, voice: true },
+      },
+    }));
     // This composed test mounts the real AppShell runtime in the Node runner.
     // Keep its real web path while supplying only the browser-owned boundaries
     // that the runner cannot select through platform file resolution.
@@ -926,6 +948,14 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       });
       const controller = getVoiceSessionLifecycleController();
       if (!controller) throw new Error('Expected the real Voice lifecycle controller.');
+      const tools = getCurrentBundledConversationRuntimeHost()?.getRealtimeClientToolDefinitions({
+        effectCalls: 'stable_ids',
+        exposure: 'voice_assistant',
+      }) ?? [];
+      expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+        'readCurrentUiContext',
+        'invokeCurrentUiCommand',
+      ]));
       const starting = controller.toggle(null);
       await vi.waitFor(() => expect(browser.peer.createDataChannel).toHaveBeenCalledWith('oai-events'));
       browser.peer.channel.open();
@@ -1019,6 +1049,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       if (screen) await screen.unmount();
       retireActiveServerAccountScopeLifetime();
       await vi.waitFor(() => expect(getVoiceSessionLifecycleController()).toBeNull());
+      webLocks.restore();
       browser.restore();
     }
   });
@@ -1052,7 +1083,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       });
       expect(hydrate).toHaveBeenCalledWith(
         OPENAI_HISTORY_SESSION_ID,
-        { forceRefresh: true },
+        { forceRefresh: true, serverId: getActiveServerSnapshot().serverId },
       );
     } finally {
       await composed.runtime.dispose();
@@ -1102,7 +1133,10 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         activeAdapterId: 'happier.voice.openai/realtime-openai',
         providerId: 'happier.voice.openai/realtime-openai',
         requestedTargetSessionId: null,
-      })).resolves.toEqual({ conversationSessionId: null });
+      })).resolves.toEqual({
+        conversationSessionId: null,
+        conversationServerId: null,
+      });
 
       browser.peer.channel.message(JSON.stringify({
         type: 'conversation.item.input_audio_transcription.completed',
@@ -1817,6 +1851,71 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     }
   });
 
+  it.each([false, true])('temporarily opens held capture and restores prior user Mute (%s)', async (userMuted) => {
+    const browser = installVoiceWebRtcBrowserBoundary();
+    storage.setState((current) => {
+      const voice = voiceSettingsParse(current.settings.voiceSettingsV1);
+      const providerId = openAiEntry().providerId;
+      const selected = voice.providers[providerId]!;
+      const updatedVoice = { ...voice, providers: { ...voice.providers, [providerId]: {
+        ...selected, config: { ...selected.config as Readonly<Record<string, unknown>>, turnDetection: 'manual' },
+      } } };
+      return { ...current, settings: { ...current.settings, voiceSettingsV1: updatedVoice,
+        voice: { ...updatedVoice, credentialBindings: current.settings.voice.credentialBindings } } };
+    });
+    const composed = createSourceComposedOpenAiRuntime(browser);
+    let lifecycle: ReturnType<typeof createVoiceSessionLifecycleController> | null = null;
+    try {
+      const starting = composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      await vi.waitFor(() => expect(browser.peer.createDataChannel).toHaveBeenCalled());
+      browser.peer.channel.open();
+      await starting;
+      await composed.runtime.adapter.setMuted({ sessionId: composed.controlSessionId, muted: userMuted });
+      expect(composed.runtime.adapter.getSnapshot().canHoldToTalk).toBe(true);
+      const send = browser.peer.channel.send.bind(browser.peer.channel);
+      browser.peer.channel.send = (value: string) => {
+        if (JSON.parse(value).type === 'input_audio_buffer.commit') {
+          expect(browser.micSession.setMuted).toHaveBeenLastCalledWith(true);
+        }
+        send(value);
+      };
+      const sentBefore = browser.peer.channel.sent.length;
+      const held = composed.runtime.adapter.beginHoldToTalk?.({ sessionId: composed.controlSessionId });
+      expect(held).toBeTruthy();
+      expect(await held!.ready).toBe(true);
+      expect(browser.micSession.setMuted).toHaveBeenLastCalledWith(false);
+      expect(composed.runtime.adapter.getSnapshot().micMuted ?? false).toBe(userMuted);
+      await held!.release();
+      await held!.release();
+      expect(browser.micSession.setMuted).toHaveBeenLastCalledWith(userMuted);
+      expect(composed.runtime.adapter.getSnapshot().micMuted ?? false).toBe(userMuted);
+      expect(browser.peer.channel.sent.slice(sentBefore).map((value) => JSON.parse(value))).toEqual([
+        { type: 'input_audio_buffer.clear' }, { type: 'input_audio_buffer.commit' }, { type: 'response.create' },
+      ]);
+      if (userMuted) {
+        lifecycle = createVoiceSessionLifecycleController({ getRegistry: () => ({
+          get: (id) => id === composed.runtime.adapter.id ? composed.runtime.adapter : null,
+          list: () => [composed.runtime.adapter],
+        }) });
+        lifecycle.setConfiguredProviderId(composed.runtime.adapter.id);
+        const nextHold = composed.runtime.adapter.beginHoldToTalk?.({ sessionId: composed.controlSessionId });
+        expect(await nextHold!.ready).toBe(true);
+        const suspension = await lifecycle.suspendInput(composed.controlSessionId);
+        expect(suspension).not.toBeNull();
+        await nextHold!.release();
+        expect(browser.peer.channel.sent.filter((value) => JSON.parse(value).type === 'input_audio_buffer.commit')).toHaveLength(1);
+        expect(browser.micTrack.enabled).toBe(false);
+        await suspension!.release();
+      }
+      expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
+    } finally {
+      await lifecycle?.dispose();
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+      browser.restore();
+    }
+  });
+
   it('transcribes and answers a committed user turn taken while the assistant is idle', async () => {
     const browser = installVoiceWebRtcBrowserBoundary();
     const composed = createSourceComposedOpenAiRuntime(browser);
@@ -2273,12 +2372,9 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     let deleteFinished = false;
     let discoveredSessionId: string | null = OPENAI_HISTORY_SESSION_ID;
     const scope = {
-      serverId: 'openai-composed-server',
+      serverId: getActiveServerSnapshot().serverId,
       accountId: 'openai-composed-account',
     } as const satisfies ServerAccountScope;
-    const authority = {
-      scope,
-    } as unknown as ServerAccountRequestAuthority;
     const ensureHistorySession = vi.spyOn(sync, 'ensureHostedSystemSession')
       .mockImplementation(async () => {
         const sessionId = deleteFinished
@@ -2291,6 +2387,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
               ...current.sessions,
               [sessionId]: createSessionFixture({
                 id: sessionId,
+                serverId: scope.serverId,
                 active: false,
                 encryptionMode: 'plain',
                 metadata: {
@@ -2313,7 +2410,11 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     });
     const runtime: DefaultVoiceHistoryRuntime = {
       readActiveScope: () => scope,
-      captureAuthority: async () => authority,
+      captureAuthority: (capturedScope) =>
+        captureServerRequestAuthorityForServerAccountScope({
+          scope: capturedScope,
+          activeRequest: (path, init, options) => apiSocket.request(path, init, options),
+        }),
       lookupByTags: async () => (
         discoveredSessionId ? [{ id: discoveredSessionId }] : []
       ),
@@ -2410,6 +2511,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
             ...current.sessions,
             [recreatedSessionId]: createSessionFixture({
               id: recreatedSessionId,
+              serverId: getActiveServerSnapshot().serverId,
               active: false,
               encryptionMode: 'plain',
               metadata: {
@@ -2617,6 +2719,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
           ...current.sessions,
           [recreatedSessionId]: createSessionFixture({
             id: recreatedSessionId,
+            serverId: getActiveServerSnapshot().serverId,
             active: false,
             encryptionMode: 'plain',
             metadata: {
@@ -2718,6 +2821,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         ...current.sessions,
         [carrierId]: createSessionFixture({
           id: carrierId,
+          serverId: getActiveServerSnapshot().serverId,
           active: false,
           encryptionMode: 'plain',
           metadata: {
@@ -2822,6 +2926,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         ...current.sessions,
         [recreatedCarrierId]: createSessionFixture({
           id: recreatedCarrierId,
+          serverId: getActiveServerSnapshot().serverId,
           active: false,
           encryptionMode: 'plain',
           metadata: {
@@ -3072,6 +3177,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         ...current.sessions,
         [recreatedCarrierId]: createSessionFixture({
           id: recreatedCarrierId,
+          serverId: getActiveServerSnapshot().serverId,
           active: false,
           encryptionMode: 'plain',
           metadata: {
@@ -3349,6 +3455,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
           ...current.sessions,
           [recreatedCarrierId]: createSessionFixture({
             id: recreatedCarrierId,
+            serverId: getActiveServerSnapshot().serverId,
             active: false,
             encryptionMode: 'plain',
             metadata: {

@@ -135,6 +135,7 @@ const HOSTED_WEB_PRODUCED_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethodV1>(
         'acquireComposerInputLock',
         'watchSession',
         'watchLiveStream',
+        'watchEntityDragDrop',
     ] as const satisfies readonly PluginUiHostMethodV1[],
 );
 const HOSTED_WEB_HOST_RESOURCE_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethodV1>(
@@ -144,6 +145,7 @@ const HOSTED_WEB_HOST_RESOURCE_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethod
         'acquireComposerInputLock',
         'watchSession',
         'watchLiveStream',
+        'watchEntityDragDrop',
     ] as const satisfies readonly PluginUiHostMethodV1[],
 );
 const CANONICAL_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethodV1>(
@@ -321,6 +323,9 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                 installedMethods: params.readInstalledMethods?.() ?? params.canonicalHostApi?.methods ?? [],
                 canPushToSurface: params.postToFrame !== undefined,
             }).filter((method) => {
+                // Hosted HTML owns the whole frame. Native/declarative pages retain the shared
+                // area port, but it is neither advertised nor dispatched through this carrier.
+                if (method === 'widgetArea') return false;
                 if (ceiling && !ceiling.has(method)) return false;
                 if (CANONICAL_SUBSCRIPTION_METHODS.has(method)) {
                     return HOSTED_WEB_PRODUCED_SUBSCRIPTION_METHODS.has(method);
@@ -391,7 +396,11 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
      * raw guest cannot reuse the id and make the old completion act on its
      * successor.
      */
-    const hostResourceSubscriptions = new Map<string, 'pending' | 'active' | 'retired'>();
+    const hostResourceSubscriptions = new Map<string, 'pending' | 'active' | 'retired' | Readonly<{ state: 'pending' | 'active'; release: () => void }>>();
+    const hostResourceState = (subscriptionId: string) => {
+        const value = hostResourceSubscriptions.get(subscriptionId);
+        return typeof value === 'object' ? value.state : value;
+    };
     /**
      * A mount-side watch pumps from the moment it is admitted, which is before
      * this bridge has written the establishment response. `pending` is
@@ -616,7 +625,9 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         }
         if (message.kind === 'disposeHostResource') {
             contextSubscriptions.delete(message.subscriptionId);
-            const state = hostResourceSubscriptions.get(message.subscriptionId);
+            const state = hostResourceState(message.subscriptionId);
+            const owned = hostResourceSubscriptions.get(message.subscriptionId);
+            if (typeof owned === 'object') owned.release();
             if (state === 'active') {
                 hostResourceSubscriptions.set(message.subscriptionId, 'retired');
                 await retireHostResourceSubscription(message.subscriptionId);
@@ -679,8 +690,17 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     requestId: `${params.requestIdPrefix}:canonical:${message.requestId}`,
                     method: message.method,
                     payload: requestPayload,
+                    ...(message.method === 'watchEntityDragDrop' ? { options: { entityDragDropSubscription: {
+                        retain: (release: () => void) => { hostResourceSubscriptions.set(message.subscriptionId, { state: 'pending', release }); },
+                        publish: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => {
+                            if (!isPublishableHostResourceState(hostResourceState(message.subscriptionId))) return;
+                            pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({ wireVersion: 1, kind: 'subscription', identity: binding.identity, subscriptionId: message.subscriptionId, event: state }));
+                        },
+                    } } } : {}),
                 });
                 if (response.kind === 'error') {
+                    const retained = hostResourceSubscriptions.get(message.subscriptionId);
+                    if (typeof retained === 'object') retained.release();
                     hostResourceSubscriptions.delete(message.subscriptionId);
                     return canonicalRequestError(
                         envelope,
@@ -690,7 +710,9 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     );
                 }
                 admission = response.payload;
-                if (disposed || !isCurrent() || hostResourceSubscriptions.get(message.subscriptionId) !== 'pending') {
+                if (disposed || !isCurrent() || hostResourceState(message.subscriptionId) !== 'pending') {
+                    const retained = hostResourceSubscriptions.get(message.subscriptionId);
+                    if (typeof retained === 'object') retained.release();
                     // The mount admitted a subscription after either this bridge,
                     // its bound surface, or the guest subscription retired. The
                     // completion is the first safe point at which the one
@@ -704,7 +726,8 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                         disposed ? 'host_api_handler_disposed' : 'stale_surface',
                     );
                 }
-                hostResourceSubscriptions.set(message.subscriptionId, 'active');
+                const retained = hostResourceSubscriptions.get(message.subscriptionId);
+                hostResourceSubscriptions.set(message.subscriptionId, typeof retained === 'object' ? { ...retained, state: 'active' } : 'active');
             } else {
                 contextSubscriptions.add(message.subscriptionId);
             }
@@ -828,7 +851,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             // happened after something had, inviting a second navigation.
             if (
                 !isCurrent()
-                && !pluginSurfaceSettlementSurvivesRetirement({ method: message.method, response })
+                && !pluginSurfaceSettlementSurvivesRetirement({ method: message.method, response, requestPayload: message.payload })
             ) {
                 return canonicalRequestError(envelope, message, 'stale_surface');
             }
@@ -1054,7 +1077,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         },
         publishResourceSubscriptionEvent: (event: PluginUiResourceSubscriptionEventV1): boolean => {
             const binding = params.canonicalHostApi;
-            const state = hostResourceSubscriptions.get(event.subscriptionId);
+            const state = hostResourceState(event.subscriptionId);
             if (disposed || !binding || !isCurrent() || !isPublishableHostResourceState(state)) return false;
             pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({
                 wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -1084,7 +1107,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                 || disposed
                 || !binding
                 || !isCurrent()
-                || !isPublishableHostResourceState(hostResourceSubscriptions.get(input.subscriptionId))) {
+                || !isPublishableHostResourceState(hostResourceState(input.subscriptionId))) {
                 return false;
             }
             pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({
@@ -1127,6 +1150,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             disposed = true;
             contextSubscriptions.clear();
             for (const [subscriptionId, state] of hostResourceSubscriptions) {
+                if (typeof state === 'object') state.release();
                 if (state === 'active') void retireHostResourceSubscription(subscriptionId);
             }
             hostResourceSubscriptions.clear();

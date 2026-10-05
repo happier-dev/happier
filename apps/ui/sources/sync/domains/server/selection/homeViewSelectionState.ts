@@ -6,7 +6,7 @@ import {
     updateHomeViewState,
     type HomeViewStateV1,
 } from '@/sync/domains/server/serverProfiles';
-import { ALL_HOMES_MINIMUM_HOME_COUNT, isAllHomesSelectionTargetId } from './allHomesSelectionTarget';
+import { ALL_HOMES_MINIMUM_HOME_COUNT, ALL_HOMES_SELECTION_TARGET_ID, isAllHomesSelectionTargetId } from './allHomesSelectionTarget';
 import { listServerProfileScopeIds, resolveServerProfileScopeIdForSelectionIdentifier } from './serverSelectionProfileScopeIds';
 
 const SESSION_STORAGE_HOME_VIEW_TARGET_KEY = 'homeViewActiveTargetV1';
@@ -175,6 +175,15 @@ export async function updateEffectiveHomeViewState(
         ));
     }
     return loadEffectiveHomeViewState() ?? savedDeviceState;
+}
+
+/** Show the joined session view without changing the Home used for new sessions. */
+export async function selectAllHomes(options: Readonly<{ scope: 'tab' | 'device' }>): Promise<void> {
+    await updateEffectiveHomeViewState((current) => ({
+        ...current,
+        activeTargetKind: 'group',
+        activeTargetId: ALL_HOMES_SELECTION_TARGET_ID,
+    }), options);
 }
 
 export function subscribeEffectiveHomeViewState(listener: () => void): () => void {

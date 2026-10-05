@@ -827,6 +827,8 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
 });
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { SessionView } = await import('./SessionView');
+const draftValues = await import('@/dev/testkit/sessionDraftRepositoryTestkit');
 
 describe('SessionView (direct sessions)', () => {
   const canonicalDraftScope: ServerAccountScope = {

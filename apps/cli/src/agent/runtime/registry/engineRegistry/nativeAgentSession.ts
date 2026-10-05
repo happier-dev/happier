@@ -244,11 +244,7 @@ import {
 } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { publishRuntimeSessionEvent } from '@/agent/runtime/session/transcripts/publishRuntimeSessionEvent';
 import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
-import {
-    buildTerminalMetadataFromHostHandle,
-    resolveExistingTerminalHostLifecycle,
-} from '@/terminal/runtime/terminalMetadata';
-import { bindHerdrAgentIfNeeded } from '@/integrations/herdr/bindManagedSession';
+import { publishNativeAgentTerminalHostBinding } from '@/agent/runtime/session/terminal/terminalHostBinding';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 import {
@@ -749,46 +745,8 @@ function createNativeAgentTerminalHostScope(params: Readonly<{
                 throw error;
             }
             try {
-                const terminal = buildTerminalMetadataFromHostHandle(handle);
-                const attachmentInfo = await readTerminalHostAttachmentInfo({
-                    happyHomeDir: happierConfiguration.happyHomeDir,
-                    sessionId: params.session.sessionId,
-                });
-                const lifecycle = resolveExistingTerminalHostLifecycle({ ...params.session.getMetadataSnapshot(), terminal }, attachmentInfo) ?? 'owned';
-                const attachmentId = terminal?.controlServiceabilityV1?.attachmentId;
-                logger.debug('[native-agent] Publishing attached terminal-host metadata', {
-                    sessionId: params.session.sessionId,
-                    attachmentId,
-                    mode: terminal?.mode,
-                    tmuxTarget: terminal?.tmux?.target,
-                });
-                let updatedMetadata: Metadata | null = null;
-                await params.session.updateMetadata((metadata) => {
-                    updatedMetadata = {
-                        ...metadata,
-                        terminal,
-                    };
-                    return updatedMetadata;
-                });
-                if (updatedMetadata) {
-                    await params.reportSessionMetadataToDaemon({
-                        sessionId: params.session.sessionId,
-                        metadata: updatedMetadata,
-                    });
-                }
-                await bindHerdrAgentIfNeeded({
-                    session: params.session,
-                    sessionId: params.session.sessionId,
-                    agent: params.agentId,
-                    terminal,
-                    preserveHostOnClose: lifecycle === 'owned',
-                });
-                logger.debug('[native-agent] Published attached terminal-host metadata', {
-                    sessionId: params.session.sessionId,
-                    attachmentId,
-                    mode: terminal?.mode,
-                    tmuxTarget: terminal?.tmux?.target,
-                });
+                await publishNativeAgentTerminalHostBinding({ session: params.session, handle,
+                    agentId: params.agentId, reportSessionMetadataToDaemon: params.reportSessionMetadataToDaemon });
             } catch (error) {
                 logger.warn(
                     requireBinding
@@ -1305,7 +1263,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                 },
             } : {}),
             fileFollow,
-            async reconcileSourceIdentities(request) {
+            async reconcileSourceIdentities(request: Parameters<AgentSessionHostServices['transcripts']['reconcileSourceIdentities']>[0]) {
                 assertSessionScopeAvailable('transcript-identity');
                 if (!reconcileSourceIdentities) throw new PluginError({ code: 'native_agent_transcript_identity_unsupported', message: 'Transcript identity reconciliation is unavailable' });
                 return await invokeNativeAgentSessionPublicService(async () => await reconcileSourceIdentities(request));
@@ -4180,7 +4138,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     const contributionId = params.agent.identity?.localId ?? identity.agentId;
     let currentTerminalTranscriptFollowService: HostTerminalTranscriptFollowService | null = null;
     let runtimeExecutionSurfaces = params.executionSurfaces;
-    const plan = await createNativeAgentHostSessionRuntimePlan({
+    let plan = await createNativeAgentHostSessionRuntimePlan({
         backend: params.backend,
         agent: params.agent,
         sessionInput: params.sessionInput,
@@ -4247,34 +4205,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             if (startupInstructions && !canApplyNativeStartup) {
                 throw new PluginError({ code: 'agent_session_startup_instructions_unsupported', retryable: false });
             }
-            if (canApplyNativeStartup
-                && openIntent.startupInstructions === undefined && hostRuntimeParams.resolveFreshSessionSystemPrompt) {
-                // Resolve role sources before capturing their native workspace policy below.
-                const text = await hostRuntimeParams.resolveFreshSessionSystemPrompt({ signal });
-                startupInstructions = hostRuntimeParams.resolveFreshSessionSystemPrompt.readStartupInstructions?.()
-                    ?? (text.trim() ? AgentSessionStartupInstructionsV1Schema.parse({
-                    v: 1, id: 'happier.coding_session_plan',
-                    revision: params.sessionInput.agentSessionStartupInstructionsV1?.revision ?? 1,
-                    instructions: text.trim().normalize('NFC'),
-                }) : null);
-            }
             const modelSelection = resolvePublicSessionModelSelection({
                 sessionInput: params.sessionInput,
                 metadata: hostRuntimeParams.metadata,
             });
-            let openInputs = buildNativeAgentSessionOpenInputs(
-                identity.agentId,
-                params.sessionInput,
-                hostRuntimeParams.metadata,
-                hostRuntimeParams.providerBindingMaterialization,
-                hostRuntimeParams.getPermissionMode(),
-                hostRuntimeParams.getWorkspaceWrites,
-                {
-                    allowPendingProviderBinding:
-                        params.sessionInput.bootstrap.resolveLateEnvironment
-                        !== undefined,
-                },
-            );
+            let openInputs: ReturnType<typeof buildNativeAgentSessionOpenInputs>;
             const resolveLateEnvironment =
                 params.sessionInput.bootstrap.resolveLateEnvironment;
             let resolvedLateEnvironmentValues:
@@ -4299,40 +4234,76 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 readSessionProviderBindingMetadataV1(
                     hostRuntimeParams.metadata,
                 );
-            if (
-                selectedProviderConnectionId !== null
-                && (
-                    !authoritativeProviderBindingMetadata
-                    || authoritativeProviderBindingMetadata.connectionId
-                        !== selectedProviderConnectionId
-                )
-            ) {
-                throw new Error(
-                    'Provider-bound model selection requires exact authoritative Provider binding metadata',
-                );
-            }
             const useRunnerManagedProviderBinding =
                 selectedProviderConnectionId !== null
                 && authoritativeProviderBindingMetadata
                     ?.runtimeBindingBasis?.deployment.kind
                     === 'managedLocal';
-            if (
-                useRunnerManagedProviderBinding
-                && !params.prepareManagedProviderBinding
-            ) {
-                throw new Error(
-                    'Managed Provider binding requires runner custody preparation',
-                );
-            }
             const cleanupLateProviderBindingMaterialization = () => {
                 const cleanup = lateProviderBindingMaterializationCleanup;
                 lateProviderBindingMaterializationCleanup = null;
                 cleanup?.();
             };
+            const assertGenerationCurrent = () => {
+                signal.throwIfAborted();
+                let current = false;
+                try {
+                    current = identity.isCurrent();
+                } catch {
+                    // A failed currentness probe is not authority to enter the generation.
+                }
+                if (!current) {
+                    throw new Error(`Agent runtime '${identity.agentId}' generation retired`);
+                }
+            };
             try {
                 const resolvedLateEnvironment = resolveLateEnvironment
                     ? await resolveLateEnvironment({ sessionId })
                     : null;
+                // Foreground late admission publishes the canonical authority. Claim it
+                // before resolving any startup contribution through the runner source.
+                await params.prepareRuntimeSource?.({ sessionId, signal });
+                assertGenerationCurrent();
+                if (canApplyNativeStartup
+                    && openIntent.startupInstructions === undefined && hostRuntimeParams.resolveFreshSessionSystemPrompt) {
+                    // Resolve role sources before capturing their native workspace policy below.
+                    const text = await hostRuntimeParams.resolveFreshSessionSystemPrompt({ signal });
+                    startupInstructions = hostRuntimeParams.resolveFreshSessionSystemPrompt.readStartupInstructions?.()
+                        ?? (text.trim() ? AgentSessionStartupInstructionsV1Schema.parse({
+                        v: 1, id: 'happier.coding_session_plan',
+                        revision: params.sessionInput.agentSessionStartupInstructionsV1?.revision ?? 1,
+                        instructions: text.trim().normalize('NFC'),
+                    }) : null);
+                }
+                openInputs = buildNativeAgentSessionOpenInputs(
+                    identity.agentId,
+                    params.sessionInput,
+                    hostRuntimeParams.metadata,
+                    hostRuntimeParams.providerBindingMaterialization,
+                    hostRuntimeParams.getPermissionMode(),
+                    hostRuntimeParams.getWorkspaceWrites,
+                    { allowPendingProviderBinding: resolveLateEnvironment !== undefined },
+                );
+                if (
+                    selectedProviderConnectionId !== null
+                    && (
+                        !authoritativeProviderBindingMetadata
+                        || authoritativeProviderBindingMetadata.connectionId
+                            !== selectedProviderConnectionId
+                    )
+                ) {
+                    throw new Error(
+                        'Provider-bound model selection requires exact authoritative Provider binding metadata',
+                    );
+                }
+                if (
+                    useRunnerManagedProviderBinding
+                    && !params.prepareManagedProviderBinding
+                ) {
+                    throw new Error(
+                        'Managed Provider binding requires runner custody preparation',
+                    );
+                }
                 if (resolvedLateEnvironment) {
                     const lateEnvironment = {
                         ...resolvedLateEnvironment.environmentVariables,
@@ -4458,27 +4429,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     resolvedLateProviderBindingHandoff =
                         providerBindingHandoff;
                 }
-                await params.prepareRuntimeSource?.({
-                    sessionId,
-                    signal,
-                });
             } catch (error) {
                 ownedAbortController.abort(error);
+                await params.retireRuntimeSource?.().catch(() => undefined);
                 cleanupLateProviderBindingMaterialization();
                 throw error;
             }
-            const assertGenerationCurrent = () => {
-                signal.throwIfAborted();
-                let current = false;
-                try {
-                    current = identity.isCurrent();
-                } catch {
-                    // A failed currentness probe is not authority to enter the generation.
-                }
-                if (!current) {
-                    throw new Error(`Agent runtime '${identity.agentId}' generation retired`);
-                }
-            };
             try {
             assertGenerationCurrent();
             const sourceCustody = identity.sourceCustody ?? null;
@@ -5845,6 +5801,21 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             }
         },
     });
+    if (plan.opts.startedBy === 'daemon' && plan.opts.existingSessionId
+        && plan.opts.terminalRuntime?.mode === 'plain') {
+        const selected = await params.executionSurfaces?.resolveTerminalPresentation?.({
+            cwd: plan.opts.directory ?? process.cwd(),
+            runtimeDescriptorV1: plan.opts.runtimeDescriptorV1,
+            launchEnvironment: { values: params.sessionInput.bootstrap.environmentVariables ?? {},
+                unset: params.sessionInput.bootstrap.unsetEnvironmentVariables ?? [] },
+            configuration: { options: Object.fromEntries(Object.entries(params.sessionInput.runtimePreferences.configurationOptions?.overrides ?? {})
+                .map(([id, option]) => [id, { value: option.value, updatedAtMs: option.updatedAt }])) },
+        });
+        if (selected?.retainedTerminalRecovery === 'adopt') {
+            plan = { ...plan, config: { ...plan.config,
+                initializeSession: { ...plan.config.initializeSession, retainedTerminalRecovery: 'adopt' } } };
+        }
+    }
     const createSessionRuntime = plan.config.createSessionRuntime;
     if (
         !createSessionRuntime
@@ -5925,6 +5896,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     } : undefined;
                     const providerAttachModeBinding =
                         createNativeAgentProviderAttachModeBinding({
+                            agentId: identity.agentId,
+                            reportSessionMetadataToDaemon: params.reportSessionMetadataToDaemon ?? reportSessionToDaemonIfRunning,
                             runtime,
                             attach,
                             session: runtimeParams.session,

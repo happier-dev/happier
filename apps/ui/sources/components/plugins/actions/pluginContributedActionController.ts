@@ -236,6 +236,7 @@ export type PluginContributedActionForm = ActionInputForm<
     PluginContributedActionUnavailableOutcome['reason'],
     PluginContributedActionStaleOutcome['reason']
 > & Readonly<{
+    pickerContext?: import('@/components/sessions/actions/InputTypePickerHostProvider').InputTypePickerHostContext;
     action: PluginContributedActionDescriptor;
 }>;
 
@@ -1160,7 +1161,12 @@ export function createPluginContributedActionController(params: Readonly<{
                 return outcome;
             },
         });
-        return { ...form, action: resolved.descriptor };
+        return { ...form, action: resolved.descriptor, pickerContext: {
+            machineId: resolved.snapshot.host.machineId,
+            serverId: resolved.snapshot.host.serverId,
+            sessionId: resolved.snapshot.host.sessionId,
+            contextKey: resolved.descriptor.qualifiedActionId,
+        } };
     }
 
     async function resolveFormConnectedAccountOptions(

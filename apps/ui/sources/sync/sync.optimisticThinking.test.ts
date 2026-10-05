@@ -424,7 +424,7 @@ describe('sync.sendMessage optimistic thinking', () => {
                 }
                 return kvStore.get(readKey);
             });
-            const { sync } = await import('./sync');
+            const { sync } = await import('./syncEngine');
             const retries = (sync as unknown as { pendingOutboxOperationRetryTimers: Map<string, unknown> }).pendingOutboxOperationRetryTimers;
             sync.schedulePendingOutboxOperationRetry({ sessionId, localId, outboxScope });
             expect(retries.size).toBe(1);
@@ -452,7 +452,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         } as const;
         storage.getState().activateProfileScope(activeScope);
         // Direct Sync tests bypass restore; bind the same applied transport and Account it owns.
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
         Reflect.set(sync, 'serverID', activeScope.accountId);
         appliedRuntime.available = true;
@@ -928,7 +928,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         expect(requestSpy.mock.calls.map(([path, init]) => [path, init])).toContainEqual([
             `/v2/sessions/${sessionId}/pending?includeDiscarded=1`,
-            { method: 'GET' },
+            { method: 'GET', cache: 'no-store' },
         ]);
         expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
             expect.objectContaining({

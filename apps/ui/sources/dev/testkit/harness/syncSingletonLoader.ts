@@ -18,5 +18,5 @@ export function createSyncSingletonLoaderMock() {
 
 /** Import directly, after installing transport boundaries, and call in setup. */
 export async function loadSyncSingletonForTests(): Promise<void> {
-    loader.current = (await import('@/sync/sync')).sync;
+    loader.current = (await import('@/sync/syncEngine')).sync;
 }

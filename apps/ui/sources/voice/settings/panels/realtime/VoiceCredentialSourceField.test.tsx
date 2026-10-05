@@ -2,10 +2,12 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { commitExternalVoiceProviderRegistration, resetExternalVoiceProviderRegistrationsForTests } from '@/voice/registry/externalVoiceProviderRegistrations';
+import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 
 const state = vi.hoisted(() => ({
   settings: null as any,
@@ -14,44 +16,29 @@ const state = vi.hoisted(() => ({
     connectedAccountGroupsV4: [] as any[],
   },
   settingsVersion: 4 as number | null,
-  currentDeclaration: null as any,
-  currentEntryKind: 'voice.conversation-provider.v1' as
-    | 'voice.conversation-provider.v1'
-    | 'voice.speech-engine.v1',
   mutateAccountSettingsOnce: vi.fn(),
   lastFireAndForget: null as Promise<unknown> | null,
   projectedConnectedServicesRegistry: Object.freeze({ revision: 0, entries: [] }) as object,
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-  useSettings: () => state.settings,
-  useSettingsVersion: () => state.settingsVersion,
-  useProfile: () => state.profile,
-}));
+vi.mock('@/sync/domains/state/storageStore', async () => {
+  const { createLiveStorageStoreMock, createStableStorageReader } = await import('@/dev/testkit/mocks/storage');
+  const { settingsParse } = await import('@/sync/domains/settings/settings');
+  const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+  const readSettings = createStableStorageReader(() => settingsParse(state.settings ?? {}));
+  const storage = createLiveStorageStoreMock(() => ({
+    settings: readSettings(),
+    settingsVersion: state.settingsVersion,
+    settingsScope: null,
+    profile: { ...profileDefaults, ...state.profile },
+  }));
+  return { storage, getStorage: () => storage };
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
     mutateAccountSettingsOnce: (...args: any[]) => state.mutateAccountSettingsOnce(...args),
   },
-}));
-
-vi.mock('@/voice/registry/defaultRegistry', () => ({
-  createDefaultVoiceProviderRegistry: () => {
-    const currentEntry = () => state.currentDeclaration
-      ? { kind: state.currentEntryKind, declaration: state.currentDeclaration }
-      : null;
-    return {
-      get: currentEntry,
-      list: () => {
-        const entry = currentEntry();
-        return entry ? [entry] : [];
-      },
-    };
-  },
-}));
-
-vi.mock('@/sync/domains/settings/settings', () => ({
-  settingsParse: (value: unknown) => value,
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -72,10 +59,10 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
   },
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-  tLoose: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (promise: Promise<unknown>) => {
@@ -176,6 +163,27 @@ const declaration = VoiceProviderContributionSchema.parse({
 });
 const credentials = declaration.credentials!;
 
+function installCurrentDeclaration(currentDeclaration: VoiceProviderContribution) {
+  const providerId = buildQualifiedPluginContributionKey({
+    pluginId: contribution.pluginId,
+    localId: currentDeclaration.id,
+  });
+  const registry = createVoiceProviderRegistry({
+    bundledContributions: [{ pluginId: contribution.pluginId, providerId, declaration: currentDeclaration }],
+    bundledPresentations: [{ providerId, settingsSectionId: 'voice-credential-source-test' }],
+  });
+  const descriptor = registry.get(providerId);
+  if (!descriptor) throw new Error('expected current Voice contribution');
+  commitExternalVoiceProviderRegistration({
+    token: contribution,
+    pluginId: contribution.pluginId,
+    localId: currentDeclaration.id,
+    providerId,
+    descriptor,
+    adapter: null,
+  });
+}
+
 function installCodexDescriptor(options: Readonly<{
   requiresAccountConfiguration?: boolean;
   includeOpenAi?: boolean;
@@ -271,8 +279,8 @@ describe('VoiceCredentialSourceField', () => {
     }];
     state.profile.connectedAccountGroupsV4 = [];
     state.settingsVersion = 4;
-    state.currentDeclaration = declaration;
-    state.currentEntryKind = 'voice.conversation-provider.v1';
+    resetExternalVoiceProviderRegistrationsForTests();
+    installCurrentDeclaration(declaration);
     state.lastFireAndForget = null;
     state.projectedConnectedServicesRegistry = Object.freeze({
       revision: 0,
@@ -409,8 +417,7 @@ describe('VoiceCredentialSourceField', () => {
     if (speechDeclaration.kind !== 'speech' || !speechDeclaration.credentials) {
       throw new Error('expected speech credential declaration');
     }
-    state.currentDeclaration = speechDeclaration;
-    state.currentEntryKind = 'voice.speech-engine.v1';
+    installCurrentDeclaration(speechDeclaration);
 
     const { VoiceCredentialSourceField } = await import('./VoiceCredentialSourceField');
     const screen = await renderScreen(<VoiceCredentialSourceField
@@ -627,10 +634,11 @@ describe('VoiceCredentialSourceField', () => {
   });
 
   it('admits an equivalent rehydrated declaration object', async () => {
-    state.currentDeclaration = VoiceProviderContributionSchema.parse(
+    const rehydratedDeclaration = VoiceProviderContributionSchema.parse(
       structuredClone(declaration),
     );
-    expect(state.currentDeclaration).not.toBe(declaration);
+    installCurrentDeclaration(rehydratedDeclaration);
+    expect(rehydratedDeclaration).not.toBe(declaration);
     const { VoiceCredentialSourceField } = await import('./VoiceCredentialSourceField');
     const screen = await renderScreen(<VoiceCredentialSourceField
       contribution={contribution}
@@ -687,7 +695,7 @@ describe('VoiceCredentialSourceField', () => {
     if (!selectedSource || selectedSource.kind !== 'connectedAccount') {
       throw new Error('expected Codex credential source');
     }
-    state.currentDeclaration = VoiceProviderContributionSchema.parse({
+    installCurrentDeclaration(VoiceProviderContributionSchema.parse({
       ...expectedDeclaration,
       credentials: {
         ...expectedDeclaration.credentials!,
@@ -706,7 +714,7 @@ describe('VoiceCredentialSourceField', () => {
             }
           : source),
       },
-    });
+    }));
     const { VoiceCredentialSourceField } = await import('./VoiceCredentialSourceField');
     const screen = await renderScreen(<VoiceCredentialSourceField
       contribution={contribution}
@@ -776,7 +784,7 @@ describe('VoiceCredentialSourceField', () => {
     })],
   ])('does not mutate when the current manifest %s drifts after the gesture', async (_kind, drifted) => {
     state.mutateAccountSettingsOnce.mockImplementationOnce(async (input: any) => {
-      state.currentDeclaration = drifted;
+      installCurrentDeclaration(drifted);
       return input.mutate(state.settings);
     });
     const before = structuredClone(state.settings);
@@ -811,7 +819,7 @@ describe('VoiceCredentialSourceField', () => {
       request?: Partial<typeof operation.request>;
       response?: Partial<typeof operation.response>;
     }>;
-    state.currentDeclaration = VoiceProviderContributionSchema.parse({
+    installCurrentDeclaration(VoiceProviderContributionSchema.parse({
       ...declaration,
       credentials: {
         ...credentials,
@@ -830,7 +838,7 @@ describe('VoiceCredentialSourceField', () => {
           }],
         },
       },
-    });
+    }));
     const before = structuredClone(state.settings);
     const { VoiceCredentialSourceField } = await import('./VoiceCredentialSourceField');
     const screen = await renderScreen(<VoiceCredentialSourceField
@@ -868,7 +876,7 @@ describe('VoiceCredentialSourceField', () => {
       const applied = input.mutate(state.settings);
       state.settings = applied.settings;
       state.settingsVersion = 5;
-      state.currentDeclaration = changedDeclaration;
+      installCurrentDeclaration(changedDeclaration);
       return { status: 'applied', settingsVersion: 5, value: applied.value };
     });
     const { VoiceCredentialSourceField } = await import('./VoiceCredentialSourceField');

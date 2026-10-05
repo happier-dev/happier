@@ -667,6 +667,20 @@ describe('useSessionListRenderModels', () => {
         expect(first).toBe(second);
         expect(first.listItems).toHaveLength(1);
         expect(first.rowViewModels).toHaveLength(1);
+
+        const refreshed = await hook.rerender({
+            paneState: {
+                ...paneState,
+                visibleSessionListIndex: paneState.visibleSessionListIndex?.map((item) => ({ ...item })) ?? null,
+            },
+            collapsedGroupKeys: {},
+            workspaceLabels: {},
+            workspaceRefs: [],
+            sessionTags: {},
+        });
+        expect(refreshed.existingDraftBySessionKey).toBe(first.existingDraftBySessionKey);
+        expect(refreshed.reachableSessionDisplayById).toBe(first.reachableSessionDisplayById);
+        expect(refreshed.reachableSessionDisplayByKey).toBe(first.reachableSessionDisplayByKey);
     });
 
     it('records low-volume render derivation telemetry for non-empty list models', async () => {

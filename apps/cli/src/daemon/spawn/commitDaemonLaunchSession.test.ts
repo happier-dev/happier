@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import { snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol';
+import { SessionInitialTriggerAdmissionV1Schema, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol';
 
 // Network boundary only: the Session row read, the Account currentness read and
 // the archive mutation are HTTP calls. Attach-context building stays real.
@@ -103,6 +103,32 @@ describe('commitDaemonLaunchSession', () => {
         workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } },
     });
     expect(daemonLaunchRequiresCommittedSession({ directory: '/repo', initialSessionRolesV1 })).toBe(true);
+  });
+
+  it('commits initial triggers at birth and consumes them before the runner attaches', async () => {
+    const initialTriggers = [SessionInitialTriggerAdmissionV1Schema.parse({
+      automationId: 'automation-initial', name: 'Prepare workspace', enabled: true,
+      workflowDefinitionId: 'builtin:review-and-converge',
+      assignments: [{ machineId: 'machine-1', enabled: true }],
+      executionRecipe: { v: 2, templateVersion: 0, triggerEvidence: null,
+        workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } } } },
+      triggers: [{ triggerId: 'trigger-initial', trigger: { kind: 'sessionLifecycle', enabled: true,
+        events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
+    })];
+    const options = { directory: '/repo', initialTriggers };
+    expect(daemonLaunchRequiresCommittedSession(options)).toBe(true);
+    const getOrCreateSession = vi.fn(async (input: { metadata: Record<string, unknown> }) => ({
+      id: 'session-initial-trigger', metadata: input.metadata,
+      sessionCreationOutcome: { disposition: 'created' as const, organizationPlacement: { folderId: null, tagIds: [] } },
+    }));
+    network.fetchSessionByIdCompat.mockImplementation(async () =>
+      plainSessionRow('session-initial-trigger', getOrCreateSession.mock.calls[0]![0].metadata));
+    const committed = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials, options, directory: '/repo' });
+    expect(committed.ok).toBe(true);
+    expect(getOrCreateSession.mock.calls[0]![0]).toMatchObject({ initialTriggers });
+    if (!committed.ok) return;
+    expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('initialTriggers');
+    expect(committed.session.attachPayload).not.toHaveProperty('initialTriggers');
   });
 
   it('creates the Session with its Team slot binding before launch, then continues as an attach to it', async () => {

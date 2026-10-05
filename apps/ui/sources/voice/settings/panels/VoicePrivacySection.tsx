@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
@@ -13,9 +12,9 @@ import { t } from '@/text';
 export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (next: VoiceSettings) => void }) {
   const privacy = props.voice.privacy;
   const currentUiContextModeOptions = React.useMemo(() => [
-    { id: 'off' as const, label: t('settingsVoice.privacy.currentUiContextMode.offTitle'), description: t('settingsVoice.privacy.currentUiContextMode.offSubtitle') },
-    { id: 'on_demand' as const, label: t('settingsVoice.privacy.currentUiContextMode.onDemandTitle'), description: t('settingsVoice.privacy.currentUiContextMode.onDemandSubtitle') },
-    { id: 'automatic' as const, label: t('settingsVoice.privacy.currentUiContextMode.automaticTitle'), description: t('settingsVoice.privacy.currentUiContextMode.automaticSubtitle') },
+    { id: 'off' as const, label: t('settingsVoice.pages.privacy.screenNever') },
+    { id: 'on_demand' as const, label: t('settingsVoice.pages.privacy.screenWhenAsked') },
+    { id: 'automatic' as const, label: t('settingsVoice.pages.privacy.screenAlways') },
   ], []);
 
   const setPrivacy = (patch: Partial<VoiceSettings['privacy']>) => {
@@ -28,14 +27,15 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
   return (
     <SettingSection section={VOICE_PRIVACY_SETTINGS.sectionRefs.contextSharing}>
       <ItemGroup
-        title={t('settingsVoice.privacy.title')}
-        description={t('settingsVoice.privacy.footer')}
+        title={t('settingsVoice.pages.privacy.startTitle')}
+        description={t('settingsVoice.pages.privacy.startDescription')}
       >
         <SettingAnchor setting={VOICE_PRIVACY_SETTINGS.settings.currentUiContextMode}>
           <SegmentedChoiceItem<VoiceSettings['privacy']['currentUiContextMode']>
             testID="settings.voice.privacy.currentUiContextMode"
             testIDPrefix="settings.voice.privacy.currentUiContextMode"
-            title={t('settingsVoice.privacy.currentUiContextModeTitle')}
+            title={t(VOICE_PRIVACY_SETTINGS.settings.currentUiContextMode.titleKey)}
+            subtitle={t('settingsVoice.pages.privacy.screenDescription')}
             subtitleLines={0}
             value={privacy.currentUiContextMode}
             options={currentUiContextModeOptions}
@@ -46,7 +46,7 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
           setting={VOICE_PRIVACY_SETTINGS.settings.shareSessionSummary}
           rightElement={(
             <Switch
-              accessibilityLabel={t('settingsVoice.privacy.shareSessionSummary')}
+              accessibilityLabel={t(VOICE_PRIVACY_SETTINGS.settings.shareSessionSummary.titleKey)}
               value={privacy.shareSessionSummary}
               onValueChange={(v) => setPrivacy({ shareSessionSummary: v })}
             />
@@ -56,43 +56,39 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
           setting={VOICE_PRIVACY_SETTINGS.settings.shareRecentMessages}
           rightElement={(
             <Switch
-              accessibilityLabel={t('settingsVoice.privacy.shareRecentMessages')}
+              accessibilityLabel={t(VOICE_PRIVACY_SETTINGS.settings.shareRecentMessages.titleKey)}
               value={privacy.shareRecentMessages}
               onValueChange={(v) => setPrivacy({ shareRecentMessages: v })}
             />
           )}
         />
-        {privacy.shareRecentMessages ? (
+        <SettingAnchor setting={VOICE_PRIVACY_SETTINGS.settings.recentMessagesCount}>
           <FieldValueItem
-            title={t('settingsVoice.privacy.recentMessagesCount')}
-            subtitle={t('settingsVoice.privacy.recentMessagesCountSubtitle')}
+            title={t(VOICE_PRIVACY_SETTINGS.settings.recentMessagesCount.titleKey)}
+            subtitle={privacy.shareRecentMessages
+              ? t('settingsVoice.pages.privacy.recentCountDescription')
+              : t('settingsVoice.pages.privacy.recentCountUnavailable')}
             fieldTestID="settings.voice.privacy.recentMessagesCount.field"
             kind="integer"
+            stepper={{ min: 0, max: 50, step: 1 }}
+            unit={t('settingsVoice.pages.privacy.messagesUnit')}
+            disabled={!privacy.shareRecentMessages}
             value={String(privacy.recentMessagesCount)}
             onCommit={(draft) => {
               const next = Math.max(0, Math.min(50, Math.floor(Number(draft))));
+              if (!Number.isFinite(next)) return String(privacy.recentMessagesCount);
               setPrivacy({ recentMessagesCount: next });
               return String(next);
             }}
           />
-        ) : null}
+        </SettingAnchor>
         <SettingRow
           setting={VOICE_PRIVACY_SETTINGS.settings.shareToolNames}
           rightElement={(
             <Switch
-              accessibilityLabel={t('settingsVoice.privacy.shareToolNames')}
+              accessibilityLabel={t(VOICE_PRIVACY_SETTINGS.settings.shareToolNames.titleKey)}
               value={privacy.shareToolNames}
               onValueChange={(v) => setPrivacy({ shareToolNames: v })}
-            />
-          )}
-        />
-        <SettingRow
-          setting={VOICE_PRIVACY_SETTINGS.settings.shareDeviceInventory}
-          rightElement={(
-            <Switch
-              accessibilityLabel={t('settingsVoice.privacy.shareDeviceInventory')}
-              value={privacy.shareDeviceInventory}
-              onValueChange={(v) => setPrivacy({ shareDeviceInventory: v })}
             />
           )}
         />
@@ -100,9 +96,19 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
           setting={VOICE_PRIVACY_SETTINGS.settings.sharePermissionRequests}
           rightElement={(
             <Switch
-              accessibilityLabel={t('settingsVoice.privacy.sharePermissionRequests')}
+              accessibilityLabel={t(VOICE_PRIVACY_SETTINGS.settings.sharePermissionRequests.titleKey)}
               value={privacy.sharePermissionRequests}
               onValueChange={(v) => setPrivacy({ sharePermissionRequests: v })}
+            />
+          )}
+        />
+        <SettingRow
+          setting={VOICE_PRIVACY_SETTINGS.settings.shareDeviceInventory}
+          rightElement={(
+            <Switch
+              accessibilityLabel={t(VOICE_PRIVACY_SETTINGS.settings.shareDeviceInventory.titleKey)}
+              value={privacy.shareDeviceInventory}
+              onValueChange={(v) => setPrivacy({ shareDeviceInventory: v })}
             />
           )}
         />

@@ -1,18 +1,21 @@
 import * as React from 'react';
 
 import type { PluginResourceContextV1 } from '@happier-dev/protocol';
-import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import type {
     PluginUiResourceReference,
     PluginUiResourceSnapshot,
 } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 import { createPluginContextualResourceReadClient } from './pluginSurfaceResourceRead';
+import { readPluginSurfaceResourceReference } from './pluginSurfaceResourceRead';
 import { createPluginContextualResourceWatchClient } from './pluginSurfaceResourceWatch';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
-import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { randomUUID } from '@/platform/randomUUID';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 
 type PluginContextualResourceStore = ReturnType<typeof createPluginUiResourceStore>;
 
@@ -25,7 +28,7 @@ export type PluginContextualResourceStoreLease = Readonly<{
 
 export type PluginContextualResourceStoreOwner = Readonly<{
     /**
-     * Acquires one mounted-provider-local store for an exact host-stamped
+     * Acquires one captured active-Account store for an exact host-stamped
      * binding. Callers cannot supply their own transport, cache, or Session
      * identity.
      */
@@ -53,7 +56,7 @@ type ResourceStoreBinding = PluginContextualResourceBinding;
 
 function accountBindingKey(input: ResourceStoreBinding): readonly [string, string] {
     // Account coordinates are the existing Account owner's identity. Including
-    // them in this mounted-provider-local key prevents a brief A/B overlap
+    // them in this key prevents a brief A/B overlap
     // from sharing one contextual store; retirement removes the old entry
     // before a same-coordinate lifetime can be reused.
     return [input.accountLifetime.scope.serverId, input.accountLifetime.scope.accountId];
@@ -85,7 +88,7 @@ function resourceBindingFamilyKey(input: ResourceStoreBinding): string {
 const CONTEXTUAL_RESOURCE_SURFACE_ID = 'host:plugin-contextual-resource';
 
 function createPluginContextualResourceStoreOwner(): PluginContextualResourceStoreOwner {
-    // The provider lifetime is the sharing boundary. An entry exists only
+    // The captured active Account is the sharing boundary. An entry exists only
     // while one of its mounted consumers holds it; no Account-keyed outer map
     // and no zero-consumer retention survives navigation.
     const entries = new Map<string, ResourceStoreEntry>();
@@ -102,8 +105,14 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
     };
 
     return Object.freeze({
-        acquire(input) {
-            if (!input.accountLifetime.isCurrent()) return null;
+        acquire(requestedBinding) {
+            const accountLifetime = captureActiveServerAccountScopeLifetime();
+            if (!requestedBinding.accountLifetime.isCurrent() || !accountLifetime?.isCurrent()
+                || accountLifetime.scope.serverId !== requestedBinding.accountLifetime.scope.serverId
+                || accountLifetime.scope.accountId !== requestedBinding.accountLifetime.scope.accountId) return null;
+            // An Action's invocation lifetime may retire independently. The shared
+            // transport belongs to the canonical Account, never its first caller.
+            const input = { ...requestedBinding, accountLifetime };
 
             const key = resourceBindingKey(input);
             const bindingFamilyKey = resourceBindingFamilyKey(input);
@@ -212,9 +221,57 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
 }
 
 const PluginContextualResourceStoreContext = React.createContext<PluginContextualResourceStoreOwner | null>(null);
+const activeAccountResourceStoreOwner = createPluginContextualResourceStoreOwner();
+
+/** Shares the existing exact-binding owner with host mounts and Account Actions. */
+export function acquirePluginContextualResourceStore(binding: PluginContextualResourceBinding): PluginContextualResourceStoreLease | null {
+    return activeAccountResourceStoreOwner.acquire(binding);
+}
+
+/** A private mount facade: declaration scope selects an existing exact-context entry. */
+export function createPluginDeclaredResourceStore(input: Omit<PluginContextualResourceBinding, 'context'> & Readonly<{
+    resourcesById: PluginUiProjectionModel['resourcesById'];
+    sessionId?: string;
+    surfaceContext?: Extract<PluginResourceContextV1, { kind: 'surface' }>;
+}>): PluginUiResourceStore | null {
+    const declarations = Object.values(input.resourcesById).filter(row => row.pluginId === input.pluginId);
+    // Older admitted projections can still use ordinary read/watch transport,
+    // but cannot lend the new sharing path a guessed Resource namespace.
+    if (!declarations.length || declarations.some(row => row.scope === undefined)) return null;
+    const leases = new Map<string, PluginContextualResourceStoreLease>();
+    let disposed = false;
+    const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    return Object.freeze({
+        getEntry(resource) {
+            if (disposed || !input.accountLifetime.isCurrent()) return fail('plugin_surface_retired');
+            const reference = readPluginSurfaceResourceReference(input.pluginId, resource);
+            const declaration = reference?.pluginId === input.pluginId
+                ? declarations.find(row => row.id === reference.localId) : undefined;
+            if (!declaration) return fail('plugin_resource_not_found');
+            const context: PluginResourceContextV1 | undefined = declaration.scope === 'global' ? { kind: 'global' }
+                : declaration.scope === 'session' && input.sessionId ? { kind: 'session', sessionId: input.sessionId }
+                : declaration.scope === 'surface' ? input.surfaceContext : undefined;
+            if (!context) return fail('plugin_resource_context_unavailable');
+            const key = JSON.stringify(context);
+            let lease = leases.get(key);
+            if (!lease) {
+                lease = acquirePluginContextualResourceStore({ ...input, context }) ?? undefined;
+                if (!lease) return fail('plugin_surface_retired');
+                leases.set(key, lease);
+            }
+            return lease.store.getEntry(reference!);
+        },
+        dispose() {
+            if (disposed) return;
+            disposed = true;
+            for (const lease of leases.values()) lease.dispose();
+            leases.clear();
+        },
+    });
+}
 
 /**
- * A mounted pane-level owner for concurrent exact contextual Resource
+ * A mounted access boundary for concurrent exact contextual Resource
  * consumers. It owns no asynchronous provider cleanup: each consumer release
  * synchronously disposes the final store, which also makes StrictMode replay
  * an ordinary acquire/release sequence rather than a special fenced lifetime.
@@ -223,12 +280,8 @@ export function PluginContextualResourceStoreProvider(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const nearestOwner = React.useContext(PluginContextualResourceStoreContext);
-    const ownerRef = React.useRef<PluginContextualResourceStoreOwner | null>(null);
-    if (nearestOwner === null && ownerRef.current === null) {
-        ownerRef.current = createPluginContextualResourceStoreOwner();
-    }
     return (
-        <PluginContextualResourceStoreContext.Provider value={nearestOwner ?? ownerRef.current}>
+        <PluginContextualResourceStoreContext.Provider value={nearestOwner ?? activeAccountResourceStoreOwner}>
             {props.children}
         </PluginContextualResourceStoreContext.Provider>
     );
@@ -266,7 +319,10 @@ export function PluginContextualResourceState(props: Readonly<{
     resource: PluginUiResourceReference;
     isCurrent?: () => boolean;
     signal?: AbortSignal;
-    children: (snapshot: PluginUiResourceSnapshot | null) => React.ReactNode;
+    /** Demand follows the containing host; identity and retained data keep the existing lease. */
+    active?: boolean;
+    /** `refresh` re-reads through the same leased entry (a Retry); it settles even on failure or retirement. */
+    children: (snapshot: PluginUiResourceSnapshot | null, controls: PluginContextualResourceControls) => React.ReactNode;
 }>): React.ReactElement | null {
     const owner = usePluginContextualResourceStoreOwner();
     const presented = useLayoutPresentationActive();
@@ -322,8 +378,8 @@ export function PluginContextualResourceState(props: Readonly<{
         return acquired.lease.store.getEntry(stableResource);
     }, [acquired, bindingKey, currentAtRender, owner, stableResource]);
     const subscribe = React.useCallback(
-        (listener: () => void): (() => void) => presented ? entry?.subscribe(listener, true) ?? (() => {}) : () => {},
-        [entry, presented],
+        (listener: () => void): (() => void) => presented && props.active !== false ? entry?.subscribe(listener, true) ?? (() => {}) : () => {},
+        [entry, presented, props.active],
     );
     const getSnapshot = React.useCallback(
         (): PluginUiResourceSnapshot | null => (
@@ -334,6 +390,12 @@ export function PluginContextualResourceState(props: Readonly<{
         [entry, props.signal],
     );
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    useWidgetFrameResourceActivity(presented && props.active !== false && snapshot?.pending === 'refresh');
+    const controls = React.useMemo<PluginContextualResourceControls>(() => ({
+        refresh: async () => { if (entry && currentRef.current?.() !== false) await entry.refresh(); },
+    }), [entry]);
 
-    return <>{props.children(snapshot)}</>;
+    return <>{props.children(snapshot, controls)}</>;
 }
+
+export type PluginContextualResourceControls = Readonly<{ refresh: () => Promise<void> }>;

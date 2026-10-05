@@ -1,4 +1,11 @@
 import {
+    PluginUiWidgetAreaRequestV1Schema,
+    PluginUiWidgetAreaResultV1Schema,
+    PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema,
+    PluginUiReadEntityDragItemRequestV1Schema,
+    PluginUiReadEntityDragItemResultV1Schema,
+    PluginUiUpdateEntityDragDropRequestV1Schema,
+    PluginUiUpdateEntityDragDropResultV1Schema,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
@@ -28,10 +35,11 @@ import {
     PluginUiSetComposerDecorationsRequestV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
     PluginUiSelectActionInputResultV1Schema,
-    PluginUiSelectedActionInputCarrierV1Schema,
     PluginUiWatchComposerRequestV1Schema,
     PluginUiReadSessionRequestV1Schema,
     PluginUiReadSessionResultV1Schema,
+    PluginUiReadStoredImageRequestV1Schema,
+    PluginUiReadStoredImageResultV1Schema,
     PluginUiRespondToSessionPermissionRequestV1Schema,
     PluginUiRespondToSessionPermissionResultV1Schema,
     PluginUiWatchSessionRequestV1Schema,
@@ -41,8 +49,6 @@ import {
     ComposerReadResultV1Schema,
     ComposerSnapshotV1Schema,
     ComposerTransactionResultV1Schema,
-    pluginUiSelectedActionInputsEqual,
-    pluginUiTargetedContributionOperationKey,
     type PluginUiHostApiErrorCodeV1,
     type PluginUiHostApiRequestMethodV1,
     type PluginUiHostApiRequestEnvelopeV1,
@@ -53,8 +59,6 @@ import {
     type PluginUiWatchComposerRequestV1,
     type PluginUiWatchSessionRequestV1,
     type PluginUiSurfaceContextV1,
-    type PluginUiTargetedContributionOperationV1,
-    type PluginUiSelectActionInputResultV1,
 } from '@happier-dev/protocol/plugins/ui';
 import {
     OpenableContentReadResultV1Schema,
@@ -91,6 +95,7 @@ import {
 } from '../surfaces/createPluginSurfaceHostApi';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { decodeBase64 } from '@/encryption/base64';
+import { createSelectedActionInputCustody } from '../hostApi/selectedActionInputCustody';
 
 export type PluginReactNativeHostApiRequestHandler = (
     request: PluginUiHostApiRequestEnvelopeV1,
@@ -114,6 +119,7 @@ type PluginReactNativeHostRequestSubscription = Readonly<{
  * context or a second source of author-visible surface facts.
  */
 type PluginReactNativeHostRequestTransport = Readonly<{
+    watchEntityDragDrop: (payload: import('@happier-dev/protocol/plugins/ui').PluginUiWatchEntityDragDropRequestV1 & Readonly<{ subscriptionId: string }>, listener: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => void, options?: PluginSurfaceHostApiRequestOptions) => Promise<PluginReactNativeHostRequestSubscription>;
     watchLiveStream: (payload: import('@happier-dev/protocol/plugins/ui').PluginUiWatchLiveStreamRequestV1,
         listener: (event: PluginUiResourceSubscriptionEventV1) => void,
         options?: PluginSurfaceHostApiRequestOptions) => Promise<PluginReactNativeHostRequestSubscription>;
@@ -314,7 +320,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             method !== 'disposeHostResource'
             && (disposed || params.isRequestSurfaceCurrent?.(params.requestSurface) === false)
             && !subscriptionEstablishmentMethods.has(method)
-            && !pluginSurfaceSettlementSurvivesRetirement({ method, response })
+            && !pluginSurfaceSettlementSurvivesRetirement({ method, response, requestPayload: payload })
         ) {
             throwHostApiError('stale_surface');
         }
@@ -589,6 +595,19 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
 
     return Object.freeze({
         request,
+        watchEntityDragDrop: async (payload, listener, options) => {
+            let active = true;
+            let release: (() => void) | undefined;
+            const retire = () => { active = false; release?.(); };
+            subscriptions.register({ surface: params.requestSurface, subscriptionId: payload.subscriptionId, release: retire, deliverValue: value => listener(PluginUiEntityDragDropStateV1Schema.parse(value)) });
+            try {
+                await request('watchEntityDragDrop', payload, { ...options, entityDragDropSubscription: {
+                    retain: value => { if (active) release = value; else value(); },
+                    publish: state => { subscriptions.publishValue(params.requestSurface, { subscriptionId: payload.subscriptionId, value: state }); },
+                } });
+            } catch (error) { subscriptions.dispose({ surface: params.requestSurface, subscriptionId: payload.subscriptionId }); throw error; }
+            return { subscriptionId: payload.subscriptionId, dispose: async () => { subscriptions.dispose({ surface: params.requestSurface, subscriptionId: payload.subscriptionId }); } };
+        },
         watchResource,
         watchSession,
         watchLiveStream: async (payload, listener, options) => {
@@ -831,43 +850,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         );
     let currentSurface = params.surface;
     let currentSurfaceSemanticKey = stableJsonStringify(currentSurface);
-    // The operation is never serialized in the public executeAction payload.
-    // Each admitted operation retains only its latest selected settlement.
-    type RetainedSelectedActionInput = Readonly<{
-        /**
-         * The strict public-shaped carrier remains distinct from the host-only
-         * lifetime hook below. It is the only value allowed through the
-         * Protocol parser when an immediate Action reuses a selection.
-         */
-        carrier: Readonly<{
-            operation: PluginUiTargetedContributionOperationV1;
-            result: Extract<PluginUiSelectActionInputResultV1, Readonly<{ kind: 'submitted' }>>;
-        }>;
-        /** Retires only this exact host-private retained settlement. */
-        release: () => void;
-    }>;
-    const selectedOperationByAction = new WeakMap<object, RetainedSelectedActionInput>();
-    const selectedActionInputByOperation = new Map<string, RetainedSelectedActionInput>();
-
-    function resolveActiveSelectedActionInput(
-        candidate: unknown,
-    ): RetainedSelectedActionInput | undefined {
-        const parsed = PluginUiSelectedActionInputCarrierV1Schema.safeParse(candidate);
-        if (!parsed.success) return undefined;
-        const retained = selectedActionInputByOperation.get(
-            pluginUiTargetedContributionOperationKey(parsed.data.operation),
-        );
-        return retained && pluginUiSelectedActionInputsEqual(retained.carrier.result, parsed.data.result)
-            ? retained
-            : undefined;
-    }
-    function isCurrentSelectedActionInput(
-        retained: RetainedSelectedActionInput,
-    ): boolean {
-        return selectedActionInputByOperation.get(
-            pluginUiTargetedContributionOperationKey(retained.carrier.operation),
-        ) === retained;
-    }
+    const selectedInputs = createSelectedActionInputCustody();
     const contextWatchers = new Set<(surface: SurfaceContext) => void>();
     let disposed = false;
     let subscriptionSequence = 0;
@@ -926,6 +909,40 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
     }
 
     const apiShape: PluginUiHostApi = {
+        widgetArea: async (request, options) => {
+            assertActive(options?.signal);
+            assertInstalled('widgetArea');
+            const payload = PluginUiWidgetAreaRequestV1Schema.safeParse(request);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const result = PluginUiWidgetAreaResultV1Schema.safeParse(await transport.request('widgetArea', payload.data,
+                options?.signal ? { signal: options.signal } : undefined));
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
+        },
+        watchEntityDragDrop: async (request, listener, options) => {
+            assertActive(options?.signal); assertInstalled('watchEntityDragDrop');
+            const payload = PluginUiWatchEntityDragDropRequestV1Schema.parse(request);
+            subscriptionSequence += 1;
+            const subscription = await transport.watchEntityDragDrop({ ...payload, subscriptionId: `${params.requestIdPrefix}:entity:${subscriptionSequence}` }, listener, options);
+            if (disposed || options?.signal?.aborted) { await subscription.dispose(); assertActive(options?.signal); }
+            return disposable(() => { void subscription.dispose(); });
+        },
+        readEntityDragItem: async (request, options) => {
+            assertActive(options?.signal); assertInstalled('readEntityDragItem');
+            const payload = PluginUiReadEntityDragItemRequestV1Schema.safeParse(request);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const result = PluginUiReadEntityDragItemResultV1Schema.safeParse(await transport.request('readEntityDragItem', payload.data, options?.signal ? { signal: options.signal } : undefined));
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
+        },
+        updateEntityDragDrop: async (request, options) => {
+            assertActive(options?.signal); assertInstalled('updateEntityDragDrop');
+            const payload = PluginUiUpdateEntityDragDropRequestV1Schema.safeParse(request);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const result = PluginUiUpdateEntityDragDropResultV1Schema.safeParse(await transport.request('updateEntityDragDrop', payload.data, options?.signal ? { signal: options.signal } : undefined));
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
+        },
         version: () => Object.freeze({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -979,24 +996,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 ...(input === undefined ? {} : { input }),
             });
             if (!actionRequest.success) throwHostApiError('invalid_payload');
-            const explicitSelectedActionInput = options?.selectedActionInput;
-            const directSelectedActionInput = explicitSelectedActionInput === undefined
-                && action && typeof action === 'object'
-                ? selectedOperationByAction.get(action)
-                : undefined;
-            const targetedSelection = explicitSelectedActionInput === undefined
-                ? (directSelectedActionInput === undefined
-                    ? undefined
-                    : (isCurrentSelectedActionInput(directSelectedActionInput)
-                        ? directSelectedActionInput
-                        : undefined))
-                : resolveActiveSelectedActionInput(explicitSelectedActionInput);
-            if (
-                (explicitSelectedActionInput !== undefined || directSelectedActionInput !== undefined)
-                && !targetedSelection
-            ) {
-                throwHostApiError('invalid_payload', ['selected_action_input_inactive']);
-            }
             // This mounted-host fact intentionally has no public SDK option
             // type. It can only remove an exact active host-selected carrier;
             // it cannot manufacture one or grant an Action any authority.
@@ -1008,12 +1007,9 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             // A terminal relay is one-shot even when the outer dispatcher
             // fails, observes cancellation, or returns an ambiguous result.
             // Delete synchronously before crossing that external boundary.
-            if (consumeSelectedActionInput) {
-                if (!targetedSelection) {
-                    throwHostApiError('invalid_payload', ['selected_action_input_required_for_consumption']);
-                }
-                targetedSelection.release();
-            }
+            const custody = selectedInputs.settle(action, options?.selectedActionInput, consumeSelectedActionInput);
+            if (!custody.ok) throwHostApiError('invalid_payload', [custody.reason]);
+            const targetedSelection = custody.selected;
             const requestOptions = options?.signal || targetedSelection
                 ? {
                     ...(options?.signal ? { signal: options.signal } : {}),
@@ -1048,42 +1044,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 throwHostApiError('invalid_payload', ['select_action_input_response_invalid']);
             }
             if (parsedResult.data.kind === 'submitted' && 'operation' in parsedRequest.data) {
-                // The parsed value below is returned to author code.
-                // Retain a separately parsed JSON copy for the mount-private
-                // immediate-execute association so later JavaScript mutation
-                // of that public object cannot rewrite host-selected input or
-                // Account-ref facts. The Protocol result is bounded JSON, so
-                // this avoids relying on a runtime-specific clone global in
-                // React Native while the strict parser preserves the owner
-                // schema at the private boundary.
-                const retainedResult = PluginUiSelectActionInputResultV1Schema.parse(
-                    JSON.parse(JSON.stringify(parsedResult.data)),
-                );
-                if (retainedResult.kind !== 'submitted') {
-                    throwHostApiError('invalid_payload', ['select_action_input_response_invalid']);
-                }
-                const operationKey = pluginUiTargetedContributionOperationKey(parsedRequest.data.operation);
-                const selectionSignal = options?.signal;
-                let selectedActionInput!: RetainedSelectedActionInput;
-                const release = () => {
-                    // A late abort for a superseded selection must never retire
-                    // its replacement for the same canonical operation key.
-                    if (selectedActionInputByOperation.get(operationKey) !== selectedActionInput) return;
-                    selectedActionInputByOperation.delete(operationKey);
-                    selectionSignal?.removeEventListener('abort', release);
-                };
-                selectedActionInput = Object.freeze({
-                    carrier: Object.freeze({
-                        operation: parsedRequest.data.operation,
-                        result: retainedResult,
-                    }),
-                    release,
-                });
-                selectedActionInputByOperation.get(operationKey)?.release();
-                selectedActionInputByOperation.set(operationKey, selectedActionInput);
-                if (selectionSignal?.aborted) release();
-                else selectionSignal?.addEventListener('abort', release, { once: true });
-                selectedOperationByAction.set(parsedResult.data.action, selectedActionInput);
+                selectedInputs.retain(parsedRequest.data.operation, parsedResult.data, options?.signal);
             }
             return parsedResult.data;
         },
@@ -1094,7 +1055,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             if (!payload.success) throwHostApiError('invalid_payload');
             const selected = options?.preparedReviewWorkspace === undefined
                 ? undefined
-                : resolveActiveSelectedActionInput(options.preparedReviewWorkspace);
+                : selectedInputs.resolve(options.preparedReviewWorkspace);
             if (
                 (payload.data.checkoutIntent === 'preparedReviewWorkspace')
                     !== (selected !== undefined)
@@ -1207,6 +1168,19 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             if (!payload.success) throwHostApiError('invalid_payload');
             const result = PluginUiReadSessionResultV1Schema.safeParse(await transport.request(
                 'readSession',
+                payload.data,
+                options?.signal ? { signal: options.signal } : undefined,
+            ));
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
+        },
+        readStoredImage: async (image, options) => {
+            assertActive(options?.signal);
+            assertInstalled('readStoredImage');
+            const payload = PluginUiReadStoredImageRequestV1Schema.safeParse({ image });
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const result = PluginUiReadStoredImageResultV1Schema.safeParse(await transport.request(
+                'readStoredImage',
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             ));
@@ -1450,6 +1424,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const result = await transport.request('confirm', {
                 message,
                 ...(options?.title === undefined ? {} : { title: options.title }),
+                ...(options?.action === undefined ? {} : { action: options.action }),
             }, options?.signal ? { signal: options.signal } : undefined);
             // A host that ignored the cancellation still may not answer a
             // question the author withdrew: the request carrier settles a
@@ -1521,9 +1496,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         dispose: () => {
             if (disposed) return;
             disposed = true;
-            for (const selectedActionInput of selectedActionInputByOperation.values()) {
-                selectedActionInput.release();
-            }
+            selectedInputs.dispose();
             for (const dispose of [...disposables]) dispose();
             contextWatchers.clear();
             transport.dispose();

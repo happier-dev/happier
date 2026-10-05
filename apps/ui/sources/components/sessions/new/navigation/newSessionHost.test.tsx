@@ -113,6 +113,7 @@ describe('newSessionHost', () => {
         expect(routeBoundary.push).not.toHaveBeenCalled();
         expect(routeBoundary.replace).not.toHaveBeenCalled();
         expect(onHandedOff).toHaveBeenCalledTimes(1);
+        expect(onHandedOff).toHaveBeenCalledWith('/session/created');
         await hook.unmount();
     });
 

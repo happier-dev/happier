@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
+import { prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
 
 export type ArtifactWorkspaceCaller = Readonly<{ sessionId: string; machineId: string; directory: string; runId?: string }>;
@@ -19,7 +20,7 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
     throw Object.assign(new Error('artifact_source_unavailable'), { code: 'artifact_source_unavailable' });
   }
   const resolved = await resolveWorkspaceFileDownloadSource({ workingDirectory: params.caller.directory,
-    path: params.path, asZip: false, accessPolicy: { kind: 'restrictedRoots', roots: [params.caller.directory] } });
+    path: params.path, asZip: false, confinedToWorkingDirectory: true });
   if (!resolved.success) throw Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
   params.signal?.throwIfAborted();
   const transfers = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
@@ -54,20 +55,7 @@ export async function publishArtifactFromWorkspaceFile(params: Readonly<{
   signal?: AbortSignal;
 }>) {
   const file = await readArtifactWorkspaceFile({ caller: params.caller, path: params.input.path, signal: params.signal });
-  const declaredMime = params.input.mime?.split(';', 1)[0].trim().toLowerCase();
-  const allowsText = !declaredMime || declaredMime.startsWith('text/')
-    || ['application/json', 'application/javascript', 'application/xml'].includes(declaredMime);
-  let body: string | undefined;
-  if (allowsText) {
-    try {
-      const decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(file.bytes);
-      if (!decoded.includes('\0')) body = decoded;
-    } catch { /* Non-UTF8 content uses the binary body path. */ }
-  }
-  const mime = params.input.mime ?? (body === undefined ? 'application/octet-stream' : 'text/plain');
-  return params.store.create({ header: {
-    title: params.input.title ?? file.name, kind: params.input.kind ?? 'published.v1', mime, sizeBytes: file.bytes.length,
-    source: { sessionId: params.caller.sessionId, ...(params.caller.runId ? { runId: params.caller.runId } : {}),
-      machineId: params.caller.machineId, path: file.path, sha: createHash('sha256').update(file.bytes).digest('hex') },
-  }, ...(body === undefined ? { binary: { bytes: file.bytes, mime } } : { body }), ...(params.signal ? { signal: params.signal } : {}) });
+  return params.store.create({ ...prepareArtifactWorkspaceFileV1({ caller: params.caller, input: params.input,
+    file: { ...file, sha: createHash('sha256').update(file.bytes).digest('hex') } }),
+    ...(params.signal ? { signal: params.signal } : {}) });
 }

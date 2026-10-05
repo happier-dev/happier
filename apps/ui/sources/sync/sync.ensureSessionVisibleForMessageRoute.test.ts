@@ -2,6 +2,11 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { projectLegacySessionAccessCapabilitiesV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
+import { createSyncSingletonLoaderMock, loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+// Metro's lazy CommonJS load is outside Vitest's graph. Keep the real Sync
+// singleton and its internal owners, replacing only that loader boundary.
+vi.mock('@/sync/runtime/getSyncSingleton', () => createSyncSingletonLoaderMock());
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -106,7 +111,7 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
 }));
 
 import { storage } from './domains/state/storage';
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
 import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import { loadSessionMaterializedMaxSeqById } from './domains/state/persistence';
@@ -186,13 +191,72 @@ async function applySelectedHomeForSessionListTest(): Promise<void> {
     // selected Home before each test supplies its HTTP credentials and responses.
     getCredentialsForServerUrlMock.mockResolvedValue(null);
     await switchConnectionToActiveServer();
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
     onTestFinished(disconnectActiveServerConnection);
     onTestFinished(() => sync.disconnectServer());
 }
 
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
+    it.each(['current', 'retired'] as const)('upgrades offscreen legacy public-linked Sessions through the real tuple writer only for the %s Account lifetime', async (lifetime) => {
+        const home = await upsertServerProfile({ serverUrl: 'https://owner-first-visit.example.test', name: 'First visit' });
+        await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
+        const { sync } = await import('./syncEngine');
+        const credentials = { token: tokenForSub('owner-first-visit') };
+        Reflect.set(sync, 'credentials', credentials);
+        Reflect.set(sync, 'encryption', null);
+        storage.setState({ profileScope: { serverId: home.id, accountId: 'owner-first-visit' } });
+        getCredentialsForServerUrlMock.mockResolvedValue(credentials);
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
+        const legacyMetadata = { path: '/owner/private', host: 'owner-host', name: 'Retained session' };
+        const patches: unknown[] = [];
+        const discovery = createDeferred<Response>();
+        const request = async (path: string, init?: RequestInit): Promise<Response> => {
+            const route = path.split('?')[0];
+            if (route === '/v1/auth/ping') return Response.json({ success: true });
+            if (route === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+            });
+            if (route === '/v2/sessions/metadata-upgrades') {
+                return patches.length ? Response.json({ sessionIds: [] }) : discovery.promise;
+            }
+            if (route === '/v2/sessions/legacy-offscreen' && init?.method === 'PATCH') {
+                patches.push(JSON.parse(String(init.body)));
+                return Response.json({ success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 4 }, agentState: { version: 6 } });
+            }
+            if (route === '/v2/sessions/legacy-offscreen') return Response.json({ session: {
+                id: 'legacy-offscreen', seq: 1, createdAt: 1, updatedAt: 2, active: false, activeAt: 2,
+                archivedAt: 3, encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+                metadata: JSON.stringify(legacyMetadata), metadataVersion: 3, agentState: null, agentStateVersion: 5, share: null,
+                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], audienceContext: null,
+                    capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner', canApprovePermissions: true }) },
+            } });
+            if (route === '/v2/sessions' || route === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            return new Response(null, { status: 404 });
+        };
+        requestMock.mockImplementation(request);
+        runtimeFetchMock.mockImplementation((url: string, init?: RequestInit) => request(new URL(url).pathname + new URL(url).search, init));
+        const refreshing = sync.refreshSessions({ awaitSessionListHydration: true });
+        await waitForAssertion(() => expect(storage.getState().concurrentSessionListCacheByServerId[home.id]?.listObservation?.phase).toBe('ready'));
+        expect(patches).toEqual([]);
+        if (lifetime === 'retired') storage.setState({ profileScope: { serverId: home.id, accountId: 'different-account' } });
+        discovery.resolve(Response.json({ sessionIds: ['legacy-offscreen'] }));
+        await refreshing;
+        if (lifetime === 'retired') {
+            expect(patches).toEqual([]);
+            return;
+        }
+        expect(patches).toHaveLength(1);
+        expect(patches[0]).toMatchObject({ mode: 'owner_migration', expectedAccountEncryptionMode: 'plain',
+            source: { metadata: { version: 3, ciphertext: JSON.stringify(legacyMetadata) } },
+            target: { ownerMetadata: { t: 'plain', v: { workspace: { path: '/owner/private', host: 'owner-host' } } } },
+        });
+        const patch = patches[0] as { target: { sharedMetadata: { ciphertext: string } } };
+        expect(patch.target.sharedMetadata.ciphertext).not.toContain('/owner/private');
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        expect(patches).toHaveLength(1);
+    });
     it.each([
         ['retired', 'applied'], ['retired', 'conflict'], ['retired', 'outcomeUnknown'],
         ['advanced', 'applied'], ['erase-retired', 'applied'], ['erase-retired', 'outcomeUnknown'],
@@ -488,7 +552,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 request: async () => { requested.resolve(); return response.promise; },
                 release: async () => {},
             };
-            const { sync } = await import('./sync');
+            const { sync } = await import('./syncEngine');
             Reflect.set(sync, 'credentials', credentials);
             Reflect.set(sync, 'encryption', encryption);
             storage.getState().applySessions([{
@@ -985,6 +1049,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         createEncryptionFromAuthCredentialsMock.mockReset();
         resetSessionSurfaceVisibilityForTests();
 
+        await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
         sync.disconnectServer();
     });

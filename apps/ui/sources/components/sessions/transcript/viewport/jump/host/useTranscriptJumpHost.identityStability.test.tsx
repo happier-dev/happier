@@ -161,6 +161,24 @@ describe('useTranscriptJumpHost identity stability', () => {
         loadTargetWindowMessagesMock.mockReset();
     });
 
+    it('releases a Find jump takeover immediately on abort and rejects its late window load', async () => {
+        const members = createStableMembers();
+        const load = createDeferred<null>();
+        loadTargetWindowMessagesMock.mockReturnValue(load.promise);
+        const hook = await renderHook((deps: JumpHostDeps) => useTranscriptJumpHost(deps),
+            { initialProps: buildDeps(members) });
+        const intent = new AbortController();
+        const landing = hook.getCurrent().jumpToTranscriptTarget({ kind: 'seq', seq: 50 },
+            { preferTargetWindow: true, signal: intent.signal });
+        expect(loadTargetWindowMessagesMock).toHaveBeenCalledTimes(1);
+        intent.abort();
+        expect(members.endExplicitJumpWriteBarrier).toHaveBeenCalledTimes(1);
+        load.resolve(null);
+        await expect(landing).resolves.toEqual({ status: 'aborted' });
+        expect(members.executeViewportCommandWithAnimation).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('settles a successful current route jump only after its explicit barrier closes', async () => {
         const members = createStableMembers();
         members.onRouteJumpSettled.mockImplementation(() => {

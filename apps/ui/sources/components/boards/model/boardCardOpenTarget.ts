@@ -20,7 +20,8 @@ export function resolveBoardCardOpenTarget(
     if (card.availability === 'home_unavailable') return null;
     const inboxWork = card.ref.kind === 'session' || card.ref.kind === 'workflow_run';
     if (inboxWork && card.status.bucket === 'needs_you' && context.inboxAvailable) {
-        return { kind: 'inbox', item: { kind: card.ref.kind === 'session' ? 'session' : 'workflow_run', id: card.ref.qualifiedId.id } };
+        return { kind: 'inbox', item: { kind: card.ref.kind === 'session' ? 'session' : 'workflow_run',
+            serverId: card.ref.qualifiedId.serverId, id: card.ref.qualifiedId.id } };
     }
     return { kind: 'item', ref: card.ref };
 }

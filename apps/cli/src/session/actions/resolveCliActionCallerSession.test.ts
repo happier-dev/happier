@@ -5,6 +5,21 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { createCliBoundSessionMetadataReader, resolveCliActionCallerSession } from './resolveCliActionCallerSession';
 
 describe('Account Action caller Session metadata authority', () => {
+  it('keeps a Session bearer closed to layout-1 owner metadata', async () => {
+    const sessionId = 'c111111111111111111111111';
+    const rawSession = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadataLayoutVersion: 1,
+      share: null, metadata: JSON.stringify({ v: 1 }),
+      ownerMetadata: { t: 'plain', v: { v: 1, workspace: { path: '/owner/private' } } },
+    });
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: rawSession } });
+    try {
+      const read = createCliBoundSessionMetadataReader({ token: 'session-bearer', sessionId, rawSession,
+        mode: 'plain', ctx: null, resolveTransportForSession: async () => { throw new Error('Account transport is not authorized'); },
+      });
+      await expect(read()).resolves.toBeNull();
+    } finally { get.mockRestore(); }
+  });
+
   it.each(['cached', 'fetched'] as const)('opens bound layout-1 owner metadata from the %s record', async (source) => {
     const sessionId = 'c111111111111111111111111';
     const credentials = { token: 'token', encryption: null };
@@ -41,7 +56,7 @@ describe('Account Action caller Session metadata authority', () => {
         : { session: rawSession } }));
     try {
       const result = await resolveCliActionCallerSession({ credentials, boundSessionId: 'cli-global',
-        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId }, defaultSessionId: sessionId },
+        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 2, turnDepth: 3 }, defaultSessionId: sessionId },
         // This is the bound process's real-shaped snapshot, not a normalizer.
         readBoundSession: async () => ({ metadata: { flavor: 'claude' }, workDepth: 0,
           backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
@@ -65,7 +80,7 @@ describe('Account Action caller Session metadata authority', () => {
         : { session: rawSession } }));
     try {
       await expect(resolveCliActionCallerSession({ credentials, boundSessionId: 'cli-global',
-        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId }, defaultSessionId: sessionId },
+        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, defaultSessionId: sessionId },
         readBoundSession: async () => ({ metadata: null, workDepth: undefined, backendTarget: null, machineId: null, directory: null }),
         resolveTransportForSession: (id) => resolveSessionTransportContext({ credentials, idOrPrefix: id }),
       })).resolves.toBeNull();
@@ -87,13 +102,13 @@ describe('Account Action caller Session metadata authority', () => {
     };
     try {
       await expect(resolveCliActionCallerSession({ ...params,
-        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId }, defaultSessionId: 'another-selector' },
+        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'another-selector' },
       })).resolves.toBeNull();
       await expect(resolveCliActionCallerSession({ ...params,
         context: { surface: 'agent', actionCaller: { kind: 'host' }, defaultSessionId: sessionId },
       })).resolves.toBeNull();
       await expect(resolveCliActionCallerSession({ ...params,
-        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId }, defaultSessionId: sessionId },
+        context: { surface: 'agent', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, defaultSessionId: sessionId },
       })).resolves.toBeNull();
     } finally { get.mockRestore(); }
   });

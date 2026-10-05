@@ -482,14 +482,20 @@ export function createVoiceToolHandlers(
         ...(ctx?.signal ? { signal: ctx.signal } : {}),
       });
     } catch (error) {
-      // The Account-qualified Action owner deliberately invalidates its
-      // captured authority when the invocation signal aborts. Voice presents
-      // that expected cancellation as a tool result, not an unhandled Action
-      // scope error; unrelated failures still propagate to their owner.
+      // An aborted invocation that throws supplied no completed disposition.
+      // Present its cancellation as a tool result; unrelated failures still
+      // propagate to their owner.
       if (ctx?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
       throw error;
     }
-    if (ctx?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
+    // Preserve the canonical effect disposition after dispatch. Reads remain
+    // delivery-cancellable; effects may already have committed or be pending.
+    if (ctx?.signal?.aborted && (
+      resolveVoiceToolEffectClass(toolName) === 'read_only'
+      || (!res.ok && res.errorCode === 'cancelled')
+    )) {
+      return jsonError('tool_cancelled', 'tool_cancelled');
+    }
     if (res.ok && actionId === 'session.list') {
       const awareness = parseSessionAwarenessListResultV1(res.result);
       if (awareness) {

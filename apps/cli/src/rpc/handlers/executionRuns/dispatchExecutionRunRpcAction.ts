@@ -742,6 +742,9 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       if (!getRunInAuthoritativeScope(parsed.runId, sessionId)) return executionRunNotFound();
       const started = await params.manager.startTurnStream(parsed.runId, {
         message: parsed.message,
+        ...(parsed.speechSegmentTargetChars !== undefined
+          ? { speechSegmentTargetChars: parsed.speechSegmentTargetChars }
+          : {}),
         ...(typeof parsed.displayMessage === 'string' ? { displayMessage: parsed.displayMessage } : {}),
         resume: parsed.resume,
         ...(actionOptions?.causalPermissionAuthority

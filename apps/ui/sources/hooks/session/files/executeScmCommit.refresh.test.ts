@@ -55,7 +55,6 @@ describe('commit result survives refresh failure', () => {
         expect(storage.getState().getSessionProjectScmInFlightOperation('s1')).toBeNull();
     });
     it('never repeats creation when final index sync fails after a commit SHA exists', async () => {
-        const selectedPatches = storage.getState().getSessionProjectScmCommitSelectionPatches('s1');
         rpc.mockResolvedValueOnce({
             success: false,
             commitSha: 'abc123',
@@ -71,12 +70,23 @@ describe('commit result survives refresh failure', () => {
         expect(result.ok).toBe(false);
         expect(rpc).toHaveBeenCalledTimes(1);
         expect(confirm).not.toHaveBeenCalled();
-        expect(storage.getState().getSessionProjectScmCommitSelectionPaths('s1')).toEqual(['a.txt']);
-        expect(storage.getState().getSessionProjectScmCommitSelectionPatches('s1')).toEqual(selectedPatches);
-        expect(storage.getState().getSessionProjectScmOperationLog('s1')[0]).toMatchObject({
+        expect(storage.getState().getSessionProjectScmCommitSelectionPaths('s1')).toEqual([]);
+        expect(storage.getState().getSessionProjectScmCommitSelectionPatches('s1')).toEqual([]);
+        expect(storage.getState().getSessionProjectScmOperationLog('s1').find((entry) => entry.operation === 'commit')).toMatchObject({
             operation: 'commit',
             outcome: { kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: 'abc123' } },
         });
+    });
+    it.each(['published', 'unknown'] as const)('never retries %s publication with a lock diagnostic and no legacy SHA', async (state) => {
+        const candidateOid = 'b'.repeat(40);
+        rpc.mockResolvedValueOnce({ success: false, errorCode: 'INDEX_LOCKED', error: 'index.lock: File exists', publication: { state, expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main', candidateOid, indexReconciliation: 'failed' } });
+        const refreshScmData = vi.fn(async () => {});
+        await executeScmCommit({ sessionId: 's1', repoPath: '/tmp/commit-test', commitMessage: 'commit', scmCommitStrategy: 'atomic', commitSelectionPaths: ['a.txt'], commitSelectionPatches: [], refreshScmData, loadCommitHistory: async () => {}, setScmOperationBusy: vi.fn(), setScmOperationStatus: vi.fn(), tracking: null });
+        expect(rpc).toHaveBeenCalledTimes(1);
+        expect(confirm).not.toHaveBeenCalled();
+        const operation = storage.getState().getSessionProjectScmOperationLog('s1').find((entry) => entry.operation === 'commit');
+        expect(operation?.outcome).toMatchObject(state === 'published' ? { kind: 'effect_applied_with_warning', effect: { kind: 'commit', commitSha: candidateOid } } : { kind: 'outcome_unknown' });
+        expect(refreshScmData).toHaveBeenCalledTimes(1);
     });
     it('retains canonical commit identity when a new response omits the legacy SHA field', async () => {
         rpc.mockResolvedValueOnce({ success: true, outcome: { v: 1, kind: 'succeeded', effect: { kind: 'commit', commitSha: 'canonical-sha' }, nextActions: [] } });

@@ -4,6 +4,7 @@ import type { UnistylesThemes } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
@@ -18,9 +19,9 @@ export const NATIVE_ACTION_CHIP_GAP_Y = 1;
 export const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
 
-export function resolveAgentInputPanelStyle(theme: Theme) {
+/** The material plane owns paint; this layout is shared by live input and previews. */
+export function resolveAgentInputPanelLayoutStyle(theme: Theme) {
     return {
-        backgroundColor: theme.colors.input.background,
         // The composer stack's radius (`theme.parts.composer`), shared with the banners above it.
         borderRadius: theme.parts.composer.radius,
         ...resolveThemeSurfaceBorderStyle({
@@ -31,6 +32,13 @@ export function resolveAgentInputPanelStyle(theme: Theme) {
         paddingTop: AGENT_INPUT_PANEL_PADDING_TOP,
         paddingBottom: AGENT_INPUT_PANEL_PADDING_BOTTOM,
         paddingHorizontal: 8,
+    };
+}
+
+export function resolveAgentInputPanelStyle(theme: Theme) {
+    return {
+        ...resolveAgentInputPanelLayoutStyle(theme),
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.input.background, 'content', true),
     };
 }
 

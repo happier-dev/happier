@@ -120,7 +120,7 @@ describe('sync session viewport', () => {
 
     it('leaves eager session-list hydration rows out of prioritized hydration ids', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
 
         storage.setState((state) => ({
             ...state,
@@ -443,7 +443,7 @@ describe('sync session viewport', () => {
         expect(sync.getSessionViewport('session-1')).toMatchObject({ anchor: validViewportAnchor });
 
         vi.resetModules();
-        const { sync: reloadedSync } = await import('./sync');
+        const { sync: reloadedSync } = await import('./syncEngine');
 
         expect(reloadedSync.getSessionViewport('session-1')).toMatchObject({
             isPinned: false,

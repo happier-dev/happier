@@ -11,7 +11,9 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { getStorage } from '@/sync/domains/state/storage';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { getSessionSubtitle } from '@/utils/sessions/sessionUtils';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 
 import type { BoardCard, BoardCardBody } from '../model/boardCards';
 
@@ -47,18 +49,20 @@ const SessionContext = React.memo(function SessionContext(props: Readonly<{ serv
 function describeBody(body: BoardCardBody, nowMs: number): string | null {
     switch (body.kind) {
         case 'workflow_run': {
-            if (body.waitingForYou) return t('boards.card.run.waitingForYou');
             const age = ageOf(body.startedAt, nowMs);
-            return age ? t('boards.card.run.started', { age }) : null;
+            const state = body.waitingForYou ? t('boards.card.run.waitingForYou') : age ? t('boards.card.run.started', { age }) : null;
+            return [describeWorkflowRunProgress(body.progress), state].filter(Boolean).join(' · ') || null;
         }
         case 'workflow': {
             const age = ageOf(body.lastRunAt, nowMs);
             const lastRun = body.lastRunWord && age ? t('boards.card.workflow.lastRun', { word: body.lastRunWord, age }) : null;
-            if (body.needsYouCount > 0) {
-                const needs = t('boards.card.workflow.needYou', { count: body.needsYouCount });
-                return lastRun ? `${lastRun} · ${needs}` : needs;
-            }
-            return lastRun ?? t('boards.card.workflow.noRuns');
+            const needs = body.needsYouCount !== null && body.needsYouCount > 0
+                ? t('boards.card.workflow.needYou', { count: body.needsYouCount }) : null;
+            const next = body.nextRun.kind === 'scheduled' ? t('workflows.triggers.row.nextRun', {
+                time: formatWithCachedDateTimeFormatter(body.nextRun.at, getPreferredLanguage(), { dateStyle: 'medium', timeStyle: 'short' }),
+            }) : body.nextRun.kind === 'unavailable' ? `${t('automations.detail.overview.nextRunTitle')}: ${t('boards.card.notLoaded')}` : null;
+            return [body.triggerSummary, next, lastRun ?? (body.runSummaryAvailable ? t('boards.card.workflow.noRuns') : null), needs]
+                .filter(Boolean).join(' · ') || null;
         }
         case 'machine': {
             if (!body.online) return t('boards.card.machine.offlineBody');
@@ -106,7 +110,7 @@ export const BoardCardView = React.memo(function BoardCardView(props: Readonly<{
                     ? <SessionContext serverId={card.body.serverId} sessionId={card.body.sessionId} />
                     : null}
             </View>
-            {body ? <Text numberOfLines={2} style={[styles.body, unavailable ? styles.quiet : null]}>{body}</Text> : null}
+            {body ? <Text style={[styles.body, unavailable ? styles.quiet : null]}>{body}</Text> : null}
         </View>
     );
 });
@@ -122,7 +126,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: theme.borderRadius.xl,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated,
+        backgroundColor: theme.colors.surface.base,
     },
     lifted: shadowLevelStyle(theme.colors.shadowLevels[4]),
     titleRow: {

@@ -50,11 +50,14 @@ const selected = {
     selection: {
         target: {
             pluginId: 'happier.triage',
-            occurrenceId: 'triage-generation-1',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-root' },
         },
         point: operation.point,
-        contributor: operation.contributor,
+        contributor: {
+            pluginId: operation.contributor.pluginId,
+            contributionId: operation.contributor.contributionId,
+            sourceCustody: operation.contributor.sourceCustody,
+        },
     },
     connectedAccount: { kind: 'none' as const },
     presentation: {

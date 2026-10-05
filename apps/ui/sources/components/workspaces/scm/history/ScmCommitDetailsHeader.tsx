@@ -1,4 +1,10 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { Icon } from '@/components/ui/icons/Icon';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 
 import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -25,6 +31,7 @@ export const ScmCommitDetailsHeader = React.memo(function ScmCommitDetailsHeader
     testID?: string;
 }>) {
     const entry = props.commit.entry;
+    const { theme } = useUnistyles();
     const shortSha = entry?.shortSha?.trim() || props.sha.slice(0, SHORT_SHA_LENGTH);
     const copySha = React.useCallback(() => {
         void setClipboardStringSafe(entry?.sha ?? props.sha);
@@ -32,7 +39,6 @@ export const ScmCommitDetailsHeader = React.memo(function ScmCommitDetailsHeader
 
     const meta = React.useMemo((): DetailsTabHeaderMetaFact[] => {
         const facts: DetailsTabHeaderMetaFact[] = [];
-        if (entry?.authorName) facts.push({ key: 'author', text: entry.authorName, tone: 'strong' });
         const when = entry ? formatScmHistoryTimestamp(entry.timestamp) : '';
         if (when) facts.push({ key: 'when', text: when });
         facts.push({ key: 'sha', text: shortSha, tone: 'mono', testID: 'scm-commit-details-short-sha' });
@@ -45,10 +51,17 @@ export const ScmCommitDetailsHeader = React.memo(function ScmCommitDetailsHeader
         <DetailsTabHeader
             testID={props.testID ?? 'scm-commit-details-header'}
             title={entry?.subject?.trim() || shortSha}
+            titleTextStyle={{ fontSize: 17, lineHeight: 22 }}
+            leading={<Icon name="git-commit" size={20} color={theme.colors.text.secondary} />}
+            metaLeading={entry?.authorName ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <Avatar id={entry.authorEmail || entry.authorName} size={16} />
+                    <Text style={{ color: theme.colors.text.primary, fontSize: 12, ...Typography.default('semiBold') }}>{entry.authorName}</Text>
+                </View>
+            ) : undefined}
             meta={meta}
             body={body}
-            actions={(
-                <>
+            metaTrailing={(
                     <IconButton
                         variant="plain"
                         size={28}
@@ -59,9 +72,9 @@ export const ScmCommitDetailsHeader = React.memo(function ScmCommitDetailsHeader
                         tooltip={t('detailsSurface.history.copyCommitSha')}
                         testID="scm-commit-details-copy-sha"
                     />
-                    {props.actions}
-                </>
             )}
+            actions={props.actions}
+            menuActions={[{ id: 'copy-sha', title: t('detailsSurface.history.copyCommitSha'), testID: 'scm-commit-details-menu-copy-sha', onSelect: copySha }]}
             notice={props.runningOperation ? (
                 <SurfaceFreshnessLine
                     testID="scm-commit-details-running"

@@ -5,12 +5,15 @@ import { View } from 'react-native';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
+import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
+import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import type { EmbeddedTerminalDockLocation } from './embeddedTerminalDocking';
 import type { SessionTerminalIdentity, SessionTerminalMode } from './sessionTerminalMode';
 import { publishTerminalSurfaceSummary } from './terminalSurfaceSummary';
-import { SessionTerminalLeafHandlesContext } from './strip/sessionTerminalLeafHandles';
+import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
 import { useSessionEmbeddedTerminalPty } from './useSessionEmbeddedTerminalPty';
 
 export type SessionEmbeddedTerminalPaneProps = Readonly<{
@@ -52,6 +55,7 @@ export function useSessionEmbeddedTerminalPaneModel(props: SessionEmbeddedTermin
         terminalKey,
         terminalMode,
         terminalTarget: props.terminalIdentity.terminalTarget,
+        available: props.terminalIdentity.available,
         terminalRef: terminalRendererRef,
     });
 
@@ -71,18 +75,34 @@ export function useSessionEmbeddedTerminalPaneModel(props: SessionEmbeddedTermin
     }, [controller.error, controller.status, controller.terminalTitle, detectedUrl, terminalKey, unseenBell]);
 
     // The pane's tab menu reaches this view's own verbs while it is mounted.
-    const leafHandles = React.useContext(SessionTerminalLeafHandlesContext);
-    const terminalId = props.terminal?.id ?? null;
+    const leafHandles = React.useMemo(() => createSessionTerminalLeafHandles(props.scopeId), [props.scopeId]);
+    const findRuntime = useFindSurfaceRuntime();
+    const mountedFindId = React.useId();
+    const findSurfaceId = `terminal:${terminalKey}:${mountedFindId}`;
+    const findEligible = usePluginSurfaceFocusEligibility() && props.focused !== false;
+    const terminalId = props.terminalIdentity.terminalId;
     const { clearTerminal, requestRestart, copySelection, onPaste } = controller;
     React.useEffect(() => {
-        if (!leafHandles || !terminalId) return;
+        if (!terminalId || !props.terminalIdentity.available) return;
         return leafHandles.register(terminalId, {
+            get find() { return findEligible && terminalRendererRef.current?.find
+                ? () => { findRuntime.open(findSurfaceId); } : null; },
             copySelection: copySelection ? () => copySelection() : null,
             paste: () => { void getClipboardStringTrimmedSafe().then((text) => { if (text) void onPaste(text); }); },
             clear: clearTerminal,
             restart: requestRestart,
         });
-    }, [clearTerminal, copySelection, leafHandles, onPaste, requestRestart, terminalId]);
+    }, [clearTerminal, copySelection, findEligible, findRuntime, findSurfaceId, leafHandles, onPaste, props.terminalIdentity.available, requestRestart, terminalId]);
+
+    const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
+    const restartFromSurface = React.useCallback(() => {
+        if (!terminalId) return;
+        void execute('session.terminals.restart', { scopeId: props.scopeId, terminalId }, {
+            surface: 'ui', defaultSessionId: props.sessionId, serverId: serverId ?? undefined,
+        });
+    }, [execute, props.scopeId, props.sessionId, serverId, terminalId]);
+    // Keep the registered worker handle raw; the toolbar is an Action caller, not another restart owner.
+    const surfaceController = React.useMemo(() => ({ ...controller, requestRestart: restartFromSurface }), [controller, restartFromSurface]);
 
     const toolbarActionsStart = React.useMemo(() => (props.onOpenNewTerminalTab ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -100,8 +120,9 @@ export function useSessionEmbeddedTerminalPaneModel(props: SessionEmbeddedTermin
     ) : null), [props.onOpenNewTerminalTab, testIdPrefix]);
 
     return {
-        controller,
+        controller: surfaceController,
         terminalRendererRef,
+        findSurfaceId,
         terminalKey,
         testIdPrefix,
         title: props.title ?? t('settings.terminal'),

@@ -54,7 +54,7 @@ function mapListEntryToHappierService(
     platform: entry.platform,
     backend: resolveServiceBackend(entry),
     label: entry.label,
-    verification: 'verified',
+    verification: entry.verification,
     targetMode: entry.targetMode,
     ring: getReleaseRingCatalogEntry(entry.releaseChannel).publicLabel,
     instanceId: entry.serverId,
@@ -319,11 +319,15 @@ export function buildBackgroundServiceRepairPlan(params: Readonly<{
   const sharedPlan = buildSharedBackgroundServiceRepairPlan({
     currentReleaseChannel: params.currentReleaseChannel,
     preferredMode: params.preferredMode,
-    services: orderedRepairableServices.map((service) => mapListEntryToHappierService(
+    services: [...orderedRepairableServices, ...repairableExternalDefaultServices.filter((service) => service.verification !== 'verified')].map((service) => mapListEntryToHappierService(
       service,
       params.currentHappierHomeDir,
     )),
   });
+
+  if (sharedPlan.manualWarnings.length > 0) {
+    return { currentReleaseChannel: params.currentReleaseChannel, existingServices: [...params.services], actions: [], manualWarnings: sharedPlan.manualWarnings };
+  }
 
   const driftedCompatibleDefaultService = orderedRepairableServices.find((service) =>
     service.targetMode === 'default-following'

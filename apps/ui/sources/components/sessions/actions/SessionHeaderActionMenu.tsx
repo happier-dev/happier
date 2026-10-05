@@ -18,6 +18,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { t } from '@/text';
+import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -319,6 +320,7 @@ function didSessionHeaderActionMenuPropsChange(
 function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const { theme } = useUnistyles();
   const currentUiContextReader = useOptionalCurrentUiContextReader();
+  const findSurfaceRuntime = useFindSurfaceRuntime();
   const router = useRouter();
   const enabledAgentIds = useEnabledAgentIds();
   const settings = useSettings();
@@ -520,10 +522,11 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
       resolveServerIdForSessionId: () => sessionServerId,
-      openSession: (childSessionId: string, options?: { serverId?: string | null }) => {
+      openSession: (childSessionId, options) => {
         router.push(buildScopedSessionRouteHref({
           sessionId: childSessionId,
           serverId: options?.serverId ?? sessionServerId,
+          query: options?.query,
         }) as any);
       },
     }),
@@ -610,6 +613,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       }));
 
     const out: DropdownMenuItem[] = [];
+    out.push({ id: 'header.findChat', title: t('find.surface.chat') });
 
     if (props.collaborationHeader && collaborationHeaderState.overflow) {
       out.push(createSessionCollaborationHeaderMenuItem({
@@ -763,6 +767,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       items={actions}
       onSelect={(actionId) => {
         setOpen(false);
+        if (actionId === 'header.findChat') {
+          findSurfaceRuntime.open(`transcript:${sessionServerId ?? ''}:${props.sessionId}`);
+          return;
+        }
         if (actionId === 'header.openCompanion' && showCompanionInOverflow) {
           applyCompanionHeaderIntent();
           return;

@@ -14,6 +14,7 @@ import type { StoredCredentials } from '@/persistence';
 import { createAutomationAccountEncryptionMaterialSnapshotV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { resolveAutomationTemplateRetainedSession } from '@/daemon/automation/automationRetainedSession';
 
 /** CLI adapts canonical Account currentness/crypto and Automation transport, not trigger semantics. */
 export function createCliWorkflowTriggerActions(params: Readonly<{
@@ -26,6 +27,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
   resolveRunSource?: WorkflowTriggerActionsDependencies['resolveRunSource'];
   resolveMaterializer?: WorkflowTriggerActionsDependencies['resolveMaterializer'];
   pullRequests?: WorkflowTriggerActionsDependencies['pullRequests'];
+  observeLegacyChannelAssociation?: Parameters<typeof createAccountWorkflowTriggerActions>[0]['observeLegacyChannelAssociation'];
 }>) {
   const onServer = <T>(operation: () => Promise<T>): Promise<T> => params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
@@ -50,6 +52,9 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
       if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
       return resolved;
     },
+    resolveRetainedSession: (sessionId) => onServer(() => resolveAutomationTemplateRetainedSession({
+      credentials: params.credentials, sessionId,
+    })),
     randomBytes: getRandomBytes,
     newId: () => randomUUID(),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
@@ -57,6 +62,8 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),
     ...(params.resolveMaterializer ? { resolveMaterializer: params.resolveMaterializer } : {}),
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
+    ...(params.observeLegacyChannelAssociation ? { observeLegacyChannelAssociation: (input, caller) =>
+      onServer(() => params.observeLegacyChannelAssociation!(input, caller)) } : {}),
     resolveWorkflow: (ref) => onServer(() => params.resolveWorkflow(ref)),
     resolveWorkflowTeamIds: (artifactId) => onServer(async () => {
       if (params.resolveWorkflowTeamIds) return params.resolveWorkflowTeamIds(artifactId);

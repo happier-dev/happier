@@ -73,6 +73,13 @@ describe('buildChangedFilesOutlineTree', () => {
             expect(nodes.find((node) => node.name === 'settings.tsx')?.path).toBe('apps/ui/sources/app/(app)/settings.tsx');
         });
 
+        it('prioritizes session roots without disturbing alphabetical descendants or single-child compaction', () => {
+            const nodes = buildChangedOnlyTreeNodes(files, new Set(), new Set(['apps/ui/sources/app/(app)/settings.tsx']));
+            expect(nodes[0]?.name).toBe('apps/ui/sources');
+            expect(nodes[1]?.name).toBe('app/(app)');
+            expect(nodes.find((node) => node.name === '.agents/skills')?.depth).toBe(0);
+        });
+
         it('hides the files under a folder the person closed, keeping the rest open', () => {
             const nodes = buildChangedOnlyTreeNodes(files, new Set(['apps/ui/sources/components/settings/modal']));
             expect(rows(nodes).slice(5)).toEqual([

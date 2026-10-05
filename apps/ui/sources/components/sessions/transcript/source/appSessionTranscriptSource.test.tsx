@@ -48,6 +48,29 @@ beforeEach(async () => {
 });
 
 describe('app transcript source', () => {
+    it('projects both active target-window frontiers through source history and observes window-only changes', async () => {
+        const { sync } = await import('@/sync/syncEngine');
+        const { activateSessionMessagesWindow, createInactiveSessionMessagesWindowState } = await import('@/sync/runtime/sessionMessagesWindowState');
+        const previous = storage.getState();
+        const session = createSessionFixture({ id: 'source-find-frontiers', metadata: null });
+        const owner = sync as unknown as { setSessionTargetWindowState(id: string, state: ReturnType<typeof createInactiveSessionMessagesWindowState>): void };
+        const initialWindow = sync.getSessionTargetWindowState(session.id);
+        try {
+            storage.getState().applySessions([session]);
+            storage.getState().applyMessagesLoaded(session.id);
+            const hook = await renderHook(() => useSessionTranscriptSource().history.useState(), {
+                wrapper: (props) => <AppSessionTranscriptSourceProvider sessionId={session.id}>{props.children}</AppSessionTranscriptSourceProvider>,
+            });
+            await act(async () => { owner.setSessionTargetWindowState(session.id, activateSessionMessagesWindow(createInactiveSessionMessagesWindowState(), {
+                windowId: `${session.id}:main:seq:100`, targetSeq: 100, windowMinSeq: 95, windowMaxSeq: 105,
+                olderCursor: 95, newerCursor: 105, hasMoreOlder: false, hasMoreNewer: true, activatedAtMs: Date.now(),
+            })); });
+            expect(hook.getCurrent()).toMatchObject({ hasOlder: false, hasNewer: true, targetWindow: { targetSeq: 100, olderCursor: 95, newerCursor: 105 } });
+            await act(async () => { owner.setSessionTargetWindowState(session.id, { ...sync.getSessionTargetWindowState(session.id), hasMoreNewer: false }); });
+            expect(hook.getCurrent()).toMatchObject({ hasOlder: false, hasNewer: false });
+            await hook.unmount();
+        } finally { owner.setSessionTargetWindowState(session.id, initialWindow); storage.setState(previous); }
+    });
     it('notifies restart recovery only when switch evidence changes, preserving streamed-message locality', async () => {
         const previous = storage.getState();
         const session = createSessionFixture({ id: 'source-restart-events', active: true });

@@ -1,8 +1,81 @@
 import { describe, expect, it } from 'vitest';
 
-import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
+import { persistSessionTranscriptMessage, readStoredSessionMessages, type PersistedSessionTranscriptMessage } from "@happier-dev/session-core/messages";
+import { createReducer, reducer } from '@happier-dev/session-core/reducer';
+import { createVoiceTranscriptProjector } from './VoiceTranscriptProjector';
+import { createVoiceContinuationProjection } from './voiceContinuationProjection';
+import { selectVoiceTranscriptEntriesForConversationSession } from './voiceTranscriptSelectors';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 describe('VoiceTranscriptProjector', () => {
+    it('delivers one acknowledged visible continuation through the real writer and two independent transcript consumers', async () => {
+        const conversation = { serverId: 'home-a', sessionId: 'conversation' };
+        const binding: VoiceSessionBinding = { adapterId: 'service', controlSessionId: 'control',
+            conversationSessionId: conversation.sessionId, conversationSessionAddress: conversation,
+            targetSessionAddress: null, transcriptMode: 'synthetic', updatedAt: 1 };
+        const snapshot: VoiceSessionSnapshot = { adapterId: 'service', sessionId: 'control', status: 'connecting', mode: 'idle', canStop: true };
+        const older = createVoiceContinuationProjection();
+        const newer = createVoiceContinuationProjection();
+        older.update({ snapshot, binding, deviceId: 'older-device', sessionSeq: 10 });
+        newer.update({ snapshot, binding, deviceId: 'newer-device', sessionSeq: 10 });
+        const provenance = newer.update({ snapshot: { ...snapshot, status: 'connected' }, binding,
+            deviceId: 'newer-device', sessionSeq: 10 });
+        expect(provenance).not.toBeNull();
+        if (!provenance) throw new Error('Expected a connected continuation');
+        let persisted: Promise<PersistedSessionTranscriptMessage> | undefined;
+        const requests: unknown[] = [];
+        const projector = createVoiceTranscriptProjector({ getState: () => ({}), nowMs: () => 100,
+            persistFinal: (input) => {
+                persisted = persistSessionTranscriptMessage({ sessionEncryptionMode: 'plain',
+                    // Network acknowledgement is the only substituted boundary; schemas, normalization and reducers are real.
+                    request: async (_path, init) => {
+                        requests.push(JSON.parse(String(init?.body)));
+                        return new Response(JSON.stringify({ didWrite: true, message: {
+                            id: 'acknowledged-note', localId: input.localId, seq: 11, createdAt: 100,
+                        } }), { status: 200 });
+                    } }, input);
+                return persisted;
+            } });
+        projector.projectNoteText({ conversationSessionId: conversation.sessionId, text: 'Continued here', continuation: provenance });
+        expect(persisted).toBeDefined();
+        const acknowledgement = await persisted;
+        if (!acknowledgement) throw new Error('Expected transcript acknowledgement');
+        expect(requests).toEqual([expect.objectContaining({ messageRole: 'agent', content: {
+            t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({ happier: expect.objectContaining({ kind: 'voice_note.v1' }) }) }),
+        } })]);
+
+        for (const [projection, expectedEnd] of [[older, 'control'], [newer, null]] as const) {
+            const consumer = createReducer();
+            const received = reducer(consumer, [acknowledgement.message]).messages;
+            expect(selectVoiceTranscriptEntriesForConversationSession({ sessionMessages: {
+                [conversation.sessionId]: { messages: received },
+            } }, conversation.sessionId)).toEqual([expect.objectContaining({ kind: 'note' })]);
+            expect(projection.observe(conversation, received)).toEqual(expectedEnd ? { controlSessionId: expectedEnd, continuation: provenance } : null);
+            expect(projection.observe(conversation, received)).toBeNull();
+            expect(reducer(consumer, [acknowledgement.message]).messages).toEqual([]);
+        }
+        const hydrated = createVoiceContinuationProjection();
+        hydrated.update({ snapshot, binding, deviceId: 'third-device', sessionSeq: 11 });
+        expect(hydrated.observe(conversation, reducer(createReducer(), [acknowledgement.message]).messages)).toBeNull();
+    });
+    it('persists a continuation as an ordinary note, without exposing an unacknowledged control note', async () => {
+        const persisted: import('@happier-dev/session-core/messages').PersistSessionTranscriptMessageInput[] = [];
+        const applied: unknown[] = [];
+        const projector = createVoiceTranscriptProjector({ getState: () => ({ applyMessages: (_id, messages) => { applied.push(...messages); } }),
+            nowMs: () => 100, persistFinal: (input) => { persisted.push(input); } });
+        const input = { conversationSessionId: 'conversation', text: 'Continued on this device',
+            continuation: { v: 1 as const, deviceId: 'device', conversation: { serverId: 'home', sessionId: 'conversation' } } };
+        const note = projector.projectNoteText(input);
+        expect(note?.meta).toMatchObject({ happier: { kind: 'voice_note.v1', payload: { v: 1, continuation: input.continuation } } });
+        expect(persisted).toHaveLength(1);
+        expect(persisted[0]).toMatchObject({ sessionId: 'conversation', messageRole: 'agent', rawRecord: {
+            role: 'agent', meta: note?.meta, content: { type: 'output', data: { type: 'assistant',
+                message: { content: [{ type: 'text', text: 'Voice continued.' }] },
+            } },
+        } });
+        expect(applied).toHaveLength(0);
+    });
     it('keeps the exact realtime provider source on the canonical turn origin', async () => {
         const { buildRealtimeConversationTurnMeta } = await import('./VoiceTranscriptProjector');
 

@@ -1,4 +1,4 @@
-import type { SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol';
+import { readSessionWorkStateGroupV1, type SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import {
@@ -382,21 +382,6 @@ export type WorkStateGroups = Readonly<{
 
 type WorkStateGroupKey = keyof WorkStateGroups;
 
-function stateGroupOf(bucket: WorkBucket): WorkStateGroupKey {
-    switch (bucket) {
-        case 'needs_you':
-            return 'needsYou';
-        case 'working':
-            return 'working';
-        // Working is titled with that bucket's own word, so only working rows sit there; an idle or
-        // offline row waits in Recent and says its own state word and tone.
-        case 'finished':
-        case 'idle':
-        case 'offline':
-            return 'recent';
-    }
-}
-
 /**
  * The Work list reads by state on every surface (INT r0.5 §6 I4, lab `convo-W1/W8full`): what needs the
  * person, what is still going, and the rest — finished, idle or offline — under Recent.
@@ -411,7 +396,7 @@ export function groupWorkByState(projection: WorkProjection): WorkStateGroups {
     const groups: Record<WorkStateGroupKey, WorkItem[]> = { needsYou: [], working: [], recent: [] };
     const placed = new Map<string, Readonly<{ group: WorkStateGroupKey; level: number }>>();
     for (const item of [...projection.sessions, ...projection.backgroundRuns, ...projection.workflows, ...projection.agents]) {
-        const group = stateGroupOf(item.status.bucket);
+        const group = readSessionWorkStateGroupV1(item.status.bucket);
         const parent = item.parentKey ? placed.get(item.parentKey) : undefined;
         const level = parent && parent.group === group ? parent.level + 1 : 0;
         placed.set(item.key, { group, level });

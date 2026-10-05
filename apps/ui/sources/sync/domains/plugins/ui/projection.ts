@@ -4,13 +4,21 @@ import type {
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import {
+    PluginUiWidgetAreaDeclarationsV1Schema,
+    type PluginUiWidgetAreaDeclarationV1,
     PluginLocalizedStringV2Schema,
     PluginContributionLocalIdSchema,
     PluginUiIconTokenV1Schema,
+    PluginPolicyExpressionV2Schema,
+    type PluginPolicyExpressionV2,
     PluginContributionIdentityV1Schema,
     OpenableContentViewerSelectorV1Schema,
     RecipientContractV1Schema,
     VoiceProviderContributionSchema,
+    PluginProjectedDragSourceEntryV1Schema,
+    PluginProjectedDropTargetEntryV1Schema,
+    type PluginProjectedDragSourceEntryV1,
+    type PluginProjectedDropTargetEntryV1,
     buildQualifiedPluginContributionKey,
     compilePluginJsonSchema,
     createPluginContributionIdentity,
@@ -45,6 +53,9 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
+export type PluginUiDragSourceProjection = PluginProjectedDragSourceEntryV1 & UnknownRecord;
+export type PluginUiDropTargetProjection = PluginProjectedDropTargetEntryV1 & UnknownRecord;
+export type PluginUiInputTypeProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['inputTypes']>['entriesById'][string];
 
 /**
  * The OS-level platform every plugin UI projection is normalized for.
@@ -118,6 +129,8 @@ export type PluginUiSurfaceAvailabilityProjection = Readonly<{
     state: 'available' | 'fallback' | 'blocked' | 'disabled';
     reason: string;
     diagnostics: readonly string[];
+    when?: PluginPolicyExpressionV2;
+    disabledWhen?: PluginPolicyExpressionV2;
 }>;
 
 /**
@@ -164,6 +177,7 @@ type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     rightSidebar?: UnknownRecord;
     /** An app page's own shell column: its renderer and that renderer's availability. */
     column?: PluginUiAppPageColumnProjection;
+    widgetAreas?: readonly PluginUiWidgetAreaDeclarationV1[];
 }>;
 
 export type PluginUiAppPageColumnProjection = Readonly<{
@@ -364,7 +378,10 @@ export type PluginUiProjectionModel = Readonly<{
     actionsById: Readonly<Record<string, PluginUiActionProjection>>;
     /** Exact current Resource declarations for host-owned qualified consumers. */
     resourcesById: Readonly<Record<string, PluginUiResourceProjection>>;
+    inputTypesById: Readonly<Record<string, PluginUiInputTypeProjection>>;
     voiceProvidersById: Readonly<Record<string, PluginVoiceProviderProjection>>;
+    dragSourcesById: Readonly<Record<string, PluginUiDragSourceProjection>>;
+    dropTargetsById: Readonly<Record<string, PluginUiDropTargetProjection>>;
     unknownEntriesById: Readonly<Record<string, UnknownRecord>>;
 }>;
 
@@ -387,7 +404,10 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     composerRegionsById: Object.freeze({}),
     actionsById: Object.freeze({}),
     resourcesById: Object.freeze({}),
+    inputTypesById: Object.freeze({}),
     voiceProvidersById: Object.freeze({}),
+    dragSourcesById: Object.freeze({}),
+    dropTargetsById: Object.freeze({}),
     unknownEntriesById: Object.freeze({}),
 });
 
@@ -582,10 +602,15 @@ function readSurfaceAvailability(value: unknown): PluginUiSurfaceAvailabilityPro
     ) {
         return null;
     }
+    const when = availability?.when === undefined ? null : PluginPolicyExpressionV2Schema.safeParse(availability.when);
+    const disabledWhen = availability?.disabledWhen === undefined ? null : PluginPolicyExpressionV2Schema.safeParse(availability.disabledWhen);
+    if (when?.success === false || disabledWhen?.success === false) return null;
     return Object.freeze({
         state,
         reason,
         diagnostics: Object.freeze(readStringArray(availability?.diagnostics)),
+        ...(when?.success ? { when: when.data } : {}),
+        ...(disabledWhen?.success ? { disabledWhen: disabledWhen.data } : {}),
     });
 }
 
@@ -821,6 +846,17 @@ export function normalizePluginUiProjection(
     // from a feature-local declaration family.
     const actionsById = Object.freeze({ ...projection.actionsById });
     const resourcesById = Object.freeze({ ...projection.resourcesById });
+    const inputTypesById = Object.freeze({ ...(projection.familiesById.inputTypes?.entriesById ?? {}) });
+    const dragSourcesById: Record<string, PluginUiDragSourceProjection> = {};
+    for (const [id, entry] of Object.entries(projection.familiesById.dragSources?.entriesById ?? {})) {
+        const parsed = PluginProjectedDragSourceEntryV1Schema.safeParse(entry);
+        if (parsed.success && parsed.data.id === id) dragSourcesById[id] = Object.freeze({ ...parsed.data });
+    }
+    const dropTargetsById: Record<string, PluginUiDropTargetProjection> = {};
+    for (const [id, entry] of Object.entries(projection.familiesById.dropTargets?.entriesById ?? {})) {
+        const parsed = PluginProjectedDropTargetEntryV1Schema.safeParse(entry);
+        if (parsed.success && parsed.data.id === id) dropTargetsById[id] = Object.freeze({ ...parsed.data });
+    }
 
     const voiceProvidersById: Record<string, PluginVoiceProviderProjection> = {};
     const voiceProviderFamily = projection.familiesById.voiceProviders;
@@ -883,7 +919,10 @@ export function normalizePluginUiProjection(
             composerRegionsById,
             actionsById,
             resourcesById,
+            inputTypesById,
             voiceProvidersById: Object.freeze(voiceProvidersById),
+            dragSourcesById: Object.freeze(dragSourcesById),
+            dropTargetsById: Object.freeze(dropTargetsById),
         });
     }
 
@@ -944,8 +983,10 @@ export function normalizePluginUiProjection(
                 const runtime = asRecord(entry.runtime);
                 const rightSidebar = asRecord(entry.rightSidebar);
                 const headerActions = resolvePluginUiPageHeaderActions(entry.headerActions);
-                const { column: projectedColumn, ...entryFields } = entry;
+                const { column: projectedColumn, widgetAreas: projectedWidgetAreas, ...entryFields } = entry;
                 const column = readAppPageColumn(projectedColumn);
+                const widgetAreas = binding.kind === 'destination' && binding.container === 'appPage'
+                    ? PluginUiWidgetAreaDeclarationsV1Schema.safeParse(projectedWidgetAreas) : null;
                 const normalized = Object.freeze({
                     ...entryFields,
                     // Preserve the CLI-normalized object verbatim. No UI
@@ -960,6 +1001,7 @@ export function normalizePluginUiProjection(
                     ...(rightSidebar ? { rightSidebar: Object.freeze({ ...rightSidebar }) } : {}),
                     // A malformed column is dropped, never passed through as an unknown record.
                     ...(column ? { column } : {}),
+                    ...(widgetAreas?.success ? { widgetAreas: Object.freeze(widgetAreas.data) } : {}),
                     availability,
                 }) as PluginUiPhysicalSurfacePlacementProjection;
                 surfacePlacementsById[entry.id] = normalized;
@@ -1030,7 +1072,10 @@ export function normalizePluginUiProjection(
         composerRegionsById,
         actionsById,
         resourcesById,
+        inputTypesById,
         voiceProvidersById: Object.freeze(voiceProvidersById),
+        dragSourcesById: Object.freeze(dragSourcesById),
+        dropTargetsById: Object.freeze(dropTargetsById),
         unknownEntriesById: Object.freeze(unknownEntriesById),
     });
 }

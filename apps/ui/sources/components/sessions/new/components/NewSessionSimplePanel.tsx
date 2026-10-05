@@ -88,6 +88,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     containerStyle: ViewStyle;
     promptStore: NewSessionPromptStore;
     composerDocument?: NewSessionComposerDocument;
+    composerReferenceHost?: React.ComponentProps<typeof AgentInput>['composerReferenceHost'];
+    composerFileScope?: React.ComponentProps<typeof AgentInput>['composerFileScope'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     /**
@@ -441,6 +443,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                         <NewSessionComposerCard
                             panelProps={props}
                             layout="screen"
+                            surfaceGroup={isFloatingComposer ? 'floating' : 'content'}
                             reservedHeight={composerReservedHeight}
                         />
                         </View>

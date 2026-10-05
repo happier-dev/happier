@@ -102,7 +102,7 @@ describe('createCliActionDeps workflow boundary', () => {
       if (body.operation === 'get') return { data: { run, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null, keyCensus } };
       if (body.operation === 'run-key.census') return { data: keyCensus };
       if (body.operation === 'invocations.get') return { data: { invocation: { index, contentEnvelope, parentRevision: 2 } } };
-      if (body.operation === 'invocations.list') return { data: { invocations: [index] } };
+      if (body.operation === 'invocations.list') return { data: { invocations: [index], parentRevision: 2, keyCensus } };
       throw new Error(`unexpected_effect:${String(body.operation)}`);
     });
     if (targetKind === 'session') {
@@ -141,6 +141,8 @@ describe('createCliActionDeps workflow boundary', () => {
     expect(await deps.workflowAction!({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: recordId }, context: {} }))
       .toMatchObject({ invocation: { recoveryAvailability: { retry: { kind: 'available' }, continueSameConversation: { kind: 'available' } } } });
     expect(machineRpc.mock.calls.every(([input]) => input.machineId === 'machine-1')).toBe(true);
+    expect(await deps.workflowAction!({ actionId: 'workflow.run.invocations.list', input: { runId }, context: {} }))
+      .toEqual({ invocations: [index], parentRevision: 2 });
     if (targetKind === 'detached_run') {
       index.lifecycle = 'running';
       machineRpc.mockResolvedValue({ run: { runId: 'native-run', callId: 'call', sidechainId: 'sidechain', intent: 'delegate',
@@ -216,10 +218,13 @@ describe('createCliActionDeps workflow boundary', () => {
         },
       },
     });
-    // Caller authorization may read currentness; normalization never fetches saved content.
+    // Caller authorization may read currentness and the authenticated Session
+    // index; normalization never fetches saved Workflow content or starts work.
     expect(http.get.mock.calls.every(([url]) => typeof url === 'string'
       && url.endsWith('/v1/account/encryption/currentness'))).toBe(true);
-    expect(http.post).not.toHaveBeenCalled();
+    expect(http.post.mock.calls.every(([url, input]) => typeof url === 'string'
+      && url.endsWith('/v2/sessions/lookup-by-tags')
+      && JSON.stringify(input) === JSON.stringify({ tags: ['session-1'] }))).toBe(true);
     expect(http.put).not.toHaveBeenCalled();
     expect(http.delete).not.toHaveBeenCalled();
   });

@@ -68,7 +68,8 @@ function resolveAttachStrategyForEligibility(input: Readonly<{
   fallbackAgentId: AgentId | string | null | undefined;
 }>): AgentAttachStrategyForExplainer {
   if (input.eligibility.eligible) {
-    return input.eligibility.attachStrategy;
+    return input.eligibility.attachStrategy === 'managed_provider_attach'
+      ? 'provider_attach' : input.eligibility.attachStrategy;
   }
   if (input.eligibility.reasonCode === 'provider_attach_unavailable') {
     return 'provider_attach';

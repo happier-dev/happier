@@ -7,6 +7,7 @@ import { resolvePublicReleaseRingLabelForId, type PublicReleaseRingLabel } from 
 
 import { resolveHappyHomeDirFromEnvironment } from '../../agents/resolveHappyHomeDir.js';
 import { readDefaultManagedReleaseChannelSync } from '../../firstPartyRuntime/defaultReleaseChannelState.js';
+import { splitQualifiedWindowsScheduledTaskName } from '../../service/windows.js';
 import {
     listKnownServiceDefinitionFiles,
     parseLaunchdPlist,
@@ -43,7 +44,12 @@ type DiscoverFs = Readonly<{
 }>;
 
 type DiscoverCommandRunner = Readonly<{
-    run?: (input: Readonly<{ cmd: string; args: readonly string[] }>) => string | null;
+    run?: (input: Readonly<{ cmd: string; args: readonly string[] }>) => string | null | Readonly<{
+        stdout: string;
+        stderr?: string;
+        status: number | null;
+        error?: unknown;
+    }>;
 }>;
 
 type DiscoveredServiceIdentity = Readonly<{
@@ -51,6 +57,7 @@ type DiscoveredServiceIdentity = Readonly<{
     targetMode: HappierServiceTargetMode;
     ring: PublicReleaseRingLabel | null;
     instanceId: string | null;
+    serviceInstanceId?: string | null;
 }>;
 
 const DAEMON_LAUNCHD_LABEL_PREFIX = 'com.happier.cli.daemon';
@@ -142,9 +149,11 @@ function resolveDaemonIdentity(label: string, definition: ServiceDefinition): Di
             : null;
     if (parts === null) return null;
 
+    const labelRing = parts.length > 1 ? parseReleaseRingLabel(parts[0]) : null;
+    const serviceInstanceId = (labelRing ? parts.slice(1) : parts).join('.') || 'default';
     const targetMode = resolveDaemonServiceTargetMode(
         definition.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE,
-        parts[0] === 'default' ? 'default-following' : 'pinned',
+        serviceInstanceId === 'default' ? 'default-following' : 'pinned',
     );
 
     if (targetMode === 'default-following') {
@@ -153,14 +162,14 @@ function resolveDaemonIdentity(label: string, definition: ServiceDefinition): Di
             targetMode,
             ring: resolveDefaultFollowingServiceRing(definition),
             instanceId: null,
+            serviceInstanceId,
         };
     }
 
     const envRing = parseReleaseRingLabel(definition.env.HAPPIER_PUBLIC_RELEASE_CHANNEL);
-    const ring = envRing ?? parseReleaseRingLabel(parts[0]) ?? 'stable';
+    const ring = envRing ?? labelRing ?? 'stable';
     const instanceId = String(
-        definition.env.HAPPIER_ACTIVE_SERVER_ID ??
-        (parts.length >= 2 && parseReleaseRingLabel(parts[0]) ? parts[1] : parts[0] ?? 'cloud'),
+        definition.env.HAPPIER_ACTIVE_SERVER_ID ?? serviceInstanceId,
     ).trim() || 'cloud';
 
     return {
@@ -168,6 +177,7 @@ function resolveDaemonIdentity(label: string, definition: ServiceDefinition): Di
         targetMode,
         ring,
         instanceId,
+        serviceInstanceId,
     };
 }
 
@@ -223,15 +233,21 @@ function resolveExecutablePath(programArgs: readonly string[]): string | null {
     return String(programArgs[0] ?? '').trim() || null;
 }
 
+export function isDaemonStartSyncCommand(programArgs: readonly string[]): boolean {
+    return /\bdaemon\b\s+\bstart-sync\b/iu.test(programArgs.join(' '));
+}
+
 function resolveVerification(params: Readonly<{
     identity: DiscoveredServiceIdentity;
     definition: ServiceDefinition;
     executablePath: string | null;
+    expectedLabel: string;
 }>): HappierServiceVerification {
     const programArgs = params.definition.programArgs.map((value) => String(value ?? '').trim().toLowerCase());
     const executableName = basenameForAnyPlatform(String(params.executablePath ?? '')).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase();
     if (params.identity.serviceType === 'daemon') {
-        return programArgs.includes('daemon') && programArgs.includes('start-sync') ? 'verified' : 'candidate';
+        if (params.definition.kind === 'launchd-plist' && params.definition.label !== params.expectedLabel) return 'candidate';
+        return isDaemonStartSyncCommand(params.definition.programArgs) ? 'verified' : 'candidate';
     }
     if (params.identity.serviceType === 'self-host-service') {
         return executableName === 'happier-server' || programArgs.some((value) => basenameForAnyPlatform(value).replace(/\.(exe|mjs|js)$/iu, '').toLowerCase() === 'happier-server')
@@ -260,10 +276,20 @@ function resolveInstalledAndRunning(params: Readonly<{
     definitionPath: string;
     runner: DiscoverCommandRunner;
     uid: number | null;
-}>): Readonly<{ installed: boolean; running: boolean; enabled: boolean | null }> {
-    const run = params.runner.run;
+}>): Readonly<{ installed: boolean; running: boolean | null; enabled: boolean | null }> {
+    const rawRun = params.runner.run;
+    const run = rawRun ? (input: Readonly<{ cmd: string; args: readonly string[] }>) => {
+        try {
+            const result = rawRun(input);
+            const output = typeof result === 'string' || result === null ? result
+                : result.status === 0 && !result.error ? result.stdout : null;
+            return output?.trim() ? output : null;
+        } catch {
+            return null;
+        }
+    } : undefined;
     if (!run) {
-        return { installed: true, running: false, enabled: null };
+        return { installed: true, running: null, enabled: null };
     }
 
     if (params.platform === 'darwin') {
@@ -273,7 +299,7 @@ function resolveInstalledAndRunning(params: Readonly<{
         const enabled = domain
             ? readLaunchdServiceEnabled({ output: run({ cmd: 'launchctl', args: ['print-disabled', domain] }), label: params.label })
             : null;
-        return { installed: true, running: status.pid !== null || status.state === 'loaded', enabled };
+        return { installed: true, running: status.state === 'unknown' ? null : status.pid !== null || status.state === 'loaded', enabled };
     }
 
     if (params.platform === 'win32') {
@@ -282,7 +308,7 @@ function resolveInstalledAndRunning(params: Readonly<{
             args: ['/Query', '/TN', `\\${params.label.startsWith('Happier\\') ? params.label : `Happier\\${params.label}`}`, '/V', '/FO', 'LIST'],
         });
         const status = readScheduledTaskStatus({ output: output ?? '' });
-        return { installed: true, running: status.running === true, enabled: status.enabled };
+        return { installed: true, running: status.running, enabled: status.enabled };
     }
 
     const args = [
@@ -296,7 +322,7 @@ function resolveInstalledAndRunning(params: Readonly<{
     const status = readSystemdUnitStatus({ output: output ?? '' });
     return {
         installed: true,
-        running: status.activeState === 'active' || status.subState === 'running',
+        running: status.activeState === null && status.subState === null ? null : status.activeState === 'active' || status.subState === 'running',
         enabled: readSystemdUnitFileEnabled(status.unitFileState),
     };
 }
@@ -310,25 +336,99 @@ function readSystemdUnitFileEnabled(unitFileState: string | null): boolean | nul
     return null;
 }
 
-function defaultCommandRunner(input: Readonly<{ cmd: string; args: readonly string[] }>): string | null {
-    try {
-        const result = spawnSync(input.cmd, [...input.args], {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true,
-            env: process.env,
-        });
-        const output = `${String(result.stdout ?? '')}${String(result.stderr ?? '')}`.trim();
-        return output || null;
-    } catch {
-        return null;
+function defaultCommandRunner(input: Readonly<{ cmd: string; args: readonly string[] }>): ReturnType<NonNullable<DiscoverCommandRunner['run']>> {
+    const requestedTimeout = Number(process.env.HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS);
+    const result = spawnSync(input.cmd, [...input.args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: process.env,
+        encoding: 'utf8',
+        // Preserve the Scheduler discovery owner's existing configurable deadline.
+        ...(input.cmd === 'schtasks' ? { timeout: Number.isInteger(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : 15_000 } : {}),
+    });
+    return { stdout: String(result.stdout ?? ''), stderr: String(result.stderr ?? ''), status: result.status, error: result.error };
+}
+
+function inventoryUnavailable(subject: string, cause: unknown): Error {
+    return Object.assign(new Error(`Background service inventory could not be read (${subject}): ${cause instanceof Error ? cause.message : String(cause)}`, { cause }), { code: 'service_inventory_unavailable' as const });
+}
+
+function isKnownHappierLabel(label: string): boolean {
+    return /^(?:com\.happier\.cli\.daemon|happier-daemon|dev\.happier\.stack)(?:\.|$)/iu.test(label)
+        || /^happier-server(?:[._-]|$)/iu.test(label);
+}
+
+function runScheduledTaskCommand(runner: DiscoverCommandRunner, args: readonly string[]): string {
+    const result = runner.run?.({ cmd: 'schtasks', args });
+    if (typeof result === 'string') return result;
+    if (!result) throw new Error('Scheduler query returned no result');
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(result.stderr?.trim() || `schtasks exited with status ${result.status}`);
+    return result.stdout;
+}
+
+function listScheduledTaskNames(runner: DiscoverCommandRunner): string[] {
+    return runScheduledTaskCommand(runner, ['/Query', '/FO', 'CSV', '/NH']).split(/\r?\n/u).flatMap((line) => {
+        const rawName = /^"((?:[^"]|"")*)"/u.exec(line.trim())?.[1]?.replaceAll('""', '"').trim();
+        if (!rawName) return [];
+        const parsed = splitQualifiedWindowsScheduledTaskName(rawName);
+        const name = `${parsed.taskPath}${parsed.taskName}`.replace(/^\\+/u, '');
+        if (!name.toLowerCase().startsWith('happier\\') || !isKnownHappierLabel(parsed.taskName)) return [];
+        return [name];
+    });
+}
+
+export function readWindowsScheduledTaskWrapperPath(taskName: string, runner: DiscoverCommandRunner = { run: defaultCommandRunner }): string | null {
+    let cause: unknown = new Error('Task inspection returned no wrapper path');
+    for (const format of ['xml', 'list'] as const) {
+        try {
+            const output = runScheduledTaskCommand(runner, ['/Query', '/TN', taskName, ...(format === 'xml' ? ['/XML'] : ['/FO', 'LIST', '/V'])]);
+            const argumentsText = format === 'xml' ? /<Arguments>([\s\S]*?)<\/Arguments>/iu.exec(output)?.[1] ?? '' : output;
+            const decoded = argumentsText.replaceAll('&quot;', '"').replaceAll('&apos;', "'").replaceAll('&amp;', '&');
+            const path = /-File\s+"([^"]+\.ps1)"/iu.exec(decoded)?.[1] ?? /-File\s+([^\s]+\.ps1)/iu.exec(decoded)?.[1];
+            if (path) return path.trim();
+        } catch (error) {
+            cause = error;
+        }
     }
+    // A detail error is not absence. Only a successful fresh enumeration proves disappearance.
+    try {
+        if (!listScheduledTaskNames(runner).some((name) => name.toLowerCase() === taskName.toLowerCase())) return null;
+    } catch (error) {
+        throw inventoryUnavailable(taskName, error);
+    }
+    throw inventoryUnavailable(taskName, cause);
+}
+
+function syntheticTaskDefinition(file: ServiceDefinitionFile): ParsedWindowsScheduledTaskWrapperPs1 {
+    const home = file.path.replace(/[\\/]services[\\/][^\\/]+$/iu, '');
+    // A missing wrapper has no channel declaration; retain the ring encoded by its installed name.
+    const daemonParts = splitLabelAfterPrefix(file.label, DAEMON_SYSTEMD_LABEL_PREFIX);
+    const env = {
+        ...(file.label.startsWith(DAEMON_SYSTEMD_LABEL_PREFIX)
+            ? { HAPPIER_PUBLIC_RELEASE_CHANNEL: (daemonParts.length > 1 ? parseReleaseRingLabel(daemonParts[0]) : null) ?? 'stable' }
+            : {}),
+        ...(home === file.path ? {} : { HAPPIER_HOME_DIR: home }),
+    };
+    return {
+        kind: 'windows-wrapper-ps1',
+        label: file.label,
+        env,
+        programArgs: [],
+        workingDirectory: null,
+        stdoutPath: null,
+        stderrPath: null,
+    };
 }
 
 async function parseServiceDefinition(params: Readonly<{
     definitionFile: ServiceDefinitionFile;
     fsApi: DiscoverFs;
 }>): Promise<ServiceDefinition | null> {
-    const contents = await (params.fsApi.readFile ?? readFile)(params.definitionFile.path, 'utf8').catch(() => null);
+    const contents = await (params.fsApi.readFile ?? readFile)(params.definitionFile.path, 'utf8').catch((cause: unknown) => {
+        if (!isKnownHappierLabel(params.definitionFile.label) || (cause && typeof cause === 'object' && 'code' in cause && cause.code === 'ENOENT')) return null;
+        throw inventoryUnavailable(`${params.definitionFile.label} at ${params.definitionFile.path}`, cause);
+    });
     if (typeof contents !== 'string') return null;
 
     if (params.definitionFile.kind === 'launchd-plist') {
@@ -355,11 +455,30 @@ export async function discoverHappierServices(params: Readonly<{
     const platform = normalizePlatform(params.platform);
     const roots = params.roots ?? resolveDefaultRoots({ platform, processEnv });
     const runner = params.commands ?? { run: defaultCommandRunner };
-    const definitionFiles = await listKnownServiceDefinitionFiles({ roots });
+    const definitionFiles = [...await listKnownServiceDefinitionFiles({ roots }).catch((cause: unknown) => { throw inventoryUnavailable('service definition directories', cause); })];
+    const scheduledPaths = new Set<string>();
+    if (platform === 'win32') {
+        try {
+            for (const taskName of listScheduledTaskNames(runner)) {
+                const path = readWindowsScheduledTaskWrapperPath(taskName, runner);
+                if (!path) continue;
+                const pathKey = path.replaceAll('\\', '/').toLowerCase();
+                scheduledPaths.add(pathKey);
+                if (!definitionFiles.some((file) => file.path.replaceAll('\\', '/').toLowerCase() === pathKey)) {
+                    const scope = path.replaceAll('/', '\\').toLowerCase().startsWith(`${WINDOWS_SYSTEM_HAPPIER_SERVICES_DIR.toLowerCase()}\\`) ? 'system' : 'user';
+                    definitionFiles.push({ path, scope, kind: 'windows-wrapper-ps1', label: taskName.slice('Happier\\'.length) });
+                }
+            }
+        } catch (cause) {
+            throw inventoryUnavailable('Happier scheduled tasks', cause);
+        }
+    }
     const services: HappierService[] = [];
 
     for (const definitionFile of definitionFiles) {
-        const definition = await parseServiceDefinition({ definitionFile, fsApi: params.fs ?? {} });
+        const isScheduledTask = scheduledPaths.has(definitionFile.path.replaceAll('\\', '/').toLowerCase());
+        const definition = await parseServiceDefinition({ definitionFile, fsApi: params.fs ?? {} })
+            ?? (isScheduledTask ? syntheticTaskDefinition(definitionFile) : null);
         if (!definition) continue;
 
         const identity = resolveServiceIdentity(definition.label, definition);
@@ -384,13 +503,16 @@ export async function discoverHappierServices(params: Readonly<{
             backend,
             label: definition.label,
             targetMode: identity.targetMode,
-            verification: resolveVerification({ identity, definition, executablePath }),
+            verification: resolveVerification({ identity, definition, executablePath, expectedLabel: definitionFile.label }),
             ring: identity.ring,
             instanceId: identity.instanceId,
+            activeServerId: String(definition.env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() || null,
+            serviceInstanceId: identity.serviceInstanceId ?? null,
+            startupSource: String(definition.env.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim() || null,
             scope: definitionFile.scope,
             definitionPath: definitionFile.path,
             executablePath,
-            happierHomeDir: String(definition.env.HAPPIER_HOME_DIR ?? '').trim() || null,
+            happierHomeDir: String(definition.env.HAPPIER_HOME_DIR ?? definition.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR ?? '').trim() || null,
             serverUrl: String(definition.env.HAPPIER_SERVER_URL ?? '').trim() || null,
             publicServerUrl: String(definition.env.HAPPIER_PUBLIC_SERVER_URL ?? '').trim() || null,
             managedBy: String(definition.env.HAPPIER_DAEMON_SERVICE_MANAGED_BY ?? '').trim() === 'desktop' ? 'desktop' : null,
@@ -398,7 +520,7 @@ export async function discoverHappierServices(params: Readonly<{
             running: status.running,
             enabled: status.enabled,
         };
-        if (service.verification === 'candidate' && params.deep !== true) {
+        if (service.verification === 'candidate' && params.deep !== true && !isScheduledTask) {
             continue;
         }
         services.push(service);

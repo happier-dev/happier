@@ -13,7 +13,6 @@ import { MachineAgentsSection } from '@/components/machines/agents/MachineAgents
 import { useMachine } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
-import { WizardChoiceRow } from '@/components/onboarding/ui/WizardChoiceRow';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
@@ -24,7 +23,6 @@ import { setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent
 import { buildDismissedThisComputerSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
-import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
 import { MOBILE_MAX_WIDTH_PX } from '../unauthShell/useUnauthShellLayout';
@@ -49,7 +47,6 @@ import {
 } from './state/journeyBeats';
 import {
     useJourneyProgress,
-    type JourneyAttentionChoice,
     type JourneyCompletion,
 } from './state/useJourneyProgress';
 import { beginOnboardingJourneySession, endOnboardingJourneySession } from './state/journeySession';
@@ -60,10 +57,9 @@ export type OnboardingJourneyHostProps = Readonly<{
     preAuthController: OnboardingWizardController;
     wizardSurfaceProps: OnboardingWizardSurfaceProps;
     initialBeatId?: JourneyBeatId;
-    initialAttentionChoice?: JourneyAttentionChoice;
     retentionDisclosure?: RelayRetentionDisclosureState | null;
     reducedMotion?: boolean;
-    onExit?: () => void;
+    onExit?: (completion?: JourneyCompletion) => void;
     testID?: string;
 }>;
 
@@ -167,33 +163,6 @@ export function adaptPreAuthController(
     };
 }
 
-function AttentionChoiceBody(props: Readonly<{
-    choice: JourneyAttentionChoice;
-    setChoice: (choice: JourneyAttentionChoice) => void;
-    testID: string;
-}>): React.ReactElement {
-    return (
-        <View testID={props.testID} style={styles.attentionChoices}>
-            <WizardChoiceRow
-                testID={`${props.testID}-promote_attention_and_working`}
-                selected={props.choice === 'promote_attention_and_working'}
-                icon="stack"
-                title={t('settingsSession.sessionList.attentionPromotionModeGlobalTitle')}
-                subtitle={t('settingsSession.sessionList.workingPlacementModeGlobalSubtitle')}
-                onPress={() => props.setChoice('promote_attention_and_working')}
-            />
-            <WizardChoiceRow
-                testID={`${props.testID}-keep_current`}
-                selected={props.choice === 'keep_current'}
-                icon="list"
-                title={t('settingsSession.sessionList.attentionPromotionModeOffTitle')}
-                subtitle={t('settingsSession.sessionList.workingPlacementModeOffSubtitle')}
-                onPress={() => props.setChoice('keep_current')}
-            />
-        </View>
-    );
-}
-
 function buildDefaultController(params: Readonly<{
     progress: ReturnType<typeof useJourneyProgress>;
     handleExit: () => Promise<void>;
@@ -207,12 +176,6 @@ function buildDefaultController(params: Readonly<{
         <ShowcaseReel
             onSetUpHappier={params.skipToSetup}
             testID={`${params.testID}-reel`}
-        />
-    ) : beat.configStepId === 'attention_micro_choice' ? (
-        <AttentionChoiceBody
-            choice={params.progress.attentionChoice}
-            setChoice={params.progress.setAttentionChoice}
-            testID={`${params.testID}-attention-choice`}
         />
     ) : (
         <Text>{null}</Text>
@@ -419,7 +382,7 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     const auth = useAuth();
     const pendingSetupIntent = usePendingSetupIntent();
     const [arrivedMachine, setArrivedMachine] = React.useState<Readonly<{ machineId: string; serverId: string }> | null>(null);
-    const applySettings = useApplySettings();
+    const exitStartedRef = React.useRef(false);
     const demoLifecycleRef = React.useRef<DemoLifecycleGeneration | null>(null);
     const demoTeardownStartedRef = React.useRef(false);
     const demoTornDownRef = React.useRef(false);
@@ -428,14 +391,6 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     const hingeHandledRef = React.useRef(false);
     const preAuthStepSyncRef = React.useRef<ConfigStepSyncState | null>(null);
     const { demoSeeded, setDemoSeeded, unmountDemoStage } = useDemoStageUnmountGate();
-
-    const persistCompletionSettings = React.useCallback((completion: JourneyCompletion) => {
-        if (completion.attentionChoice !== 'promote_attention_and_working') return;
-        applySettings({
-            sessionListAttentionPromotionModeV1: 'global',
-            sessionListWorkingPlacementModeV1: 'global',
-        });
-    }, [applySettings]);
 
     const dismissPendingSetupIntent = React.useCallback(() => {
         if (pendingSetupIntent) {
@@ -503,21 +458,22 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     }, [teardownDemoGeneration]);
 
     const settleJourneyExit = React.useCallback((completion?: JourneyCompletion) => {
+        if (exitStartedRef.current) return;
+        exitStartedRef.current = true;
         void (async () => {
             try {
                 await teardownDemo();
-                if (completion) {
-                    persistCompletionSettings(completion);
-                }
                 dismissPendingSetupIntent();
-                props.onExit?.();
+                // Release the journey's viewport before the next flow acquires it.
+                endOnboardingJourneySession();
+                props.onExit?.(completion);
             } catch {
                 // Fall back to the authenticated route owner; pending setup intent remains for legacy continuation.
             } finally {
                 endOnboardingJourneySession();
             }
         })();
-    }, [dismissPendingSetupIntent, persistCompletionSettings, props.onExit, teardownDemo]);
+    }, [dismissPendingSetupIntent, props.onExit, teardownDemo]);
 
     const handleComplete = React.useCallback((completion: JourneyCompletion) => {
         settleJourneyExit(completion);
@@ -526,7 +482,6 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     const progress = useJourneyProgress({
         surface: curationSurface,
         initialBeatId: props.initialBeatId,
-        initialAttentionChoice: props.initialAttentionChoice,
         onComplete: handleComplete,
     });
     const setupConfigStepId = isSetupJourneyConfigStepId(progress.currentBeat.configStepId)
@@ -852,13 +807,6 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
 
     return renderJourney(controller);
 }
-
-const styles = StyleSheet.create(() => ({
-    attentionChoices: {
-        width: '100%',
-        gap: 10,
-    },
-}));
 
 const hostStylesheet = StyleSheet.create((theme) => ({
     root: {

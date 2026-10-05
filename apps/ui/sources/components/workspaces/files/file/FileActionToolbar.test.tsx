@@ -625,7 +625,7 @@ describe('FileActionToolbar', () => {
 
         expect(screen.findByTestId('file-details-view-actions')).toBeTruthy();
         expect(screen.findByTestId('file-details-view-mode:diff')).toBeTruthy();
-        expect(screen.findByTestId('file-details-edit')).toBeTruthy();
+        expect(screen.findByTestId('file-details-header.menu.trigger')).toBeTruthy();
         expect(screen.findByTestId('file-discard-action')).toBeTruthy();
         // Selected-line controls sit on their own wrapping row under the header, never clipped off.
         const selectionBar = screen.findByTestId('file-details-change-actions');
@@ -712,7 +712,7 @@ describe('FileActionToolbar', () => {
         expect(onStartLineSelection).toHaveBeenCalledTimes(1);
     });
 
-    it('shows an Edit button in file mode when editor is enabled', async () => {
+    it('offers editing in the header overflow when editor is enabled', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
         const onStartEditingFile = vi.fn();
 
@@ -743,10 +743,9 @@ describe('FileActionToolbar', () => {
             }),
         );
 
-        const editButton = screen.findByTestId('file-details-edit');
-        expect(editButton).toBeTruthy();
-
-        await screen.pressByTestIdAsync('file-details-edit');
+        const menu = screen.findAllByType('DropdownMenu' as never).find((node) => node.props.items.some((item: { id: string }) => item.id === 'edit'));
+        expect(menu).toBeTruthy();
+        await act(async () => { menu?.props.onSelect('edit'); });
         expect(onStartEditingFile).toHaveBeenCalledTimes(1);
     });
 
@@ -856,7 +855,7 @@ describe('FileActionToolbar', () => {
         expect(onDisplayMode).toHaveBeenCalledWith('markdown');
     });
 
-    it('only shows the diff area menu when more than one diff area is available', async () => {
+    it('shows the single diff area without offering an unavailable choice', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
         const singleAreaScreen = await renderScreen(
@@ -882,7 +881,7 @@ describe('FileActionToolbar', () => {
                 onClearSelection: () => {},
             }),
         );
-        expect(singleAreaScreen.findByTestId('file-details-diff-area-menu')).toBeNull();
+        expect(singleAreaScreen.findByTestId('file-details-diff-area-menu.trigger')?.props.disabled).toBe(true);
 
         const multipleAreaScreen = await renderScreen(
             React.createElement(FileActionToolbar as any, {
@@ -1045,7 +1044,7 @@ describe('FileActionToolbar', () => {
                 return null;
             }
         };
-        expect(findChildByTestId(viewActions, 'file-details-edit')).toBeTruthy();
+        expect(screen.findByTestId('file-details-header.menu.trigger')).toBeTruthy();
         expect(findChildByTestId(viewActions, 'file-discard-action')).toBeTruthy();
     });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveDaemonServiceInstallConflictPlan } from './daemonInstallConflict.js';
+import { happierHomeDirsMatch, resolveDaemonServiceInstallConflictPlan } from './daemonInstallConflict.js';
 import type { HappierService } from './types.js';
 
 function createDaemonService(overrides: Partial<HappierService> = {}): HappierService {
@@ -26,6 +26,12 @@ function createDaemonService(overrides: Partial<HappierService> = {}): HappierSe
 }
 
 describe('resolveDaemonServiceInstallConflictPlan', () => {
+  it('requires known home identities for service authority while normalizing Windows paths', () => {
+    expect(happierHomeDirsMatch(null, null, 'linux')).toBe(false);
+    expect(happierHomeDirsMatch(undefined, '/home/qa/.happier', 'linux')).toBe(false);
+    expect(happierHomeDirsMatch('C:\\Users\\Alice\\.happier\\', 'c:/users/alice/.happier', 'win32')).toBe(true);
+    expect(happierHomeDirsMatch('C:\\Users\\Alice\\.happier', 'C:\\Users\\Alice2\\.happier', 'win32')).toBe(false);
+  });
   it('does not treat unrelated daemon instances as conflicts by default', () => {
     const plan = resolveDaemonServiceInstallConflictPlan({
       target: {

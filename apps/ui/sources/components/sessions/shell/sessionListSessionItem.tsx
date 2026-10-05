@@ -17,6 +17,7 @@ import type {
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
 import type { SessionItemProps } from './SessionItem';
+import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 
 type SessionListSessionItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'session' }>;
@@ -58,6 +59,7 @@ type SessionListSessionItemProps = Readonly<{
 
 export function SessionListSessionItem(props: SessionListSessionItemProps) {
     const { rowViewModel } = props;
+    const organize = useSessionListOrganizeMode();
     if (!rowViewModel) {
         return null;
     }
@@ -78,6 +80,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             treeRowId={props.treeRowId}
             groupKey={rowViewModel.groupKey}
             reorderEnabled={props.dragEnabled}
+            organizeMode={organize.active}
             onDragStart={props.onDragStart}
             resolveDropResult={props.resolveDropResult}
             onDropResult={props.onDropResult}
@@ -126,12 +129,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}
             onDeleteDraft={props.onDeleteDraft}
-            {...(isIos && sessionKey != null
-                ? {
-                    nativeInlineDragEnabled: isIos && props.dragEnabled,
-                    nativeContextMenuOpen,
-                }
-                : null)}
+            {...(isIos && sessionKey != null ? { nativeContextMenuOpen } : null)}
         />
     );
 }

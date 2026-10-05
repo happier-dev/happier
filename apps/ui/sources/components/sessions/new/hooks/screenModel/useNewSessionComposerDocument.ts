@@ -106,6 +106,9 @@ export type NewSessionComposerDocument = Readonly<{
     /** Bound by the mounted New Session input; never a global focus registry. */
     onComposerFocusChange: (focused: boolean) => void;
     onComposerFocusRequestChange: (request: (() => void) | null) => void;
+    onPromptPickerOpenRequestChange: (request: (() => boolean) | null) => void;
+    /** The existing transfer controller binds its OS picker after this document owner mounts. */
+    bindAttachmentPicker?: (request: () => boolean) => () => void;
     onComposerInputFlushRequestChange: (request: (() => void) | null) => void;
     flushComposerInput: () => void;
     onComposerActionBarLayoutChange: (layout: ComposerSnapshotV1['layout']) => void;
@@ -225,6 +228,14 @@ export function useNewSessionComposerDocument(params: Readonly<{
     }> | null>(null);
     const composerActionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
+    const promptPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
+    const attachmentPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
+    const bindAttachmentPicker = React.useCallback((request: () => boolean) => {
+        attachmentPickerOpenRequestRef.current = request;
+        return () => {
+            if (attachmentPickerOpenRequestRef.current === request) attachmentPickerOpenRequestRef.current = null;
+        };
+    }, []);
     const composerInputFlushRequestRef = React.useRef<(() => void) | null>(null);
     const isSubmittingRef = React.useRef(params.isSubmitting);
     isSubmittingRef.current = params.isSubmitting;
@@ -377,6 +388,9 @@ export function useNewSessionComposerDocument(params: Readonly<{
 
     const onComposerFocusRequestChange = React.useCallback((request: (() => void) | null) => {
         composerFocusRequestRef.current = request;
+    }, []);
+    const onPromptPickerOpenRequestChange = React.useCallback((request: (() => boolean) | null) => {
+        promptPickerOpenRequestRef.current = request;
     }, []);
     const onComposerInputFlushRequestChange = React.useCallback((request: (() => void) | null) => {
         composerInputFlushRequestRef.current = request;
@@ -571,6 +585,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
             });
         },
         readSnapshot,
+        readScope: () => draftScope ?? composerAccountLifetime?.scope ?? null,
         isPresented: () => layoutPresented && params.isPresented !== false,
         applyNewSessionDirectoryIntent: (intent, expectedScope) => {
             if (!params.setDirectoryIntent || !readSnapshot().state.editable) return false;
@@ -602,6 +617,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
             focus();
             return true;
         },
+        openPromptPicker: () => promptPickerOpenRequestRef.current?.() ?? false,
+        openAttachmentPicker: () => attachmentPickerOpenRequestRef.current?.() ?? false,
     } satisfies ComposerPresentationTarget);
 
     React.useEffect(() => registerComposerPresentationTarget(ref, target), [ref, target]);
@@ -891,6 +908,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
         onStructuredInputMentionsChange,
         onComposerFocusChange,
         onComposerFocusRequestChange,
+        onPromptPickerOpenRequestChange,
+        bindAttachmentPicker,
         onComposerInputFlushRequestChange,
         flushComposerInput,
         onComposerActionBarLayoutChange,
@@ -922,6 +941,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
         onComposerActionBarLayoutChange,
         onComposerFocusChange,
         onComposerFocusRequestChange,
+        onPromptPickerOpenRequestChange,
+        bindAttachmentPicker,
         onComposerInputFlushRequestChange,
         flushComposerInput,
         onStructuredInputMentionsChange,

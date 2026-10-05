@@ -142,6 +142,99 @@ describe('socket update handling: plaintext update-session', () => {
         ]);
     });
 
+    it.each(['hydrated', 'cache-only'] as const)('does not resurrect %s working state from an equal-timestamp heartbeat after a stop', async (kind) => {
+        vi.useFakeTimers();
+        const session = {
+            ...buildSession('s_delayed_working_heartbeat'),
+            updatedAt: 200,
+            activeAt: 100,
+            thinking: true,
+            thinkingAt: 100,
+        };
+        if (kind === 'hydrated') {
+            storage.getState().applySessions([session]);
+        } else {
+            replaceActiveSessionListRows([{ ...session, archivedAt: null }]);
+        }
+        const readThinking = () => kind === 'hydrated'
+            ? storage.getState().sessions[session.id].thinking
+            : storage.getState().sessionListRowsByServerId[String(getActiveServerSnapshot().serverId)][session.id].thinking;
+        const applySessions = storage.getState().applySessions;
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 200, thinking: false,
+            }]]),
+            applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(readThinking()).toBe(false);
+
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 200, thinking: true,
+            }]]),
+            applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(readThinking()).toBe(false);
+
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 201, thinking: true,
+            }]]),
+            applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(readThinking()).toBe(true);
+    });
+
+    it('applies cache-only working-to-online activity after a newer durable projection', async () => {
+        vi.useFakeTimers();
+        const session = {
+            ...buildSession('s_cached_working_to_online'),
+            updatedAt: 200,
+            activeAt: 100,
+            thinking: true,
+            thinkingAt: 100,
+            archivedAt: null,
+        };
+        replaceActiveSessionListRows([session]);
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 150, thinking: false,
+            }]]),
+            applySessions: storage.getState().applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRowsByServerId[String(getActiveServerSnapshot().serverId)][session.id]).toMatchObject({
+            active: true, activeAt: 150, thinking: false, thinkingAt: 150,
+        });
+    });
+
+    it('rechecks a queued cache-only working heartbeat against a stop published before its flush', async () => {
+        vi.useFakeTimers();
+        const session = {
+            ...buildSession('s_cached_queued_working'),
+            updatedAt: 100,
+            activeAt: 100,
+            thinkingAt: 100,
+            archivedAt: null,
+        };
+        replaceActiveSessionListRows([session]);
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 200, thinking: true,
+            }]]),
+            applySessions: storage.getState().applySessions,
+        });
+        storage.getState().applyServerScopedSessionListRowPatches(String(getActiveServerSnapshot().serverId), [{
+            sessionId: session.id,
+            patch: { thinking: false, thinkingAt: 200, activeAt: 200, updatedAt: 200 },
+        }]);
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRowsByServerId[String(getActiveServerSnapshot().serverId)][session.id].thinking).toBe(false);
+    });
+
     afterEach(() => {
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
@@ -637,6 +730,7 @@ describe('socket update handling: plaintext update-session', () => {
         const sessionId = 's_runtime_ordering';
         storage.getState().applySessions([{
             ...buildSession(sessionId),
+            serverId: getActiveServerSnapshot().serverId,
             seq: 7,
             updatedAt: 1_000,
             thinking: false,
@@ -1287,6 +1381,7 @@ describe('socket update handling: plaintext update-session', () => {
     });
 
     it('target-hydrates visible cache-only renderables after update-session projection patches', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
         replaceActiveSessionListRows([
             {
                 id: 's_cached_visible_update',
@@ -1305,13 +1400,13 @@ describe('socket update handling: plaintext update-session', () => {
                 hasUnreadMessages: false,
             },
         ]);
-        markSessionSurfaceVisible('s_cached_visible_update', 'server-a');
+        markSessionSurfaceVisible('s_cached_visible_update', serverId);
 
         const hydrateSessionById = vi.fn();
         const params = buildBaseParams({ hydrateSessionById });
         await handleUpdateContainer({
             ...params,
-            sourceServerId: 'server-a',
+            sourceServerId: serverId,
             updateData: {
                 id: 'u_visible_cache_only_update',
                 seq: 12,
@@ -2201,6 +2296,7 @@ describe('socket update handling: plaintext update-session', () => {
     });
 
     it('target-hydrates visible cache-only renderables after pending-changed patches', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
         replaceActiveSessionListRows([
             {
                 id: 's_cached_visible_pending',
@@ -2220,13 +2316,13 @@ describe('socket update handling: plaintext update-session', () => {
                 presence: 'online',
             },
         ]);
-        markSessionSurfaceVisible('s_cached_visible_pending', 'server-a');
+        markSessionSurfaceVisible('s_cached_visible_pending', serverId);
         const hydrateSessionById = vi.fn();
         const params = buildBaseParams({ hydrateSessionById });
 
         await handleUpdateContainer({
             ...params,
-            sourceServerId: 'server-a',
+            sourceServerId: serverId,
             updateData: {
                 id: 'u_visible_pending_cache_only',
                 seq: 12,
@@ -3186,6 +3282,7 @@ describe('socket update handling: plaintext update-session', () => {
 
     it('target-hydrates visible cache-only renderables after activity patches', async () => {
         vi.useFakeTimers();
+        const serverId = String(getActiveServerSnapshot().serverId);
         replaceActiveSessionListRows([
             {
                 id: 's_cached_activity_visible',
@@ -3203,7 +3300,7 @@ describe('socket update handling: plaintext update-session', () => {
                 presence: 1,
             },
         ]);
-        markSessionSurfaceVisible('s_cached_activity_visible', 'server-a');
+        markSessionSurfaceVisible('s_cached_activity_visible', serverId);
         const applySessions = vi.fn();
         const hydrateSessionById = vi.fn();
         const flushParams: Parameters<typeof flushActivityUpdates>[0] & {
@@ -3223,7 +3320,7 @@ describe('socket update handling: plaintext update-session', () => {
                 ],
             ]),
             applySessions,
-            sourceServerId: 'server-a',
+            sourceServerId: serverId,
             hydrateSessionById,
         };
 
@@ -3258,6 +3355,7 @@ describe('socket update handling: plaintext update-session', () => {
 
     it('skips queued cache-only activity patches when targeted hydration materializes the session before flush', async () => {
         vi.useFakeTimers();
+        const serverId = String(getActiveServerSnapshot().serverId);
         replaceActiveSessionListRows([
             {
                 id: 's_cached_activity_hydrated_before_flush',
@@ -3275,7 +3373,7 @@ describe('socket update handling: plaintext update-session', () => {
                 presence: 1,
             },
         ]);
-        markSessionSurfaceVisible('s_cached_activity_hydrated_before_flush', 'server-a');
+        markSessionSurfaceVisible('s_cached_activity_hydrated_before_flush', serverId);
         const applySessions = vi.fn();
         const hydrateSessionById = vi.fn();
 
@@ -3294,7 +3392,7 @@ describe('socket update handling: plaintext update-session', () => {
                 ],
             ]),
             applySessions,
-            sourceServerId: 'server-a',
+            sourceServerId: serverId,
             hydrateSessionById,
         });
 
@@ -3305,6 +3403,7 @@ describe('socket update handling: plaintext update-session', () => {
         storage.getState().applySessions([
             {
                 ...buildSession('s_cached_activity_hydrated_before_flush'),
+                serverId,
                 active: false,
                 activeAt: 500,
                 thinking: false,

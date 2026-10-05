@@ -157,6 +157,8 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   /** Mutable presentation state committed inside the fresh Session create transaction. */
   initialTitle?: string;
   initialAccess?: SessionInitialAccessDraftV1;
+  /** Canonical host-sealed trigger intents committed with fresh Session birth. */
+  initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];
   reportsTo?: SessionReportsToV1;
   /** Host-resolved role selection and complete lead snapshot, seeded in fresh owner metadata only. */
   initialSessionRolesV1?: SessionRolesV1;

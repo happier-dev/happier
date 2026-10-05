@@ -93,6 +93,7 @@ export interface ExecutionRunHostBridgeContract {
     params: Readonly<{
       message: string;
       displayMessage?: string;
+      speechSegmentTargetChars?: number;
       resume?: boolean;
       userTranscript?: ExecutionRunUserTranscriptDirective;
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;

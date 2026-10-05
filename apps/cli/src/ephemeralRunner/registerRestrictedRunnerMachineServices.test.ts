@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
-import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 
 import { registerRestrictedRunnerMachineServices } from './registerRestrictedRunnerMachineServices';
 import { createRestrictedRunnerLocalServicesRoutes } from './restrictedRunnerLocalServices';

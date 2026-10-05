@@ -158,6 +158,7 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
     agentRootPath?: string | null;
     request: Readonly<{ path: string; asZip: boolean }>;
     destination: TransferFileDestination;
+    confinedToWorkingDirectory?: boolean;
     onInit?: ((init: Readonly<{ name: string; sizeBytes: number }>) => Promise<void | TransferFailureResponse>) | null;
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => void) | null;
@@ -175,6 +176,7 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
         workingDirectory: params.rootPath,
         path: absolutePath,
         asZip: params.request.asZip,
+        ...(params.confinedToWorkingDirectory ? { confinedToWorkingDirectory: true } : {}),
     } as const;
 
     if (params.signal?.aborted) {

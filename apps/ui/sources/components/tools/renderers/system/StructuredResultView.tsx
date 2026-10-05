@@ -8,6 +8,8 @@ import { maybeParseJson } from '@happier-dev/protocol';
 import { extractStdStreams, tailTextWithEllipsis } from "@happier-dev/session-core/tools";
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 function truncate(text: string, maxChars: number): string {
@@ -99,7 +101,34 @@ function getText(result: unknown): string | null {
     return null;
 }
 
-export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
+export const projectStructuredResultDisplayText: ToolDisplayTextProjector = (tool) => {
+    if ((tool.state !== 'completed' && tool.state !== 'running') || !tool.result) return [];
+    const streams = extractStdStreams(tool.result);
+    if (tool.state === 'running' && !streams) return [];
+    const diff = getDiff(tool.result);
+    const paths = getPaths(tool.result);
+    const text = getText(tool.result);
+    const stdout = streams?.stdout?.trim() ? streams.stdout : null;
+    const stderr = streams?.stderr?.trim() ? streams.stderr : null;
+    return [
+        ...(typeof streams?.exitCode === 'number' ? toolTextBlock('tool-exit-code', `${t('tools.structuredResult.exit')} ${streams.exitCode}`) : []),
+        ...toolTextBlock('tool-stdout-label', stdout ? t('tools.structuredResult.stdout') : null),
+        ...toolTextBlock('tool-stdout', stdout),
+        ...toolTextBlock('tool-stderr-label', stderr ? t('tools.structuredResult.stderr') : null),
+        ...toolTextBlock('tool-stderr', stderr),
+        ...toolTextBlock('tool-diff-label', diff ? t('tools.structuredResult.diff') : null),
+        ...toolTextBlock('tool-diff', diff),
+        ...(!streams?.stdout && !streams?.stderr && !diff && text ? [
+            ...toolTextBlock('tool-result-label', t('tools.structuredResult.result')),
+            ...toolTextBlock('tool-result', text),
+        ] : []),
+        ...toolTextBlock('tool-items-label', paths.length ? t('tools.structuredResult.items') : null),
+        ...paths.flatMap((path, index) => toolTextBlock(`tool-path-${index}`, path)),
+    ];
+};
+
+export const StructuredResultView = React.memo<ToolViewProps>(({ tool, messageId }) => {
+    const find = useToolFindState(messageId);
     const { theme } = useUnistyles();
     if (tool.state !== 'completed' && tool.state !== 'running') return null;
     if (!tool.result) return null;
@@ -118,17 +147,16 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
         <ToolSectionView>
             <View style={styles.container}>
                 {typeof streams?.exitCode === 'number' && (
-                    <Text style={[styles.meta, { color: theme.colors.text.secondary }]}>
-                        {t('tools.structuredResult.exit')} {streams.exitCode}
-                    </Text>
+                    <ToolFindText messageId={messageId} blockId="tool-exit-code" text={`${t('tools.structuredResult.exit')} ${streams.exitCode}`} style={[styles.meta, { color: theme.colors.text.secondary }]} />
                 )}
 
                 {streams?.stdout && streams.stdout.trim() ? (
                     <View style={styles.block}>
-                        <Text style={styles.label}>{t('tools.structuredResult.stdout')}</Text>
+                        <ToolFindText messageId={messageId} blockId="tool-stdout-label" text={t('tools.structuredResult.stdout')} style={styles.label} />
                         <CodeView
+                            findRanges={find.ranges('tool-stdout')}
                             code={
-                                tool.state === 'running'
+                                find.active ? streams.stdout : tool.state === 'running'
                                     ? tailTextWithEllipsis(streams.stdout, 1200)
                                     : truncate(streams.stdout, 2000)
                             }
@@ -138,10 +166,11 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
 
                 {streams?.stderr && streams.stderr.trim() ? (
                     <View style={styles.block}>
-                        <Text style={styles.label}>{t('tools.structuredResult.stderr')}</Text>
+                        <ToolFindText messageId={messageId} blockId="tool-stderr-label" text={t('tools.structuredResult.stderr')} style={styles.label} />
                         <CodeView
+                            findRanges={find.ranges('tool-stderr')}
                             code={
-                                tool.state === 'running'
+                                find.active ? streams.stderr : tool.state === 'running'
                                     ? tailTextWithEllipsis(streams.stderr, 900)
                                     : truncate(streams.stderr, 1200)
                             }
@@ -151,27 +180,25 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
 
                 {diff && (
                     <View style={styles.block}>
-                        <Text style={styles.label}>{t('tools.structuredResult.diff')}</Text>
-                        <CodeView code={truncate(diff, 2200)} />
+                        <ToolFindText messageId={messageId} blockId="tool-diff-label" text={t('tools.structuredResult.diff')} style={styles.label} />
+                        <CodeView code={find.active ? diff : truncate(diff, 2200)} findRanges={find.ranges('tool-diff')} />
                     </View>
                 )}
 
                 {!streams?.stdout && !streams?.stderr && !diff && text && (
                     <View style={styles.block}>
-                        <Text style={styles.label}>{t('tools.structuredResult.result')}</Text>
-                        <CodeView code={truncate(text, 2200)} />
+                        <ToolFindText messageId={messageId} blockId="tool-result-label" text={t('tools.structuredResult.result')} style={styles.label} />
+                        <CodeView code={find.active ? text : truncate(text, 2200)} findRanges={find.ranges('tool-result')} />
                     </View>
                 )}
 
                 {paths.length > 0 && (
                     <View style={styles.block}>
-                        <Text style={styles.label}>{t('tools.structuredResult.items')}</Text>
-                        {paths.slice(0, 8).map((p, idx) => (
-                            <Text key={`${idx}-${p}`} style={styles.path} numberOfLines={1}>
-                                {p}
-                            </Text>
+                        <ToolFindText messageId={messageId} blockId="tool-items-label" text={t('tools.structuredResult.items')} style={styles.label} />
+                        {(find.active ? paths : paths.slice(0, 8)).map((p, idx) => (
+                            <ToolFindText key={`${idx}-${p}`} messageId={messageId} blockId={`tool-path-${idx}`} text={p} style={styles.path} numberOfLines={1} />
                         ))}
-                        {paths.length > 8 && (
+                        {!find.active && paths.length > 8 && (
                             <Text style={[styles.meta, { color: theme.colors.text.secondary }]}>
                                 {t('tools.structuredResult.more', { count: paths.length - 8 })}
                             </Text>

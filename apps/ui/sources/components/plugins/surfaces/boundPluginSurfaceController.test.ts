@@ -1,9 +1,14 @@
 import {
+    createActionExecutor,
     DaemonPluginActionSchemasReadResponseSchema,
     type PluginContributionIdentityV1,
     type PluginProjectedActionV2,
     type PluginResourceContextV1,
 } from '@happier-dev/protocol';
+import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetActionInputResolverV1, readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
+import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import {
     PluginUiSelectActionInputResultV1Schema,
     type PluginUiJsonValueV1,
@@ -15,6 +20,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderHook } from '@/dev/testkit';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { log } from '@/log';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -150,6 +156,53 @@ function request(method: string, payload?: unknown) {
 }
 
 describe('BoundPluginSurfaceController (§3.1)', () => {
+    it('installs a declared page area on the actual mounted host port and persists its Action result', async () => {
+        const scope = CURRENT_ACCOUNT_LIFETIME.scope;
+        let row: Awaited<ReturnType<HomeHubArtifactTransportV1['read']>> = null;
+        let onRead: (() => void) | undefined;
+        const transport: HomeHubArtifactTransportV1 = {
+            read: async () => { onRead?.(); return row; },
+            create: async input => { row = { artifactId: input.artifactId, ownerAccountId: scope.accountId, header: input.header,
+                body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }; return { artifactId: input.artifactId }; },
+            update: async input => { const revision = { headerVersion: 2, bodyVersion: 2 }; row = { artifactId: input.artifactId,
+                ownerAccountId: scope.accountId, header: input.header!, body: input.body!, revision }; return { ok: true, revision }; },
+        };
+        const area = createWidgetAreaActionPortV1(surface => createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area },
+            widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async request => readBuiltinWidgetDescriptorV1(request.instance.definition),
+                readContext: async () => ({}), readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }),
+                resolveOptions: async () => [{ value: { serverId: scope.serverId, sessionId: 'readable-session' } }] }) }));
+        const destination = normalizePluginUiDestinationBindingV1({ pluginId: FACTS.pluginId, destinationId: FACTS.contributionId,
+            container: 'appPage', target: { kind: 'app' }, rendererId: 'native', instancePolicy: 'singleton' });
+        if (!destination) throw new Error('Destination admission failed');
+        const facts = { ...FACTS, pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, surfacePlacementsById: {
+            [FACTS.surfaceId]: { id: FACTS.surfaceId, pluginId: FACTS.pluginId, occurrenceId: FACTS.occurrenceId,
+                contributionKind: 'surfacePlacement' as const, descriptorId: FACTS.contributionId, binding: destination,
+                target: {}, renderer: {}, display: {}, headerActions: [], availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+                widgetAreas: [{ name: 'pinned', contextSchema: { type: 'object' as const, additionalProperties: false as const } }],
+            },
+        } } };
+        const controller = createBoundPluginSurfaceController({ facts, binding: { executeHostAction: (id, input, context) =>
+            executor.execute(id, input, { ...context, bypassApprovals: true }) } });
+        expect(controller.installedMethods).toContain('widgetArea');
+        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {
+            session: { kind: 'value', value: { serverId: scope.serverId, sessionId: 'readable-session' } },
+        } };
+        const added = await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.instance.add', instance } }));
+        if (added && typeof added === 'object' && !Array.isArray(added) && 'ok' in added && added.ok === false) throw new Error(JSON.stringify(added));
+        expect(added)
+            .toMatchObject({ ok: true, result: { instance, ref: { surface: { ...scope, owner: { kind: 'pluginArea', pluginId: FACTS.pluginId, pageId: FACTS.contributionId, area: 'pinned' } } } } });
+        expect((await transport.read('singleton'))?.body).toContain('copy');
+        const before = row;
+        // Retirement during the real Artifact read must prevent the subsequent write.
+        onRead = () => controller.dispose();
+        await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } }));
+        expect(row).toBe(before);
+        expect(await controller.hostApi.handleRequest(request('widgetArea', { area: 'pinned', operation: { actionId: 'widgets.instance.remove', instanceId: 'copy' } })))
+            .toMatchObject({ code: 'stale_surface' });
+        expect(row).toBe(before);
+        expect(createBoundPluginSurfaceController({ facts: FACTS }).installedMethods).not.toContain('widgetArea');
+    });
     it('passes the raw client target to the canonical dispatcher before daemon availability', async () => {
         const executeContributedAction = vi.fn();
         const controller = createBoundPluginSurfaceController({

@@ -482,7 +482,7 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     var elements = queryAutomationElements(command.payload || {});
     postAutomationResult(command, startedAt, true, {
       elementCount: elements.length,
-      elements: elements.slice(0, 25).map(summarizeAutomationElement)
+      elements: elements.map(summarizeAutomationElement)
     });
   }
 

@@ -11,6 +11,8 @@ import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorks
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import { buildCodeLinesFromTextDiff } from '@/components/ui/code/model/buildCodeLinesFromTextDiff';
+import { useToolFindState } from '../../renderers/core/ToolFindText';
+import { toolDiffContextLines, toolDiffFindProps } from '../../renderers/fileOps/toolDiffDisplayText';
 
 interface ToolDiffViewProps {
     sessionId?: string | null;
@@ -21,6 +23,8 @@ interface ToolDiffViewProps {
     style?: any;
     showLineNumbers?: boolean;
     showPlusMinusSymbols?: boolean;
+    messageId?: string;
+    findBlockPrefix?: string;
 }
 
 export const ToolDiffView = React.memo<ToolDiffViewProps>(({ 
@@ -31,8 +35,12 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     newText, 
     style, 
     showLineNumbers = false,
-    showPlusMinusSymbols = false 
+    showPlusMinusSymbols = false,
+    messageId,
+    findBlockPrefix,
 }) => {
+    const find = useToolFindState(messageId);
+    const contextLines = find.active ? toolDiffContextLines(oldText, newText) : 3;
     const wrapLines = useSetting('wrapLinesInDiffs');
     const reviewCommentsFeatureEnabled = useFeatureEnabled('files.reviewComments');
     const reviewScope = useWorkspaceScopeForSession(sessionId, serverId);
@@ -66,13 +74,15 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
     const codeLines = React.useMemo(() => {
-        if (!reviewCommentsEnabled) return [];
+        if (!reviewCommentsEnabled && !find.active) return [];
         return buildCodeLinesFromTextDiff({
             oldText,
             newText,
-            contextLines: 3,
+            contextLines,
         });
-    }, [newText, oldText, reviewCommentsEnabled]);
+    }, [newText, oldText, reviewCommentsEnabled, find.active, contextLines]);
+    const findProps = React.useMemo(() => find.active && findBlockPrefix ? toolDiffFindProps(codeLines, findBlockPrefix, find.ranges) : undefined,
+        [codeLines, find.active, find.blocks, findBlockPrefix]);
     const reviewControls = useCodeLinesReviewComments({
         enabled: reviewCommentsEnabled,
         filePath: normalizedFilePath ?? '',
@@ -87,11 +97,14 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     return (
         <View style={[style, virtualized ? resolveInlineDiffVirtualizedViewportStyle(maxVirtualizedHeight) : null]}>
             <DiffViewer
+                findActive={find.active}
+                findRangesByLineId={findProps?.findRangesByLineId}
+                scrollToLineId={findProps?.scrollToLineId}
                 mode="text"
                 filePath={filePath}
                 oldText={oldText}
                 newText={newText}
-                contextLines={3}
+                contextLines={contextLines}
                 wrapLines={wrapLines}
                 virtualized={virtualized}
                 presentationStyleOverride={presentationStyleOverride}

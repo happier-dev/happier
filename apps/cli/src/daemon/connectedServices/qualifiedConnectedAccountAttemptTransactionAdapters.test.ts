@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol';
 
 import {
   ConnectedAccountAttemptTransactionApiError,
@@ -8,6 +9,7 @@ import {
 } from '@/api/client/connectedAccountAttemptTransactionApi';
 import type { Credentials, StoredCredentials } from '@/persistence';
 import type {
+  ConnectedAccountAttemptSettlementRequest,
   ConnectedAccountDeviceTransactionSnapshot,
   ConnectedAccountOAuthTransactionSnapshot,
 } from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
@@ -189,7 +191,77 @@ function deviceSnapshot(
   });
 }
 
+function preparedDeviceSettlement(
+  snapshot: ConnectedAccountDeviceTransactionSnapshot,
+): ConnectedAccountAttemptSettlementRequest {
+  return {
+    intent: snapshot.intent,
+    service: snapshot.service,
+    accountId: 'account-1',
+    authenticationModeId: snapshot.modeId,
+    directExportContract: null,
+    expectedCredentialRevision: snapshot.expectedCredentialRevision,
+    expectedCredentialConfigurationRevision: snapshot.expectedCredentialConfigurationRevision,
+    expectedConfigurationRevision: snapshot.expectedConfigurationRevision,
+    sourceCustody: snapshot.sourceCustody,
+    stagedCredentials: snapshot.stagedCredentials,
+    stagedAccountConfigurationContent: snapshot.stagedAccountConfigurationContent,
+    displayName: 'Connected account',
+    scopes: ['read'],
+  };
+}
+
 describe('qualified Connected Account attempt transaction adapters', () => {
+  it.each([
+    ['device policy', { directExportContract: null }],
+    ['direct-export policy', { directExportContract: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }],
+    ['absent policy', {}],
+  ] as const)('persists and restores prepared settlement with %s', async (_label, policy) => {
+    const api = createTransactionApi();
+    const initial = deviceSnapshot();
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    await owner.device!.acknowledge(initial);
+    const { directExportContract: _policy, ...settlement } = preparedDeviceSettlement(initial);
+    const prepared = { ...initial, preparedSettlement: { ...settlement, ...policy } };
+
+    await owner.device!.acknowledge(prepared);
+
+    expect(api.records.get('device:device-attempt')?.revision).toBe(2);
+    const replacement = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    await expect(replacement.device!.read(initial.attemptId)).resolves.toEqual(prepared);
+  });
+
+  it('rejects malformed direct-export policy and unknown prepared-settlement fields without replacing custody', async () => {
+    const api = createTransactionApi();
+    const initial = deviceSnapshot();
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    await owner.device!.acknowledge(initial);
+    const settlement = preparedDeviceSettlement(initial);
+    await expect(owner.device!.acknowledge({
+      ...initial,
+      preparedSettlement: {
+        ...settlement,
+        // A malformed persisted policy must fail at the adapter's runtime boundary.
+        // @ts-expect-error Deliberately invalid public input.
+        directExportContract: 'unsupported-contract',
+      },
+    })).rejects.toMatchObject({ issues: expect.arrayContaining([
+      expect.objectContaining({ path: ['snapshot', 'preparedSettlement', 'directExportContract'] }),
+    ]) });
+    const unknownField = { ...initial, preparedSettlement: { ...settlement, unknownPolicy: true } };
+    await expect(owner.device!.acknowledge(unknownField)).rejects.toMatchObject({
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'unrecognized_keys' })]),
+    });
+    expect(api.records.get('device:device-attempt')?.revision).toBe(1);
+    await expect(owner.device!.read(initial.attemptId)).resolves.toEqual(initial);
+  });
+
   it('discovers only safe pending metadata and restores a sealed OAuth link', async () => {
     const api = createTransactionApi();
     const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({

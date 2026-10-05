@@ -72,6 +72,10 @@ export function describeDaemonServiceInstallConflict(params: Readonly<{
   strategy: DaemonServiceInstallStrategy;
   conflictPlan: DaemonServiceInstallConflictPlan;
 }>): DaemonServiceInstallConflictNotice | null {
+  const unverified = params.conflictPlan.competingServices.filter((service) => service.verification !== 'verified');
+  if (unverified.length > 0) {
+    return { blocking: true, message: `Background service ownership could not be verified: ${formatDaemonServiceLabels(unverified)}. Repair the service definition before installing here.` };
+  }
   if (params.conflictPlan.competingServices.length === 0) {
     return null;
   }

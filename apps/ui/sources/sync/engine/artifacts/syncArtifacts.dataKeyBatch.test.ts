@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 
-import { fetchAndApplyArtifactsList, type ArtifactDataKeyCache } from './syncArtifacts';
+import { decryptArtifactListItems, fetchAndApplyArtifactsList, type ArtifactDataKeyCache } from './syncArtifacts';
 
 const fetchArtifactsMock = vi.hoisted(() => vi.fn());
 
@@ -50,6 +50,35 @@ async function buildArtifact(id: string, envelope: string, dataKey: Uint8Array) 
 describe('fetchAndApplyArtifactsList artifact data-key unwrapping', () => {
     afterEach(() => {
         fetchArtifactsMock.mockReset();
+    });
+
+    it('opens opt-in list bodies through the full reader while retaining one envelope batch', async () => {
+        const keyA = new Uint8Array(32).fill(1);
+        const keyB = new Uint8Array(32).fill(2);
+        const artifacts = await Promise.all(([['a', keyA], ['b', keyB]] as const).map(async ([id, key]) => {
+            return { ...await buildArtifact(id, `env-${id}`, key),
+                body: await new ArtifactEncryption(key).encryptBody({ body: `private-${id}` }), bodyVersion: 1 };
+        }));
+        const { encryption, decryptEncryptionKeys } = createEncryptionHarness(new Map([['env-a', keyA], ['env-b', keyB]]));
+        const opened = await decryptArtifactListItems({ artifacts, encryption, artifactDataKeys: new Map(), ...{ includeBody: true } });
+        expect(opened.map((row) => row?.body)).toEqual(['private-a', 'private-b']);
+        expect(decryptEncryptionKeys).toHaveBeenCalledTimes(1);
+    });
+    it('retains readable headers beside a bad body and an unavailable per-record key in one batch', async () => {
+        const keyA = new Uint8Array(32).fill(1);
+        const keyB = new Uint8Array(32).fill(2);
+        const valid = { ...await buildArtifact('a', 'env-a', keyA),
+            body: await new ArtifactEncryption(keyA).encryptBody({ body: 'valid' }), bodyVersion: 1 };
+        const badBody = { ...await buildArtifact('b', 'env-b', keyB), body: 'bad ciphertext', bodyVersion: 1 };
+        const unavailableKey = await buildArtifact('c', 'env-c', keyB);
+        const { encryption, decryptEncryptionKeys } = createEncryptionHarness(new Map([['env-a', keyA], ['env-b', keyB]]));
+        const opened = await decryptArtifactListItems({ artifacts: [valid, badBody, unavailableKey], encryption,
+            artifactDataKeys: new Map(), includeBody: true });
+        expect(opened[0]).toMatchObject({ title: 'title-a', body: 'valid' });
+        expect(opened[1]).toMatchObject({ title: 'title-b', rawHeader: { title: 'title-b' }, isDecrypted: true });
+        expect(opened[1]?.body).toBeUndefined();
+        expect(opened[2]?.isDecrypted).toBe(false);
+        expect(decryptEncryptionKeys).toHaveBeenCalledTimes(1);
     });
 
     it('opens every artifact envelope in one batch instead of one call per artifact', async () => {

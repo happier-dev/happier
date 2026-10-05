@@ -33,6 +33,7 @@ import { TerminalKeyRail } from './keys/TerminalKeyRail';
 import { TerminalKeysSurface } from './keys/TerminalKeysSurface';
 import { useTerminalKeys } from './keys/useTerminalKeys';
 import type { EmbeddedTerminalPaneController } from './types';
+import { useTerminalFind } from './useTerminalFind';
 
 export type EmbeddedTerminalPaneProps = Readonly<{
     title: string;
@@ -47,6 +48,8 @@ export type EmbeddedTerminalPaneProps = Readonly<{
     testIdPrefix?: string | null;
     nativeSurfaceKey?: string | null;
     showQuickKeys?: boolean;
+    focused?: boolean;
+    findSurfaceId?: string;
     enableNativeRendererQaCrashControl?: boolean;
 }>;
 
@@ -165,16 +168,18 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     // A phone gets the key rail and the floating arrow pad (terminal lab P1).
     const deviceType = useDeviceType();
     const showKeys = props.showQuickKeys ?? deviceType === 'phone';
+    const find = useTerminalFind(props, showKeys);
     const keys = useTerminalKeys({
         onInput: props.controller.onInput,
         focusRenderer: React.useCallback(() => props.terminalRef.current?.focus?.(), [props.terminalRef]),
     });
     const onRendererInput = showKeys ? keys.onInput : props.controller.onInput;
     const footer = showKeys
-        ? <TerminalKeyRail modifiers={keys.modifiers} onPressKey={keys.pressRailKey} testIdPrefix={props.testIdPrefix} />
+        ? find.open ? find.bar : <TerminalKeyRail modifiers={keys.modifiers} onPressKey={keys.pressRailKey} testIdPrefix={props.testIdPrefix} />
         : null;
 
     return (
+        <View ref={find.rootRef} style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
         <EmbeddedTerminalPaneFrame
             chrome={props.chrome}
             machineName={props.machineName}
@@ -189,7 +194,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             keyboardBottomInset={keyboardBottomInset}
             platformOS={Platform.OS === 'android' ? 'android' : 'ios'}
             surface={(
-                <TerminalKeysSurface showArrowPad={showKeys} onArrow={keys.pressArrow} testIdPrefix={props.testIdPrefix}>
+                <TerminalKeysSurface showArrowPad={showKeys && !find.open} onArrow={keys.pressArrow} testIdPrefix={props.testIdPrefix}>
                     {effectiveRenderer === 'ios-ghosttykit' ? (
                         <GhosttyTerminalSurface
                             ref={props.terminalRef}
@@ -244,6 +249,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                         <XtermWebViewSurface
                             key={`xterm-webview-${webViewRecoveryNonce}`}
                             ref={webViewRef}
+                            onFindEngine={find.onFindEngine}
                             testID={props.testIdPrefix ? `${props.testIdPrefix}-xterm` : undefined}
                             fontSize={fontMetrics.fontSize}
                             lineHeightPx={fontMetrics.lineHeight}
@@ -257,6 +263,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             onRendererFailure={onWebViewRendererFailure}
                         />
                     )}
+                    {!showKeys ? find.bar : null}
                     {qaCrashInjectionAvailable && activeNativeSurfaceId ? (
                         <Pressable
                             accessibilityRole="button"
@@ -278,6 +285,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                 </TerminalKeysSurface>
             )}
         />
+        </View>
     );
 });
 

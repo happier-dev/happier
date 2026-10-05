@@ -1,22 +1,30 @@
 import type { VoiceLightStop } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import type { VoiceSurfaceStatusTone } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
+import type { SessionAwarenessPresentationV1 } from '@/utils/sessions/sessionUtils';
 
 import { resolveVoiceAttemptLightStop } from './resolveVoiceAttemptLightStop';
 
 /**
  * Whether a transport is worth presenting at all.
  *
- * `recoverable` still renders — tapping opens the canonical recovery action. `unavailable` does
- * not: a transport that cannot do anything is worse than no transport.
+ * `recoverable` still renders — tapping opens the canonical recovery action. `setup` renders the
+ * rest mic of a Voice that is switched on but cannot start yet; tapping opens Voice setup, so Voice
+ * stays discoverable before it works. `unavailable` does not render: a live attempt that can do
+ * nothing is worse than no transport.
  */
-export type VoiceAttemptAvailability = 'ready' | 'recoverable' | 'unavailable';
-export type VoiceAttemptPrimaryAction = 'start' | 'end' | 'recover' | null;
+export type VoiceAttemptAvailability = 'ready' | 'recoverable' | 'setup' | 'unavailable';
+export type VoiceAttemptPrimaryAction = 'start' | 'end' | 'recover' | 'setup' | null;
+export type VoiceAttemptMarkPose = 'mic' | 'light' | 'shadow' | 'blocked';
+export type VoiceAttemptStatusCell = 'thinking' | 'working' | 'needs_you' | null;
 
 export function resolveVoiceAttemptActionability(input: Readonly<{
     canStart: boolean;
     canStop: boolean;
     recoveryAvailable: boolean;
+    canDismissFailedAttempt?: boolean;
+    /** Voice is on and idle: when nothing else is possible, its setup is. */
+    setupOffered?: boolean;
 }>): Readonly<{
     availability: VoiceAttemptAvailability;
     primaryAction: VoiceAttemptPrimaryAction;
@@ -24,16 +32,16 @@ export function resolveVoiceAttemptActionability(input: Readonly<{
     return {
         availability: input.canStop || input.canStart
             ? 'ready'
-            : input.recoveryAvailable
+            : input.recoveryAvailable || input.canDismissFailedAttempt === true
                 ? 'recoverable'
-                : 'unavailable',
+                : input.setupOffered === true ? 'setup' : 'unavailable',
         primaryAction: input.canStop
             ? 'end'
             : input.canStart
                 ? 'start'
                 : input.recoveryAvailable
                     ? 'recover'
-                    : null,
+                    : input.setupOffered === true ? 'setup' : null,
     };
 }
 
@@ -45,9 +53,8 @@ export function resolveVoiceAttemptActionability(input: Readonly<{
  * canonical snapshot and routes user actions back to that owner. An adapter that "enforced"
  * targeting would be a second lifecycle decision-maker — the split-brain it exists to prevent.
  *
- * It carries **no placement knowledge**: `surfaceLocation` and `scopeDefault` are Horizon-only
- * policy. If the orb consulted `surfaceLocation`, choosing "session" would silently delete the
- * floating companion.
+ * It carries no placement knowledge. Idle target policy belongs at the target/admission seam;
+ * device-local container selection never changes the admitted attempt's lifecycle or binding.
  */
 export type VoiceAttemptControl = Readonly<{
     availability: VoiceAttemptAvailability;
@@ -56,6 +63,7 @@ export type VoiceAttemptControl = Readonly<{
     canStart: boolean;
     canStop: boolean;
     canMute: boolean;
+    canDismissFailedAttempt?: boolean;
     canCommitInput?: boolean;
     muted: boolean;
     /** The canonical runtime capture fact; distinct from the user's mute preference. */
@@ -69,6 +77,8 @@ export type VoiceAttemptControl = Readonly<{
     stop: VoiceLightStop;
     /** The attempt's control session. Immutable while an attempt runs; never re-targeted here. */
     sessionId: string | null;
+    markPose: VoiceAttemptMarkPose;
+    statusCell: VoiceAttemptStatusCell;
 }>;
 
 /**
@@ -95,6 +105,15 @@ export function resolveVoiceAttemptControl(input: Readonly<{
     startAdmitted: boolean;
     /** A canonical recovery action exists for the current error. */
     hasRecovery: boolean;
+    /** Terminal acknowledgement eligibility from the canonical lifecycle/store owner. */
+    canDismissFailedAttempt?: boolean;
+    /**
+     * Voice is switched on for this person. An idle Voice that cannot start then still offers its
+     * setup (the rest mic opens Voice setup) instead of disappearing.
+     */
+    setupOffered?: boolean;
+    /** Already projected by the shared Session awareness owner; never provider-authored copy. */
+    sessionStatus?: Pick<SessionAwarenessPresentationV1, 'state' | 'statusText'> | null;
 }>): VoiceAttemptControl {
     const live = input.status !== 'disconnected';
     const canStop = input.canStop && input.status !== 'disconnected';
@@ -111,16 +130,21 @@ export function resolveVoiceAttemptControl(input: Readonly<{
      * "is there an action behind this?" is the same question the user's press asks.
      */
     const recoveryAvailable = input.hasRecovery;
+    const canDismissFailedAttempt = !canStop && input.canDismissFailedAttempt === true;
     const { availability, primaryAction } = resolveVoiceAttemptActionability({
         canStart,
         canStop,
+        canDismissFailedAttempt,
         recoveryAvailable,
+        // Only at rest: a live attempt that can do nothing is not a setup entry point.
+        setupOffered: input.setupOffered === true && !live,
     });
     return {
         availability,
         live,
         canStart,
         canStop,
+        canDismissFailedAttempt,
         canCommitInput: input.status === 'connected' && Boolean(input.sessionId)
             && input.canCommitInput === true,
         // Muting is available for a connected attempt even while a half-duplex provider has
@@ -138,5 +162,15 @@ export function resolveVoiceAttemptControl(input: Readonly<{
         tone: input.tone,
         stop: resolveVoiceAttemptLightStop(input.surfaceState),
         sessionId: input.sessionId,
+        markPose: input.surfaceState === 'error' || input.surfaceState === 'permission_required'
+            ? 'blocked'
+            : input.surfaceState === 'connecting' || input.surfaceState === 'reconnecting'
+                ? 'shadow'
+                : input.status === 'disconnected' ? 'mic' : 'light',
+        statusCell: input.status !== 'connected' ? null
+            : input.sessionStatus?.state === 'permission_required' || input.sessionStatus?.state === 'action_required'
+                ? 'needs_you'
+                : input.sessionStatus?.state === 'thinking' ? 'working'
+                    : input.surfaceState === 'thinking' ? 'thinking' : null,
     };
 }

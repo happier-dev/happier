@@ -4,12 +4,14 @@ import type { SystemTaskResult } from '@happier-dev/protocol';
 import { readTokenOnlyAuthRequestPrompt, respondToTokenOnlyAuthRequestPrompt, type SystemTaskAuthRequestApproval } from './approveSystemTaskAuthRequestPrompt';
 import { presentUnmanagedCliConsent } from './presentUnmanagedCliConsent';
 import { getSystemTasksRunner } from './systemTasksRuntime';
+import { readSystemTaskStartErrorMessage } from './systemTaskStartError';
 import { answerThisComputerSetupPrompt } from './thisComputerSetup/answerThisComputerSetupPrompt';
-import { areServerProfileIdentifiersEquivalent, resolveSavedServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { matchesThisComputerSetupScope } from './thisComputerSetup/thisComputerSetupScope';
 import { useSystemTaskSnapshot } from './useSystemTaskSnapshot';
 import type { SystemTaskPromptContinuation, SystemTaskRunState, SystemTaskRunner } from './types';
 import type { SystemTaskSpec } from '@happier-dev/protocol';
+import { adoptLocalComputerSetup, readLocalDaemonSharedState, subscribeLocalDaemonSharedState } from '@/components/settings/machines/localControl/localDaemonSharedState';
+import { readLocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 
 export type ThisComputerSetupFollowUp = 'auth' | null;
 
@@ -47,29 +49,12 @@ export function createThisComputerSetupPromptContinuation(
     };
 }
 
-function matchesSetupApproval(spec: SystemTaskSpec | null, approval: SystemTaskAuthRequestApproval): boolean {
-    if (!spec || (spec.kind !== 'setup.thisComputer.v1' && spec.kind !== 'setup.repairThisComputer.v1')) return false;
-    const params = spec.params;
-    if (params === null || typeof params !== 'object' || Array.isArray(params)) return false;
-    const relayUrl = 'activeRelayUrl' in params && typeof params.activeRelayUrl === 'string' ? params.activeRelayUrl : '';
-    const identity = 'activeServerIdentityId' in params && typeof params.activeServerIdentityId === 'string'
-        ? params.activeServerIdentityId : null;
-    const accountId = 'activeAccountId' in params && typeof params.activeAccountId === 'string' ? params.activeAccountId : null;
-    const urlProfile = identity ? null : resolveSavedServerProfileByUrl(relayUrl, { includeCanonicalServerUrl: true });
-    const matchesHome = identity
-        ? identity === approval.serverId || areServerProfileIdentifiersEquivalent(identity, approval.serverId)
-        : approval.serverId
-            ? urlProfile?.kind === 'resolved' && areServerProfileIdentifiersEquivalent(urlProfile.profile.id, approval.serverId)
-            : urlProfile?.kind !== 'ambiguous';
-    return Boolean(relayUrl) && createServerUrlComparableKey(relayUrl) === createServerUrlComparableKey(approval.expectedRelayUrl)
-        && matchesHome
-        && accountId === (approval.expectedAccountId ?? null);
-}
-
 export function useThisComputerSetupTask(options: Readonly<{
     runner?: SystemTaskRunner;
     /** A presenter-owned handle; otherwise adopt this runner's continued setup for the explicit Home. */
     taskId?: string | null;
+    /** A cancellation-on-leave owner refuses a borrowed run; other surfaces adopt by default. */
+    adoptExisting?: boolean;
     onTaskIdChange?: (taskId: string | null) => void;
     onNeedsAuth?: () => void;
     onSucceeded?: (snapshot: SystemTaskRunState) => void;
@@ -77,20 +62,29 @@ export function useThisComputerSetupTask(options: Readonly<{
     authRequestApproval?: SystemTaskAuthRequestApproval;
 }> = {}) {
     const runner = options.runner ?? getSystemTasksRunner();
+    const retainedSetup = React.useSyncExternalStore(runner.subscribeActiveSetupTask, runner.getActiveSetupTask, () => null);
+    const subscribeOutcome = React.useCallback((listener: () => void) => subscribeLocalDaemonSharedState(runner, listener), [runner]);
+    const readOutcome = React.useCallback(() => readLocalDaemonSharedState(runner).setup, [runner]);
+    const retainedOutcome = React.useSyncExternalStore(subscribeOutcome, readOutcome, readOutcome);
     const [localTaskId, setLocalTaskId] = React.useState<string | null>(() => {
         const approval = options.authRequestApproval;
         if (!approval || options.taskId !== undefined) return null;
-        return runner.listPromptContinuations?.().find(({ spec }) => matchesSetupApproval(spec, approval))?.taskId ?? null;
+        const retained = runner.getActiveSetupTask();
+        return retained && matchesThisComputerSetupScope(retained.spec, approval) ? retained.taskId : null;
     });
     const approval = options.authRequestApproval;
+    const scopedRetainedSetup = retainedSetup && approval && matchesThisComputerSetupScope(retainedSetup.spec, approval) ? retainedSetup : null;
+    const retainedOutcomeTaskId = options.adoptExisting !== false && approval && retainedOutcome.taskId
+        && matchesThisComputerSetupScope(runner.getTaskSpec?.(retainedOutcome.taskId) ?? null, approval)
+        ? retainedOutcome.taskId : null;
     const activeTaskId = options.taskId === undefined
-        ? localTaskId && approval && !matchesSetupApproval(runner.getTaskSpec?.(localTaskId) ?? null, approval) ? null : localTaskId
+        ? scopedRetainedSetup?.taskId ?? retainedOutcomeTaskId ?? (localTaskId && approval && !matchesThisComputerSetupScope(runner.getTaskSpec?.(localTaskId) ?? null, approval) ? null : localTaskId)
         : options.taskId;
     React.useEffect(() => {
         if (options.taskId !== undefined || !approval) return;
-        setLocalTaskId((current) => current && matchesSetupApproval(runner.getTaskSpec?.(current) ?? null, approval)
-            ? current : runner.listPromptContinuations?.().find(({ spec }) => matchesSetupApproval(spec, approval))?.taskId ?? null);
-    }, [runner, options.taskId, approval?.expectedRelayUrl, approval?.serverId, approval?.expectedAccountId]);
+        setLocalTaskId((current) => scopedRetainedSetup?.taskId
+            ?? (current && matchesThisComputerSetupScope(runner.getTaskSpec?.(current) ?? null, approval) ? current : null));
+    }, [runner, options.taskId, scopedRetainedSetup, approval?.expectedRelayUrl, approval?.serverId, approval?.expectedAccountId]);
     const setActiveTaskId = React.useCallback((taskId: string | null) => {
         setLocalTaskId(taskId);
         options.onTaskIdChange?.(taskId);
@@ -104,18 +98,23 @@ export function useThisComputerSetupTask(options: Readonly<{
         setIsStarting(true);
         setStartError(null);
         try {
-            const taskId = await runner.start(spec);
-            runner.registerPromptContinuation?.(taskId, createThisComputerSetupPromptContinuation(options.authRequestApproval, spec));
+            const taskId = await runner.start(spec, createThisComputerSetupPromptContinuation(options.authRequestApproval, spec), {
+                adoptExisting: options.adoptExisting,
+            });
+            if (options.authRequestApproval && options.adoptExisting !== false) {
+                adoptLocalComputerSetup(runner, taskId, runner.getTaskSpec?.(taskId) ?? spec,
+                    options.authRequestApproval, readLocalDaemonStatusData);
+            }
             handledResultTaskIdRef.current = null;
             setActiveTaskId(taskId);
             return taskId;
         } catch (error) {
-            setStartError(error instanceof Error ? error.message : 'system_task_start_failed');
+            setStartError(readSystemTaskStartErrorMessage(error) ?? 'system_task_start_failed');
             throw error;
         } finally {
             setIsStarting(false);
         }
-    }, [runner, setActiveTaskId, options.authRequestApproval]);
+    }, [runner, setActiveTaskId, options.authRequestApproval, options.adoptExisting]);
 
     const cancel = React.useCallback(() => {
         if (!activeTaskId) {
@@ -167,7 +166,7 @@ export function useThisComputerSetupTask(options: Readonly<{
         activeTaskSnapshot,
         cancel,
         completedMachineId,
-        isStarting,
+        isStarting: isStarting || scopedRetainedSetup?.taskId === null,
         runner,
         start,
         startError,

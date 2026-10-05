@@ -5,12 +5,49 @@ import { registerSessionTerminalWorkspaceOwner, registerSessionTerminalSplitMeas
 import { createEmptyTerminalSurfaceState, readTerminalSurfaceState, replaceTerminalSurfaceState } from './terminalSurfaceStateCache';
 import { resolveSessionTerminalIdentity } from './sessionTerminalMode';
 import { machineTerminalEnsure, machineTerminalRestart } from '@/sync/ops/machineTerminal';
+import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
+import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
 
 // Machine transport is outside the deterministic pane/Action ownership boundary.
 const machineRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 
 describe('mounted terminal Actions', () => {
+    it('opens the exact retained member in pinned Details through the same Action owner', async () => {
+        const scopeId = 'session:address:home-details:session-details';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });
+        const retire = registerSessionTerminalWorkspaceOwner({ getState: () => state, dispatch: (action) => { state = appPaneReduce(state, action); } });
+        try {
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.open_in_details', input: { scopeId, terminalId: 'embedded' } })).toEqual({ ok: true });
+            expect(buildDetailsWorkspaceStateView(state.scopes[scopeId].details).tabs).toMatchObject([{ key: 'terminal:embedded', isPinned: true }]);
+            expect(state.scopes[scopeId].bottom.isOpen).toBe(false);
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.open_in_details', input: { scopeId, terminalId: 'missing' } })).toMatchObject({ ok: false, errorCode: 'terminal_not_found' });
+        } finally { retire(); }
+    });
+    it('restarts only the exact mounted owned member and reports unavailable/read-only admission', async () => {
+        const scopeId = 'session:address:home-restart:session-restart';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'open', terminal: { id: 'borrowed', target: { kind: 'terminal_view', machineId: 'm', terminalId: 'other', terminalKey: 'other-key', cwd: '/repo' } } } });
+        const retire = registerSessionTerminalWorkspaceOwner({ getState: () => state, dispatch: (action) => { state = appPaneReduce(state, action); } });
+        const handles = createSessionTerminalLeafHandles(scopeId);
+        let attempts = 0;
+        const unregister = handles.register('embedded', { copySelection: null, paste: () => {}, clear: () => {}, restart: () => { attempts += 1; } });
+        try {
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.restart', input: { scopeId, terminalId: 'embedded' } })).toEqual({ ok: true });
+            expect(attempts).toBe(1);
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.restart', input: { scopeId, terminalId: 'borrowed' } })).toMatchObject({ ok: false, errorCode: 'terminal_restart_unavailable' });
+            let detailsAttempts = 0;
+            const unregisterDetails = handles.register('embedded', { copySelection: null, paste: () => {}, clear: () => {}, restart: () => { detailsAttempts += 1; } });
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.restart', input: { scopeId, terminalId: 'embedded' } })).toEqual({ ok: true });
+            expect(detailsAttempts).toBe(1);
+            expect(attempts).toBe(1);
+            unregisterDetails();
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.restart', input: { scopeId, terminalId: 'embedded' } })).toEqual({ ok: true });
+            expect(attempts).toBe(2);
+            unregister();
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.restart', input: { scopeId, terminalId: 'embedded' } })).toMatchObject({ ok: false, errorCode: 'terminal_restart_unavailable' });
+        } finally { unregister(); retire(); }
+    });
     it.each(['ensure', 'restart'] as const)('stops a connecting shell whose %s finishes after close was requested', async (operation) => {
         vi.useFakeTimers();
         const scopeId = `session:address:home-connect:session-connect-${operation}`;

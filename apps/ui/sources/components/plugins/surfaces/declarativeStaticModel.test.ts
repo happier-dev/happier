@@ -69,6 +69,26 @@ function model(inventory: Readonly<Record<string, unknown>>) {
 }
 
 describe('admitDeclarativeStaticModel', () => {
+    it('reattaches drag nodes only to this model declaration and occurrence', () => {
+        const source = { ...destination, identity: { pluginId: 'acme.dashboard', localId: 'card' }, qualifiedId: 'acme.dashboard/card', referenceSchema: { type: 'string' } };
+        const target = { ...destination, identity: { pluginId: 'acme.dashboard', localId: 'tray' }, qualifiedId: 'acme.dashboard/tray' };
+        const sourceReference = { identity: source.identity, qualifiedId: source.qualifiedId, occurrenceId: source.occurrenceId };
+        const root = { kind: 'dropTarget', path: 'root', order: 0, target, children: [
+            { kind: 'dragSource', path: 'root.children[0]', order: 1, source: sourceReference, reference: '42', children: [] },
+        ] };
+        const candidate = { ...model({ dragSources: [source], dropTargets: [target] }), root };
+        expect(admitDeclarativeStaticModel({ model: candidate, expectedPluginId: 'acme.dashboard' })?.dragSources.size).toBe(1);
+        for (const reference of [
+            { ...sourceReference, occurrenceId: 'retired' },
+            { ...sourceReference, qualifiedId: 'acme.dashboard/missing' },
+            { ...sourceReference, identity: { pluginId: 'foreign.plugin', localId: 'card' }, qualifiedId: 'foreign.plugin/card' },
+        ]) {
+            expect(admitDeclarativeStaticModel({ model: { ...candidate, root: { ...root, children: [{ ...root.children[0], source: reference }] } },
+                expectedPluginId: 'acme.dashboard' })).toBeNull();
+        }
+        expect(admitDeclarativeStaticModel({ model: { ...candidate, declarativeInventory: { ...candidate.declarativeInventory, dragSources: [] } },
+            expectedPluginId: 'acme.dashboard' })).toBeNull();
+    });
     it('admits one immutable qualified inventory view', () => {
         const admitted = admitDeclarativeStaticModel({
             model: model({

@@ -16,9 +16,9 @@ import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { PromptResponseOrigin } from '@/components/tools/shell/permissions/executionRunPromptResponseTarget';
 import {
-    isSessionActionConfirmationRequest,
     SessionActionConfirmationPromptCard,
 } from './SessionActionConfirmationPromptCard';
+import { isSessionActionConfirmationRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 
 type UserActionPromptCardProps = PromptResponseOrigin & Readonly<{
@@ -35,6 +35,7 @@ type UserActionPromptCardProps = PromptResponseOrigin & Readonly<{
 const GenericUserActionPromptCard = React.memo(function GenericUserActionPromptCard(props: UserActionPromptCardProps) {
     const { theme } = useUnistyles();
     const transcriptSource = useSessionTranscriptSource();
+    const sourceInteraction = transcriptSource.useInteraction();
     const chrome = props.chrome ?? 'card';
 
     const model = React.useMemo(() => {
@@ -99,7 +100,7 @@ const GenericUserActionPromptCard = React.memo(function GenericUserActionPromptC
                     session={props.session}
                     executionRun={props.executionRun}
                     interaction={{
-                        canSendMessages: false,
+                        canSendMessages: sourceInteraction.canSendMessages,
                         canApprovePermissions: props.canApprovePermissions,
                         permissionDisabledReason: props.disabledReason,
                     }}

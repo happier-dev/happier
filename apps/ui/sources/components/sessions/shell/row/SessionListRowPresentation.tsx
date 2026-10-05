@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { resolveHappierWorkStatusSurfaceStyle } from '@happier-dev/plugin-ui/presentation';
 
 import { Text, type AppTextProps } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { workStatusSurfaceStyle } from '@/components/work/status/workStatusTreatment';
+import { projectWorkColors } from '@/components/work/status/workStatusTreatment';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 import {
     SESSION_LIST_ROW_CORNER_RADIUS,
@@ -34,10 +36,10 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 15,
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'sidebar', true),
         borderLeftWidth: 2,
         borderRightWidth: 2,
-        borderColor: theme.colors.surface.base,
+        borderColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'sidebar', true),
     },
     first: {
         borderTopLeftRadius: SESSION_LIST_ROW_CORNER_RADIUS,
@@ -55,9 +57,17 @@ const styles = StyleSheet.create((theme) => ({
     minimalNativePhone: { height: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE },
     // The open row is a rounded fill inside its group's sheet, the sheet's paper showing around it.
     selected: {
-        backgroundColor: theme.colors.surface.selected,
-        borderColor: theme.colors.surface.base,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.selected, 'sidebar', true),
+        borderColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'sidebar', true),
         borderRadius: SESSION_LIST_ROW_SELECTION_RADIUS,
+    },
+    attention: {
+        ...resolveHappierWorkStatusSurfaceStyle('attention', projectWorkColors(theme)),
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.state.warning.background, 'sidebar', true),
+    },
+    danger: {
+        ...resolveHappierWorkStatusSurfaceStyle('danger', projectWorkColors(theme)),
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.state.danger.background, 'sidebar', true),
     },
     identity: {
         position: 'relative',
@@ -147,7 +157,7 @@ export function SessionListRowPresentation(props: RowDensityProps & Readonly<{
         // Keep the incumbent geometry at normal scale. Large text may grow so the
         // title and context remain readable instead of being clipped by a fixed height.
         largeText ? { minHeight: scaledRowHeight, height: undefined } : null,
-        props.statusTone ? workStatusSurfaceStyle(props.statusTone) : null,
+        props.statusTone === 'attention' ? styles.attention : props.statusTone === 'danger' ? styles.danger : null,
     ];
     const pressContent = <>
         {hasIdentity ? <View style={[

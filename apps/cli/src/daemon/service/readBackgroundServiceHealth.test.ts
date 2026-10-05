@@ -13,7 +13,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-import { readBackgroundServiceHealth, readBackgroundServiceAutostartMode } from './readBackgroundServiceHealth';
+import { readBackgroundServiceHealth, readBackgroundServiceAutostartMode, readBackgroundServiceActivity } from './readBackgroundServiceHealth';
 
 describe('readBackgroundServiceHealth', () => {
   const envScope = createEnvKeyScope(['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS']);
@@ -22,6 +22,17 @@ describe('readBackgroundServiceHealth', () => {
     envScope.patch({ XDG_RUNTIME_DIR: undefined, DBUS_SESSION_BUS_ADDRESS: undefined });
   });
   afterEach(() => envScope.restore());
+  it('distinguishes denied and timed-out launchd queries from loaded and proven unloaded services', () => {
+    const params = { platform: 'darwin' as const, uid: 501, label: 'com.happier.cli.daemon.company' };
+    spawnSyncMock.mockReturnValue({ status: 1, stdout: '', stderr: 'Operation not permitted' } as never);
+    expect(readBackgroundServiceActivity(params)).toBe('unknown');
+    spawnSyncMock.mockReturnValue({ status: null, stdout: '', stderr: '', error: Object.assign(new Error('Timed out'), { code: 'ETIMEDOUT' }) } as never);
+    expect(readBackgroundServiceActivity(params)).toBe('unknown');
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: 'gui/501/com.happier.cli.daemon.company = {\n state = running\n}', stderr: '' } as never);
+    expect(readBackgroundServiceActivity(params)).toBe('active');
+    spawnSyncMock.mockReturnValue({ status: 113, stdout: '', stderr: 'Could not find service "com.happier.cli.daemon.company" in domain for user gui: 501' } as never);
+    expect(readBackgroundServiceActivity(params)).toBe('inactive');
+  });
   it('reads launchd overrides and real Windows triggers, returning unknown on failed queries', () => {
     spawnSyncMock.mockReturnValue({ status: 0, stdout: 'disabled services = {\n "com.happier.cli.daemon.company" => false\n}', stderr: '' } as never);
     expect(readBackgroundServiceAutostartMode({ platform: 'darwin', uid: 501, label: 'com.happier.cli.daemon.company', installedMode: 'on-demand' })).toBe('on-demand');

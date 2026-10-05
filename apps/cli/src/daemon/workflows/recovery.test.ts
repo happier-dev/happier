@@ -459,7 +459,7 @@ describe('workflow Run startup/reconnect recovery', () => {
     const snapshot = () => ({ run: { runId: 'native-review', callId: 'call', sidechainId: 'side', intent: 'review',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'default', retentionPolicy: 'resumable',
       runClass: 'bounded', ioMode: 'request_response', status: terminal ? 'succeeded' : 'running', startedAtMs: 1 },
-      ...(terminal ? { latestToolResult: { output: { findings: [], reviewedFingerprint: 'fingerprint', commentIds: ['comment'], materialization: { kind: 'complete' } } } } : {}) });
+      ...(terminal ? { latestToolResult: { findings: [], reviewedFingerprint: 'fingerprint', commentIds: ['comment'], materialization: { kind: 'complete' } } } : {}) });
     const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
       actionExecutor: { execute: async () => { throw new Error('unexpected_action_effect'); } },
       nativeActionRuns: { get: async () => snapshot(), stop: async () => {

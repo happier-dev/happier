@@ -60,7 +60,7 @@ function createRuntime() {
     steerInFlightTurn: vi.fn(async () => undefined),
     waitForTurnCompletion: vi.fn(async () => undefined),
     subscribeRuntimeEvents: vi.fn(() => () => undefined),
-    respondToPermission: vi.fn(async () => undefined),
+    respondToPermission: vi.fn<NonNullable<RuntimeTurnOperations['respondToPermission']>>(async () => ({ delivered: true })),
     cancelTurn: vi.fn(async () => undefined),
     readSessionIdentity: vi.fn(() => ({ sessionId: 'provider-session-1' })),
     updateSessionRuntimeConfig: vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async () => undefined),

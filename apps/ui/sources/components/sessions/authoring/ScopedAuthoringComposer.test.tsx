@@ -308,5 +308,15 @@ describe('ScopedAuthoringComposer', () => {
             machineId: 'machine-9',
             rootPath: '/Users/dev/code/app',
         });
+        const { resolveComposerEntityDrop } = await import('@/components/sessions/composer/composerEntityDrop');
+        const scope = { serverId: 'server-2', accountId: 'account-2' };
+        const result = resolveComposerEntityDrop({
+            kind: 'repository-file', scope, machineId: 'machine-9', path: '/Users/dev/code/app/src/index.ts',
+        }, {
+            scope, ref: composerRef, snapshot: readComposerPresentationSnapshot(composerRef),
+            sessions: [], workspace: composerProps?.composerFileScope as import('@/sync/domains/input/suggestionFile').FileSuggestionScope | null,
+            preview: { verb: 'Reference', target: 'Workflow' }, reason: code => code,
+        });
+        expect(result.status).toBe('allowed');
     });
 });

@@ -2,6 +2,7 @@ import type {
     PluginUiHostApiResponseEnvelopeV1,
     PluginUiHostMethodV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiWidgetAreaRequestV1Schema, pluginUiWidgetAreaOperationHasOutwardEffectV1 } from '@happier-dev/protocol/plugins/ui';
 
 /**
  * The host methods whose settlement is an OUTWARD EFFECT.
@@ -78,8 +79,17 @@ export function isPluginSurfaceOutwardEffectHostMethod(method: PluginUiHostMetho
  */
 export function pluginSurfaceSettlementSurvivesRetirement(input: Readonly<{
     method: PluginUiHostMethodV1;
+    requestPayload?: unknown;
     response: Readonly<{ kind: PluginUiHostApiResponseEnvelopeV1['kind'] }>;
 }>): boolean {
-    return input.response.kind === 'result'
-        && isPluginSurfaceOutwardEffectHostMethod(input.method);
+    if (input.response.kind !== 'result') return false;
+    if (input.method === 'widgetArea') {
+        const request = PluginUiWidgetAreaRequestV1Schema.safeParse(input.requestPayload);
+        return request.success && pluginUiWidgetAreaOperationHasOutwardEffectV1(request.data.operation);
+    }
+    if (input.method === 'updateEntityDragDrop') {
+        const command = PluginUiUpdateEntityDragDropRequestV1Schema.safeParse(input.requestPayload);
+        return command.success && (command.data.kind === 'release' || command.data.kind === 'commit' || command.data.kind === 'perform');
+    }
+    return isPluginSurfaceOutwardEffectHostMethod(input.method);
 }

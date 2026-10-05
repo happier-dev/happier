@@ -13,11 +13,13 @@ import { getReleaseRingCatalogEntry, type PublicReleaseRingId } from '@happier-d
 import { readDaemonStateForServerId } from '@/daemon/multiDaemon';
 import { resolveDaemonStartupSourceServiceManagedState } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { evaluateCurrentDaemonOwner, type DaemonOwnerEvaluation } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
-import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';
+import { happierHomeDirsMatch } from '@/daemon/ownership/happierHomeDirComparableKey';
 import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths } from '@/daemon/service/cli';
 import {
   discoverInstalledDaemonServiceEntries,
+  isInstalledDaemonServiceForHappierHome,
   readInstalledDaemonServiceManagedBy,
+  resolveInstalledDaemonServiceDefinitionPath,
 } from '@/daemon/service/discoverInstalledDaemonServiceEntries';
 import { resolveDaemonServiceLaunchdLabel, type DaemonServiceTargetMode } from '@/daemon/service/plan';
 import { resolveDaemonServiceDiscoveryTargets } from '@/daemon/service/resolveDaemonServiceDiscoveryTargets';
@@ -71,10 +73,18 @@ export function planServiceDaemonRestartAfterUpdate(params: Readonly<{
   const service = SERVICE_TARGET_MODES
     .map((targetMode) => {
       const runtime = resolveDaemonServiceCliRuntimeFromEnv({ channel: params.channel, targetMode, processEnv });
-      return { targetMode, instanceId: runtime.instanceId, label: resolveDaemonServicePaths(runtime).label };
+      const paths = resolveDaemonServicePaths(runtime);
+      return { targetMode, instanceId: runtime.instanceId, label: paths.label, runtime, paths };
     })
     .find((candidate) => serviceLabel !== '' && candidate.label === serviceLabel);
-  if (!service) {
+  if (!service || !isInstalledDaemonServiceForHappierHome({
+    platform: service.runtime.platform,
+    path: resolveInstalledDaemonServiceDefinitionPath({
+      platform: service.runtime.platform, path: service.paths.installedPath, taskName: service.paths.taskName,
+    }),
+    expectedLabel: service.label,
+    happierHomeDir: service.runtime.happierHomeDir,
+  })) {
     return {
       kind: 'unmanaged',
       message: `The running background service (${serviceLabel || 'unknown label'}) is not one this CLI manages. Run: ${restartCommandFor(params.channel)}`,
@@ -167,8 +177,6 @@ async function observeOtherServiceDaemonsBeforeUpdate(params: Readonly<{
   excludeLabel: string | null;
 }>): Promise<OtherServiceDaemonBeforeUpdate[]> {
   const runtime = resolveDaemonServiceCliRuntimeFromEnv({ channel: params.channel, processEnv: params.processEnv });
-  const homeKey = resolveHappierHomeDirComparableKey(runtime.happierHomeDir, runtime.platform);
-  if (homeKey === null) return [];
   const settings = await readSettings();
   // The default-following service serves the persisted selection, never this invocation's `--server`.
   const followedServerId = sanitizeServerIdForFilesystem(settings.activeServerId ?? 'cloud', 'cloud');
@@ -192,7 +200,7 @@ async function observeOtherServiceDaemonsBeforeUpdate(params: Readonly<{
   const others: OtherServiceDaemonBeforeUpdate[] = [];
   for (const entry of entries) {
     if (entry.releaseChannel !== params.channel) continue;
-    if (resolveHappierHomeDirComparableKey(entry.happierHomeDir, entry.platform) !== homeKey) continue;
+    if (!happierHomeDirsMatch(entry.happierHomeDir, runtime.happierHomeDir, runtime.platform)) continue;
     // The label the service hands its daemon (`HAPPIER_DAEMON_SERVICE_LABEL`), which the daemon records.
     const label = resolveDaemonServiceLaunchdLabel(entry.serverId, entry.releaseChannel, entry.targetMode);
     if (label === params.excludeLabel || others.some((other) => other.label === label)) continue;

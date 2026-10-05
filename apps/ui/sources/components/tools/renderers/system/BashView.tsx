@@ -4,19 +4,19 @@ import { StyleSheet } from 'react-native-unistyles';
 import { ToolCall } from "@happier-dev/session-core/messages";
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CommandView } from '@/components/sessions/transcript/CommandView';
-import { Metadata } from '@happier-dev/session-core/state';
 import { maybeParseJson } from '@happier-dev/protocol';
 import { extractStdStreams, tailTextWithEllipsis } from "@happier-dev/session-core/tools";
 import { CodeView } from '@/components/ui/media/CodeView';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import type { ToolViewProps } from '../core/_registry';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
-export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata | null; detailLevel?: 'title' | 'summary' | 'full' }) => {
-    const { input, result, state } = props.tool;
-    const rawCommand = extractShellCommand(input) ?? (typeof (input as any)?.command === 'string' ? (input as any).command : '');
+function getBashDisplay(tool: ToolCall, full: boolean) {
+    const { input, result, state } = tool;
+    const rawCommand = extractShellCommand(input) ?? '';
     const rawCommandTrimmed = typeof rawCommand === 'string' ? rawCommand.trim() : String(rawCommand ?? '');
     const command = stripShellCommandPreludeForDisplay(rawCommandTrimmed);
-    const isFullView = props.detailLevel === 'full';
     const didStripPrelude = rawCommandTrimmed.length > 0 && command !== rawCommandTrimmed;
 
     const parsedStreams = extractStdStreams(result);
@@ -34,7 +34,7 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
             const hasStdEnvelope =
                 !!obj &&
                 ('stdout' in obj || 'stderr' in obj || 'aggregated_output' in obj || 'formatted_output' in obj);
-            if (!hasStdEnvelope && isFullView) {
+            if (!hasStdEnvelope && full) {
                 unparsedOutput = JSON.stringify(parsedMaybe);
             }
         }
@@ -42,18 +42,44 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
         error = result;
     }
 
+    const stdout = parsedStreams?.stdout || unparsedOutput;
+    const stderr = parsedStreams?.stderr || null;
+    return {
+        command, rawCommandTrimmed, didStripPrelude,
+        stdout: stdout?.trim() ? stdout : null,
+        stdoutIsStream: Boolean(parsedStreams?.stdout),
+        stderr: stderr?.trim() ? stderr : null,
+        error,
+    };
+}
+
+export const projectBashDisplayText: ToolDisplayTextProjector = (tool) => {
+    const display = getBashDisplay(tool, true);
+    return [
+        ...toolTextBlock('tool-command', display.command),
+        ...toolTextBlock('tool-stdout', tool.state === 'running' || tool.state === 'completed' ? display.stdout : null),
+        ...toolTextBlock('tool-stderr', tool.state === 'running' || tool.state === 'completed' ? display.stderr : null),
+        ...toolTextBlock('tool-error', display.error),
+        ...toolTextBlock('tool-command-raw', display.didStripPrelude ? display.rawCommandTrimmed : null),
+        ...toolTextBlock('tool-command-raw-title', display.didStripPrelude ? t('tools.bashView.commandDiffTitle') : null),
+        ...toolTextBlock('tool-command-raw-hint', display.didStripPrelude ? t('tools.bashView.commandDiffHint') : null),
+    ];
+};
+
+export const BashView = React.memo<ToolViewProps>((props) => {
+    const find = useToolFindState(props.messageId);
+    const { state } = props.tool;
+    const isFullView = props.detailLevel === 'full' || find.active;
+    const display = getBashDisplay(props.tool, isFullView);
+    const { command, rawCommandTrimmed, didStripPrelude, error } = display;
     const maxStreamingChars = isFullView ? 8000 : 2000;
     const maxCompletedChars = 6000;
-    const streamingStdout = parsedStreams?.stdout ? tailTextWithEllipsis(parsedStreams.stdout, maxStreamingChars) : null;
-    const streamingStderr = parsedStreams?.stderr ? tailTextWithEllipsis(parsedStreams.stderr, maxStreamingChars) : null;
+    const streamingStdout = display.stdout ? (find.active ? display.stdout : tailTextWithEllipsis(display.stdout, maxStreamingChars)) : null;
+    const streamingStderr = display.stderr ? (find.active ? display.stderr : tailTextWithEllipsis(display.stderr, maxStreamingChars)) : null;
     const completedStdout =
-        parsedStreams?.stdout
-            ? (isFullView ? parsedStreams.stdout : tailTextWithEllipsis(parsedStreams.stdout, maxCompletedChars))
-            : unparsedOutput;
+        display.stdout ? (isFullView || !display.stdoutIsStream ? display.stdout : tailTextWithEllipsis(display.stdout, maxCompletedChars)) : null;
     const completedStderr =
-        parsedStreams?.stderr
-            ? (isFullView ? parsedStreams.stderr : tailTextWithEllipsis(parsedStreams.stderr, maxCompletedChars))
-            : null;
+        display.stderr ? (isFullView ? display.stderr : tailTextWithEllipsis(display.stderr, maxCompletedChars)) : null;
 
     return (
         <>
@@ -63,16 +89,19 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
                     stdout={state === 'running' ? streamingStdout : (state === 'completed' ? completedStdout : null)}
                     stderr={state === 'running' ? streamingStderr : (state === 'completed' ? completedStderr : null)}
                     error={error}
+                    commandFindRanges={find.ranges('tool-command')}
+                    stdoutFindRanges={find.ranges('tool-stdout')}
+                    stderrFindRanges={find.ranges('tool-stderr')}
+                    errorFindRanges={find.ranges('tool-error')}
                     hideEmptyOutput
                     fullWidth={isFullView}
                 />
             </ToolSectionView>
             {isFullView && didStripPrelude ? (
-                <ToolSectionView title={t('tools.bashView.commandDiffTitle')} fullWidth>
-                    <Text style={styles.commandDiffHint} numberOfLines={3}>
-                        {t('tools.bashView.commandDiffHint')}
-                    </Text>
-                    <CodeView code={rawCommandTrimmed} />
+                <ToolSectionView title={t('tools.bashView.commandDiffTitle')} titleFindRanges={find.ranges('tool-command-raw-title')} fullWidth>
+                    <ToolFindText style={styles.commandDiffHint} numberOfLines={3}
+                        text={t('tools.bashView.commandDiffHint')} blockId="tool-command-raw-hint" messageId={props.messageId} />
+                    <CodeView code={rawCommandTrimmed} findRanges={find.ranges('tool-command-raw')} />
                 </ToolSectionView>
             ) : null}
         </>

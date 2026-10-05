@@ -302,7 +302,7 @@ describe('durable review coordinator', () => {
         resolveCurrentPluginSourceCustody: async () => { throw new Error('host admission has no plugin custody'); },
         isMediatedSourceCurrent: async () => { throw new Error('host admission has no mediated source'); },
       }), onCommittedTransition: async () => {}, onReviewEntered: async () => {},
-      storage: { execute: async (operation, options) => {
+      storage: { observeChanges: boundary.observeChanges, execute: async (operation, options) => {
         const result = await boundary.execute(operation, options);
         // The real server initialization publishes an Account change. Model
         // that network boundary's new cursor without replacing internal auth.
@@ -348,7 +348,7 @@ describe('durable review coordinator', () => {
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'default' }),
       resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
       isAcceptedAuthorizationCurrent: async () => true, onCommittedTransition: async () => {}, onReviewEntered: async () => {},
-      storage: { execute: async (operation, options) => {
+      storage: { observeChanges: boundary.observeChanges, execute: async (operation, options) => {
         if (operation.operation === 'transition' && operation.state === 'waiting_for_review') {
           parks++;
           if (parent === 'committed') await boundary.execute(operation, options);

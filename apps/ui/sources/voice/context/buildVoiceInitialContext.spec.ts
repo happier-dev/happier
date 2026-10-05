@@ -115,24 +115,11 @@ describe('buildVoiceInitialContext', () => {
     });
   });
 
-  it('respects other-session policy when the session is not tracked', () => {
+  it('includes current attempt-target context without attempt-local tracking state', () => {
     const out = buildVoiceInitialContext('s1');
 
     expect(out).toContain('THIS IS AN ACTIVE SESSION:');
     expect(out).toContain('# Session:');
-    expect(out).not.toContain('# Session: Summary visible only for tracked sessions');
-    expect(out).not.toContain('Summary visible only for tracked sessions');
-    expect(out).not.toContain('# Session ID: s1');
-    expect(out).not.toContain('## Session Summary');
-    expect(out).not.toContain('Recent messages in session');
-    expect(out).not.toContain('Recent context');
-  });
-
-  it('includes summary and recent messages when the session is tracked', () => {
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
-
-    const out = buildVoiceInitialContext('s1');
-
     expect(out).toContain('## Session Summary');
     expect(out).toContain('Summary visible only for tracked sessions');
     expect(out).toContain('## Recent Messages');

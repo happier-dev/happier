@@ -2,7 +2,7 @@ import { createRelayUrlComparableKeySafe } from '@happier-dev/protocol/server/re
 import { resolvePublicReleaseRingIdForLabel, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { resolveHappyHomeDirFromEnvironment } from '../../agents/resolveHappyHomeDir.js';
-import { normalizeHomeDir } from '../../happierRuntime/daemonInstallConflict.js';
+import { happierHomeDirsMatch, normalizeHomeDir } from '../../happierRuntime/daemonInstallConflict.js';
 import { discoverHappierServices } from '../../happierRuntime/services/discoverHappierServices.js';
 import type { HappierService } from '../../happierRuntime/types.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
@@ -227,7 +227,7 @@ export function isVerifiedDaemonServiceOfHappierHome(service: HappierService, ha
 function isDaemonServiceOfHappierHome(service: HappierService, happierHomeDir: string | null): boolean {
   if (service.serviceType !== 'daemon') return false;
   const expected = normalizeHomeDir(happierHomeDir, service.platform);
-  return expected === null || normalizeHomeDir(service.happierHomeDir, service.platform) === expected;
+  return expected === null || happierHomeDirsMatch(service.happierHomeDir, happierHomeDir, service.platform);
 }
 
 /**
@@ -326,8 +326,7 @@ export async function convergeHappierHomeServicesOntoCli(params: Readonly<{
   const converged: string[] = [];
   const failed: Array<Readonly<{ label: string; message: string }>> = [];
   for (const service of params.services) {
-    if (!service.installed || !isVerifiedDaemonServiceOfHappierHome(service, params.happierHomeDir)) continue;
-    if (!service.ring || resolvePublicReleaseRingIdForLabel(service.ring) !== params.releaseRing) continue;
+    if (!isInstalledDaemonServiceOfHappierHomeAndRing(service, params)) continue;
     const scope: HappierServerScope | HappierServiceFollowingScope | null = service.targetMode === 'default-following'
       ? { serverId: null, targetMode: 'default-following' }
       : service.instanceId
@@ -338,6 +337,9 @@ export async function convergeHappierHomeServicesOntoCli(params: Readonly<{
       && (scope.targetMode === 'default-following' || params.exclude.serverId === scope.serverId)) continue;
     const scoped = scopeHappierJsonExecutor(params.executor, scope, params.processEnv ?? process.env);
     try {
+      if (service.verification !== 'verified' || service.enabled == null || service.running === null) {
+        throw new SystemTaskExecutionError('service_inventory_unavailable', `Could not establish preservation state for background service ${service.label}`);
+      }
       if (service.enabled === false) {
         // Turned off at login by the person: the CLI's install owner rewrites it and keeps it off
         // (it neither enables nor starts it), so nothing is stopped afterwards.
@@ -387,11 +389,9 @@ export async function disconnectHappierHomeService(params: Readonly<{
     ? resolveHappyHomeDirFromEnvironment(process.env)
     : params.happierHomeDir;
   const findOwnPinned = (services: readonly HappierService[], serverId: string) => services.find((service) =>
-    service.installed
-    && isVerifiedDaemonServiceOfHappierHome(service, happierHomeDir)
+    isInstalledDaemonServiceOfHappierHomeAndRing(service, { happierHomeDir, releaseRing: params.releaseRing })
     && (service.targetMode ?? 'pinned') === 'pinned'
-    && service.instanceId === serverId
-    && service.ring !== null && resolvePublicReleaseRingIdForLabel(service.ring) === params.releaseRing);
+    && service.instanceId === serverId);
   const readInventory = async (): Promise<readonly HappierService[]> => {
     try {
       return await readServices();
@@ -416,15 +416,22 @@ export async function disconnectHappierHomeService(params: Readonly<{
   if (serverId === null) return { outcome: 'no_service', label: null };
   const service = findOwnPinned(await readInventory(), serverId);
   if (!service) return { outcome: 'no_service', label: null };
+  if (service.verification !== 'verified') {
+    throw new SystemTaskExecutionError(
+      'service_inventory_unavailable',
+      `This computer's background service for this Home (${service.label}) could not be verified and was left unchanged.`,
+    );
+  }
   if (!isAppManagedDaemonService(service)) return { outcome: 'user_owned', label: service.label };
 
   try {
     await scopeHappierJsonExecutor(params.executor, { serverId, targetMode: 'pinned' })
       .runHappierJson(['service', 'uninstall', '--json']);
-    if (findOwnPinned(await readServices(), serverId)) {
+    const remainingService = findOwnPinned(await readServices(), serverId);
+    if (remainingService) {
       throw new SystemTaskExecutionError(
         'service_uninstall_failed',
-        `This computer's background service for this Home (${service.label}) is still installed after uninstalling it.`,
+        `This computer's background service for this Home (${remainingService.label}) is still installed after uninstalling it.`,
       );
     }
   } catch (error) {

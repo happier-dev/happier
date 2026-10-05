@@ -174,7 +174,7 @@ async function setupHarness() {
     }
     return sessionSpawnNewActionBoundarySpy(SessionSpawnNewInputV2Schema.parse(input));
   });
-  const { sync } = await import('@/sync/sync');
+  const { sync } = await import('@/sync/syncEngine');
   syncSingletonBridge.current = sync;
   await import('@/sync/ops/actions/defaultActionExecutor');
 

@@ -51,6 +51,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     access?: SessionAuthoringDraft['access'];
     primaryTeamId?: SessionAuthoringDraft['primaryTeamId'];
     teamCredentialBindings?: SessionAuthoringDraft['teamCredentialBindings'];
+    initialTriggers?: SessionAuthoringDraft['initialTriggers'];
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     promptStore: NewSessionPromptStore;
     /** Compatibility-only bundled identity for persisted legacy draft fields. */
@@ -141,6 +142,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         access: params.access,
         primaryTeamId: params.primaryTeamId,
         teamCredentialBindings: params.teamCredentialBindings,
+        initialTriggers: params.initialTriggers,
         prompt: sessionPrompt,
         displayText: sessionPrompt,
         agentTarget: params.agentTarget,
@@ -193,6 +195,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.organizationPlacement,
         params.access,
         params.primaryTeamId,
+        params.initialTriggers,
         params.selectedProfileId,
         params.sessionConfigOptionOverrides,
         promptStore,

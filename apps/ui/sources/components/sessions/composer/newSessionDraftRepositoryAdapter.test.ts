@@ -2,7 +2,7 @@ import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionAuthori
 import { afterEach, describe, expect, it } from 'vitest';
 import { seedNewSessionDraftV1 } from '@/components/sessions/new/newSessionDraftSeed';
 
-import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
+import { SessionInitialTriggerV1Schema, type ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
 import type {
     NewSessionComposerAttachmentSeedV1,
     NewSessionDraft,
@@ -69,6 +69,22 @@ function cataloguedNewSessionAuthoring(
 }
 
 describe('newSessionDraftRepositoryAdapter', () => {
+    it('persists initial triggers in the canonical authoring document and clears them without changing composer text', () => {
+        const draftId = 'birth-triggers';
+        const initialTriggers = SessionInitialTriggerV1Schema.array().parse([{
+            trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } },
+            target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
+            executionTarget: { kind: 'session' }, inputs: { maxRounds: 3 },
+            visibleTeamId: null,
+        }]);
+        writeNewSessionDraftToRepository({ scope, draftId, draft: authoringDraft({ input: 'Live prompt', initialTriggers }) });
+        expect(cataloguedNewSessionAuthoring(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }))?.initialTriggers?.value)
+            .toEqual(initialTriggers);
+        const recovered = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(recovered?.initialTriggers).toEqual(initialTriggers);
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: authoringDraft({ input: 'Stale autosave', initialTriggers: [] }) });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ input: 'Live prompt', initialTriggers: [] });
+    });
     it('keeps an explicit placement-only seed without keeping ordinary empty authoring edits', () => {
         writeNewSessionDraftToRepository({
             scope,

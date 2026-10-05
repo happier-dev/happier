@@ -3762,7 +3762,7 @@ describe('runDaemonServiceCliCommand', () => {
         return [{
           serverId: 'company',
           name: 'Company',
-          installed: true as const,
+          verification: 'verified' as const, installed: true as const,
           path: '/etc/systemd/system/happier-daemon.company.service',
           platform: 'linux' as const,
           mode: 'system' as const,
@@ -3776,7 +3776,7 @@ describe('runDaemonServiceCliCommand', () => {
       return [{
         serverId: 'cloud',
         name: 'Default background service',
-        installed: true as const,
+        verification: 'verified' as const, installed: true as const,
         path: '/tmp/happier-list-home/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux' as const,
         mode: 'user' as const,
@@ -3837,7 +3837,7 @@ describe('runDaemonServiceCliCommand', () => {
         return [{
           serverId: 'company',
           name: 'Company',
-          installed: true as const,
+          verification: 'verified' as const, installed: true as const,
           path: '/etc/systemd/system/happier-daemon.company.legacy.service',
           platform: 'linux' as const,
           mode: 'system' as const,
@@ -3851,7 +3851,7 @@ describe('runDaemonServiceCliCommand', () => {
       return [{
         serverId: 'cloud',
         name: 'Default background service',
-        installed: true as const,
+        verification: 'verified' as const, installed: true as const,
         path: '/tmp/happier-uninstall-home/.config/systemd/user/happier-daemon.default.legacy.service',
         platform: 'linux' as const,
         mode: 'user' as const,
@@ -3909,7 +3909,7 @@ describe('runDaemonServiceCliCommand', () => {
     const discoverInstalledDaemonServiceEntriesMock = vi.fn(async () => [{
       serverId: 'cloud',
       name: 'Default background service',
-      installed: true as const,
+      verification: 'verified' as const, installed: true as const,
       path: legacyUserUnitPath,
       platform: 'linux' as const,
       mode: 'user' as const,
@@ -3988,7 +3988,7 @@ describe('runDaemonServiceCliCommand', () => {
         return [{
           serverId: 'company',
           name: 'Company',
-          installed: true as const,
+          verification: 'verified' as const, installed: true as const,
           path: '/etc/systemd/system/happier-daemon.company.service',
           platform: 'linux' as const,
           mode: 'system' as const,
@@ -4002,7 +4002,7 @@ describe('runDaemonServiceCliCommand', () => {
       return [{
         serverId: 'cloud',
         name: 'Default background service',
-        installed: true as const,
+        verification: 'verified' as const, installed: true as const,
         path: '/home/sudo-user/.config/systemd/user/happier-daemon.default.service',
         platform: 'linux' as const,
         mode: 'user' as const,

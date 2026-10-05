@@ -1,7 +1,8 @@
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 
 const harness = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
     return {
         ...actual,
+        listServerProfiles: () => [{ id: 'home-b', name: 'Home B', serverUrl: 'https://home-b.example.test', createdAt: 0, updatedAt: 0, lastUsedAt: 0 }],
         areServerProfileIdentifiersEquivalent: (left: string, right: string) => (
             left === right || [left, right].sort().join(':') === 'local-home-b:srv-home-b'
         ),
@@ -57,6 +59,37 @@ afterEach(() => {
 });
 
 describe('useServerCredentialAccountScopes', () => {
+    it('keeps a destination Find seed after its Search source closes, then clears it on Home Account retirement', async () => {
+        harness.tokenByServerId.set('home-b', 'account-b');
+        const { useServerCredentialAccountScopes } = await import('./useServerCredentialAccountScopes');
+        const { AppPaneProvider, useAppPaneContext } = await import('@/components/appShell/panes/AppPaneProvider');
+        const destination = { host: 'project' as const, id: 'project-b', accountId: 'account-b', path: 'src/a.ts',
+            scope: { serverId: 'home-b', machineId: 'machine-b', rootPath: '/repo' } };
+        const seed = { query: 'needle', options: { matchCase: false, regex: false }, target: { kind: 'file' as const, path: destination.path } };
+        function Source() {
+            const sourceBindings = useServerCredentialAccountScopes(['home-b']);
+            const pane = useAppPaneContext();
+            const source = sourceBindings.get('home-b');
+            const authority = pane.fileFindSeedAccountBindings.get('home-b');
+            React.useEffect(() => {
+                if (source?.isCurrent() && authority?.isCurrent()) pane.fileFindSeedHandoff.stage(destination, seed, authority);
+            }, [source, authority, pane.fileFindSeedHandoff]);
+            return null;
+        }
+        function Probe() { return React.createElement('FindAuthorityProbe', { handoff: useAppPaneContext().fileFindSeedHandoff }); }
+        const frame = (sourceVisible: boolean) => React.createElement(AppPaneProvider, null,
+            sourceVisible ? React.createElement(Source) : null, React.createElement(Probe));
+        const screen = await renderScreen(frame(true));
+        const handoff = screen.root.findByType('FindAuthorityProbe').props.handoff as ReturnType<typeof useAppPaneContext>['fileFindSeedHandoff'];
+        await vi.waitFor(() => expect(handoff.peek(destination)).toEqual(seed));
+        await screen.update(frame(false));
+        expect(handoff.peek(destination)).toEqual(seed);
+        harness.tokenByServerId.delete('home-b');
+        await act(async () => {
+            for (const listener of harness.listeners) listener({ kind: 'credentials_removed', serverId: 'home-b', serverUrl: 'https://home-b.example.test' });
+            expect(handoff.peek(destination)).toBeNull();
+        });
+    });
     it('resolves each Home Account from that Home credential and immediately retires it on mutation', async () => {
         harness.tokenByServerId.set('home-a', 'account-a');
         harness.tokenByServerId.set('home-b', 'account-b');

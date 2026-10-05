@@ -198,7 +198,7 @@ describe('SCM worktree filesystem authority', () => {
       baseUrl: 'https://forge.example', remoteName: 'origin', urlSafety: { allowedSchemes: ['https:'] } };
     const hostingRegistry = {
       ...createEmptyScmHostingProviderRegistry(),
-      detectRemote: () => ({ kind: 'resolved' as const, provider }),
+      detectRemote: () => ({ kind: 'resolved' as const, providerId: provider.id, provider }),
       getPullRequestCheckout: () => ({ resolvePullRequestCheckoutReference: async () => ({
         pullRequest: null, branch, remoteRef: `refs/heads/${fixture.branchName}`, headSha: fixture.headCommit,
       }) }),

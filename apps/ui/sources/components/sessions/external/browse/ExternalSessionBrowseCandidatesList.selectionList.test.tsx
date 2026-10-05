@@ -208,6 +208,43 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         announceForAccessibilityMock.mockClear();
     });
 
+    it('renders decoded snippets and keeps unsearchable rows visible but inert', async () => {
+        const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
+        const screen = await renderScreen(<ExternalSessionBrowseCandidatesList
+            {...defaultProps()}
+            searchTarget="content"
+            contentSearchSupported
+            contentSearchSubmitted
+            contentCoverage="partial"
+            searchQuery="世界"
+            candidates={[
+                { ...candidate, match: { snippet: 'Hello\n"世界"', sourceItemId: 'message-1', messageIndex: 3 } },
+                { ...candidate, remoteSessionId: 'native-only', title: 'Native thread' },
+            ]}
+        />);
+        // The decoded snippet, with the query marked in the shared Find tint.
+        expect(screen.findByTestId('external-session-candidate-match:session-1')?.props.children?.props).toMatchObject({
+            text: 'Hello\n"世界"', ranges: [{ start: 7, end: 9, current: false }],
+        });
+        expect(screen.findByTestId('direct-session-candidate:native-only')?.props.accessibilityState?.disabled).toBe(true);
+        expect(screen.findByTestId('direct-session-candidates-content-partial')).not.toBeNull();
+    });
+
+    it('never declares no matches while content coverage is unsupported or unsearched', async () => {
+        const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
+        const screen = await renderScreen(<ExternalSessionBrowseCandidatesList
+            {...defaultProps()}
+            candidates={[]}
+            searchQuery="body"
+            searchTarget="content"
+            contentSearchSupported={false}
+            contentCoverage="unsupported"
+            nextCursor={null}
+        />);
+        expect(screen.findByTestId('direct-session-candidates:content-unsupported')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:no-matches')).toBeNull();
+    });
+
     it('keeps candidate options and pending-state projection within the virtualized window', async () => {
         const props = defaultProps();
         const reads: CandidatePresentationReadCounts = {

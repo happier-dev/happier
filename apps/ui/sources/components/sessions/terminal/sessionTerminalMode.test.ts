@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { appPaneReduce, createAppPaneState } from '@/components/appShell/panes/model/appPaneReducer';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
-import { readSessionTerminalMode, setSessionTerminalMode } from './sessionTerminalMode';
+import { readSessionTerminalMode, resolveSessionTerminalIdentity, setSessionTerminalMode } from './sessionTerminalMode';
 import { registerSessionTerminalWorkspaceOwner, readSessionTerminalWorkspaceForScope } from './sessionTerminalWorkspaceRuntime';
 
 describe('legacy terminal mode adapter', () => {
+    it('does not admit an unresolved instance reference as an owned shell', () => {
+        const identity = resolveSessionTerminalIdentity({ sessionId: 'closed', scopeId: createSessionPaneScopeId('closed', 'home-mode'), terminalInstanceId: 'closed-instance' });
+        expect(identity.available).toBe(false);
+        expect(identity).toMatchObject({ terminalId: null });
+        expect(resolveSessionTerminalIdentity({ sessionId: 'closed', scopeId: createSessionPaneScopeId('closed', 'home-mode'), terminalInstanceId: 'stale-reference', terminal: { id: 'live', target: { kind: 'workspace_shell' } } })).toMatchObject({ available: true, terminalId: 'live' });
+    });
     it('opens the requested target only in the supplied destination scope for duplicate Session tabs', () => {
         const firstScope = createSessionPaneScopeId('same-session', 'home-mode', 'a');
         const secondScope = createSessionPaneScopeId('same-session', 'home-mode', 'b');

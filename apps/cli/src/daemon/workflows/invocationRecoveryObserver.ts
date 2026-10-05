@@ -241,8 +241,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         return { kind: 'unresolved', code: 'session_input_cancel_unavailable' };
       }
       switch (cancelled.kind) {
-        case 'pending_retired': return { kind: 'cancelled', code: 'session_input_pending_retired',
-          ...(result.kind !== 'pending' && result.usage ? { usage: result.usage } : {}) };
+        case 'pending_retired': return { kind: 'cancelled', code: 'session_input_pending_retired' };
         // Acknowledging a stop is not exact terminal evidence.
         case 'turn_cancel_requested': return { kind: 'unresolved', code: 'session_input_turn_cancel_requested' };
         case 'turn_cancel_refused':

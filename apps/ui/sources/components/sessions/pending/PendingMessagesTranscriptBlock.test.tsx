@@ -34,7 +34,7 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
                     message: m,
                     index,
                     isDragging: false,
-                    renderDragHandle: ({ children: handleChildren }: any) => handleChildren,
+                    renderDragHandle: ({ testID, accessibilityLabel }: { testID?: string; accessibilityLabel?: string }) => React.createElement('View', { testID, accessibilityLabel }),
                 }),
             )
             : null;
@@ -569,7 +569,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.headerLabel')).toBeTruthy();
     });
 
-    it('wires reorder persistence via PendingMessagesDragReorderList', async () => {
+    it('passes the main Session queue to the shared semantic reorder binding', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -581,15 +581,12 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
         const list = screen.findByType('PendingMessagesDragReorderList');
-        await act(async () => {
-            invokeTestInstanceHandler(list, 'onReorderIds', ['p2', 'p1'], 'PendingMessagesDragReorderList');
-        });
-
-        expect(reorderPendingMessages).toHaveBeenCalledTimes(1);
-        expect(reorderPendingMessages).toHaveBeenCalledWith('s1', ['p2', 'p1']);
+        expect(list.props.sessionId).toBe('s1');
+        expect(list.props.recipient).toBeNull();
+        expect(list.props.onReorderIds).toBeUndefined();
     });
 
-    it('keeps pending delete, reorder, and send-now on the mounted exact Home', async () => {
+    it('keeps pending delete and send-now on the mounted exact Home', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValue(true);
         sendPendingMessageNow.mockResolvedValueOnce({ type: 'retry_scheduled' });
@@ -603,19 +600,9 @@ describe('PendingMessagesTranscriptBlock', () => {
             discardedMessages: [],
         }));
 
-        const list = screen.findByType('PendingMessagesDragReorderList');
-        await act(async () => {
-            invokeTestInstanceHandler(list, 'onReorderIds', ['p2', 'p1'], 'PendingMessagesDragReorderList');
-        });
         await screen.pressByTestIdAsync('pendingMessages.remove:p1');
         await screen.pressByTestIdAsync('pendingMessages.sendNow:p2');
 
-        expect(reorderPendingMessages).toHaveBeenCalledWith(
-            'same-session',
-            ['p2', 'p1'],
-            undefined,
-            { serverId: 'home-b' },
-        );
         expect(deletePendingMessage).toHaveBeenCalledWith(
             'same-session',
             'p1',
@@ -2351,26 +2338,6 @@ describe('PendingMessagesTranscriptBlock', () => {
         await hoverPendingMessageRow(screen, 'p2');
         expect(screen.findByTestId('pendingMessages.moveUp:p2')).toBeFalsy();
         expect(screen.findByTestId('pendingMessages.moveDown:p1')).toBeFalsy();
-    });
-
-    it('renders reorder affordance without nested pressable action', async () => {
-        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
-                sessionId: 's1',
-                pendingMessages: [
-                    { id: 'p1', text: 'one', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
-                    { id: 'p2', text: 'two', displayText: undefined, createdAt: 1, updatedAt: 1, localId: 'p2', rawRecord: {} },
-                ],
-                discardedMessages: [],
-            }));
-
-        await hoverPendingMessageRow(screen, 'p1');
-
-        const reorderHandle = screen.findByTestId('pendingMessages.reorder:p1');
-        expect(reorderHandle).toBeTruthy();
-        expect(reorderHandle!.type).not.toBe('Pressable');
-        expect((reorderHandle!.props as any).pointerEvents).toBeUndefined();
-        expect(flattenStyle((reorderHandle!.props as any).style).pointerEvents).toBe('none');
     });
 
     it('keeps a durable outbox enqueue on retry-or-remove actions until its exact envelope settles', async () => {

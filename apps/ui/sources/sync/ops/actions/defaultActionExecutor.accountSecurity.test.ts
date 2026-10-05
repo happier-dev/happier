@@ -7,6 +7,8 @@ import {
 } from '@happier-dev/protocol';
 
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { setCurrentAuth } from '@/auth/context/currentAuth';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import {
@@ -36,9 +38,13 @@ describe('default Account Security Action transport', () => {
     let serverId: string;
     let securityResponseOverride: Promise<Response> | null;
     let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+    let previousAuth: ReturnType<typeof getCurrentAuth>;
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
 
     beforeEach(async () => {
+        previousAuth = getCurrentAuth();
+        setCurrentAuth(null);
+        await loadSyncSingletonForTests();
         getStorage().setState(initialState, true);
         resetAccountSecurityProjectionStoreForTests();
         vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
@@ -73,6 +79,7 @@ describe('default Account Security Action transport', () => {
 
     afterEach(async () => {
         await screen?.unmount();
+        setCurrentAuth(previousAuth);
         await disposeIrohHomeTunnelRuntime();
         screen = null;
         vi.unstubAllGlobals();

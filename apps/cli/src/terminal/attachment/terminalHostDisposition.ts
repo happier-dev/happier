@@ -3,6 +3,7 @@ import type { AgentTerminalHostDisposeIntent } from '@happier-dev/plugin-sdk/age
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import { disposeSessionHookArtifactsForSession } from '@/plugins/runtime/hooks/session/service';
 import { logger } from '@/ui/logger';
+import { retireTerminalClientProcess } from '@/terminal/host/terminalClientCustody';
 
 import {
   readTerminalHostAttachmentState,
@@ -19,7 +20,7 @@ export type TerminalHostDispositionIntent =
       reason: 'planned_runner_refresh' | 'wrapper_exit' | 'controller_failure' | 'auth_switch_handoff';
       runtimePhase: 'transfer_pending' | 'blocked';
     }>
-  | Readonly<{ kind: 'destroy_owned_host'; reason: 'explicit_user_stop' | 'session_closed' }>
+  | Readonly<{ kind: 'destroy_owned_host'; reason: 'explicit_user_stop' | 'session_closed' | 'unrecoverable_control_recovery' }>
   | Readonly<{ kind: 'retire_confirmed_dead_attachment'; reason: 'positive_dead_recovery' }>
   | Readonly<{ kind: 'release_borrowed_host'; reason: 'provider_exit' | 'explicit_user_stop' | 'wrapper_exit' }>;
 
@@ -160,6 +161,9 @@ export async function executeTerminalHostDisposition(input: Readonly<{
         return { status: 'parked', reason: 'attachment_mismatch' };
       }
       try {
+        if (current.version === 3 && current.nativeClientProcess) {
+          await retireTerminalClientProcess(current.nativeClientProcess);
+        }
         await input.beforeDescriptorRetirement?.({
           happyHomeDir: input.happyHomeDir,
           sessionId: input.sessionId,

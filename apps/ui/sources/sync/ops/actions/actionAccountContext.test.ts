@@ -31,7 +31,8 @@ const boundary = vi.hoisted(() => ({
     homeCarrier: { endpointId: 'action-home-carrier' },
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
     TokenStorage: {
         getCredentialsForServerUrl: vi.fn(async () => boundary.credentials),
     },
@@ -40,18 +41,21 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
     createEncryptionFromAuthCredentials: (...args: unknown[]) => boundary.createEncryption(...args),
 }));
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
     fetchAccountEncryptionMode: (...args: unknown[]) => boundary.fetchMode(...args),
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: vi.fn(() => boundary.stagedSnapshot),
 }));
-vi.mock('@/sync/domains/state/storageStateReaderBridge', () => ({
+vi.mock('@/sync/domains/state/storageStateReaderBridge', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/storageStateReaderBridge')>(),
     readRegisteredStorageState: () => boundary.mountedProfileScope
         ? { profileScope: boundary.mountedProfileScope }
         : null,
 }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
     areServerProfileIdentifiersEquivalent: vi.fn((left: unknown, right: unknown) => left === right),
     getServerProfileById: vi.fn((serverId: string) => boundary.profiles.get(serverId)),
     resolveServerProfileScopeIdForIdentifier: vi.fn((serverId: string) => serverId),
@@ -67,7 +71,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         }),
     },
 }));
-vi.mock('@/sync/domains/state/accountSettingsPersistence', () => ({
+vi.mock('@/sync/domains/state/accountSettingsPersistence', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/accountSettingsPersistence')>(),
     loadAccountSettings: vi.fn(() => ({ settings: {}, version: null })),
 }));
 vi.mock('@/sync/engine/settings/accountSettingsBaseline', () => ({
@@ -159,6 +164,22 @@ describe('captureActionAccountContext encryption authority', () => {
 });
 
 describe('captureLazyActionAccountContext encryption on demand', () => {
+    it('returns committed self-revocation without opening the now-inaccessible Artifact', async () => {
+        const revoked = { artifactId: 'artifact', ownerAccountId: 'owner', access: null, grants: [], changed: true };
+        boundary.endpointFetch.mockImplementation(async (_path: string, init?: RequestInit) => init?.method === 'DELETE'
+            ? new Response(JSON.stringify(revoked), { status: 200 })
+            : new Response(JSON.stringify({ error: 'Artifact not found' }), { status: 404 }));
+        const context = await captureLazyActionAccountContext('home-a');
+        try {
+            await expect(context.artifactAccessGrants.remove({ artifactId: 'artifact',
+                principal: { kind: 'account', accountId: 'account-a' } })).resolves.toEqual(revoked);
+            expect(boundary.endpointFetch).toHaveBeenCalledTimes(1);
+            expect(boundary.fetchMode).not.toHaveBeenCalled();
+        } finally {
+            context.dispose();
+        }
+    });
+
     it('binds the Home and Account without reading the encryption mode or deriving keys', async () => {
         boundary.accountMode = 'e2ee';
         const context = await captureLazyActionAccountContext('home-a');

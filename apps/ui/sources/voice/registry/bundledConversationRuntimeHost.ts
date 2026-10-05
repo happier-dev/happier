@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { randomUUID } from '@/platform/randomUUID';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type {
@@ -25,7 +26,7 @@ import { createRealtimeReadOnlyClientTools } from '@/realtime/realtimeClientTool
 import { fetchHappierVoiceToken, completeHappierVoiceSession, releaseHappierVoiceSession } from '@/sync/api/voice/apiVoice';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, getActiveServerHomeCarrier } from '@/sync/domains/server/serverRuntime';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -185,6 +186,10 @@ export function createBundledHostedConversationService(input: Readonly<{
   const controller = new AbortController();
   let state: 'idle' | 'starting' | 'started' | 'terminal' = 'idle';
   let leaseId: string | null = null;
+  let providerConversationId: string | null = null;
+  let admittedCredentials: AuthCredentials | null = null;
+  let admittedRequest: ServerFetch | null = null;
+  let settlementPromise: Promise<void> | null = null;
   let upstreamAbortAttached = false;
 
   const onUpstreamAbort = (): void => {
@@ -205,6 +210,33 @@ export function createBundledHostedConversationService(input: Readonly<{
     if (!input.isCurrent()) throw hostedConversationUnavailable('hosted_conversation_generation_revoked');
   };
 
+  const complete: VoiceHostedConversationService['complete'] = async (request) => {
+    if (state === 'terminal') return;
+    if (state !== 'started' || !leaseId) {
+      throw hostedConversationUnavailable('hosted_conversation_not_started');
+    }
+    if (providerConversationId && providerConversationId !== request.providerConversationId) {
+      throw hostedConversationUnavailable('hosted_conversation_identity_mismatch');
+    }
+    providerConversationId = request.providerConversationId;
+    if (settlementPromise) return await settlementPromise;
+    const completingLeaseId = leaseId;
+    detachUpstreamAbort();
+    if (!admittedCredentials || !admittedRequest) {
+      throw hostedConversationUnavailable('hosted_conversation_authentication_required');
+    }
+    settlementPromise = completeHappierVoiceSession(admittedCredentials, {
+      leaseId: completingLeaseId,
+      providerConversationId,
+    }, { request: admittedRequest }).then(() => {
+      // Until attested settlement succeeds, the same identity remains retryable
+      // through the canonical idempotent endpoint, including after `processing`.
+      state = 'terminal';
+      leaseId = null;
+    }).finally(() => { settlementPromise = null; });
+    await settlementPromise;
+  };
+
   return Object.freeze({
     async start(request) {
       assertCurrent();
@@ -217,6 +249,8 @@ export function createBundledHostedConversationService(input: Readonly<{
       state = 'starting';
       attachUpstreamAbort();
       try {
+        const endpoint = getActiveServerSnapshot();
+        const homeCarrier = getActiveServerHomeCarrier();
         const credentials = await TokenStorage.getCredentials();
         assertCurrent();
         if (controller.signal.aborted) {
@@ -226,6 +260,13 @@ export function createBundledHostedConversationService(input: Readonly<{
           state = 'idle';
           return Object.freeze({ allowed: false as const, reason: 'authentication_required' });
         }
+        admittedCredentials = credentials;
+        admittedRequest = createServerFetchAtEndpoint({
+          endpointUrl: endpoint.serverUrl,
+          serverId: endpoint.serverId,
+          credentials,
+          ...(homeCarrier ? { homeCarrier } : {}),
+        });
         const response = await startHostedConversationWithPaywall({
           signal: controller.signal,
           start: async () => {
@@ -236,6 +277,7 @@ export function createBundledHostedConversationService(input: Readonly<{
             return await fetchHappierVoiceToken(credentials, {
               sessionId: request.sessionId,
               signal: controller.signal,
+              request: admittedRequest!,
             });
           },
           presentPaywall: async () => {
@@ -245,6 +287,10 @@ export function createBundledHostedConversationService(input: Readonly<{
             return Object.freeze({ purchased: result.purchased === true });
           },
         });
+        if (response.allowed) {
+          leaseId = response.leaseId;
+          state = 'started';
+        }
         assertCurrent();
         if (controller.signal.aborted) {
           throw hostedConversationUnavailable('hosted_conversation_attempt_aborted');
@@ -253,8 +299,6 @@ export function createBundledHostedConversationService(input: Readonly<{
           state = 'idle';
           return response;
         }
-        leaseId = response.leaseId;
-        state = 'started';
         return Object.freeze({
           allowed: true as const,
           token: response.token,
@@ -267,37 +311,23 @@ export function createBundledHostedConversationService(input: Readonly<{
         throw error;
       }
     },
-    async complete(request) {
-      assertCurrent();
-      if (state === 'terminal') return;
-      if (state !== 'started' || !leaseId) {
-        throw hostedConversationUnavailable('hosted_conversation_not_started');
-      }
-      const completingLeaseId = leaseId;
-      state = 'terminal';
-      leaseId = null;
-      detachUpstreamAbort();
-      const credentials = await TokenStorage.getCredentials();
-      assertCurrent();
-      if (!credentials) {
-        throw hostedConversationUnavailable('hosted_conversation_authentication_required');
-      }
-      await completeHappierVoiceSession(credentials, {
-        leaseId: completingLeaseId,
-        providerConversationId: request.providerConversationId,
-      });
-    },
+    complete,
     async abort() {
       if (state === 'terminal') return;
+      if (providerConversationId) return await complete({ providerConversationId });
       const releasingLeaseId = leaseId;
-      state = 'terminal';
-      leaseId = null;
       controller.abort();
       detachUpstreamAbort();
-      if (!releasingLeaseId) return;
-      const credentials = await TokenStorage.getCredentials();
-      if (!credentials) return;
-      await releaseHappierVoiceSession(credentials, { leaseId: releasingLeaseId });
+      if (!releasingLeaseId) {
+        state = 'terminal';
+        return;
+      }
+      if (settlementPromise) return await settlementPromise;
+      if (!admittedCredentials || !admittedRequest) throw hostedConversationUnavailable('hosted_conversation_authentication_required');
+      settlementPromise = releaseHappierVoiceSession(admittedCredentials, { leaseId: releasingLeaseId }, { request: admittedRequest })
+        .then(() => { state = 'terminal'; leaseId = null; })
+        .finally(() => { settlementPromise = null; });
+      await settlementPromise;
     },
   });
 }
