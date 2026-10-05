@@ -2412,13 +2412,13 @@ describe('native Agent session host adapter', () => {
             }),
         });
         if (!plan.config.createSessionRuntime) throw new Error('Expected a native Session factory');
-        const failure = await plan.config.createSessionRuntime({
+        const failure = await Promise.resolve(plan.config.createSessionRuntime({
             directory: '/tmp/acme-native-missing-cli', metadata: {}, machineId: 'machine-1',
             session: createNativeSessionClientTestPort('session-native-missing-cli'),
             transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
             getPermissionMode: () => 'default', setThinking: () => undefined,
             memoryRecallGuidanceEnabled: false,
-        } as never).then(() => undefined, (error: unknown) => error);
+        } as never)).then(() => undefined, (error: unknown) => error);
         expect(failure).toMatchObject({ code: 'agent_cli_missing', retryable: false });
         const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure });
         expect(issue).toMatchObject({ code: 'agent_cli_missing', source: 'dependency_failure' });
