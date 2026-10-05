@@ -33,14 +33,6 @@ const breakpoints = {
     xl: 1200
 };
 
-type AppThemes = typeof appThemes;
-type AppBreakpoints = typeof breakpoints;
-
-declare module 'react-native-unistyles' {
-    export interface UnistylesThemes extends AppThemes { }
-    export interface UnistylesBreakpoints extends AppBreakpoints { }
-}
-
 const getInitialTheme = (): AppThemeName => {
     return resolveThemeRuntimeVisualTheme(themePreference, normalizeColorScheme(Appearance.getColorScheme()));
 };

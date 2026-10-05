@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -59,6 +59,72 @@ function assertProjectCoverage(packageDir, sourceNames) {
 test('UI projects preserve every original root exactly once, except shared declarations', () => {
   assertProjectCoverage(uiDir, ['tsconfig.foundation.json', 'tsconfig.core.json', 'tsconfig.source.json']);
 });
+
+for (const name of ['foundation', 'core']) {
+  test(`native UI ${name} partition loads shared theme and breakpoint augmentation`, () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-ui-theme-types-'));
+    const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: uiDir });
+    const actual = ts.readConfigFile(join(uiDir, `tsconfig.${name}.json`), ts.sys.readFile).config;
+    const base = ts.readConfigFile(join(uiDir, 'tsconfig.json'), ts.sys.readFile).config;
+    const write = (file, content) => {
+      mkdirSync(dirname(join(fixtureDir, file)), { recursive: true });
+      writeFileSync(join(fixtureDir, file), content);
+    };
+    const run = () => spawnSync(invocation.command,
+      [...invocation.argsPrefix, '--project', join(fixtureDir, 'tsconfig.json'), '--pretty', 'false'],
+      { encoding: 'utf8', cwd: fixtureDir });
+    try {
+      // Keep the installed library's real augmentation seam and the partition's
+      // real include rules; only replace the app Theme's large runtime closure.
+      const paths = Object.fromEntries(Object.entries(base.compilerOptions.paths)
+        .map(([key, values]) => [key, values.map((value) => resolve(uiDir, value))]));
+      paths['@/*'] = ['./sources/*'];
+      write('tsconfig.json', JSON.stringify({
+        extends: join(uiDir, 'tsconfig.json'),
+        compilerOptions: { ...actual.compilerOptions, types: [], paths, rootDir: '.',
+          outDir: './cache', tsBuildInfoFile: './cache/types.tsbuildinfo' },
+        files: ['sources/theme.ts', 'sources/consumer.ts', 'sources/adapter.ts'], include: actual.include, exclude: [],
+      }));
+      for (const file of readdirSync(join(uiDir, 'sources/types')).filter((file) => file.endsWith('.d.ts'))) {
+        const content = readFileSync(join(uiDir, 'sources/types', file), 'utf8');
+        const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
+        if (source.statements.some((statement) => ts.isModuleDeclaration(statement)
+          && ts.isStringLiteral(statement.name) && statement.name.text === 'react-native-unistyles')) {
+          write(`sources/types/${file}`, content);
+        }
+      }
+      write('sources/theme.ts', 'export type Theme = { dark: boolean; colors: { surface: { base: string } } };\n');
+      // Compile the actual owner expression and its public adapter type without
+      // importing the app's persistence and theme-profile runtime graph.
+      const runtimePath = join(uiDir, 'sources/theme/profiles/themeProfileRuntime.ts');
+      const runtimeSource = ts.createSourceFile(runtimePath, readFileSync(runtimePath, 'utf8'), ts.ScriptTarget.Latest, true);
+      const adapterType = runtimeSource.statements.find((statement) => ts.isTypeAliasDeclaration(statement)
+        && statement.name.text === 'ThemeRuntimeUnistylesAdapter');
+      const adapter = runtimeSource.statements.filter(ts.isVariableStatement)
+        .flatMap((statement) => [...statement.declarationList.declarations])
+        .find((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'defaultUnistylesRuntimeAdapter');
+      const getTheme = adapter.initializer.properties.find((property) => property.name.getText(runtimeSource) === 'getTheme');
+      write('sources/adapter.ts', "import { UnistylesRuntime } from 'react-native-unistyles'; import type { Theme } from './theme';\n"
+        + "type AppThemeName = 'light' | 'dark';\n" + adapterType.getText(runtimeSource)
+        + "\nexport const adapter: Pick<ThemeRuntimeUnistylesAdapter, 'getTheme'> = { " + getTheme.getText(runtimeSource) + ' };\n');
+      const consumer = "import { StyleSheet, UnistylesRuntime, type UnistylesThemes, type UnistylesBreakpoints } from 'react-native-unistyles';\n"
+        + "import { adapter } from './adapter'; export const color: string = adapter.getTheme('light').colors.surface.base;\n"
+        + "export const styles = StyleSheet.create(theme => ({ root: { backgroundColor: theme.colors.surface.base } }));\n"
+        + "export const light: keyof UnistylesThemes = 'light'; export const dark: keyof UnistylesThemes = 'dark';\n"
+        + "export const lg: UnistylesBreakpoints['lg'] = 800; UnistylesRuntime.setTheme(light);\n";
+      write('sources/consumer.ts', consumer);
+      const green = run();
+      assert.equal(green.status, 0, green.stdout + green.stderr);
+      write('sources/consumer.ts', consumer + "export const unsupported: keyof UnistylesThemes = 'unknown'; adapter.getTheme('unknown');\n");
+      const invalidTheme = run();
+      assert.notEqual(invalidTheme.status, 0);
+      assert.match(invalidTheme.stdout + invalidTheme.stderr, /consumer\.ts.*TS2322/u);
+      assert.match(invalidTheme.stdout + invalidTheme.stderr, /consumer\.ts.*TS2345/u);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('CLI projects preserve every original root and compiler strictness', () => {
   assertProjectCoverage(resolve('apps/cli'), ['tsconfig.source.json']);

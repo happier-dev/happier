@@ -24,6 +24,7 @@
     "sources/types/react-native-webrtc-web-shim.d.ts",
     "sources/types/react-test-renderer-host-types.d.ts",
     "sources/types/stylesheets.d.ts",
+    "sources/types/unistyles.d.ts",
     ".expo/types/**/*.ts"
   ]
 }

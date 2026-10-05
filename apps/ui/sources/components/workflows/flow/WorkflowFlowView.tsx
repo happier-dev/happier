@@ -278,7 +278,8 @@ export function WorkflowFlowView(props: Readonly<{
                                     <HappierPressable
                                         testID={`${testIDPrefix}-node-${node.nodeId}-occurrence-${occurrence.invocationId}`}
                                         accessibilityRole="button"
-                                        accessibilityState={{ selected: occurrenceSelected }}
+                                        selected={occurrenceSelected}
+                                        current={occurrenceSelected ? 'page' : undefined}
                                         accessibilityLabel={t('workflows.a11y.flowNode', { node: node.label, state: label })}
                                         onPress={(event) => props.onSelectOccurrence?.(occurrence.invocationId, event)}
                                         style={({ pressed, focused }) => [

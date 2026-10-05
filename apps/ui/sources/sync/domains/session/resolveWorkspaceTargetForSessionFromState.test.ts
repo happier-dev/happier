@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import type { SessionAddress } from './sessionAddress';
 import { resolveWorkspaceTargetForSessionFromState } from './resolveWorkspaceTargetForSessionFromState';
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -45,6 +47,10 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
             machines: {
                 'machine-a': activeMachine('machine-a', 'a.local'),
                 'machine-b': activeMachine('machine-b', 'b.local'),
+            },
+            machineListByServerId: {
+                'home-a': [activeMachine('machine-a', 'a.local')],
+                'home-b': [activeMachine('machine-b', 'b.local')],
             },
             getProjectForSession: () => ({ key: { machineId: 'machine-a', rootPath: '/repo/a' } }),
         } as any, {
@@ -148,7 +154,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
         }));
     });
 
-    it('prefers an explicit fallback server id when canonical index scope is unavailable', () => {
+    it('rejects a fallback Home when the Session has no known origin', () => {
         const result = resolveWorkspaceTargetForSessionFromState({
             sessions: {
                 s1: {
@@ -183,6 +189,26 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
             },
             getProjectForSession: () => null,
         } as any, 's1', { fallbackServerId: 'server-scoped' });
+
+        expect(result).toBeNull();
+    });
+
+    it('resolves an explicit Home address from its scoped machine inventory', () => {
+        const address = { serverId: 'server-scoped', sessionId: 's1' } satisfies SessionAddress;
+        const machine = createMachineFixture({ id: 'm-direct' });
+        const result = resolveWorkspaceTargetForSessionFromState({
+            sessions: {
+                s1: {
+                    id: 's1',
+                    serverId: address.serverId,
+                    active: false,
+                    updatedAt: 10,
+                    metadata: { machineId: machine.id, path: '/workspace/direct-repo' },
+                },
+            },
+            machineListByServerId: { [address.serverId]: [machine] },
+            getProjectForSession: () => null,
+        }, address);
 
         expect(result).toEqual(expect.objectContaining({
             serverId: 'server-scoped',

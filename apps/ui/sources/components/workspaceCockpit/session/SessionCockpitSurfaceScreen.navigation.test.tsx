@@ -5,6 +5,7 @@ import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionMobileSurface } from './sessionCockpitState';
@@ -116,11 +117,13 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
-vi.mock('@react-navigation/native', () => ({
-    NavigationContainer: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
-    NavigationIndependentTree: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
-    useIsFocused: () => React.useContext(CockpitNavigatorFocusContext),
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        useIsFocused: () => React.useContext(CockpitNavigatorFocusContext),
+    };
+});
 
 vi.mock('@react-navigation/bottom-tabs', () => ({
     createBottomTabNavigator: () => ({
@@ -319,7 +322,6 @@ vi.mock('@/sync/store/hooks', async () => {
     },
     };
 });
-vi.mock('@/sync/sync', () => ({ sync: { prefetchForkedTranscriptContext: async () => undefined } }));
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     useUserMessageHistoryRemoteEntries: () => ({
         rows: [],
@@ -330,6 +332,8 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
         requestNextPage: () => {},
     }),
 }));
+
+beforeEach(loadSyncSingletonForTests);
 
 const SCREEN_TEST_ID = 'session-transcript-navigation-screen';
 const ENTRY_TEST_ID = 'session-transcript-navigation-entry:session-1:user-turn:3';
