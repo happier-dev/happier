@@ -510,6 +510,7 @@ export const PluginAgentUiBehaviorContributionV2Schema = lazyZodSchema(() => z.o
   components: AgentUiComponentsDeclarationV1Schema.optional(),
 }).strict());
 export type PluginAgentUiBehaviorContributionV2 = z.infer<typeof PluginAgentUiBehaviorContributionV2Schema>;
+export type { AgentUiConditionV1 } from './agentUiGrammar.js';
 export { AgentUiProjectedDeclarationV1Schema, type AgentUiProjectedDeclarationV1 } from './agentUiGrammar.js';
 
 /**

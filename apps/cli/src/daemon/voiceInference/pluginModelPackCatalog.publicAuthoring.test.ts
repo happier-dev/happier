@@ -57,7 +57,9 @@ async function projectLoadedPlugins(
     const catalog = projectDaemonPluginVoiceModelPackCatalogV1({
       plugins: loadResult.loadedPlugins.map((plugin) => {
         const sourceCustody = readSourceCustody(plugin.pluginId);
-        if (!sourceCustody) throw new Error('Expected admitted public authoring source custody');
+        if (sourceCustody?.kind !== 'development') {
+          throw new Error('Expected admitted linked public authoring development source custody');
+        }
         return {
           pluginId: plugin.pluginId,
           pluginVersion: plugin.manifest.version,

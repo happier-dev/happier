@@ -28,9 +28,6 @@ describe('foreground Connected Account admission through the applied plugin runt
   afterEach(() => vi.restoreAllMocks());
 
   it('admits a nonempty qualified binding matching the real Codex published purpose projection', async () => {
-    // Temporary root-requested phase observation; never log Account material.
-    const phase = (name: string) => process.stderr.write(`[foreground-fixture-phase] ${Date.now()} ${name}\n`);
-    phase('start');
     await withTempDir('happier-foreground-qualified-services-', async (root) => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'CODEX_HOME']);
       const home = join(root, 'home');
@@ -42,7 +39,6 @@ describe('foreground Connected Account admission through the applied plugin runt
         await mkdir(nativeHome, { recursive: true });
         env.patch({ HAPPIER_HOME_DIR: home, CODEX_HOME: nativeHome });
         reloadConfiguration();
-        phase('configuration-ready');
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
         const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
         const record = buildConnectedServiceCredentialRecord({
@@ -74,20 +70,14 @@ describe('foreground Connected Account admission through the applied plugin runt
           return { status: 200, statusText: 'OK', data, headers: {}, config: { headers: new AxiosHeaders() } };
         });
         const credentials = { token: 'account-token', encryption: null } as const;
-        phase('api-create-start');
         const api = await ApiClient.create(credentials);
-        phase('api-create-complete');
         const readAccounts = async () => {
-          phase('account-read-start');
           const result = await listQualifiedConnectedAccountsV4({ token: credentials.token, service });
-          phase('account-read-complete');
           return result;
         };
         const readCredential = async () => {
-          phase('credential-read-start');
           const credential = await api.getConnectedServiceCredentialPlain({ serviceId: 'openai-codex', profileId: 'work' });
           if (!credential || credential.revisionSemantics !== 'revisioned') throw new Error('Revisioned fixture credential unavailable');
-          phase('credential-read-complete');
           return credential;
         };
         // This in-memory boundary models the durable Account settings store;
@@ -145,7 +135,6 @@ describe('foreground Connected Account admission through the applied plugin runt
           projectTargetAccounts: async () => { throw new Error('Foreground launch does not list purpose Accounts'); },
           assertTargetAccountMaterializable: async () => { throw new Error('Foreground launch does not materialize a listed Account'); },
         });
-        phase('runtime-admission-start');
         runtime = await createAdmittedPluginRuntimeFixture({
           happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: {
@@ -153,23 +142,19 @@ describe('foreground Connected Account admission through the applied plugin runt
             networkDependencies: { resolveNetworkAddresses: async () => ['1.1.1.1'] },
           },
         });
-        phase('runtime-admission-complete');
         const wireRequest = ForegroundAgentRuntimeAdmissionRequestV1Schema.parse({
           v: 1, attemptId: 'attempt-qualified', sessionId: 'session-qualified', foregroundPid: process.pid,
           directory: root, agentId: 'codex', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
           connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } } },
         });
-        phase('request-schema-complete');
         const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: 'codex', bindings: wireRequest.connectedServices!, contributions: runtime.registry.contributes,
         });
-        phase('purpose-projection-complete');
         expect(Object.keys(wireRequest.connectedServices!.bindingsByServiceId)).toEqual([buildQualifiedPluginContributionKey(service)]);
         expect(snapshot?.bindings).toEqual([{
           purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
           target: { kind: 'account', account: { service, accountId: 'work' } },
         }]);
-        phase('prepare-owner-start');
         const admitted = await prepareForegroundAgentRuntimeAdmission({ ...wireRequest, machineId: 'machine-1' }, {
           activateSessionPurposeBindings: owner.activateSessionPurposeBindings,
           resolveConnectedServiceAuthForSpawn: async (input) => {
@@ -193,22 +178,20 @@ describe('foreground Connected Account admission through the applied plugin runt
           connectedAccountRequestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
           resolveConnectedAccountRequestAuthHttpPort: () => 43122,
         });
-        phase('prepare-owner-complete');
         expect(admitted).toMatchObject({ ok: true });
         if (!admitted.ok) throw new Error(admitted.error.code);
-        cleanupAdmission = admitted.prepared.cleanup;
+        const cleanup = admitted.prepared.cleanup;
+        if (!cleanup) throw new Error('Expected admitted foreground runtime to own bootstrap cleanup');
+        cleanupAdmission = cleanup;
         const bootstrapPath = admitted.prepared.authorization.bootstrapFilePath;
         const bootstrap = AgentRuntimeRunnerBootstrapV1Schema.parse(JSON.parse(await readFile(bootstrapPath, 'utf8')));
         const custody = runtime.registry.readPluginSourceCustody?.('happier.agent.codex');
         expect(custody).toBeTruthy();
         expect(bootstrap.descriptor.sourceCustody).toEqual(custody);
-        phase('admission-cleanup-start');
-        await cleanupAdmission();
-        phase('admission-cleanup-complete');
+        await cleanup();
         cleanupAdmission = null;
         await expect(stat(bootstrapPath)).rejects.toMatchObject({ code: 'ENOENT' });
       } finally {
-        phase('finally-start');
         try {
           try {
             await cleanupAdmission?.();
@@ -216,15 +199,12 @@ describe('foreground Connected Account admission through the applied plugin runt
             try {
               await materializationCleanup.current?.();
             } finally {
-              phase('runtime-dispose-start');
               await runtime?.dispose();
-              phase('runtime-dispose-complete');
             }
           }
         } finally {
           env.restore();
           reloadConfiguration();
-          phase('finally-complete');
         }
       }
     });
