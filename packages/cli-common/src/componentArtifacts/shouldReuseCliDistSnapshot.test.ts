@@ -21,6 +21,19 @@ async function writeTimedFile(path: string, content: string, timestamp: Date): P
 }
 
 describe('shouldReuseCliDistSnapshot', () => {
+  it('reuses QA typecheck diagnostics only in QA mode, including release-forced strict mode', async () => {
+    const rootDir = await createTempDir();
+    const entrypoint = join(rootDir, 'dist', 'index.mjs');
+    await writeTimedFile(entrypoint, 'export const runtime = 42;\n', new Date());
+    cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+      inputFingerprint: 'a'.repeat(64),
+      stalePackages: [{ packageName: '@happier-dev/cli', reason: 'typecheck', diagnosticSummary: 'src/index.ts(1,1): error TS2322: fixture', errorCount: 1, files: ['src/index.ts'] }],
+    });
+    const params = { distEntrypointPath: entrypoint, requiredInputFingerprint: 'a'.repeat(64) };
+    await expect(shouldReuseCliDistSnapshot({ ...params, env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' } })).resolves.toBe(true);
+    await expect(shouldReuseCliDistSnapshot({ ...params, env: {} })).resolves.toBe(false);
+    await expect(shouldReuseCliDistSnapshot({ ...params, env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'prepack' } })).resolves.toBe(false);
+  });
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map(async (dir) => {
       await rm(dir, { recursive: true, force: true });
