@@ -25,18 +25,12 @@ describe('client Action placement and CLI availability', () => {
     expect(agentIds.has('settings.set')).toBe(true);
   });
 
-  it('reports unsupported CLI settings discovery and execution through the same admission owner', async () => {
+  it('discovers Account settings on the CLI while retaining client placement for device-local inputs', async () => {
     const executor = createActionExecutor({});
-    for (const [actionId, input] of [
-      ['action.spec.get', { id: 'settings.set' }],
-      ['settings.list', { pageId: 'appearance' }],
-    ] as const) {
-      await expect(executor.execute(actionId, input, { surface: 'cli' })).resolves.toMatchObject({
-        ok: false, errorCode: 'action_disabled',
-        details: { actionId: actionId === 'action.spec.get' ? 'settings.set' : actionId,
-          surface: 'cli', reason: 'unsupported_surface' },
-      });
-    }
+    await expect(executor.execute('action.spec.get', { id: 'settings.set' }, { surface: 'cli' }))
+      .resolves.toMatchObject({ ok: true, result: { actionSpec: { surfaces: { cli: true } } } });
+    await expect(executor.execute('settings.list', { pageId: 'delegation' }, { surface: 'cli' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     await expect(executor.execute('settings.list', {}, { surface: 'agent' })).resolves.toMatchObject({
       ok: false, errorCode: 'unsupported_action',
     });

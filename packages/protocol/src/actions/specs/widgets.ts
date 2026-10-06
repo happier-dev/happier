@@ -1,13 +1,18 @@
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import {
   WIDGET_INSTANCE_ACTION_IDS_V1, WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1,
+  readWidgetActionSurfaceV1, readWidgetActionDestinationV1,
+  type WidgetInstanceActionIdV1,
 } from '../../widgets/actionsV1.js';
 import {
   WIDGET_DEFINITION_ACTION_IDS_V1, WidgetDefinitionActionInputSchemasV1, WidgetDefinitionActionOutputSchemasV1,
+  type WidgetDefinitionActionIdV1,
 } from '../../widgets/definitionActionsV1.js';
 import { WidgetSnapshotPostInputV1Schema, WidgetSnapshotPostOutputV1Schema } from '../../widgets/widgetSnapshotV1.js';
 
-export const WIDGET_INSTANCE_ACTION_SPECS_V1 = WIDGET_INSTANCE_ACTION_IDS_V1.map(id => {
+export const WIDGET_INSTANCE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
+  id: WidgetInstanceActionIdV1; requiredAuthority: 'account_automation';
+}>)[] = WIDGET_INSTANCE_ACTION_IDS_V1.map(id => {
   const read = id.endsWith('.list') || id.endsWith('.get') || id.endsWith('.validate');
   const refresh = id.endsWith('.refresh');
   return {
@@ -18,6 +23,10 @@ export const WIDGET_INSTANCE_ACTION_SPECS_V1 = WIDGET_INSTANCE_ACTION_IDS_V1.map
     safety: read || refresh ? 'safe' : 'danger',
     sideEffectClass: read || refresh ? 'read' : 'write',
     executionPlacement: refresh ? 'client' : 'account',
+    executionPlacementForInput: (input: unknown) => refresh
+      || readWidgetActionSurfaceV1(input)?.owner.kind === 'companion'
+      || (id === 'widgets.instance.move' && readWidgetActionDestinationV1(input)?.owner.kind === 'companion')
+      ? 'client' as const : 'account' as const,
     requiredAuthority: 'account_automation', placements: [],
     bindings: { mcpToolName: id.replaceAll('.', '_'), rpcMethod: id },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
@@ -28,7 +37,9 @@ export const WIDGET_INSTANCE_ACTION_SPECS_V1 = WIDGET_INSTANCE_ACTION_IDS_V1.map
   } as const satisfies PreNormalizedActionSpec;
 });
 
-export const WIDGET_DEFINITION_ACTION_SPECS_V1 = WIDGET_DEFINITION_ACTION_IDS_V1.map(id => {
+export const WIDGET_DEFINITION_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
+  id: WidgetDefinitionActionIdV1; requiredAuthority: 'account_automation';
+}>)[] = WIDGET_DEFINITION_ACTION_IDS_V1.map(id => {
   const read = id === 'widgets.definition.list' || id === 'widgets.definition.get';
   return {
     id, title: id,
@@ -50,7 +61,10 @@ export const WIDGET_DEFINITION_ACTION_SPECS_V1 = WIDGET_DEFINITION_ACTION_IDS_V1
   } as const satisfies PreNormalizedActionSpec;
 });
 
-export const WIDGET_SNAPSHOT_ACTION_SPECS_V1 = [{
+export const WIDGET_SNAPSHOT_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
+  id: 'widgets.snapshot.post'; requiredAuthority: 'account_automation';
+  inputSchema: typeof WidgetSnapshotPostInputV1Schema; outputSchema: typeof WidgetSnapshotPostOutputV1Schema;
+}>)[] = [{
   id: 'widgets.snapshot.post', title: 'Post a widget snapshot',
   description: 'Publish the exact previewed frozen output and as-of provenance as an inert shared Session Board item. The approved payload is never queried again.',
   safety: 'danger', sideEffectClass: 'write', executionPlacement: 'account', requiredAuthority: 'account_automation',

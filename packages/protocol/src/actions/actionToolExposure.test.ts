@@ -32,11 +32,20 @@ import {
 } from './actionSurfaceAvailability.js';
 import {
   isActionDirectToolExposedOn,
+  isActionExecutableFromStandaloneMcp,
   isActionDiscoverableOnToolSurface,
   resolveActionToolExposureMode,
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
+  it('narrows unbound MCP hosts without removing the bound Agent Session presentation tool', () => {
+    const spec = getActionSpec('session.presentation.apply');
+    expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(true);
+    expect(isActionExecutableFromStandaloneMcp(spec)).toBe(false);
+    for (const id of ['sessions.external.candidates.list', 'sessions.external.materialize.start', 'session.status.get', 'ui.find'] as const) {
+      expect(isActionExecutableFromStandaloneMcp(getActionSpec(id)), id).toBe(true);
+    }
+  });
   it('exposes relayed Find and Next as direct MCP tools while retaining the default Agent discovery budget', () => {
     for (const id of ['ui.find', 'session.pending.next'] as const) {
       const spec = getActionSpec(id);

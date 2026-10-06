@@ -231,6 +231,11 @@ describe('current UI context host ActionSpecs', () => {
     });
     expect(invokeAction.surfaces).toEqual({
       ...voiceApiPlugin,
+      ui: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: true,
       api: true,
       plugin: true,
     });

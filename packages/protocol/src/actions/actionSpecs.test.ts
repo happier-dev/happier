@@ -1284,10 +1284,10 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.permission.remote.grants.revoke').surfaces.api).toBe(true);
   });
 
-  it('publishes permission approval for opt-in token decisions while excluding trusted plugins', () => {
+  it('publishes agent permission answers and opt-in token decisions while excluding trusted plugins', () => {
     const permission = getActionSpec('session.permission.respond');
     const userAction = getActionSpec('session.user_action.answer');
-    expect(permission.requiredAuthority).toBe('present_user');
+    expect(permission.requiredAuthority).toBe('account_automation');
     expect(userAction.requiredAuthority).toBe('present_user');
     const userActionInput = userAction.surfaceBindings?.plugin?.inputSchema;
 
@@ -1296,8 +1296,8 @@ describe('Action Spec Registry', () => {
       ui: true,
       cli: true,
       rpc: true,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       voice: false,
       api: true,
       plugin: false,

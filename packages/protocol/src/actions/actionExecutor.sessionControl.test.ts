@@ -2360,7 +2360,7 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionPermissionRemoteAction).not.toHaveBeenCalled();
   });
 
-  it.each(['api', 'plugin', 'agent', 'mcp'] as const)(
+  it.each(['api', 'plugin'] as const)(
     'rejects %s automation from responding to session permissions',
     async (surface) => {
       const sessionPermissionRespond = vi.fn(async () => ({ ok: true }));
