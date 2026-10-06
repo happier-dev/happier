@@ -563,7 +563,7 @@ describe('ProviderIdentityItems', () => {
             const action = inlineActionProps(itemProps()
                 .find((item) => item.title === 'Acme Workforce' && typeof inlineActionProps(item.rightElement)?.onPress === 'function')
                 ?.rightElement);
-            if (!action) throw new Error('Acme Workforce connect action was not rendered');
+            if (!action || typeof action.onPress !== 'function') throw new Error('Acme Workforce connect action was not rendered');
             return action.onPress();
         };
 
@@ -612,10 +612,11 @@ describe('ProviderIdentityItems', () => {
         const connectItem = itemProps().find((p) => p.title === 'GitHub' && typeof inlineActionProps(p.rightElement)?.onPress === 'function');
         if (!connectItem) throw new Error('GitHub connect action was not rendered');
         const connectAction = inlineActionProps(connectItem.rightElement);
-        if (!connectAction) throw new Error('GitHub connect action has no press handler');
+        if (!connectAction || typeof connectAction.onPress !== 'function') throw new Error('GitHub connect action has no press handler');
+        const onPress = connectAction.onPress;
 
         await act(async () => {
-            await connectAction.onPress();
+            await onPress();
         });
 
         expect(shared.pendingConnectAtRequest).toMatchObject({ provider: 'github', returnTo: '/settings/account' });

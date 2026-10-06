@@ -249,7 +249,9 @@ describe('editor workflow composer', () => {
             if (block.kind !== 'step') throw new Error('Expected the workflow authoring step');
             return block;
         };
-        expect(readStep().execution?.engine?.agentTarget).toBeDefined();
+        const engine = readStep().execution?.engine;
+        if (!engine || !('agentTarget' in engine)) throw new Error('Expected the workflow Agent engine');
+        expect(engine.agentTarget).toBeDefined();
         expect(readStep().execution?.agentTarget).toBeUndefined();
         expect(readStep().execution?.modelSelection).toBeUndefined();
         await act(async () => body.props.onChange({ ...body.props.draft, blocks: [{ ...readStep(),
