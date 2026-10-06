@@ -74,7 +74,7 @@ describe('Claude plugin manifest', () => {
           fields: [{
             id: 'token',
             title: 'Anthropic API key',
-            schema: { type: 'string', minLength: 1 },
+            schema: { type: 'string', minLength: 1, pattern: '^\\s*sk-ant-[A-Za-z0-9_-]+\\s*$' },
             secret: true,
           }],
         }],

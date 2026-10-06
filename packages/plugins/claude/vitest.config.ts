@@ -2,11 +2,15 @@ import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { resolve } from 'node:path';
 
 import { defineConfig } from 'vitest/config';
+import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vitestWorkspacePackageResolution';
 
 const uiSources = resolve(__dirname, '../../../apps/ui/sources');
 const uiDev = (path: string): string => resolve(uiSources, 'dev', path);
 
 export default defineConfig({
+  plugins: [createWorkspacePackageSourcesPlugin([
+    { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(__dirname, '../../protocol/src') },
+  ])],
   define: {
     __DEV__: false,
   },
