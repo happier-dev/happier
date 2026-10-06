@@ -11,8 +11,7 @@ import {
   resolveTrustedStackRuntimeServerPort,
 } from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
-import { readPinnedServerPortFromEnvFile } from '../server/port.mjs';
-import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
+import { getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from '../server/urls.mjs';
 import { readLastLines } from '../fs/tail.mjs';
 import { run } from '../proc/proc.mjs';
 
@@ -363,24 +362,8 @@ export async function runGuidedLogin({ rootDir, stackName, env, webappUrl, forwa
 
 export async function resolveServerPortForPostAuthDaemonStart({ stackName, env = process.env } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
-  const runtimeStatePath = getStackRuntimeStatePath(name);
-  const st = await readStackRuntimeStateFile(runtimeStatePath);
-  const runtimePort = await resolveTrustedStackRuntimeServerPort(st, { stackName: name });
-  if (runtimePort !== null) {
-    return runtimePort;
-  }
-
-  const envPort = Number((env?.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim());
-  if (Number.isFinite(envPort) && envPort > 0) {
-    return envPort;
-  }
-
-  const { envPath } = resolveStackEnvPath(name, env);
-  const envFilePort = await readPinnedServerPortFromEnvFile(envPath);
-  if (envFilePort) {
-    return envFilePort;
-  }
-
+  const { port } = await resolveStackServerEndpoint({ stackName: name, env, defaultPort: null });
+  if (port) return port;
   throw new Error('[auth] post-auth daemon start failed: could not resolve server port from stack.runtime.json or stack env');
 }
 

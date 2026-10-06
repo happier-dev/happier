@@ -17,7 +17,6 @@ import {
 import {
   getStackRuntimeStatePath,
   readStackRuntimeStateFile,
-  resolveTrustedStackRuntimeServerPort,
 } from '../utils/stack/runtime_state.mjs';
 import { readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
 import { checkDaemonState } from '../daemon.mjs';
@@ -27,6 +26,7 @@ import { writeJsonAtomic } from '../utils/fs/json.mjs';
 import { hasRetainedServerData } from '../utils/dev_targets/retained_server_data.mjs';
 import { getServerLightDataDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { assertCanonicalManagedStackName } from '../utils/stack/names.mjs';
+import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -141,18 +141,13 @@ export async function withStackEnv({
   }
   const refreshedRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
-  const runtimePortCandidate =
-    Number(env.HAPPIER_STACK_SERVER_PORT) > 0
-      ? Number(env.HAPPIER_STACK_SERVER_PORT)
-      : Number(refreshedRuntimeState?.ports?.server) > 0
-        ? Number(refreshedRuntimeState?.ports?.server)
-        : null;
+  const runtimeEndpoint = await resolveStackServerEndpoint({ env, stackName,
+    runtimeState: refreshedRuntimeState, defaultPort: null });
   const runtimeState = reconcileDaemonRuntimeState
     ? await readStackRuntimeStateWithDaemonSync({
         runtimeStatePath,
         cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
-        internalServerUrl:
-          Number.isFinite(runtimePortCandidate) && runtimePortCandidate > 0 ? `http://127.0.0.1:${runtimePortCandidate}` : '',
+        internalServerUrl: runtimeEndpoint.internalServerUrl ?? '',
         env,
       }, {
         checkDaemonStateImpl: checkDaemonState,
@@ -161,12 +156,9 @@ export async function withStackEnv({
 
   // Runtime-only port overlay (ephemeral stacks): prefer stack.runtime.json ports when the stack
   // is still running, even if the original "owner" process is gone (common during dev restarts).
-  const runtimeProcessTrustContext = {
-    stackName,
-    envPath,
-    cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
-  };
-  const trustedRuntimeServerPort = await resolveTrustedStackRuntimeServerPort(runtimeState, runtimeProcessTrustContext);
+  const { runtimePort: trustedRuntimeServerPort } = await resolveStackServerEndpoint({
+    env, stackName, runtimeState, defaultPort: null,
+  });
 
   if (trustedRuntimeServerPort !== null) {
     const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
@@ -246,14 +238,7 @@ export async function configureSharedDatabasePreset({ stackName, sourceStackName
 }
 
 export async function getRuntimePortExtraEnv(stackName) {
-  const runtimeStatePath = getStackRuntimeStatePath(stackName);
-  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
-  const runtimeProcessTrustContext = {
-    stackName,
-    envPath: resolveStackEnvPath(stackName).envPath,
-    cliHomeDir: join(resolveStackEnvPath(stackName).baseDir, 'cli'),
-  };
-  const runtimePort = await resolveTrustedStackRuntimeServerPort(runtimeState, runtimeProcessTrustContext);
+  const { runtimePort } = await resolveStackServerEndpoint({ stackName });
 
   return runtimePort !== null
     ? {

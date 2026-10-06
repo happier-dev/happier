@@ -12,10 +12,9 @@ import {
   getStackRuntimeStatePath,
   isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
-  resolveTrustedStackRuntimeServerPort,
 } from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
-import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
+import { getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from '../server/urls.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../../runtime/shared/borrowed_expo.mjs';
 import {
@@ -473,24 +472,7 @@ function resolvePortFromUrl(urlRaw) {
 }
 
 export async function resolveServerPortForCoreAuth({ stackName, env = process.env }) {
-  const direct = Number((env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim());
-  if (Number.isFinite(direct) && direct > 0) return direct;
-
-  const fromInternal = resolvePortFromUrl(env.HAPPIER_SERVER_URL);
-  if (fromInternal) return fromInternal;
-
-  const fromPublic = resolvePortFromUrl(env.HAPPIER_PUBLIC_SERVER_URL);
-  if (fromPublic) return fromPublic;
-
-  try {
-    const runtimeStatePath = getStackRuntimeStatePath(stackName);
-    const st = await readStackRuntimeStateFile(runtimeStatePath);
-    return await resolveTrustedStackRuntimeServerPort(st, { stackName });
-  } catch {
-    // ignore
-  }
-
-  return null;
+  return (await resolveStackServerEndpoint({ stackName, env, defaultPort: null })).port;
 }
 
 async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = {}) {
