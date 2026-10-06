@@ -244,7 +244,8 @@ class Fixture {
       : `$env:TEMP = ${quote(runnerTemp)}`,
     '$env:TMP = $env:TEMP',
     raw.match(/^\$InstallerTempDir\s*=.*$/m)[0],
-    `if ($InstallerTempDir.TrimEnd('\\') -ne ${quote(runnerTemp)}.TrimEnd('\\')) { throw 'Installer did not resolve the long temporary directory' }`,
+    `$expectedRunnerTemp = (Get-Item -LiteralPath ${quote(runnerTemp)}).FullName`,
+    `if ($InstallerTempDir.TrimEnd('\\') -ne $expectedRunnerTemp.TrimEnd('\\')) { throw ('Installer did not resolve the long temporary directory: expected ' + $expectedRunnerTemp + ', got ' + $InstallerTempDir) }`,
     // FileSystem-provider enumeration is the OS boundary that fails on the
     // reporter's Insider build. Keep all other filesystem/process logic real.
     `function Remove-Item {
