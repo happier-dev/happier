@@ -231,14 +231,15 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                 ]}
               >
                 {props.meta.map((fact, index) => (
+                  // The separator closes the fact before it, so a wrapped line never starts with "·".
                   <View key={fact.key} testID={fact.testID} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    {index > 0 ? (
+                    {fact.icon ?? null}
+                    {renderText({ role: 'meta', text: fact.text, header: false })}
+                    {index < (props.meta?.length ?? 0) - 1 ? (
                       <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
                         {renderText({ role: 'meta', text: '·', header: false })}
                       </View>
                     ) : null}
-                    {fact.icon ?? null}
-                    {renderText({ role: 'meta', text: fact.text, header: false })}
                   </View>
                 ))}
               </View>
