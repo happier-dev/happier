@@ -59,7 +59,9 @@ describe('AgentInput (path popover)', () => {
         expect(onRoute).not.toHaveBeenCalled();
         const open = screen.root.findAllByType(Popover).find(node => node.props.open);
         expect(open).toBeDefined();
-        expect(open?.props.anchorRef.current).not.toBeNull();
+        const anchorRef = open?.props.anchorRef;
+        if (!anchorRef) throw new Error('Expected the open chip popover to have an anchor ref');
+        expect(anchorRef.current).not.toBeNull();
         expect(open?.props.boundaryRef).toBeNull();
         expect(open?.props.maxHeightCap).toBe(maxHeightCap);
         expect(open?.props.maxWidthCap).toBe(maxWidthCap);

@@ -1,7 +1,7 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { findAllByType, findFirstByType, renderScreen } from '@/dev/testkit';
+import { findAllByType, findFirstByType, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -296,7 +296,9 @@ describe('CodeLinesView', () => {
 
         const rows = await findCodeRows(tree);
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.props.syntaxHighlighting.mode).toBe('advanced');
+        const syntaxHighlighting = rows[0]!.props.syntaxHighlighting;
+        if (!syntaxHighlighting) throw new Error('Expected advanced syntax highlighting on the rendered row');
+        expect(syntaxHighlighting.mode).toBe('advanced');
     });
 
     it('extends a range with Shift-click in an explicit interaction mode', async () => {
@@ -349,8 +351,11 @@ describe('CodeLinesView', () => {
         />);
 
         const rows = await findCodeRows(screen.tree);
-        rows[0]!.props.onPressLine(lines[0]);
-        rows[2]!.props.onPressLine(lines[2], { nativeEvent: { shiftKey: true } });
+        const { Pressable } = await import('react-native');
+        await pressTestInstanceAsync(rows[0]!.findByType(Pressable), 'range anchor row');
+        await renderer.act(async () => {
+            invokeTestInstanceHandler(rows[2]!.findByType(Pressable), 'onPress', { nativeEvent: { shiftKey: true } }, 'Shift-click range row');
+        });
 
         expect(onPressLine).toHaveBeenCalledTimes(1);
         expect(onPressLineRange).toHaveBeenCalledTimes(1);
@@ -440,8 +445,11 @@ describe('CodeLinesView', () => {
         />);
 
         const rows = await findCodeRows(screen.tree);
-        rows[0]!.props.onPressLine(lines[0]);
-        rows[1]!.props.onPressLine(lines[1]);
+        const onPressFirstLine = rows[0]!.props.onPressLine;
+        const onPressSecondLine = rows[1]!.props.onPressLine;
+        if (!onPressFirstLine || !onPressSecondLine) throw new Error('Expected range-selection row press callbacks');
+        onPressFirstLine(lines[0]);
+        onPressSecondLine(lines[1]);
 
         expect(onPressLine).not.toHaveBeenCalled();
         expect(onPressLineRange).toHaveBeenCalledTimes(1);

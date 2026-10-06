@@ -52,7 +52,7 @@ describe('PathPickerScreen (Stack.Screen options stability)', () => {
         const Screen = (await import('@/app/(app)/new/pick/path')).default;
         const { NewSessionPathSelectionContent } = await import('@/components/sessions/new/components/NewSessionPathSelectionContent');
         const screen = await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(Screen)));
-        const content: React.ComponentProps<typeof NewSessionPathSelectionContent> = screen.findByType(NewSessionPathSelectionContent).props;
+        const content: React.ComponentProps<typeof NewSessionPathSelectionContent> = screen.findByType<typeof NewSessionPathSelectionContent>(NewSessionPathSelectionContent).props;
         await act(async () => { content.onChangeSelectedPath('/tmp/typing'); });
         expect(screen.findByType(NewSessionPathSelectionContent).props.selectedPath).toBe('/tmp/typing');
 

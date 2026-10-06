@@ -65,7 +65,7 @@ type SurfaceMountProps = React.ComponentProps<typeof import('@/components/plugin
 
 function latestMountFor(descriptorId: string): SurfaceMountProps | null {
     // The component query preserves the mounted surface's real public props.
-    return mountedScreen?.tree.findAllByType(ActualSurfaceHost)
+    return mountedScreen?.tree.findAllByType<typeof ActualSurfaceHost>(ActualSurfaceHost)
         .find(node => node.props.placement?.descriptorId === descriptorId)?.props ?? null;
 }
 

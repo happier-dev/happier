@@ -10,7 +10,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 
 export const RUN_STORAGE_PATH = '/v3/automations/runs/workflow-storage';
@@ -33,7 +33,7 @@ export function installBoardLibraryTestHarness() {
         });
     });
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
-    let executorLoader: Awaited<ReturnType<typeof loadVitestModuleForNodeRequire>> | undefined;
+    let executorLoader: Awaited<ReturnType<typeof installRealActionExecutorModuleLoader>> | undefined;
     const restore = async (serverUrl: string, accountId: string) => {
         connection = await restoreServerAccountForTest({ serverUrl, accountId,
             request: async (url, init) => {
@@ -50,10 +50,7 @@ export function installBoardLibraryTestHarness() {
             installHomeGovernanceBoundaries(home);
             await loadSyncSingletonForTests();
             // Metro's lazy require is a loader boundary. Supply the real evaluated module.
-            executorLoader = await loadVitestModuleForNodeRequire(
-                new URL('../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
-                () => import('@/sync/ops/actions/defaultActionExecutor'),
-            );
+            executorLoader = await installRealActionExecutorModuleLoader();
             const serverId = await home.addHome({ name: 'Board Home', serverUrl, accountId });
             home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
             home.answer(serverId, AUTOMATION_LIST_PATH, { body: { automations: [], nextCursor: null } });
@@ -69,7 +66,7 @@ export function installBoardLibraryTestHarness() {
         async dispose() {
             await connection?.dispose();
             connection = undefined;
-            executorLoader?.dispose();
+            executorLoader?.();
             executorLoader = undefined;
         },
     };

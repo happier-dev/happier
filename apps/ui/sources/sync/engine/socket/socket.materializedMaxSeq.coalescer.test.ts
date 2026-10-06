@@ -607,7 +607,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             artifactDataKeys: new Map(),
             applySessions: storage.getState().applySessions,
             fetchSessions: () => { void sync.refreshSessions(); },
-            applyMessages,
+            applyMessages: storage.getState().applyMessages,
             onSessionVisible: vi.fn(),
             isSessionMessagesLoaded: vi.fn(() => true),
             getSessionMaterializedMaxSeq: () => 1,

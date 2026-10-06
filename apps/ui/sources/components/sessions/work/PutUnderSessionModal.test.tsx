@@ -25,6 +25,16 @@ vi.mock('@/modal', async () => {
 import { PutUnderSessionModal } from './PutUnderSessionModal';
 import { PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
 
+async function captureDisplayedChoice(screen: Awaited<ReturnType<typeof renderScreen>>, id: string) {
+    return vi.waitFor(() => {
+        const props = screen.root.findByType<typeof SelectionList>(SelectionList).props;
+        const option = props.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+            .find(candidate => candidate.id === id);
+        if (!option) throw new Error(`Expected displayed choice ${id}`);
+        return { onSelect: props.onSelect, option };
+    });
+}
+
 describe('PutUnderSessionModal captured scope', () => {
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
     let previous: ReturnType<ReturnType<typeof getStorage>['getState']>;
@@ -71,9 +81,10 @@ describe('PutUnderSessionModal captured scope', () => {
     it('refuses a captured top-level choice after the source Session leaves the current store', async () => {
         const onClose = vi.fn();
         const screen = await renderScreen(<PutUnderSessionModal sessionId="self" serverId={account.home.id} onClose={onClose} />);
+        const choice = await captureDisplayedChoice(screen, PUT_UNDER_TOP_LEVEL_OPTION_ID);
         await act(async () => {
             getStorage().setState({ sessions: {} });
-            screen.root.findByType(SelectionList).props.onSelect(PUT_UNDER_TOP_LEVEL_OPTION_ID);
+            choice.onSelect(choice.option.id, choice.option);
         });
         expect(onClose).toHaveBeenCalled();
         expect(relationWrites).toEqual([]);
@@ -83,16 +94,17 @@ describe('PutUnderSessionModal captured scope', () => {
         const onClose = vi.fn();
         const screen = await renderScreen(<PutUnderSessionModal sessionId="self" serverId={account.home.id} onClose={onClose} />);
         await vi.waitFor(() => {
-            const sections = screen.root.findByType(SelectionList).props.rootStep.sections;
-            expect(sections.some((section: { options?: readonly { id: string; disabled?: boolean }[] }) =>
-                section.options?.some(option => option.id === 'lead' && !option.disabled))).toBe(true);
+            const sections = screen.root.findByType<typeof SelectionList>(SelectionList).props.rootStep.sections;
+            expect(sections.some(section => section.kind === 'static'
+                && section.options.some(option => option.id === 'lead' && !option.disabled))).toBe(true);
         });
+        const choice = await captureDisplayedChoice(screen, 'lead');
         await act(async () => {
             const sessions = getStorage().getState().sessions;
             const lead = sessions.lead!;
             getStorage().setState({ sessions: { ...sessions, lead: { ...lead,
                 access: { ...lead.access!, capabilities: { ...lead.access!.capabilities, submitAgentInput: false } } } } });
-            screen.root.findByType(SelectionList).props.onSelect('lead');
+            choice.onSelect(choice.option.id, choice.option);
         });
         expect(onClose).not.toHaveBeenCalled();
         expect(screen.findByTestId('session-put-under-error')).not.toBeNull();

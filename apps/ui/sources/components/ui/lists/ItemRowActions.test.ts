@@ -290,7 +290,9 @@ describe('ItemRowActions', () => {
         expect(popover.props.portal).toEqual(expect.objectContaining({
             anchorAlign: 'center',
         }));
-        expect(popover.props.backdrop?.anchorOverlay).toMatchObject({
+        const backdrop = popover.props.backdrop;
+        if (!backdrop || typeof backdrop !== 'object') throw new Error('Expected an overlay backdrop');
+        expect(backdrop.anchorOverlay).toMatchObject({
             props: expect.objectContaining({
                 testID: 'custom-anchor-overlay',
             }),

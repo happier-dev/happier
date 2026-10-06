@@ -72,6 +72,15 @@ function itemProps() {
     return mountedScreen?.root.findAllByType(Item).map((item) => item.props) ?? [];
 }
 
+function inlineActionProps(node: React.ReactNode) {
+    if (!React.isValidElement(node)) return undefined;
+    const props = node.props;
+    if (typeof props !== 'object' || props === null || !('onPress' in props) || typeof props.onPress !== 'function') {
+        return undefined;
+    }
+    return props;
+}
+
 describe('ProviderIdentityItems', () => {
     const initialStorageState = storage.getState();
 
@@ -171,7 +180,7 @@ describe('ProviderIdentityItems', () => {
         // The catalog answer settles after the first render, so the row as the
         // user finally sees it is the last one rendered.
         const latestLinkedRow = () => itemProps().find((item) => item.detail === '@alice');
-        await vi.waitFor(() => expect(typeof latestLinkedRow()?.rightElement?.props.onPress).toBe('function'));
+        await vi.waitFor(() => expect(typeof inlineActionProps(latestLinkedRow()?.rightElement)?.onPress).toBe('function'));
         expect(itemProps().some((item) => String(item.title).includes('showProviderOnProfile'))).toBe(true);
     });
 
@@ -386,7 +395,7 @@ describe('ProviderIdentityItems', () => {
             const row = itemProps().find((p) => p.title === 'Corporate SSO');
             expect(row).toMatchObject({ showChevron: false });
             // Connecting is the row's inline action, not a press on the row.
-            expect(row?.rightElement?.props).toMatchObject({ disabled: false });
+            expect(inlineActionProps(row?.rightElement)).toMatchObject({ disabled: false });
         });
     });
 
@@ -424,7 +433,7 @@ describe('ProviderIdentityItems', () => {
             const row = itemProps().find((p) => p.title === 'Acme Workforce');
             expect(row).toMatchObject({ showChevron: false });
             // Connecting is the row's inline action, not a press on the row.
-            expect(row?.rightElement?.props).toMatchObject({ disabled: false });
+            expect(inlineActionProps(row?.rightElement)).toMatchObject({ disabled: false });
         });
     });
 
@@ -472,7 +481,7 @@ describe('ProviderIdentityItems', () => {
             const row = itemProps().find((p) => p.title === 'Acme Workforce');
             expect(row).toMatchObject({ showChevron: false });
             // Connecting is the row's inline action, not a press on the row.
-            expect(row?.rightElement?.props).toMatchObject({ disabled: false });
+            expect(inlineActionProps(row?.rightElement)).toMatchObject({ disabled: false });
         });
         expect(itemProps().some((p) => p.title === 'Conflicting later presentation')).toBe(false);
     });
@@ -547,12 +556,16 @@ describe('ProviderIdentityItems', () => {
         );
 
         await vi.waitFor(() => {
-            expect(itemProps().find((item) => item.title === 'Acme Workforce')?.rightElement?.props.onPress)
+            expect(inlineActionProps(itemProps().find((item) => item.title === 'Acme Workforce')?.rightElement)?.onPress)
                 .toEqual(expect.any(Function));
         });
-        const connect = () => itemProps()
-            .find((item) => item.title === 'Acme Workforce' && typeof item.rightElement?.props.onPress === 'function')
-            ?.rightElement.props.onPress();
+        const connect = () => {
+            const action = inlineActionProps(itemProps()
+                .find((item) => item.title === 'Acme Workforce' && typeof inlineActionProps(item.rightElement)?.onPress === 'function')
+                ?.rightElement);
+            if (!action) throw new Error('Acme Workforce connect action was not rendered');
+            return action.onPress();
+        };
 
         shared.connectFailure = true;
         // Drive the genuine clock boundary while the real HTTP/OAuth owners
@@ -594,13 +607,15 @@ describe('ProviderIdentityItems', () => {
         );
 
         await vi.waitFor(() => {
-            expect(itemProps().find((p) => p.title === 'GitHub' && typeof p.rightElement?.props.onPress === 'function')).toBeTruthy();
+            expect(itemProps().find((p) => p.title === 'GitHub' && typeof inlineActionProps(p.rightElement)?.onPress === 'function')).toBeTruthy();
         });
-        const connectItem = itemProps().find((p) => p.title === 'GitHub' && typeof p.rightElement?.props.onPress === 'function');
+        const connectItem = itemProps().find((p) => p.title === 'GitHub' && typeof inlineActionProps(p.rightElement)?.onPress === 'function');
         if (!connectItem) throw new Error('GitHub connect action was not rendered');
+        const connectAction = inlineActionProps(connectItem.rightElement);
+        if (!connectAction) throw new Error('GitHub connect action has no press handler');
 
         await act(async () => {
-            await connectItem.rightElement.props.onPress();
+            await connectAction.onPress();
         });
 
         expect(shared.pendingConnectAtRequest).toMatchObject({ provider: 'github', returnTo: '/settings/account' });

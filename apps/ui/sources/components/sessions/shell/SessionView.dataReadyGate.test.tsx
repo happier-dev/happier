@@ -1628,6 +1628,7 @@ describe('SessionView (data ready gating)', () => {
 
     it('does not expose a gesture handle that can unintentionally open cockpit mode from the composer', async () => {
         deviceTypeState.value = 'phone';
+        canonicalStorage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'classic' });
         const { SessionView } = await sessionViewModulePromise;
 
         const screen = await renderScreen(
@@ -1639,7 +1640,7 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.findAllByTestId('session-cockpit-open-swipe-handle')).toHaveLength(0);
         const gesture = gestureHandlerState.gestures.find((candidate) => candidate.kind === 'pan');
         expect(gesture).toBeUndefined();
-        expect(canonicalStorage.getState().localSettings.mobileWorkspaceExperienceV1).toBe('classic');
+        expect(canonicalStorage.getState().settings.mobileWorkspaceExperienceV1).toBe('classic');
     });
 
     it('surfaces auth sync errors as a restore-account action instead of generic retry', async () => {

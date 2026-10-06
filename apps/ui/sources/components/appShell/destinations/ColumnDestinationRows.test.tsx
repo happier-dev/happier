@@ -1,8 +1,8 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { act } from 'react-test-renderer';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -116,13 +116,16 @@ async function render(element: React.ReactElement) {
 const rowIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
     .findAllByType(Item).map(node => String(node.props.testID));
 function rowFor(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
-    return screen.root.findAllByType(Item).find(node => node.props.testID === testID);
+    return screen.root.findAllByType<typeof Item>(Item).find(node => node.props.testID === testID);
 }
-async function renderActionRowStyle(): Promise<Record<string, number>> {
+async function renderActionRowStyle() {
     const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
     const screen = await render(<ColumnDestinationRows column="sessions" />);
-    // Renderer props are untyped; this reads the real Item's public row-size input.
-    return rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes')?.props.style;
+    const row = rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes');
+    if (!row) throw new Error('Expected the notes destination row');
+    const style = StyleSheet.flatten(row.props.style);
+    if (!style) throw new Error('Expected the notes destination row-size style');
+    return style;
 }
 
 describe('ColumnDestinationRows', () => {
@@ -183,14 +186,12 @@ describe('ColumnDestinationRows', () => {
         const scope = { accountId: 'account-b', serverId: 'home-b', sessionId: null, machineId: null, rootPath: null } as const;
         const screen = await render(<ColumnDestinationRows universalSearchScope={scope} />);
 
-        await act(async () => { rowFor(screen, 'sessions-search-all-button')?.props.onPress(); });
+        await pressTestInstanceAsync(rowFor(screen, 'sessions-search-all-button'));
         expect(openUniversalSearch).toHaveBeenCalledWith(undefined, scope);
         expect(routeState.push).not.toHaveBeenCalled();
 
-        await act(async () => {
-            rowFor(screen, 'compact-app-destination:plugins')?.props.onPress();
-            rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes')?.props.onPress();
-        });
+        await pressTestInstanceAsync(rowFor(screen, 'compact-app-destination:plugins'));
+        await pressTestInstanceAsync(rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes'));
         expect(routeState.push.mock.calls.map(([href]) => href)).toEqual(['/plugins', '/plugins/acme.notes/notes']);
     });
 

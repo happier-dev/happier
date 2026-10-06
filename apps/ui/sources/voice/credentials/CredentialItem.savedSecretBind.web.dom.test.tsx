@@ -300,9 +300,11 @@ async function renderRow(options: Readonly<{
     const { sync } = await import('@/sync/sync');
     const { storage } = await import('@/sync/domains/state/storage');
     const { requireOneShotAccountSettingsMutationApplied } = await import('@/sync/engine/settings/syncSettings');
+    const expectedSettingsVersion = storage.getState().settingsVersion;
+    if (expectedSettingsVersion === null) throw new Error('Expected loaded Account settings version');
     requireOneShotAccountSettingsMutationApplied(await sync.mutateAccountSettingsOnce({
         expectedSettingsScope: account.scope,
-        expectedSettingsVersion: storage.getState().settingsVersion,
+        expectedSettingsVersion,
         mutate: (raw) => ({
             settings: { ...raw, ...(options.initialRawSettings ?? { secrets: SECRETS }) },
             value: undefined,

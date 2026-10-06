@@ -6,7 +6,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
-import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { SessionCompanionAddBinding } from './picker/SessionCompanionAddControl';
 import type { SessionCompanionInstanceControls } from './SessionCompanionItemFrame';
 
@@ -36,9 +36,7 @@ describe('Companion widget write acknowledgement', () => {
     it.each(['setup', 'inputs', 'rename'] as const)('keeps %s unsaved when the actual local preference owner loses its realm', async operation => {
         restoreGlobals = withPopoverWebGlobals();
         const boundary = createHomeHubArtifactHttpBoundary('account-a');
-        await import('@/sync/syncEngine');
-        const syncLoader = await loadVitestModuleForNodeRequire(new URL('../../../sync/sync.ts', import.meta.url), () => import('@/sync/sync'));
-        restoreSyncLoader = syncLoader.dispose;
+        restoreSyncLoader = (await loadSyncSingletonForTests()).dispose;
         connection = await restoreServerAccountForTest({ serverUrl: 'https://companion-write.test', accountId: 'account-a', request: boundary.request });
         const serverId = connection.home.id;
         storage.setState({ isDataReady: true, profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });

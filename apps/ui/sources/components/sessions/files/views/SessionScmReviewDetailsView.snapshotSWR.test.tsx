@@ -196,8 +196,10 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
         const first = screen.tree.root.findByType(ChangedFilesReview).props;
         expect(first.initialScrollTop).toBe(120);
+        const onScrollTopChange = first.onScrollTopChange;
+        if (!onScrollTopChange) throw new Error('Expected the mounted review scroll persistence callback');
         vi.useFakeTimers();
-        act(() => { first.onScrollTopChange(360); vi.advanceTimersByTime(250); });
+        act(() => { onScrollTopChange(360); vi.advanceTimersByTime(250); });
         expect(scrollTop()).toBe(360);
         await screen.update(fixture.wrap(element(1)));
         expect(screen.tree.root.findByType(ChangedFilesReview).props.initialScrollTop).toBe(120);

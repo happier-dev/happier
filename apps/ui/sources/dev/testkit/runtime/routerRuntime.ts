@@ -188,15 +188,17 @@ export function createExpoRouterRuntime(
         return state.params;
     };
     syncParams();
-    const setParamsMock = (value: ExpoRouterParams) => {
+    const createTrackedMethod = adapters.createTrackedMethod ?? createRuntimeTrackedMethod;
+    const setParamsMock = createTrackedMethod<[ExpoRouterParams], unknown>((value) => {
         paramsOverrides = {
             ...paramsOverrides,
             ...value,
         };
         syncParams();
         return trackedSetParams.method(value);
-    };
-    state.router.setParams = setParamsMock as typeof state.router.setParams;
+    });
+    state.router.setParams = setParamsMock;
+    spies.setParams = setParamsMock;
     /**
      * Drops everything `router.setParams` wrote, returning the route to the
      * supplied `params` input alone.

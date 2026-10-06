@@ -59,7 +59,9 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
         fixture.storage.setState({ sessions: { s1: { ...fixture.session, serverId: undefined } },
             sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {} });
         const screen = await fixture.render(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="src/a.txt" />);
-        expect(screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope.serverId).toBe(fixture.home.id);
+        const initialScope = screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope;
+        if (!initialScope) throw new Error('Expected the initial focused Home workspace scope');
+        expect(initialScope.serverId).toBe(fixture.home.id);
         const secondHome = await upsertServerProfile({ serverUrl: 'https://session-file-views-second.test' });
         await act(async () => {
             await setActiveServer({ serverId: secondHome.id });
@@ -68,6 +70,8 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
             const machine = fixture.storage.getState().machines.m1!;
             fixture.storage.setState((state) => ({ machineListByServerId: { ...state.machineListByServerId, [secondHome.id]: [machine] } }));
         });
-        expect(screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope.serverId).toBe(secondHome.id);
+        const nextScope = screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope;
+        if (!nextScope) throw new Error('Expected the newly focused Home workspace scope');
+        expect(nextScope.serverId).toBe(secondHome.id);
     });
 });

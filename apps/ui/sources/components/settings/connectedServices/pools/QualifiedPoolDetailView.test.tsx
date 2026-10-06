@@ -742,11 +742,13 @@ describe('QualifiedPoolDetailView', () => {
         await act(async () => storage.setState({ profileScope: { serverId: 'home-a', accountId: 'account-a' } }));
         const { screen, group } = await renderPoolDetail();
         const binding = screen.root.findByType(EntityFlatReorderList).props.binding;
-        expect(binding.getItem('work')).toMatchObject({ kind: 'pool-member', scope: { serverId: 'home-a', accountId: 'account-a' }, pool: group.ref, member: accountRef('work') });
+        const workItem = binding.getItem('work');
+        expect(workItem).toMatchObject({ kind: 'pool-member', scope: { serverId: 'home-a', accountId: 'account-a' }, pool: group.ref, member: accountRef('work') });
+        if (workItem?.kind !== 'pool-member') throw new Error('Expected the work pool member drag item');
         expect(binding.resolve('work', { anchorId: 'backup', placement: 'after' })).toMatchObject({ status: 'allowed', effect: { actionId: 'connectedServices.pools.reorder', input: { group: group.ref, move: { accountId: 'work', position: { anchorId: 'backup', placement: 'after' } } } } });
         expect(binding.resolve('work', { anchorId: 'backup', placement: 'before' }).status).toBe('refused');
         expect(binding.resolve('missing', { anchorId: 'backup', placement: 'after' }).status).toBe('refused');
-        expect(binding.getSourceId({ ...binding.getItem('work'), pool: { ...group.ref, groupId: 'other' } })).toBeNull();
+        expect(binding.getSourceId({ ...workItem, pool: { ...group.ref, groupId: 'other' } })).toBeNull();
         const currentProps = { accounts: ACCOUNTS, serviceLabel: 'Codex', now: NOW, mutations: createMutations() };
         await screen.update(<QualifiedPoolDetailView {...currentProps} group={{ ...group, members: [
             ...group.members, { ref: accountRef('spare'), priority: 150, enabled: true, state: {} },

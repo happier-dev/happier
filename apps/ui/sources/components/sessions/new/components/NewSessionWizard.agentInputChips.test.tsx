@@ -30,7 +30,7 @@ async function renderWizard(props: NewSessionWizardTestProps = buildProps(), bou
     const screen = await renderScreen(<runtime.Wrapper>
         <NewSessionWizard {...props} popoverBoundaryRef={boundaryRef} />
     </runtime.Wrapper>);
-    const input: React.ComponentProps<typeof AgentInput> = screen.findByType(AgentInput).props;
+    const input: React.ComponentProps<typeof AgentInput> = screen.findByType<typeof AgentInput>(AgentInput).props;
     return { screen, input };
 }
 
@@ -158,7 +158,7 @@ describe('NewSessionWizard real AgentInput composition', () => {
                 {renderContent({ maxHeight: 420, requestClose: () => {} })}
             </runtime.Wrapper>);
         }
-        const list: React.ComponentProps<typeof ProfilesList> = browser.findByType(ProfilesList).props;
+        const list: React.ComponentProps<typeof ProfilesList> = browser.findByType<typeof ProfilesList>(ProfilesList).props;
         await act(async () => { list.onViewEnvironmentVariables?.(profile); });
         expect(props.profiles.openProfileEnvVarsPreview).not.toHaveBeenCalled();
         expect(browser.findByType(EnvironmentVariablesPreviewPanel).props.profileName).toBe('Work');

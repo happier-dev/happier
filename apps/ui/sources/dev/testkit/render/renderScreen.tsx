@@ -296,8 +296,9 @@ export async function renderScreen(
         get root() {
             return getRoot();
         },
-        findByType: (type) => getRoot().findByType(type as never),
-        findAllByType: (type) => getRoot().findAllByType(type as never),
+        // The SDK erases props; explicit component queries narrow only this genuine renderer boundary.
+        findByType: ((type: unknown) => getRoot().findByType(type as never)) as ReactTestRenderer['findByType'],
+        findAllByType: ((type: unknown) => getRoot().findAllByType(type as never)) as ReactTestRenderer['findAllByType'],
         findByProps: (props) => getRoot().findByProps(props),
         findAllByProps: (props) => getRoot().findAllByProps(props),
         find: (predicate) => getRoot().find(predicate),

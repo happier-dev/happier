@@ -75,7 +75,9 @@ async function completeJourney() {
     const { OnboardingJourneyHost } = await import('@/components/onboarding/tour/OnboardingJourneyHost');
     const host = screen.tree.root.findByType(OnboardingJourneyHost);
     expect(host.props.onExit).toBeTypeOf('function');
-    await act(async () => { host.props.onExit({ completedBeatId: 'S5' }); });
+    const onExit = host.props.onExit;
+    if (!onExit) throw new Error('Expected the journey completion callback');
+    await act(async () => { onExit({ completedBeatId: 'S5' }); });
     await flushHookEffects({ cycles: 3, turns: 3 });
 }
 

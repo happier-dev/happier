@@ -9,6 +9,7 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { projectAgentInputAttachmentRowItems } from './agentInputContracts';
 import { findAllHostTestInstances } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 
 vi.mock('expo-haptics', () => ({
     impactAsync: vi.fn(async () => {}),
@@ -285,12 +286,14 @@ describe('AgentInput (action bar auto layout)', () => {
         const variableContentBeforeInput = screen.tree.root.findAllByProps({
             testID: 'agent-input-variable-content-before-input',
         })[0];
+        const onPanelLayout = panel.props.onLayout;
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
 
         await act(async () => {
-            panel.props.onLayout({ nativeEvent: { layout: { height: 640 } } });
-            inputContainer?.props.onLayout({ nativeEvent: { layout: { height: 520 } } });
-            actionFooter?.props.onLayout({ nativeEvent: { layout: { height: 80 } } });
-            variableContentBeforeInput?.props.onLayout?.({ nativeEvent: { layout: { height: 70 } } });
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 640 }));
+            inputContainer?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 520 }));
+            actionFooter?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 80 }));
+            variableContentBeforeInput?.props.onLayout?.(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 70 }));
         });
 
         expect(screen.tree.root.findByProps({ testID: 'new-session-composer-input' }).props.maxHeight).toBe(468);
@@ -609,10 +612,12 @@ describe('AgentInput (action bar auto layout)', () => {
         const panel = screen.tree.root.findByType(WebDropTargetView);
         const input = screen.tree.root.findByProps({ testID: 'session-composer-input' });
         const inputContainer = input.parent;
+        const onPanelLayout = panel.props.onLayout;
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
 
         await act(async () => {
-            panel.props.onLayout({ nativeEvent: { layout: { height: 220 } } });
-            inputContainer?.props.onLayout({ nativeEvent: { layout: { height: 60 } } });
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 220 }));
+            inputContainer?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 60 }));
         });
 
         expect(screen.tree.root.findByProps({ testID: 'session-composer-input' }).props.maxHeight).toBe(245);
@@ -642,10 +647,12 @@ describe('AgentInput (action bar auto layout)', () => {
         const panel = screen.tree.root.findByType(WebDropTargetView);
         const input = screen.tree.root.findByProps({ testID: 'new-session-composer-input' });
         const inputContainer = input.parent;
+        const onPanelLayout = panel.props.onLayout;
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
 
         await act(async () => {
-            panel.props.onLayout({ nativeEvent: { layout: { height: 436 } } });
-            inputContainer?.props.onLayout({ nativeEvent: { layout: { height: 358 } } });
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 436 }));
+            inputContainer?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: layoutMockState.width, height: 358 }));
         });
 
         expect(screen.tree.root.findByProps({ testID: 'new-session-composer-input' }).props.maxHeight).toBe(614);

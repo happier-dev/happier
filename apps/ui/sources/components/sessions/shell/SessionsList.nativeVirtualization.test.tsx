@@ -765,13 +765,16 @@ describe('SessionsList (native virtualization)', () => {
         const { SessionListSelectionStoreProvider } = await import('./selection/SessionListSelectionContext');
         const { SessionListSelectionActionBarHost } = await import('./selection/SessionListSelectionActionBar');
         const store = screen.root.findByType(SessionListSelectionStoreProvider).props.store;
-        const readTargets = () => screen.root.findByType(SessionListSelectionActionBarHost).props.targetsByKey;
+        const readTargets = () => expectPresent(
+            screen.root.findByType(SessionListSelectionActionBarHost).props.targetsByKey,
+            'expected bulk action targets to be published',
+        );
 
         // This is the unused bulk model, not the virtualized row projection.
         expect(readTargets().size).toBe(0);
         await act(async () => { store.enter(selectedKey); });
         expect(readTargets().size).toBe(1);
-        expect(readTargets().get(selectedKey).tags).toEqual([]);
+        expect(expectPresent(readTargets().get(selectedKey), 'expected selected bulk target').tags).toEqual([]);
         await act(async () => { store.selectAllVisible(); });
         expect(store.getSnapshot().count).toBe(2);
         expect(readTargets().size).toBe(2);
@@ -783,7 +786,7 @@ describe('SessionsList (native virtualization)', () => {
         await screen.update(<SessionsList />);
         expect(readTargets().size).toBe(0);
         await act(async () => { store.enter(selectedKey); });
-        expect(readTargets().get(selectedKey).tags).toEqual(['updated-while-closed']);
+        expect(expectPresent(readTargets().get(selectedKey), 'expected reopened bulk target').tags).toEqual(['updated-while-closed']);
     });
 
     it('renders session items with correct adjacency props on native', async () => {

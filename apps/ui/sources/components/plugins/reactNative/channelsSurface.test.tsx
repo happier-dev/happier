@@ -27,7 +27,6 @@ import type {
 } from '@happier-dev/plugin-sdk/collections';
 import type {
   PluginUiTargetedContributionsV1,
-  ResourceSubscriptionEvent,
   SelectActionInputRequest,
   SelectActionInputResult,
   SurfaceContext,
@@ -211,10 +210,7 @@ type BindingResourceRowOverrides = Omit<Partial<BindingResourceRow>, 'endpoint' 
   target?: Partial<BindingResourceRow['target']>;
 }>;
 
-type ResourceInvalidationDigest = Extract<
-  ResourceSubscriptionEvent,
-  Readonly<{ kind: 'invalidated' }>
->['digest'];
+type ResourceInvalidationDigest = ReturnType<typeof PluginUiArtifactDigestV1Schema.parse>;
 
 function resourceDigest(digestCharacter: string): ResourceInvalidationDigest {
   return PluginUiArtifactDigestV1Schema.parse(`sha256:${digestCharacter.repeat(64)}`);

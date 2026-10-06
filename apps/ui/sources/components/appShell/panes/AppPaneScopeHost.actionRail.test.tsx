@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 
 import { usePaneActionRailRightPaneHiddenByDetails } from './PaneActionRailContext';
 import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
@@ -56,8 +57,10 @@ describe('AppPaneScopeHost action rail', () => {
     it.each([{ width: 1400, hidden: false }, { width: 640, hidden: true }])('reports whether opening the sidebar requires dismissing Review at $width px', async ({ width, hidden }) => {
         const screen = await renderScreen(<AppPaneProvider><Harness /></AppPaneProvider>);
         const host = screen.tree.root.findAllByType(View).find((node) => typeof node.props.onLayout === 'function');
+        const onLayout = host?.props.onLayout;
+        if (!onLayout) throw new Error('Expected the pane host layout callback');
         await act(async () => {
-            host!.props.onLayout({ nativeEvent: { layout: { width, height: 900 } } });
+            onLayout(createLayoutChangeEvent({ x: 0, y: 0, width, height: 900 }));
             pane.openDetailsTab({ key: 'review', kind: 'scmReview', title: 'Review', resource: { kind: 'scmReview', scope: 'working' } });
         });
         expect(rightHiddenByDetails).toBe(hidden);
@@ -87,7 +90,9 @@ describe('AppPaneScopeHost action rail', () => {
         });
         const host = screen.tree.root.findAllByType(View).find((node) => typeof node.props.onLayout === 'function');
         expect(host).toBeDefined();
-        await act(async () => { host!.props.onLayout({ nativeEvent: { layout: { width: 930, height: 900 } } }); });
+        const onLayout = host?.props.onLayout;
+        if (!onLayout) throw new Error('Expected the pane host layout callback');
+        await act(async () => { onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: 930, height: 900 })); });
         expect(screen.findByTestId('multi-pane-details-docked')).toBeNull();
         expect(screen.findByTestId('multi-pane-details-overlay')).not.toBeNull();
         expect(screen.findByTestId('rail-content')).not.toBeNull();

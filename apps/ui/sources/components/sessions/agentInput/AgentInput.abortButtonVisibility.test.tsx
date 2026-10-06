@@ -38,8 +38,7 @@ const suggestions = async () => [suggestion];
 const noSuggestions = async () => [];
 
 function findInput(screen: Awaited<ReturnType<typeof renderScreen>>): MultiTextInputProps {
-    // React TestRenderer exposes untyped component props at this framework boundary.
-    return screen.tree.root.findByType(MultiTextInput).props;
+    return screen.tree.root.findByType<typeof MultiTextInput>(MultiTextInput).props;
 }
 
 async function mount(params: Partial<React.ComponentProps<typeof AgentInput>> = {}) {

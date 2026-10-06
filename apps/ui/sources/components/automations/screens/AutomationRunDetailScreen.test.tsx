@@ -10,7 +10,7 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { AutomationTriggerIdSchema, AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
+import { AutomationSourceSelectorIdV1Schema, AutomationTriggerIdSchema, AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
@@ -204,7 +204,7 @@ function detail(row: AutomationV3RunListItem, overrides: Partial<AutomationV3Run
 function privateDetail(row = run(), prefix = 'The admitted issue') {
     const evidence = { v: 1 as const, kind: 'pluginEvent' as const,
         eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
-        sourceSelectorId: '11111111-1111-4111-8111-111111111111', occurrenceId: 'occurrence-1',
+        sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111'), occurrenceId: 'occurrence-1',
         occurredAt: 10, payload: { issue: { number: 42 } }, sourceInstanceId: 'repository-acme-example',
         sourceContractVersion: 1, observationReceivedAt: 11, filter: { version: 1 as const, result: 'matched' as const } };
     const triggerId = AutomationTriggerIdSchema.parse('trigger-1');

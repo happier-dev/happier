@@ -1318,7 +1318,9 @@ describe('VoiceProviderSection', () => {
             }),
         ));
 
-        expect(tree.root.findByType(VoiceCredentialSourceField).props.isCurrent()).toBe(true);
+        const isCurrent = tree.root.findByType(VoiceCredentialSourceField).props.isCurrent;
+        if (!isCurrent) throw new Error('Expected the selected Voice credential to expose currentness');
+        expect(isCurrent()).toBe(true);
 
         await act(async () => {});
         expect(checkedReadinessRow(tree)?.props.subtitle).toContain(expectedReadiness);

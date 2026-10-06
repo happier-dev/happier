@@ -73,7 +73,7 @@ describe('SecretsSettingsScreen shared feature decision', () => {
         if (resourceMode) await account.addOwnerResource(resourceMode);
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><Screen /></InjectedAuthProvider>);
         screens.push(screen);
-        const page = (): SecretsSettingsPageProps => screen.tree.findByType(PageComponent).props;
+        const page = (): SecretsSettingsPageProps => screen.tree.findByType<typeof PageComponent>(PageComponent).props;
         if (options.sharedEnabled !== false && !options.rejectSettingsWrites) {
             await vi.waitFor(() => expect(page().onSharePersonal).toBeTypeOf('function'));
         }
@@ -202,7 +202,7 @@ describe('SecretsSettingsScreen shared feature decision', () => {
             SavedSecretResourceMaterialV1Schema.parse({ entry: { materialStatus: 'resource_corrupt', relationship: 'recipient', repair: null } }));
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><Screen /></InjectedAuthProvider>);
         screens.push(screen);
-        const page = (): SecretsSettingsPageProps => screen.tree.findByType(PageComponent).props;
+        const page = (): SecretsSettingsPageProps => screen.tree.findByType<typeof PageComponent>(PageComponent).props;
         await vi.waitFor(() => expect(page().corruptEntries).toHaveLength(2));
         return { page, account };
     }

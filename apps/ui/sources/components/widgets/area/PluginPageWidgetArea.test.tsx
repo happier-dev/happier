@@ -162,7 +162,9 @@ function menuOf(screen: Awaited<ReturnType<typeof renderScreen>>, id: string) {
 }
 async function runAction(screen: Awaited<ReturnType<typeof renderScreen>>, id: string, actionId: string) {
     const action = menuOf(screen, id).props.actions.find((entry: { id: string }) => entry.id === actionId);
-    await act(async () => { action.onPress(); });
+    const onPress = action?.onPress;
+    if (!onPress) throw new Error(`Missing widget action handler: ${actionId}`);
+    await act(async () => { onPress(); });
     await flushHookEffects({ cycles: 4 });
 }
 
@@ -394,8 +396,11 @@ describe('a plugin page widget area', () => {
         let carry: ReturnType<typeof drag.runtime.begin>;
         await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
         await flushHookEffects({ cycles: 4 });
-        const destination = drag.runtime.getDestinations(drag.sourceId).find((entry: { destination?: { anchorId?: string; placement?: string } }) =>
-            entry.destination?.anchorId === follow.id && entry.destination.placement === 'after');
+        const destination = drag.runtime.getDestinations(drag.sourceId).find(entry => {
+            const value = entry.destination;
+            return value !== null && typeof value === 'object' && 'anchorId' in value && 'placement' in value
+                && value.anchorId === follow.id && value.placement === 'after';
+        });
         expect(destination?.admission).toMatchObject({ status: 'allowed' });
         await act(async () => {
             carry?.choose(destination!.targetId, destination!.destination);
@@ -425,7 +430,9 @@ describe('a plugin page widget area', () => {
         const drag = screen.root.findByType(SessionSurfaceEntityDragHandle).props.drag;
         await act(async () => {
             const menu = screen.findByTestId('project-a.widget.pin.menu')!.findByType(ItemRowActions);
-            menu.props.actions.find((entry: { id: string }) => entry.id === 'moveTo').onPress();
+            const onPress = menu.props.actions.find((entry: { id: string }) => entry.id === 'moveTo')?.onPress;
+            if (!onPress) throw new Error('Missing widget move chooser handler');
+            onPress();
             // The real overlay waits for menu teardown before beginning its chooser carry.
             await vi.waitFor(() => expect(drag.runtime.getSnapshot().phase).toBe('carrying'));
         });
@@ -436,11 +443,14 @@ describe('a plugin page widget area', () => {
         expect(destination?.admission).toMatchObject({ status: 'allowed' });
         await act(async () => {
             const chooser = screen.root.findByType(SessionSurfaceEntityDragHandle).findByType(DropdownMenu);
-            expect((await chooser.props.onSelect(String(index)))?.status).toBe('applied');
+            const onSelect = chooser.props.onSelect;
+            if (!onSelect) throw new Error('Missing widget destination selection handler');
+            await onSelect(String(index));
         });
         await flushHookEffects({ cycles: 4 });
         expect((await fixture.first.store.read()).instances).toEqual([]);
         expect((await fixture.second.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+        expect(drag.runtime.getSnapshot().phase).toBe('idle');
         expect(screen.findByTestId('project-a.widget.pin')).toBeNull();
         expect(screen.findByTestId('project-b.widget.pin')).not.toBeNull();
         const destinationDrag = screen.root.findByType(SessionSurfaceEntityDragHandle).props.drag;
@@ -532,7 +542,7 @@ describe('a plugin page widget area', () => {
         expect(reloaded.root.findAllByType(CardGridCell).some(cell => cell.props.span === 'row'
             && cell.findAll(node => node.props.testID === 'prs.pinned.widget.pin').length > 0)).toBe(true);
         // Width is one of the area's own steps; the follower keeps half.
-        expect(menuOf(reloaded, 'follow').props.actions.find((entry: { id: string }) => entry.id === 'width-half').selected).toBe(true);
+        expect(menuOf(reloaded, 'follow').props.actions.find((entry: { id: string }) => entry.id === 'width-half')?.selected).toBe(true);
     });
 
     it('adds a contributed widget from the shared gallery that follows the page without a Set up step', async () => {

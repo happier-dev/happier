@@ -128,9 +128,13 @@ describe('CodeLinesView (web)', () => {
 
         const rows = await findCodeRows(screen.tree);
         const event = { preventDefault: vi.fn(), nativeEvent: { preventDefault: vi.fn() } };
-        rows[0]!.props.onPressInLine(lines[0], event);
-        rows[2]!.props.onHoverLine(lines[2], event);
-        rows[2]!.props.onPressOutLine(lines[2], event);
+        const onPressInLine = rows[0]!.props.onPressInLine;
+        const onHoverLine = rows[2]!.props.onHoverLine;
+        const onPressOutLine = rows[2]!.props.onPressOutLine;
+        if (!onPressInLine || !onHoverLine || !onPressOutLine) throw new Error('Expected web drag-range interaction callbacks');
+        onPressInLine(lines[0], event);
+        onHoverLine(lines[2], event);
+        onPressOutLine(lines[2], event);
 
         expect(event.preventDefault).toHaveBeenCalled();
         expect(event.nativeEvent.preventDefault).toHaveBeenCalled();

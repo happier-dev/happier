@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as ReactNative from 'react-native';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { pressTestInstance, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -8,19 +9,22 @@ import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessio
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 const state = vi.hoisted(() => ({ windowWidthPx: 1200 }));
-installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const dimensions = () => ({ width: state.windowWidthPx, height: 800, scale: 1, fontScale: 1 });
-        return createReactNativeWebMock({ useWindowDimensions: dimensions, Dimensions: { get: dimensions } });
-    },
-});
+installSessionDetailsPanelCommonModuleMocks();
 const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'app' });
 let MultiPaneHostWithBottom: typeof import('@/components/ui/panels/MultiPaneHostWithBottom')['MultiPaneHostWithBottom'];
 let currentScreen: Awaited<ReturnType<typeof renderPanelScreen>>;
 beforeEach(async () => {
-    ({ MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom'));
     state.windowWidthPx = 1200;
+    // Static consumers may load the OS module before helper options are assigned.
+    // Install viewport inputs on that actual boundary; device and pane logic stay real.
+    const dimensions = () => ({ width: state.windowWidthPx, height: 800, scale: 1, fontScale: 1 });
+    const hookDimensions = vi.spyOn(ReactNative, 'useWindowDimensions').mockImplementation(dimensions);
+    const staticDimensions = vi.spyOn(ReactNative.Dimensions, 'get').mockImplementation(dimensions);
+    onTestFinished(() => {
+        hookDimensions.mockRestore();
+        staticDimensions.mockRestore();
+    });
+    ({ MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom'));
 });
 function Wrapper({ children }: React.PropsWithChildren) {
     return <runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
@@ -36,7 +40,7 @@ async function renderScreen(element: React.ReactElement) {
 }
 function hostProps(): React.ComponentProps<typeof MultiPaneHostWithBottom> {
     // Query the real layout host through the component-typed renderer boundary.
-    return currentScreen.root.findByType(MultiPaneHostWithBottom).props;
+    return currentScreen.root.findByType<typeof MultiPaneHostWithBottom>(MultiPaneHostWithBottom).props;
 }
 function useSettings(settings: Partial<ReturnType<typeof storage.getState>['localSettings']>) {
     storage.setState({ localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: true, ...settings } });

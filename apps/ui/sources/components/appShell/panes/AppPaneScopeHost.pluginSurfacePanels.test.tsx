@@ -45,12 +45,13 @@ beforeEach(async () => {
 });
 function readLastPaneProp(key: 'rightPane' | 'detailsPane' | 'bottomPane') {
     // The real renderer keeps layout and modal/resize owners mounted beneath this public input.
-    const props: React.ComponentProps<typeof MultiPaneHostWithBottom> = currentScreen.root.findByType(MultiPaneHostWithBottom).props;
+    const props: React.ComponentProps<typeof MultiPaneHostWithBottom> = currentScreen.root.findByType<typeof MultiPaneHostWithBottom>(MultiPaneHostWithBottom).props;
     return props[key];
 }
 function surfaceHostProps(container: 'rightPane' | 'bottomPane') {
-    const node = currentScreen.root.findAllByType(ActualSurfaceHost)
-        .find(host => host.props.placement.binding.container === container);
+    const node = currentScreen.root.findAllByType<typeof ActualSurfaceHost>(ActualSurfaceHost)
+        .find(host => host.props.placement.binding.kind === 'destination'
+            && host.props.placement.binding.container === container);
     if (!node) throw new Error(`No admitted ${container} surface`);
     const props: React.ComponentProps<typeof ActualSurfaceHost> = node.props;
     return props;
