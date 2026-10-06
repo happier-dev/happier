@@ -1,7 +1,7 @@
 import type { HappierInstallationInventory, HappierRuntimeWarning, HappierService, HappierServiceInventory } from '../types.js';
 import { isHappierRuntimePathWithinRoot, normalizeHappierRuntimePath } from '../runtimePathMatching.js';
 import { buildRepairCommandsForHappierRuntimeWarning } from './buildRepairCommandsForHappierRuntimeWarning.js';
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 
 type DaemonStatusForWarnings = Readonly<{
     daemon: Readonly<{

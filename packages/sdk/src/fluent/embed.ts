@@ -1,12 +1,15 @@
-import { ACTION_ID_FAMILIES_V1, type ActionIdFamilyV1 } from '@happier-dev/protocol/actions';
-import { isModelRefGrantedV1, resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import {
-  EmbedCredentialV1Schema, EmbedPublicKeyV1Schema, EmbedSessionKeyV1Schema, EmbedSessionOptionsV1Schema,
-  projectComposerOptionsInputV1, type EmbedConfigV1, type EmbedCredentialV1,
-} from '@happier-dev/protocol/embed';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionIdFamilyV1 } from '@happier-dev/protocol/actions';
+import { isModelRefGrantedV1, resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { EmbedCredentialV1Schema, EmbedPublicKeyV1Schema, EmbedSessionKeyV1Schema } from '@happier-dev/protocol/embed/embedBridgeV1';
+import { EmbedSessionOptionsV1Schema, projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed/embedSessionOptionsV1';
+import type { EmbedConfigV1, EmbedCredentialV1 } from '@happier-dev/protocol/embed';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { sealBoxBundle, sealEncryptedDataKeyEnvelopeV1, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
-import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions';
+import { sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import type { HappierApiTokens } from '../connect.js';
 import { HappierTransportError } from '../errors.js';

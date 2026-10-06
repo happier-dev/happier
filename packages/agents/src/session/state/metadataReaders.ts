@@ -1,19 +1,10 @@
 import type { PermissionIntent } from '../../types.js';
-import {
-  SessionModelSelectionIntentV1Schema,
-  readSessionModelSelectionIntentSourceV1,
-  resolveSessionModelSelectionIntentV1,
-  type ProviderBoundModelRef,
-  type SessionModelSelectionIntentV1,
-} from '@happier-dev/protocol/providers/model-selection';
-import {
-  SessionModelSelectionV2Schema,
-  type SessionModelSelectionV2,
-} from '@happier-dev/protocol';
-import {
-  readExactSessionActiveModelSelectionV1,
-} from '@happier-dev/protocol/providers/active-model-selection';
-import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol';
+import { SessionModelSelectionIntentV1Schema, readSessionModelSelectionIntentSourceV1, resolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderBoundModelRef, SessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol';
+import { readExactSessionActiveModelSelectionV1 } from '@happier-dev/protocol/providers/active-model-selection';
+import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import {
   readPermissionModeIntentFromMetadata,
   readStringOverrideIntentFromMetadata,

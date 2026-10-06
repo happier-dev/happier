@@ -1,6 +1,4 @@
-import {
-    DetectedMcpServerV1Schema,
-} from '@happier-dev/protocol';
+import { DetectedMcpServerV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import type {
     DaemonMcpServersDetectWarningV1,
     DetectedMcpServerV1,

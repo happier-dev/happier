@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { MachineKindFromLegacyProjectionSchema } from '../machines/machineKind.js';
 import { RunnerMachineContentKeyBindingV1Schema } from '../ephemeralRunner/machineContentKeyBinding.js';
@@ -6,7 +7,7 @@ import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.
 import { AutomationRunStateChangedHostEventV1Schema } from '../plugins/events/hostReferencesV1.js';
 import { ExternalSessionTranscriptInvalidationV1Schema } from '../sessions/external/secureRefreshV1.js';
 import { ExternalSessionStorageStateV1Schema } from '../sessions/external/operationV1.js';
-import { ExecutionRunPublicStateSchema } from '../execution/runs/index.js';
+import { ExecutionRunPublicStateSchema } from '../execution/runs/responseSchemas.js';
 import { SessionMessageAttentionImpactSchema } from '../sessions/messages/transcriptRawRecordV1.js';
 import { SessionMessageRoleSchema } from '../sessions/messages/sessionMessageRole.js';
 import { SessionMessageAccountActorV1Schema } from '../sessions/messages/sessionMessageAccountActorV1.js';
@@ -23,28 +24,28 @@ import {
 import {
   parseSessionRuntimeActivityProjectionFields,
   SessionRuntimeActivityStateSchema,
-} from '../sessions/runtime/activity/index.js';
+} from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { SessionOwnerMetadataEnvelopeV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { PendingActivationAuthorizationV1Schema } from '../sessions/pending/pendingActivationAuthorizationV1.js';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
 import { ActivityMessageReferenceV2Schema } from '../push/activityRemoteAlert.js';
 
-const TimestampMsSchema = z.number().int().min(0);
-const Base64Schema = z.string();
-const SessionMessageRoleMetadataSchema = SessionMessageRoleSchema.nullable().optional();
-const SessionEncryptionModeSchema = z.enum(['e2ee', 'plain']);
+const TimestampMsSchema = lazyZodSchema(() => z.number().int().min(0));
+const Base64Schema = lazyZodSchema(() => z.string());
+const SessionMessageRoleMetadataSchema = lazyZodSchema(() => SessionMessageRoleSchema.nullable().optional());
+const SessionEncryptionModeSchema = lazyZodSchema(() => z.enum(['e2ee', 'plain']));
 
-const VersionedNullableStringSchema = z.object({
+const VersionedNullableStringSchema = lazyZodSchema(() => z.object({
   value: z.string().nullable(),
   version: z.number().int(),
-}).passthrough();
+}).passthrough());
 
-const VersionedStringSchema = z.object({
+const VersionedStringSchema = lazyZodSchema(() => z.object({
   value: z.string(),
   version: z.number().int(),
-}).passthrough();
+}).passthrough());
 
-export const UpdateBodySchema = z.discriminatedUnion('t', [
+export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('new-message'),
     sid: z.string(),
@@ -266,6 +267,8 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     body: Base64Schema,
     bodyVersion: z.number().int(),
     dataEncryptionKey: Base64Schema,
+    provenance: Base64Schema.nullable().optional(),
+    provenanceDataEncryptionKey: Base64Schema.nullable().optional(),
     createdAt: TimestampMsSchema,
     updatedAt: TimestampMsSchema,
   }).passthrough(),
@@ -274,6 +277,8 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     artifactId: z.string(),
     header: VersionedStringSchema.optional(),
     body: VersionedStringSchema.optional(),
+    provenance: Base64Schema.nullable().optional(),
+    provenanceDataEncryptionKey: Base64Schema.nullable().optional(),
   }).passthrough(),
   z.object({
     t: z.literal('delete-artifact'),
@@ -370,20 +375,20 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     message: 'Runtime Activity projection fields must form one complete valid tuple',
     path: ['runtimeActivityState'],
   });
-});
+}));
 
 export type UpdateBody = z.infer<typeof UpdateBodySchema>;
 
-export const UpdateContainerSchema = z.object({
+export const UpdateContainerSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   seq: z.number().int().min(0),
   createdAt: TimestampMsSchema,
   body: UpdateBodySchema,
-}).passthrough();
+}).passthrough());
 
 export type UpdateContainer = z.infer<typeof UpdateContainerSchema>;
 
-export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
+export const TranscriptStreamSegmentEphemeralMessageSchema = lazyZodSchema(() => z.object({
   localId: z.string().min(1),
   sidechainId: z.string().nullable().optional(),
   content: SessionStoredMessageContentSchema,
@@ -396,7 +401,7 @@ export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
   tick: z.number().int().min(0).optional(),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-}).passthrough();
+}).passthrough());
 
 /**
  * Delta form of the live transcript segment stream.
@@ -407,7 +412,7 @@ export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
  * delta (and wait for the next full-snapshot checkpoint) on any gap: unknown segment, unexpected
  * `tick`, or `baseLength` mismatch.
  */
-export const TranscriptStreamSegmentDeltaEphemeralMessageSchema = z.object({
+export const TranscriptStreamSegmentDeltaEphemeralMessageSchema = lazyZodSchema(() => z.object({
   localId: z.string().min(1),
   sidechainId: z.string().nullable().optional(),
   content: SessionStoredMessageContentSchema,
@@ -418,27 +423,27 @@ export const TranscriptStreamSegmentDeltaEphemeralMessageSchema = z.object({
   baseLength: z.number().int().min(0),
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
-}).passthrough();
+}).passthrough());
 
 /** A committed, content-free recipient fact; never persisted or replayed as history. */
-const SessionPersonalEventEphemeralBaseV1Schema = z.object({
+const SessionPersonalEventEphemeralBaseV1Schema = lazyZodSchema(() => z.object({
   type: z.literal('session-personal-event'),
   sessionId: z.string().min(1),
   eventId: z.string().min(1),
-}).strict();
+}).strict());
 
-export const SessionPersonalEventEphemeralV1Schema = z.discriminatedUnion('event', [
+export const SessionPersonalEventEphemeralV1Schema = lazyZodSchema(() => z.discriminatedUnion('event', [
   SessionPersonalEventEphemeralBaseV1Schema.extend({ event: z.literal('directly_shared') }).strict(),
   SessionPersonalEventEphemeralBaseV1Schema.extend({ event: z.literal('assigned'), assignmentAutoFollowed: z.boolean().optional() }).strict(),
   SessionPersonalEventEphemeralBaseV1Schema.extend({ event: z.literal('source_unavailable') }).strict(),
   SessionPersonalEventEphemeralBaseV1Schema.extend({ event: z.enum(['failed', 'cancelled']), turnId: TurnIdSchema }).strict(),
   SessionPersonalEventEphemeralBaseV1Schema.extend({ event: z.literal('human_message'), message: ActivityMessageReferenceV2Schema, sourceAccountId: z.string().min(1) }).strict(),
   SessionPersonalEventEphemeralBaseV1Schema.extend({ event: z.literal('message'), message: ActivityMessageReferenceV2Schema }).strict(),
-]);
+]));
 
 export type SessionPersonalEventEphemeralV1 = z.infer<typeof SessionPersonalEventEphemeralV1Schema>;
 
-export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
+export const EphemeralUpdateSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   // Hottest live event first: delta ticks stream at the live cadence (~25Hz per active segment).
   z.object({
     type: z.literal('transcript-stream-segment-delta'),
@@ -494,7 +499,7 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
   ActionOperationSnapshotEphemeralV1Schema,
   ActionOperationRevisionEphemeralV1Schema,
   SessionPersonalEventEphemeralV1Schema,
-]);
+]));
 
 export type EphemeralUpdate = z.infer<typeof EphemeralUpdateSchema>;
 
@@ -504,24 +509,24 @@ export type EphemeralUpdate = z.infer<typeof EphemeralUpdateSchema>;
 // without carrying per-account cursors or recipient-specific secrets.
 //
 // Important: clients must treat these as optional hints/optimizations only, never as the sole source of truth.
-export const SessionBroadcastBodySchema = z.discriminatedUnion('t', [
+export const SessionBroadcastBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('session-changed'),
     sessionId: z.string(),
   }).passthrough(),
-]);
+]));
 
 export type SessionBroadcastBody = z.infer<typeof SessionBroadcastBodySchema>;
 
-export const SessionBroadcastContainerSchema = z.object({
+export const SessionBroadcastContainerSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   createdAt: TimestampMsSchema,
   body: SessionBroadcastBodySchema,
-}).passthrough();
+}).passthrough());
 
 export type SessionBroadcastContainer = z.infer<typeof SessionBroadcastContainerSchema>;
 
-export const MessageAckResponseSchema = z.union([
+export const MessageAckResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     id: z.string(),
@@ -542,11 +547,11 @@ export const MessageAckResponseSchema = z.union([
     ok: z.literal(false),
     error: z.string(),
   }).passthrough(),
-]);
+]));
 
 export type MessageAckResponse = z.infer<typeof MessageAckResponseSchema>;
 
-export const SessionEndAckResponseSchema = z.union([
+export const SessionEndAckResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     applied: z.boolean(),
@@ -569,11 +574,11 @@ export const SessionEndAckResponseSchema = z.union([
     ok: z.literal(false),
     error: z.string(),
   }).passthrough(),
-]);
+]));
 
 export type SessionEndAckResponse = z.infer<typeof SessionEndAckResponseSchema>;
 
-export const UpdateMetadataAckResponseSchema = z.discriminatedUnion('result', [
+export const UpdateMetadataAckResponseSchema = lazyZodSchema(() => z.discriminatedUnion('result', [
   z.object({
     result: z.literal('success'),
     version: z.number().int(),
@@ -593,11 +598,11 @@ export const UpdateMetadataAckResponseSchema = z.discriminatedUnion('result', [
   z.object({
     result: z.literal('error'),
   }).passthrough(),
-]);
+]));
 
 export type UpdateMetadataAckResponse = z.infer<typeof UpdateMetadataAckResponseSchema>;
 
-export const UpdateStateAckResponseSchema = z.discriminatedUnion('result', [
+export const UpdateStateAckResponseSchema = lazyZodSchema(() => z.discriminatedUnion('result', [
   z.object({
     result: z.literal('success'),
     version: z.number().int(),
@@ -617,6 +622,6 @@ export const UpdateStateAckResponseSchema = z.discriminatedUnion('result', [
   z.object({
     result: z.literal('error'),
   }).passthrough(),
-]);
+]));
 
 export type UpdateStateAckResponse = z.infer<typeof UpdateStateAckResponseSchema>;

@@ -1,4 +1,5 @@
-import { openEncryptedDataKeyEnvelopeV1, openSessionDataKeyBundleV0, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { openSessionDataKeyBundleV0, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { SessionContentEncryption } from '@happier-dev/sync-client';
 

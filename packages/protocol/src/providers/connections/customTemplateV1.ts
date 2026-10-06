@@ -7,7 +7,7 @@ import {
   addProviderCredentialTransportIssues,
   ProviderCredentialTransportV1Schema,
 } from '../credentials/v1.js';
-import { normalizeProviderCredentialHeaderName } from '../safety/index.js';
+import { normalizeProviderCredentialHeaderName } from '../safety/headers.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';

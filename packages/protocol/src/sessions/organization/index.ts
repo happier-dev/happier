@@ -29,6 +29,7 @@ export {
 
 export {
   SessionOrganizationContentEnvelopeSchema,
+  SessionOrganizationContentEnvelopeStoredSchema,
   SessionOrganizationDisplayStateSchema,
   SessionOrganizationContentUnavailableError,
   prepareSessionOrganizationDisplayEnvelopeForAccountModeV1,

@@ -1,9 +1,6 @@
 /** @moduleRealm daemon */
-import {
-    ManagedServiceLocalIdSchema as canonicalManagedServiceLocalIdSchema,
-    type ManagedServiceLocalId,
-    type PluginContributionLocalId,
-} from '@happier-dev/protocol/plugins/manifest';
+import { ManagedServiceLocalIdSchema as canonicalManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ManagedServiceLocalId, PluginContributionLocalId } from '@happier-dev/protocol/plugins/manifest';
 import type {
     ManagedExecutableRef,
     ProviderCatalogProbeModelV1,
@@ -34,7 +31,7 @@ export type { ManagedServiceLocalId };
  * service. Authors consume this projection instead of carrying a second URL
  * parser alongside the daemon supervisor.
  */
-export { readManagedServiceEndpointUrl } from '@happier-dev/protocol';
+export { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 export type {
     ManagedServiceEndpointHostPolicy,
     ManagedServiceEndpointUrlFacts,

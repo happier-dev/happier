@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ProviderLocalIdSchema } from '../ids.js';
 import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1, ProviderWireProtocolSchema } from '../capabilities/v1.js';
-import { normalizeProviderCredentialHeaderName, normalizeProviderQueryParameterName } from '../safety/index.js';
+import { normalizeProviderCredentialHeaderName, normalizeProviderQueryParameterName } from '../safety/headers.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 
 export const ProviderCredentialFormatV1Schema = z.union([

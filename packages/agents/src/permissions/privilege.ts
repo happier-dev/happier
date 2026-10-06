@@ -1,7 +1,2 @@
-export {
-  assertNonEscalatingPermissionMode,
-  resolveNearestPermissionModeAtOrBelow,
-  resolvePermissionPrivilegeOrdinal,
-  type PermissionEscalationDecision,
-  type PermissionPrivilegeOrdinal,
-} from '@happier-dev/protocol/actions/permissionPrivilege';
+export { assertNonEscalatingPermissionMode, resolveNearestPermissionModeAtOrBelow, resolvePermissionPrivilegeOrdinal } from '@happier-dev/protocol/actions/permissionPrivilege';
+export type { PermissionEscalationDecision, PermissionPrivilegeOrdinal } from '@happier-dev/protocol/actions/permissionPrivilege';

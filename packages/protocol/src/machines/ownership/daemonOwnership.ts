@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
     MachineInstallationProofV1Schema,
     MachineInstallationPublicKeySchema,
-} from '../index.js';
+} from '../identity/installationIdentity.js';
 
 export const MACHINE_OWNER_CONFLICT_ERROR = 'machine-owner-conflict' as const;
 

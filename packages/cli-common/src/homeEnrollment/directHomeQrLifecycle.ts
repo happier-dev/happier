@@ -1,14 +1,7 @@
-import {
-  deriveHomeQrRendezvousVerifierV2,
-  encodeBase64,
-  parseHomeQrPairingStatusV2,
-  readServerEnabledBit,
-  verifyHomeQrRequesterProofV2,
-  type FeaturesResponse,
-  type HomeConnectionDescriptorV1,
-  type HomeQrInviteV2,
-  type HomeQrPairingStatusV2,
-} from '@happier-dev/protocol';
+import { deriveHomeQrRendezvousVerifierV2, parseHomeQrPairingStatusV2, verifyHomeQrRequesterProofV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse, HomeConnectionDescriptorV1, HomeQrInviteV2, HomeQrPairingStatusV2 } from '@happier-dev/protocol';
 
 import { ENROLLMENT_POLL_IDLE_DELAY_MS, enrollmentPollingBackoffMs } from './enrollmentPollingBackoff.js';
 

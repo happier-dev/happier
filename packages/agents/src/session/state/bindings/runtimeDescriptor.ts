@@ -1,9 +1,5 @@
-import {
-  readRuntimeDescriptorV1FromMetadata,
-  writeRuntimeDescriptorV1ToMetadata,
-  type RuntimeDescriptorV1,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata, writeRuntimeDescriptorV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { RuntimeDescriptorV1, SessionMetadata } from '@happier-dev/protocol';
 
 import type { SessionStateBinding, SessionStateStoredValue } from './_types.js';
 

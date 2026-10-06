@@ -4,7 +4,7 @@ import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
 import type { AgentSessionModeDescriptor } from '../sessionModes.js';
 import type { AgentCore, BundledAgentId } from '../types.js';
 import { isBundledAgentId } from '../types.js';
-import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 
 export const LEGACY_CUSTOM_ACP_AGENT_ID = 'customAcp' as const;
 

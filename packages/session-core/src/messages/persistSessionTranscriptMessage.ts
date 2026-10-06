@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol';
+import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { SessionMessageRole } from '@happier-dev/protocol';
 
 import { normalizeRawMessage, RawRecordSchema, type NormalizedMessage, type RawRecord } from "../raw/index.js";
 

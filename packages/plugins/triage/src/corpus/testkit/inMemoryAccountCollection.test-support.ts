@@ -8,11 +8,9 @@ import type {
     PluginCollectionMutation,
     PluginCollectionMutationConflictV1,
 } from '@happier-dev/plugin-sdk/collections';
-import {
-    derivePluginCollectionIdentityTagV1,
-    resolveEffectivePluginCollectionLimitsV1,
-    type AccountScopedCryptoMaterial,
-} from '@happier-dev/protocol';
+import { derivePluginCollectionIdentityTagV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveEffectivePluginCollectionLimitsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 
 import type { CorpusStoredValueV1 } from '../collections/handles.js';
 

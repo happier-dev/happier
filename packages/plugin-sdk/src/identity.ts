@@ -1,9 +1,5 @@
-import {
-    computeCanonicalDomainSeparatedDigest as canonicalComputeCanonicalDomainSeparatedDigest,
-} from '@happier-dev/protocol/crypto/canonicalDigest';
-import {
-    createCanonicalJsonSigningInput as canonicalCreateCanonicalJsonSigningInput,
-} from '@happier-dev/protocol/crypto/canonicalJson';
+import { computeCanonicalDomainSeparatedDigest as canonicalComputeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { createCanonicalJsonSigningInput as canonicalCreateCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { ProtocolJsonValue } from './protocol/protocolFacade.js';
 
 /**

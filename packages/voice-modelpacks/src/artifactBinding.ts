@@ -7,11 +7,8 @@
  * currently supported development path. Neither arm is a hash of extracted
  * plugin files or a process-local runtime occurrence.
  */
-import {
-  DevelopmentPluginSourceCustodyV1Schema,
-  pluginSourceCustodyV1Equal,
-  type DevelopmentPluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { DevelopmentPluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { DevelopmentPluginSourceCustodyV1 } from '@happier-dev/protocol';
 
 export type VoiceModelPackArtifactBindingV1 =
   | Readonly<{

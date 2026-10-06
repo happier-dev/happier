@@ -1,7 +1,4 @@
-import {
-    ScmHostingProviderKindSchema as canonicalScmHostingProviderKindSchema,
-    resolveScmHostingProviderFollowupAllowedBaseUrl as canonicalResolveScmHostingProviderFollowupAllowedBaseUrl,
-} from '@happier-dev/protocol/scm';
+import { ScmHostingProviderKindSchema as canonicalScmHostingProviderKindSchema, resolveScmHostingProviderFollowupAllowedBaseUrl as canonicalResolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/protocol/scm/pullRequests';
 
 import type {
     ScmHostingProviderKind,

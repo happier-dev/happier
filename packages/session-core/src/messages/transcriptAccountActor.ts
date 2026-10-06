@@ -1,4 +1,5 @@
-import { SessionMessageAccountActorV1Schema, type SessionMessageAccountActorV1 } from '@happier-dev/protocol';
+import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
+import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol';
 
 /** Account identity is local to the Home that supplied this message. */
 export type TranscriptAccountActor = SessionMessageAccountActorV1 & Readonly<{ serverId: string }>;

@@ -1,14 +1,5 @@
-import {
-    classifyVoiceProviderHttpFailure as canonicalClassifyVoiceProviderHttpFailure,
-} from '@happier-dev/protocol/voice/providerOperations';
-import {
-    VOICE_SPEECH_OUTPUT_MAX_BYTES as canonicalVoiceSpeechOutputMaxBytes,
-    VoiceCredentialSlotIdSchema as canonicalVoiceCredentialSlotIdSchema,
-    VoiceProviderContributionSchema as canonicalVoiceProviderContributionSchema,
-    VoiceServiceMarkSchema as canonicalVoiceServiceMarkSchema,
-    VoiceProviderSettingsPresentationSchema as canonicalVoiceProviderSettingsPresentationSchema,
-    resolveVoiceProviderLanguagePreference as canonicalResolveVoiceProviderLanguagePreference,
-} from '@happier-dev/protocol/plugins/contributions/voice';
+import { classifyVoiceProviderHttpFailure as canonicalClassifyVoiceProviderHttpFailure } from '@happier-dev/protocol/voice/providerOperations';
+import { VOICE_SPEECH_OUTPUT_MAX_BYTES as canonicalVoiceSpeechOutputMaxBytes, VoiceCredentialSlotIdSchema as canonicalVoiceCredentialSlotIdSchema, VoiceProviderContributionSchema as canonicalVoiceProviderContributionSchema, VoiceServiceMarkSchema as canonicalVoiceServiceMarkSchema, VoiceProviderSettingsPresentationSchema as canonicalVoiceProviderSettingsPresentationSchema, resolveVoiceProviderLanguagePreference as canonicalResolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
     VoiceAvailabilityPlatform,
     VoiceCredentialAccessPhase,
@@ -23,20 +14,8 @@ import type {
     VoiceRawCredentialGrantDeclaration,
     VoiceSettingReadinessDeclaration,
 } from '@happier-dev/protocol/plugins/contributions/voice';
-import {
-    VoiceModelPackContributionV1Schema as canonicalVoiceModelPackContributionV1Schema,
-    VoiceModelPackDirectoryArtifactV1Schema as canonicalVoiceModelPackDirectoryArtifactV1Schema,
-    VoiceModelPackExecutionHostV1Schema as canonicalVoiceModelPackExecutionHostV1Schema,
-    VoiceModelPackFileArtifactV1Schema as canonicalVoiceModelPackFileArtifactV1Schema,
-    VoiceModelPackKokoroArtifactsV1Schema as canonicalVoiceModelPackKokoroArtifactsV1Schema,
-    VoiceModelPackLicenseV1Schema as canonicalVoiceModelPackLicenseV1Schema,
-    VoiceModelPackLocalIdV1Schema as canonicalVoiceModelPackLocalIdV1Schema,
-    VoiceModelPackManifestV1Schema as canonicalVoiceModelPackManifestV1Schema,
-    VoiceModelPackRuntimeV1Schema as canonicalVoiceModelPackRuntimeV1Schema,
-    VoiceModelPackSupportArtifactKindV1Schema as canonicalVoiceModelPackSupportArtifactKindV1Schema,
-    VoiceModelPackSupportArtifactV1Schema as canonicalVoiceModelPackSupportArtifactV1Schema,
-    VoiceModelPackTransducerArtifactsV1Schema as canonicalVoiceModelPackTransducerArtifactsV1Schema,
-} from '@happier-dev/protocol/voice/modelPacks/contributionV1';
+import { VoiceModelPackContributionV1Schema as canonicalVoiceModelPackContributionV1Schema, VoiceModelPackExecutionHostV1Schema as canonicalVoiceModelPackExecutionHostV1Schema, VoiceModelPackLicenseV1Schema as canonicalVoiceModelPackLicenseV1Schema, VoiceModelPackLocalIdV1Schema as canonicalVoiceModelPackLocalIdV1Schema, VoiceModelPackManifestV1Schema as canonicalVoiceModelPackManifestV1Schema, VoiceModelPackRuntimeV1Schema as canonicalVoiceModelPackRuntimeV1Schema } from '@happier-dev/protocol/voice/modelPacks/contributionV1';
+import { VoiceModelPackDirectoryArtifactV1Schema as canonicalVoiceModelPackDirectoryArtifactV1Schema, VoiceModelPackFileArtifactV1Schema as canonicalVoiceModelPackFileArtifactV1Schema, VoiceModelPackKokoroArtifactsV1Schema as canonicalVoiceModelPackKokoroArtifactsV1Schema, VoiceModelPackSupportArtifactKindV1Schema as canonicalVoiceModelPackSupportArtifactKindV1Schema, VoiceModelPackSupportArtifactV1Schema as canonicalVoiceModelPackSupportArtifactV1Schema, VoiceModelPackTransducerArtifactsV1Schema as canonicalVoiceModelPackTransducerArtifactsV1Schema } from '@happier-dev/protocol/voice/modelPacks/artifactRolesV1';
 import type {
     VoiceModelPackContributionV1,
     VoiceModelPackDirectoryArtifactV1,

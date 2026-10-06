@@ -1,82 +1,15 @@
 /** @moduleRealm daemon */
 import { z } from 'zod';
 
-import {
-    PluginUiWidgetAreaRequestV1Schema,
-    PluginUiWidgetAreaResultV1Schema,
-    PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema,
-    PluginUiReadEntityDragItemRequestV1Schema,
-    PluginUiReadEntityDragItemResultV1Schema,
-    PluginUiUpdateEntityDragDropRequestV1Schema,
-    PluginUiUpdateEntityDragDropResultV1Schema,
-    PluginUiWatchLiveStreamRequestV1Schema,
-    PLUGIN_UI_HOST_API_VERSION_V1,
-    isPluginUiHostApiVersionCompatibleV1,
-    PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-    PLUGIN_UI_HOST_METHODS_V1,
-    PluginUiArtifactDigestV1Schema,
-    PluginUiAcquireComposerInputLockRequestV1Schema,
-    PluginUiActiveComposerResultV1Schema,
-    PluginUiApplyComposerRequestV1Schema,
-    PluginUiApplyComposerResultV1Schema,
-    PluginUiInspectComposerContentRequestV1Schema,
-    PluginUiInspectComposerContentResultV1Schema,
-    PluginUiExecuteActionRequestV1Schema,
-    PluginUiMountedActionReferenceV1Schema,
-    PluginUiEphemeralInputSettlementV1Schema,
-    PluginUiFocusComposerRequestV1Schema,
-    PluginUiFocusComposerResultV1Schema,
-    PluginUiHostApiDiagnosticV1Schema,
-    PluginUiHostApiOpenExternalLinkRequestV1Schema,
-    PluginUiHostApiWriteClipboardRequestV1Schema,
-    PluginUiHostApiWireEnvelopeV1Schema,
-    PluginUiHostApiWireIdentityV1Schema,
-    PluginUiJsonValueV1Schema,
-    PluginUiOpenNewSessionRequestV1Schema,
-    PluginUiOpenConnectedAccountsRequestV1Schema,
-    PluginUiOpenSurfaceRequestV1Schema,
-    PluginUiReplacePageLocationRequestV1Schema,
-    PluginUiPickComposerMediaRequestV1Schema,
-    PluginUiPickComposerMediaResultV1Schema,
-    PluginUiPublishCurrentUiContextRequestV1Schema,
-    PluginUiReadComposerRequestV1Schema,
-    PluginUiReadComposerResultV1Schema,
-    PluginUiReleaseComposerContentRequestV1Schema,
-    PluginUiSelectActionInputRequestV1Schema,
-    PluginUiSelectActionInputResultV1Schema,
-    PluginUiSetComposerDecorationsRequestV1Schema,
-    PluginUiSetComposerDecorationsResultV1Schema,
-    PluginUiInstanceKeyV1Schema,
-    PluginUiLaunchInputV1Schema,
-    PluginUiResourceSubscriptionTargetV1Schema,
-    PluginUiSelectedActionInputCarrierV1Schema,
-    pluginUiSelectedActionInputsEqual,
-    pluginUiTargetedContributionOperationKey,
-    PluginUiSubPathV1Schema,
-    PluginUiWatchComposerRequestV1Schema,
-    PluginUiReadSessionRequestV1Schema,
-    PluginUiReadSessionResultV1Schema,
-    PluginUiReadStoredImageRequestV1Schema,
-    PluginUiReadStoredImageResultV1Schema,
-    PluginUiRespondToSessionPermissionRequestV1Schema,
-    PluginUiRespondToSessionPermissionResultV1Schema,
-    PluginUiWatchSessionRequestV1Schema,
-    type PluginUiHostApiWireEnvelopeV1,
-} from '@happier-dev/protocol/plugins/ui';
-import {
-    DaemonPluginUiTargetedSurfaceMountsV1Schema,
-    DaemonPluginUiTargetedSurfaceRendererAvailabilityV1Schema,
-    OpenableContentReadRequestV1Schema,
-    OpenableContentRefV1Schema,
-    readDaemonPluginUiTargetedSurfaceMountV1,
-    pluginJsonValuesEqual,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiWatchLiveStreamRequestV1Schema, PLUGIN_UI_HOST_API_VERSION_V1, isPluginUiHostApiVersionCompatibleV1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiApplyComposerResultV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiInspectComposerContentResultV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiMountedActionReferenceV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiFocusComposerResultV1Schema, PluginUiHostApiDiagnosticV1Schema, PluginUiHostApiOpenExternalLinkRequestV1Schema, PluginUiHostApiWriteClipboardRequestV1Schema, PluginUiHostApiWireEnvelopeV1Schema, PluginUiHostApiWireIdentityV1Schema, PluginUiJsonValueV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiOpenSurfaceRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPickComposerMediaResultV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiReadComposerResultV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiSetComposerDecorationsResultV1Schema, PluginUiInstanceKeyV1Schema, PluginUiLaunchInputV1Schema, PluginUiResourceSubscriptionTargetV1Schema, PluginUiSelectedActionInputCarrierV1Schema, pluginUiSelectedActionInputsEqual, pluginUiTargetedContributionOperationKey, PluginUiSubPathV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadSessionResultV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
+import type { PluginUiHostApiWireEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
+import { DaemonPluginUiTargetedSurfaceMountsV1Schema, DaemonPluginUiTargetedSurfaceRendererAvailabilityV1Schema, readDaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { OpenableContentReadRequestV1Schema, OpenableContentRefV1Schema } from '@happier-dev/protocol/plugins/openableContent';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import {
-    derivePluginUiTargetedSurfaceMountInstanceKeyV1,
-    PluginUiTargetedContributionSurfaceV1Schema,
-} from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import { derivePluginUiTargetedSurfaceMountInstanceKeyV1, PluginUiTargetedContributionSurfaceV1Schema } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type { PluginDiagnosticData } from '../diagnostics.js';

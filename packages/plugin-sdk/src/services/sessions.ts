@@ -28,42 +28,23 @@ import type {
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
 import { projectProtocolValue } from '../protocol/projectProtocolValue.js';
 import type { ExternalSessionsService } from './externalSessions.js';
-import {
-    AgentPermissionIntentV1Schema as protocolAgentPermissionIntentV1Schema,
-    isSlashCommandSupported as protocolIsSlashCommandSupported,
-    normalizeSlashCommandName as protocolNormalizeSlashCommandName,
-    readLeadingSlashCommandName as protocolReadLeadingSlashCommandName,
-    hasSessionInputContentV1 as protocolHasSessionInputContentV1,
-    readPendingLocalId as protocolReadPendingLocalId,
-    readSlashCommandNames as protocolReadSlashCommandNames,
-    resolveTranscriptBodySessionMessageRole as protocolResolveTranscriptBodySessionMessageRole,
-    SessionIdSchema as protocolSessionIdSchema,
-    SessionIndexedIdentifierMaxLengthV1 as protocolSessionIndexedIdentifierMaxLengthV1,
-    SessionMessageProvenanceV1Schema as protocolSessionMessageProvenanceV1Schema,
-    SessionRuntimeIssueV1Schema as protocolSessionRuntimeIssueV1Schema,
-    SessionUsageLimitRecoveryV1Schema as protocolSessionUsageLimitRecoveryV1Schema,
-    SPAWN_SESSION_ERROR_CODES as protocolSpawnSessionErrorCodes,
-} from '@happier-dev/protocol/sessions/general';
-import {
-    SessionAuthoringCheckoutCreationDraftV1Schema as protocolSessionAuthoringCheckoutCreationDraftV1Schema,
-    SessionServerStartSpawnDraftV1Schema as protocolSessionServerStartSpawnDraftV1Schema,
-    SessionSpawnNewInputV2Schema as protocolSessionSpawnNewInputV2Schema,
-} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import {
-    HappierStructuredInputV1Schema as protocolHappierStructuredInputV1Schema,
-    MENTION_KIND_V1 as protocolMentionKindV1,
-    MentionRefV1Schema as protocolMentionRefV1Schema,
-    normalizeSessionAttachmentUploadPath as protocolNormalizeSessionAttachmentUploadPath,
-    readHappierStructuredInputV1FromMeta as protocolReadHappierStructuredInputV1FromMeta,
-    readStructuredInputMentionSourcesV1 as protocolReadStructuredInputMentionSourcesV1,
-    sanitizeHappierStructuredInputV1 as protocolSanitizeHappierStructuredInputV1,
-} from '@happier-dev/protocol/runtime';
-import {
-    CHANGE_TITLE_TOOL_NAME_ALIASES as protocolChangeTitleToolNameAliases,
-    isChangeTitleToolNameAlias as protocolIsChangeTitleToolNameAlias,
-} from '@happier-dev/protocol/tools/v2';
-import { ProjectKeyV1Schema as protocolProjectKeyV1Schema } from '@happier-dev/protocol/workspaces';
-import { readSessionModesMetadata as protocolReadSessionModesMetadata } from '@happier-dev/protocol/sessions';
+import { AgentPermissionIntentV1Schema as protocolAgentPermissionIntentV1Schema } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { isSlashCommandSupported as protocolIsSlashCommandSupported, normalizeSlashCommandName as protocolNormalizeSlashCommandName, readLeadingSlashCommandName as protocolReadLeadingSlashCommandName, readSlashCommandNames as protocolReadSlashCommandNames } from '@happier-dev/protocol/sessions/slashCommands';
+import { hasSessionInputContentV1 as protocolHasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
+import { readPendingLocalId as protocolReadPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { resolveTranscriptBodySessionMessageRole as protocolResolveTranscriptBodySessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { SessionIdSchema as protocolSessionIdSchema, SessionIndexedIdentifierMaxLengthV1 as protocolSessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
+import { SessionMessageProvenanceV1Schema as protocolSessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionRuntimeIssueV1Schema as protocolSessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionUsageLimitRecoveryV1Schema as protocolSessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SPAWN_SESSION_ERROR_CODES as protocolSpawnSessionErrorCodes } from '@happier-dev/protocol/spawnSession';
+import { SessionAuthoringCheckoutCreationDraftV1Schema as protocolSessionAuthoringCheckoutCreationDraftV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
+import { SessionServerStartSpawnDraftV1Schema as protocolSessionServerStartSpawnDraftV1Schema, SessionSpawnNewInputV2Schema as protocolSessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { HappierStructuredInputV1Schema as protocolHappierStructuredInputV1Schema, normalizeSessionAttachmentUploadPath as protocolNormalizeSessionAttachmentUploadPath, readHappierStructuredInputV1FromMeta as protocolReadHappierStructuredInputV1FromMeta, readStructuredInputMentionSourcesV1 as protocolReadStructuredInputMentionSourcesV1, sanitizeHappierStructuredInputV1 as protocolSanitizeHappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { MENTION_KIND_V1 as protocolMentionKindV1, MentionRefV1Schema as protocolMentionRefV1Schema } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES as protocolChangeTitleToolNameAliases, isChangeTitleToolNameAlias as protocolIsChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
+import { ProjectKeyV1Schema as protocolProjectKeyV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { readSessionModesMetadata as protocolReadSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 /** Accepted native mode facts; parsing and retained V1 normalization stay Protocol-owned. */
 export type SessionModeCatalog = Readonly<{

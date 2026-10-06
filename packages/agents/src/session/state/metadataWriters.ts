@@ -6,11 +6,8 @@ import type {
   SessionStateFieldId,
   SessionStateFieldValue,
 } from '@happier-dev/protocol';
-import {
-  ProviderBoundModelRefSchema,
-  SessionModelSelectionIntentV1Schema,
-  SessionModelSelectionV2Schema,
-} from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import type { SessionStateFieldWriteValue } from './_types.js';
 import {

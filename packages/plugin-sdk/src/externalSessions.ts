@@ -1,11 +1,6 @@
 /** @moduleRealm daemon */
-import {
-    AgentExternalSessionTranscriptRawRecordSchema as canonicalAgentExternalSessionTranscriptRawRecordSchema,
-    HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 as canonicalHappierBaseSystemPromptAttachmentsV1,
-    HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 as canonicalHappierBaseSystemPromptLinkedWorkspaceFilesV1,
-    HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 as canonicalHappierBaseSystemPromptOptionsV1,
-    HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 as canonicalHappierBaseSystemPromptSessionTitleInitialV1,
-} from '@happier-dev/protocol';
+import { AgentExternalSessionTranscriptRawRecordSchema as canonicalAgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
+import { HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 as canonicalHappierBaseSystemPromptAttachmentsV1, HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 as canonicalHappierBaseSystemPromptLinkedWorkspaceFilesV1, HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 as canonicalHappierBaseSystemPromptOptionsV1, HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 as canonicalHappierBaseSystemPromptSessionTitleInitialV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
 import {
     isAgentExternalSessionsFailureCode,
     type AgentExternalSessionsFailureCode,

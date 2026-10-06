@@ -1,11 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-import {
-  BOX_BUNDLE_PUBLIC_KEY_BYTES,
-  deriveBoxPublicKeyFromSeed,
-  openEncryptedDataKeyEnvelopeV1,
-  sealEncryptedDataKeyEnvelopeV1,
-} from '@happier-dev/protocol';
+import { BOX_BUNDLE_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/boxBundleFormat';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit.js';
 import { openAes256GcmBytes, sealAes256GcmBytes } from './aes256GcmBytes.js';

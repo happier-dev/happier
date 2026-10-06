@@ -1,8 +1,5 @@
-import {
-  isConnectedServiceCredentialHealthStatusUsable,
-  normalizeConnectedServiceCredentialHealthStatus,
-  type ConnectedServiceCredentialHealthStatusV1,
-} from '@happier-dev/protocol';
+import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceCredentialHealthStatusV1 } from '@happier-dev/protocol';
 
 import type { AgentCore, ConnectedServiceId, ConnectedServiceKind } from '../types.js';
 

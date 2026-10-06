@@ -7,6 +7,7 @@ import {
   getActionDefinitionForCatalogSurface,
   getActionSpec,
   listActionDefinitionsForCatalogSurface,
+  listActionSpecsForCatalogSurface,
   searchSerializedActionSpecsForSurface,
   searchSerializedActionSpecs,
   serializeActionSpec,
@@ -189,14 +190,32 @@ describe('actionCatalog action-definition adapter', () => {
     expect(definitions.every((definition) => definition.surfaces.cli === true)).toBe(true);
   });
 
-  it.each(['agent', 'voice'] as const)('projects every %s-visible Action definition through the canonical schema boundary', (surface) => {
+  it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] as const)('projects every %s-visible Action definition through the canonical schema boundary', (surface) => {
     const definitions = listActionDefinitionsForCatalogSurface({ surface });
 
     expect(definitions.length).toBeGreaterThan(0);
+    expect(definitions.map((definition) => definition.id)).toEqual(
+      listActionSpecsForCatalogSurface({ surface }).map((spec) => spec.id),
+    );
     for (const definition of definitions) {
-      const parsed = SerializedActionDefinitionV1Schema.safeParse(definition);
+      const parsed = SerializedActionDefinitionV1Schema.safeParse(JSON.parse(JSON.stringify(definition)));
       expect(parsed.success, `${definition.id}: ${parsed.success ? '' : parsed.error.message}`).toBe(true);
     }
+  });
+
+  it.each(['agent', 'mcp', 'cli'] as const)('searches the real %s catalog without unrelated schema failures', (surface) => {
+    expect(searchSerializedActionSpecsForSurface({
+      surface,
+      query: 'action.spec.get',
+      limit: 1,
+    }).map((definition) => definition.id)).toEqual(['action.spec.get']);
+    expect(searchSerializedActionSpecsForSurface({
+      surface,
+      query: 'execution.run.stream.read',
+      limit: 1,
+    }).map((definition) => definition.id)).toEqual(
+      getActionSpec('execution.run.stream.read').surfaces[surface] ? ['execution.run.stream.read'] : [],
+    );
   });
 
   it('reuses immutable host projections while evaluating request-current search inputs', () => {

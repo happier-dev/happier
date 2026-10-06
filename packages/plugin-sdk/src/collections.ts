@@ -1,7 +1,5 @@
 /** @moduleRealm daemon */
-import {
-    PluginMachineExecutionOriginV1JsonSchema,
-} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginMachineExecutionOriginV1JsonSchema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type {
     NormalizedPluginCollectionUiQueryDescriptorV1,
     PluginAccountCollectionContributionV1,
@@ -16,14 +14,7 @@ import type {
     PluginCollectionUiQueryResultV1,
     PluginCollectionUiQueryValueV1,
 } from '@happier-dev/protocol';
-export {
-    PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
-    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-    // The persisted `Int` ceiling every Collection row revision — and every
-    // durable witness of one — shares. Authors bound their own revision
-    // witnesses from this value instead of a nearby safe-integer number.
-    PLUGIN_COLLECTION_REVISION_MAX,
-} from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
+export { PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, PLUGIN_COLLECTION_REVISION_MAX } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 
 import type { JsonValue, PluginJsonSchema } from './identity.js';
 import type { Disposable, PluginCancellationOptions } from './lifecycle.js';

@@ -1,4 +1,4 @@
-import { readSessionRoleIdV1, readSessionRolesV1, writeSessionRoleIdV1ToMetadata, writeSessionRoleConfigurationV1ToMetadata } from '@happier-dev/protocol';
+import { readSessionRoleIdV1, readSessionRolesV1, writeSessionRoleIdV1ToMetadata, writeSessionRoleConfigurationV1ToMetadata } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import type { SessionStateBinding } from './_types.js';
 
 /** Host-owned role intent; providers never publish the selected role. */

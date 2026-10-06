@@ -1,10 +1,5 @@
-export {
-    SessionContextUsageSnapshotV1Schema,
-    UsageObservationContextSchema,
-    UsageObservationCostSchema,
-    UsageObservationScopeSchema,
-    UsageObservationTokensSchema,
-} from '@happier-dev/protocol/runtime';
+export { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
+export { UsageObservationContextSchema, UsageObservationCostSchema, UsageObservationScopeSchema, UsageObservationTokensSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 export type {
     SessionContextUsageSnapshotV1,
     UsageObservationContext,

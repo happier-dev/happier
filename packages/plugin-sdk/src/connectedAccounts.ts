@@ -7,35 +7,11 @@
  * single package-local boundary.
  */
 
-import {
-    CLAUDE_OAUTH_AUTHORIZE_URL,
-    CLAUDE_OAUTH_CALLBACK_URL,
-    CLAUDE_OAUTH_CLIENT_ID,
-    CLAUDE_OAUTH_TOKEN_URL,
-} from '@happier-dev/protocol/providers/claude/oauth-profile';
-import {
-    CODEX_NATIVE_HOME as canonicalCodexNativeHome,
-    CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME as canonicalCodexConnectedServiceHomeDirectoryName,
-} from '@happier-dev/protocol/agents/codex/native-home-policy';
-import {
-    CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 as canonicalClaudeSubscriptionMaterializationContractV1,
-    CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 as canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1,
-} from '@happier-dev/protocol/connect/claude-subscription-materialization';
-import {
-    OPENAI_CODEX_AUTH_BASE_URL,
-    OPENAI_CODEX_AUTHORIZE_URL,
-    OPENAI_CODEX_CLIENT_ID,
-    OPENAI_CODEX_DEVICE_REDIRECT_URI,
-    OPENAI_CODEX_DEVICE_TOKEN_URL,
-    OPENAI_CODEX_DEVICE_USER_CODE_URL,
-    OPENAI_CODEX_DEVICE_VERIFICATION_URL,
-    OPENAI_CODEX_SCOPE,
-    OPENAI_CODEX_SCOPES,
-    OPENAI_CODEX_TOKEN_URL,
-} from '@happier-dev/protocol/providers/codex/oauth';
-import {
-    buildConnectedServiceCredentialRecord as buildProtocolConnectedServiceCredentialRecord,
-} from '@happier-dev/protocol/connect/build-connected-service-credential-record';
+import { CLAUDE_OAUTH_AUTHORIZE_URL, CLAUDE_OAUTH_CALLBACK_URL, CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_TOKEN_URL } from '@happier-dev/protocol/providers/claude/oauth-profile';
+import { CODEX_NATIVE_HOME as canonicalCodexNativeHome, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME as canonicalCodexConnectedServiceHomeDirectoryName } from '@happier-dev/protocol/agents/codex/native-home-policy';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 as canonicalClaudeSubscriptionMaterializationContractV1, CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 as canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1 } from '@happier-dev/protocol/connect/claude-subscription-materialization';
+import { OPENAI_CODEX_AUTH_BASE_URL, OPENAI_CODEX_AUTHORIZE_URL, OPENAI_CODEX_CLIENT_ID, OPENAI_CODEX_DEVICE_REDIRECT_URI, OPENAI_CODEX_DEVICE_TOKEN_URL, OPENAI_CODEX_DEVICE_USER_CODE_URL, OPENAI_CODEX_DEVICE_VERIFICATION_URL, OPENAI_CODEX_SCOPE, OPENAI_CODEX_SCOPES, OPENAI_CODEX_TOKEN_URL } from '@happier-dev/protocol/providers/codex/oauth';
+import { buildConnectedServiceCredentialRecord as buildProtocolConnectedServiceCredentialRecord } from '@happier-dev/protocol/connect/build-connected-service-credential-record';
 import type {
     ConnectedAccountHttpHeadersRequest,
     ConnectedAccountMaterializationRequest,
@@ -166,33 +142,15 @@ export const OPENAI_CODEX_OAUTH_PROFILE: Readonly<{
     }),
 });
 
-export {
-    ConnectedAccountPurposeDeclarationsV1Schema,
-} from '@happier-dev/protocol/connect/connected-account-purposes';
-export {
-    ConnectedAccountAuthFailureRequestV1Schema,
-    ConnectedAccountQuotaFailureRequestV1Schema,
-    ConnectedAccountRequestAuthUsesV1Schema,
-} from '@happier-dev/protocol/connect/connected-account-request-auth';
+export { ConnectedAccountPurposeDeclarationsV1Schema } from '@happier-dev/protocol/connect/connected-account-purposes';
+export { ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 /** @realm daemon */
-export {
-    ConnectedServiceAuthGroupIdSchema,
-    ConnectedServiceBindingsV1Schema,
-    ConnectedServiceProfileIdSchema,
-} from '@happier-dev/protocol/connect/connected-service-bindings';
+export { ConnectedServiceAuthGroupIdSchema, ConnectedServiceBindingsV1Schema, ConnectedServiceProfileIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 /** @realm daemon */
-export {
-    QualifiedConnectedAccountGroupV4Schema,
-    QualifiedConnectedAccountListResponseV4Schema,
-} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-export {
-    QualifiedConnectedAccountRefJsonSchema,
-    QualifiedConnectedAccountRefSchema,
-} from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+export { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+export { QualifiedConnectedAccountRefJsonSchema, QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 /** @realm daemon */
-export {
-    QualifiedConnectedAccountPurposeBindingV1Schema,
-} from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+export { QualifiedConnectedAccountPurposeBindingV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 export type {
     ConnectedAccountHttpHeadersRequest,
     ConnectedAccountMaterializationRequest,
@@ -217,22 +175,11 @@ export type {
     ConnectedServiceId,
     ConnectedServiceProfileId,
 } from '@happier-dev/protocol/connect/connected-service-bindings';
-export {
-    normalizeConnectedServiceLimitCategoryV1,
-} from '@happier-dev/protocol/connect/connected-service-limit-category';
+export { normalizeConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
 export type {
     ConnectedServiceLimitCategoryV1,
 } from '@happier-dev/protocol/connect/connected-service-limit-category';
-export {
-    ConnectedServiceCredentialRevisionV1Schema,
-    ConnectedServiceCredentialRecordV1Schema,
-    ConnectedServiceQuotaRecoveryCreditKindV1Schema,
-    ConnectedServiceQuotaRecoveryCreditStatusV1Schema,
-    ConnectedServiceQuotaRecoveryCreditV1Schema,
-    ConnectedServiceQuotaRecoveryCreditsV1Schema,
-    ConnectedServiceQuotaSnapshotV1Schema,
-    ConnectedServiceUsageSourceV1Schema,
-} from '@happier-dev/protocol/connect/connected-service-schemas';
+export { ConnectedServiceCredentialRevisionV1Schema, ConnectedServiceCredentialRecordV1Schema, ConnectedServiceQuotaRecoveryCreditKindV1Schema, ConnectedServiceQuotaRecoveryCreditStatusV1Schema, ConnectedServiceQuotaRecoveryCreditV1Schema, ConnectedServiceQuotaRecoveryCreditsV1Schema, ConnectedServiceQuotaSnapshotV1Schema, ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 export type {
     ConnectedServiceCredentialRecordV1,
     ConnectedServiceCredentialRevisionV1,
@@ -249,17 +196,12 @@ export type {
     QualifiedConnectedAccountPurposeBindingV1 as QualifiedConnectedAccountPurposeBinding,
     QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
-export {
-    ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1Schema,
-    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema,
-} from '@happier-dev/protocol/sessions/work-state';
+export { ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 export type {
     ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
     ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
 } from '@happier-dev/protocol/sessions/work-state';
-export {
-    resolveConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/protocol/account/settings/connected-services';
+export { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 export type {
     ConnectedServicesProviderStateSharingPolicyV1,
 } from '@happier-dev/protocol/account/settings/connected-services';

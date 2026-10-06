@@ -1,15 +1,8 @@
-import {
-  describeActionForVoiceTool,
-  isVoicePromptHotPathSpec,
-  listVoiceToolActionSpecs,
-  type ActionInputFieldHint,
-  type ActionSpec,
-} from '@happier-dev/protocol/actions/actionSpecs';
-import {
-  describeActionInputFieldForVoice,
-  getActionVoiceWorkflowNotes,
-  type VoiceGuidanceAvailability,
-} from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
+import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
+import { isVoicePromptHotPathSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionInputFieldHint, ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { describeActionInputFieldForVoice, getActionVoiceWorkflowNotes } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
+import type { VoiceGuidanceAvailability } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 
 export type VoicePromptActionSpec = Pick<
   ActionSpec,

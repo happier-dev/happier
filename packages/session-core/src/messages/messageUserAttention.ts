@@ -1,11 +1,5 @@
-import {
-    SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
-    SESSION_MESSAGE_USER_ATTENTION_IMPACT,
-    SessionMessageAttentionImpactSchema,
-    TranscriptRawRecordV1Schema,
-    agentEventAttentionImpact,
-    type SessionMessageAttentionImpact,
-} from '@happier-dev/protocol';
+import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT, SESSION_MESSAGE_USER_ATTENTION_IMPACT, SessionMessageAttentionImpactSchema, TranscriptRawRecordV1Schema, agentEventAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import type { SessionMessageAttentionImpact } from '@happier-dev/protocol';
 
 import type { Message } from "./messageTypes.js";
 import { isRecoveredHistoryTranscriptObservation } from "./transcriptObservationProvenance.js";

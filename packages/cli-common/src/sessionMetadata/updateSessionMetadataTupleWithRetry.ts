@@ -1,14 +1,5 @@
-import {
-  SessionSharedMetadataV1Schema,
-  createSessionOwnerMetadataV1,
-  projectSessionOwnerCompatibilityViewV1,
-  projectSessionSharedMetadataV1,
-  type SessionMetadataTuplePatchV1,
-  type SessionMetadataOwnerMigrationPatchV1,
-  type SessionOwnerMetadataEnvelopeV1,
-  type SessionOwnerMetadataV1,
-  type SessionSharedMetadataV1,
-} from '@happier-dev/protocol';
+import { SessionSharedMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { SessionMetadataTuplePatchV1, SessionMetadataOwnerMigrationPatchV1, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, SessionSharedMetadataV1 } from '@happier-dev/protocol';
 
 export type SessionMetadataOwnerTupleMutationValueV1<M, A> = Readonly<{
   metadata: M;

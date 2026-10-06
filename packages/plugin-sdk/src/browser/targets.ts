@@ -1,6 +1,4 @@
-import {
-    PluginBrowserTargetContributionV1Schema,
-} from '@happier-dev/protocol/plugins/contributions/browser';
+import { PluginBrowserTargetContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/browser/v1';
 import type { BrowserAvailabilityDescriptor } from './actions.js';
 import type { JsonValue } from '../identity.js';
 import type { PluginLocalizedStringV2 } from '../manifest.js';

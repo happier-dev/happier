@@ -1,6 +1,4 @@
-import {
-    LaunchProfileIdV2ProtocolSchema,
-} from '@happier-dev/protocol/profiles/v2/profileId';
+import { LaunchProfileIdV2ProtocolSchema } from '@happier-dev/protocol/profiles/v2/profileId';
 
 import type { ProtocolComposableSchema } from './protocolFacade.js';
 

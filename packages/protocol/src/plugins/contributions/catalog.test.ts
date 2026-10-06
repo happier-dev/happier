@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { PluginManifestV2Schema } from '../manifest/v2.js';
+
 import {
   assertPluginProjectionFamilyIdsV2,
   derivePluginClientContributionRegistrationRights,
@@ -87,6 +89,22 @@ describe('plugin contribution catalog', () => {
       ...declarativeRuntime,
       ux: { title: 'forbidden runtime presentation' },
     }).success).toBe(false);
+  });
+
+  it('keeps the shared ACP permission map as a direct reference in both raw Manifest dialects', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      const raw = PluginManifestV2Schema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' });
+      const definitions = raw.$defs ?? raw.definitions ?? {};
+      const permissionModeArgv = Object.values(definitions).find((schema) =>
+        schema.type === 'object'
+        && schema.properties?.flag !== undefined
+        && schema.properties?.map !== undefined
+        && schema.required?.includes('flag')
+        && schema.required.includes('map'));
+      expect(permissionModeArgv?.properties?.map).toEqual({
+        $ref: expect.stringMatching(target === 'draft-7' ? /^#\/definitions\// : /^#\/\$defs\//),
+      });
+    }
   });
 
   it('accounts for every schema family with executable semantic metadata', () => {

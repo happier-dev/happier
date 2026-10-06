@@ -1,9 +1,6 @@
 import type { JsonValue } from './identity.js';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
-import {
-    COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1,
-    MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 as canonicalMaxComposerContentInspectBytesV1,
-} from '@happier-dev/protocol/plugins/ui/client';
+import { COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1, MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 as canonicalMaxComposerContentInspectBytesV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 export type {
     ComposerContentHandleV1,
     ComposerContentInspectRequestV1,

@@ -1,8 +1,5 @@
-import {
-    SESSION_METADATA_LAYOUT_VERSION_V1,
-    SessionActionConfirmationsV1Schema,
-    SessionSharedMetadataV1Schema,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionActionConfirmationsV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 
 export function readSharedMetadataPresentationCompletedRequests(
     metadata: unknown,

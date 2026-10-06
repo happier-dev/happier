@@ -1,20 +1,8 @@
-import {
-    PluginActionDangerLevelV2Schema,
-    PluginActionSurfaceV2Schema,
-} from '@happier-dev/protocol/plugins/actions/vocabulary';
-import {
-    PluginContributionLocalIdSchema,
-    PluginContributionOperationRoleV1Schema,
-    PluginContributionProtocolIdV1Schema,
-} from '@happier-dev/protocol/plugins/contribution-identity';
-import {
-    PluginContributionPointProtocolV1Schema,
-} from '@happier-dev/protocol/plugins/contributions/targeted';
+import { PluginActionDangerLevelV2Schema, PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/vocabulary';
+import { PluginContributionLocalIdSchema, PluginContributionOperationRoleV1Schema, PluginContributionProtocolIdV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginContributionPointProtocolV1Schema } from '@happier-dev/protocol/plugins/contributions/targeted';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import {
-    PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1,
-    PluginTargetedContributionSelectionV1Schema as canonicalPluginTargetedContributionSelectionV1Schema,
-} from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import { PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1, PluginTargetedContributionSelectionV1Schema as canonicalPluginTargetedContributionSelectionV1Schema } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import type { AdmittedTargetedOperationExecutionHandle } from './actions/admittedTargetedOperation.js';
 import { readProtocolComposableSchema } from './protocol/protocolFacade.js';

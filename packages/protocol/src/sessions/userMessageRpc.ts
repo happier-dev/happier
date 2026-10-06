@@ -1,21 +1,9 @@
 import { z } from 'zod';
 
-import {
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  HappierStructuredInputV1Schema as HappierStructuredInputV1EnvelopeSchema,
-  RawIngressStructuredInputV1Schema,
-  ComposerContentHandleV1Schema,
-  MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
-  SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND,
-  hasAdmittedComposerAttachmentSelectionV1,
-  readAttachmentEnvelopeLocalImagePaths,
-  readHappierStructuredInputV1FromMeta,
-  readIngressComposerAttachmentSelectionV1,
-  sanitizeHappierStructuredInputV1,
-  sanitizeSessionStructuredInputMeta,
-  type ComposerContentHandleV1,
-  type HappierStructuredInputV1 as HappierStructuredInputV1Envelope,
-} from '../runtime/input/index.js';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, HappierStructuredInputV1Schema as HappierStructuredInputV1EnvelopeSchema, RawIngressStructuredInputV1Schema, hasAdmittedComposerAttachmentSelectionV1, readAttachmentEnvelopeLocalImagePaths, readHappierStructuredInputV1FromMeta, readIngressComposerAttachmentSelectionV1, sanitizeHappierStructuredInputV1, sanitizeSessionStructuredInputMeta, type HappierStructuredInputV1 as HappierStructuredInputV1Envelope } from '../runtime/input/structuredInputV1.js';
+import { ComposerContentHandleV1Schema, type ComposerContentHandleV1 } from '../runtime/input/composerContentV1.js';
+import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from '../runtime/input/composerAttachmentV1.js';
+import { SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND } from '../runtime/input/imageInputV1.js';
 import {
   SessionMediaMessageMetaV1Schema,
   type SessionMediaMessageMetaV1,

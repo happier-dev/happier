@@ -1,4 +1,4 @@
-import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
+import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
 
 export function normalizeVoiceAgentTurnTranscriptText(value: unknown): string | null {
   if (typeof value !== 'string') return null;

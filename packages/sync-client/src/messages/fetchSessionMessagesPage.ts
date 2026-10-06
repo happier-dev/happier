@@ -1,4 +1,5 @@
-import { buildSessionMessagesPath, SessionMessagesPageV1Schema, type BuildSessionMessagesPathParams, type SessionMessagesPageV1 } from '@happier-dev/protocol';
+import { buildSessionMessagesPath, SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import type { BuildSessionMessagesPathParams, SessionMessagesPageV1 } from '@happier-dev/protocol';
 import { throwIfAborted } from '../abortSignal.js';
 
 export function parseSessionMessagesPage(json: unknown): SessionMessagesPageV1 {

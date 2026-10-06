@@ -1,8 +1,5 @@
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
-import {
-    declaresHostSynthesizedAgentResumeOnlyExternalSources,
-    findAgentResumeOnlyExternalSourceContractIssue,
-} from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
+import { declaresHostSynthesizedAgentResumeOnlyExternalSources, findAgentResumeOnlyExternalSourceContractIssue } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type { ActionContract, ActionHandler } from './actions/contracts.js';

@@ -1,7 +1,4 @@
-import {
-    PublicToolchainCompatibilityV1Schema as canonicalPublicToolchainCompatibilityV1Schema,
-    assertCoherentPublicToolchainCompatibilityV1,
-} from '@happier-dev/protocol/plugins/public-toolchain-compatibility';
+import { PublicToolchainCompatibilityV1Schema as canonicalPublicToolchainCompatibilityV1Schema, assertCoherentPublicToolchainCompatibilityV1 } from '@happier-dev/protocol/plugins/public-toolchain-compatibility';
 import type {
     PluginUiSchema,
     PublicToolchainAuthoringDependencyV1,

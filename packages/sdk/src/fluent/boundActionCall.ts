@@ -1,4 +1,4 @@
-import { PUBLIC_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions';
+import { PUBLIC_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 
 import type { PublicActionId, PublicActionInputById } from '../actions/generated.js';
 import { HappierActionError } from '../errors.js';

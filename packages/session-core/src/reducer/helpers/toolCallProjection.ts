@@ -1,5 +1,5 @@
 import type { ToolCall } from "../../messages/messageTypes.js";
-import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionDecisionActorV1Schema } from '@happier-dev/protocol';
+import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionDecisionActorV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 
 export type ReducerStoredPermission = {
     tool: string;

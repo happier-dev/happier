@@ -1,10 +1,5 @@
-import {
-  EXTERNAL_SESSION_OPERATION_METADATA_KEY,
-  ExternalSessionOperationStateV1Schema,
-  type ExternalSessionOperationStateV1,
-  type SessionMetadata,
-  type SessionStateFieldValue,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_OPERATION_METADATA_KEY, ExternalSessionOperationStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import type { ExternalSessionOperationStateV1, SessionMetadata, SessionStateFieldValue } from '@happier-dev/protocol';
 
 import type { SessionStateBinding, SessionStateStoredValue } from '../_types.js';
 

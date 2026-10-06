@@ -1,10 +1,7 @@
 import { z } from 'zod';
 
-import {
-  ScmBackendIdSchema,
-  ScmEntryKindSchema,
-  ScmRepoModeSchema,
-} from '../scm/index.js';
+import { ScmBackendIdSchema } from '../scm/backendIdentity.js';
+import { ScmEntryKindSchema, ScmRepoModeSchema } from '../scm/workingSnapshot.js';
 
 export const ReviewScmScopeDiagnosticCodeV1Schema = z.enum([
   'invalid_path',

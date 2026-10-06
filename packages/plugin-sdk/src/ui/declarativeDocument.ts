@@ -1,8 +1,5 @@
-import {
-    PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 as canonicalContentType,
-    preflightPluginDeclarativeDocumentV1,
-    PluginDeclarativeDocumentV1Schema as canonicalDocumentSchema,
-} from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
+import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 as canonicalContentType } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocumentContentTypeV1';
+import { preflightPluginDeclarativeDocumentV1, PluginDeclarativeDocumentV1Schema as canonicalDocumentSchema } from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
 import type {
     PluginDeclarativeDocumentContentTypeV1,
     PluginDeclarativeDocumentV1,

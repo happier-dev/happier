@@ -7,12 +7,9 @@ import {
 import {
   parsePermissionIntentAlias as canonicalParsePermissionIntentAlias,
 } from '@happier-dev/agents/permissions';
-import {
-  AgentExecutionRunEventSchema as canonicalAgentExecutionRunEventSchema,
-  AgentRuntimeJsonValueSchema as canonicalAgentRuntimeJsonValueSchema,
-  AgentSessionProviderBindingV1Schema as canonicalAgentSessionProviderBindingV1Schema,
-  AgentSessionRuntimeEventSchema as canonicalAgentSessionRuntimeEventSchema,
-} from '@happier-dev/protocol/runtime';
+import { AgentExecutionRunEventSchema as canonicalAgentExecutionRunEventSchema } from '@happier-dev/protocol/runtime/agentExecutionRunV1';
+import { AgentRuntimeJsonValueSchema as canonicalAgentRuntimeJsonValueSchema, AgentSessionRuntimeEventSchema as canonicalAgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { AgentSessionProviderBindingV1Schema as canonicalAgentSessionProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
 import type {
   AcpForkSessionRequestV1,
   AcpLoadSessionRequestV1,
@@ -435,18 +432,10 @@ export {
 /** @realm any */
 export type { AgentSessionRealtimeStartRequestV1 } from '@happier-dev/protocol/runtime';
 /** @realm any */
-export {
-    AgentProviderBindingMaterializationV1Schema,
-    AgentSessionRealtimeStartRequestV1Schema,
-    AgentSessionRealtimeStartResultV1Schema,
-} from '@happier-dev/protocol/runtime';
-export {
-    SessionContextUsageSnapshotV1Schema,
-    UsageObservationContextSchema,
-    UsageObservationCostSchema,
-    UsageObservationScopeSchema,
-    UsageObservationTokensSchema,
-} from '@happier-dev/protocol/runtime';
+export { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+export { AgentSessionRealtimeStartRequestV1Schema, AgentSessionRealtimeStartResultV1Schema } from '@happier-dev/protocol/voice/realtime/agentSession';
+export { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
+export { UsageObservationContextSchema, UsageObservationCostSchema, UsageObservationScopeSchema, UsageObservationTokensSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 /** @realm any */
 export {

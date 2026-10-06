@@ -1,17 +1,9 @@
-import {
-  actionInputOptionValueKey as canonicalActionInputOptionValueKey,
-  isSameActionInputOptionValue as canonicalIsSameActionInputOptionValue,
-  normalizeActionInputByFieldHints as canonicalNormalizeActionInputByFieldHints,
-  readActionInputOptionValue as canonicalReadActionInputOptionValue,
-  resolveEffectiveActionInputFields as canonicalResolveEffectiveActionInputFields,
-} from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import {
-  readInputPath as canonicalReadInputPath,
-  writeInputPath as canonicalWriteInputPath,
-  resolveEffectiveInputFields as canonicalResolveEffectiveInputFields,
-  normalizeInputByFieldHints as canonicalNormalizeInputByFieldHints,
-  readInputTypePickerLaunchInput as canonicalReadInputTypePickerLaunchInput,
-} from '@happier-dev/protocol/inputs';
+import { actionInputOptionValueKey as canonicalActionInputOptionValueKey, isSameActionInputOptionValue as canonicalIsSameActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { normalizeInputByFieldHints as canonicalNormalizeActionInputByFieldHints, resolveEffectiveInputFields as canonicalResolveEffectiveActionInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { readInputOptionValue as canonicalReadActionInputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
+import { readInputPath as canonicalReadInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
+import { writeInputPath as canonicalWriteInputPath, readInputTypePickerLaunchInput as canonicalReadInputTypePickerLaunchInput } from '@happier-dev/protocol/inputs';
+import { resolveEffectiveInputFields as canonicalResolveEffectiveInputFields, normalizeInputByFieldHints as canonicalNormalizeInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 
 import type {
   ActionInputFieldHint,

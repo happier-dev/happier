@@ -1,7 +1,4 @@
-import {
-    redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText,
-    trimBugReportTextToMaxBytes as canonicalTrimBugReportTextToMaxBytes,
-} from '@happier-dev/protocol/bugs/reports';
+import { redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText, trimBugReportTextToMaxBytes as canonicalTrimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import type { PluginRemediationData } from './availability.js';
 import type { JsonValue } from './identity.js';

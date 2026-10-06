@@ -1,9 +1,6 @@
 import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
-import {
-  isLoopbackHostname,
-  normalizeHostnameForLoopbackCheck,
-} from '@happier-dev/protocol/server/urls';
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 export type TerminalConnectLinks = Readonly<{
   webUrl: string;

@@ -1,4 +1,4 @@
-import { createServerUrlComparableKey } from './urls/index.js';
+import { createServerUrlComparableKey } from './urls/serverUrlComparableKey.js';
 
 export type RelayDriftRepairAction = Readonly<{
     kind: 'connectBackgroundServiceToActiveRelay';

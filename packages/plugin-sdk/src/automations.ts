@@ -1,16 +1,6 @@
 /** @moduleRealm any */
 
-import {
-    AutomationConversationAdmitInputV1Schema as canonicalAutomationConversationAdmitInputV1Schema,
-    AutomationConversationAdmitResultV1Schema as canonicalAutomationConversationAdmitResultV1Schema,
-    AutomationConversationResultDeliveryV1Schema as canonicalAutomationConversationResultDeliveryV1Schema,
-    AutomationResultDeliveryInputV1JsonSchema as canonicalAutomationResultDeliveryInputV1JsonSchema,
-    AutomationResultDeliveryInputV1Schema as canonicalAutomationResultDeliveryInputV1Schema,
-    AutomationResultDeliveryResultV1JsonSchema as canonicalAutomationResultDeliveryResultV1JsonSchema,
-    AutomationResultDeliveryResultV1Schema as canonicalAutomationResultDeliveryResultV1Schema,
-    AutomationResultDeliverySourceV1JsonSchema as canonicalAutomationResultDeliverySourceV1JsonSchema,
-    AutomationResultDeliverySourceV1Schema as canonicalAutomationResultDeliverySourceV1Schema,
-} from '@happier-dev/protocol/automations/result-delivery';
+import { AutomationConversationAdmitInputV1Schema as canonicalAutomationConversationAdmitInputV1Schema, AutomationConversationAdmitResultV1Schema as canonicalAutomationConversationAdmitResultV1Schema, AutomationConversationResultDeliveryV1Schema as canonicalAutomationConversationResultDeliveryV1Schema, AutomationResultDeliveryInputV1JsonSchema as canonicalAutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema as canonicalAutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1JsonSchema as canonicalAutomationResultDeliveryResultV1JsonSchema, AutomationResultDeliveryResultV1Schema as canonicalAutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1JsonSchema as canonicalAutomationResultDeliverySourceV1JsonSchema, AutomationResultDeliverySourceV1Schema as canonicalAutomationResultDeliverySourceV1Schema } from '@happier-dev/protocol/automations/result-delivery';
 import type {
     AutomationIdV1,
     AutomationConversationAdmitInputV1,
@@ -31,9 +21,7 @@ import type { PluginJsonSchema } from './identity.js';
 export type { AutomationRunCauseDeclarationV1 as PluginAutomationRunCause }
     from '@happier-dev/protocol/automations/run-cause';
 
-export {
-    AutomationIdV1Schema,
-} from '@happier-dev/protocol/automations/result-delivery';
+export { AutomationIdV1Schema } from '@happier-dev/protocol/automations/automationIdV1';
 export type {
     AutomationIdV1,
     AutomationConversationAdmitInputV1,

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginCaptureSourceContributionV1Schema } from './captureSources.js';
 export { PluginCaptureSourceContributionV1Schema, type PluginCaptureSourceContributionV1 } from './captureSources.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
@@ -152,12 +154,12 @@ import {
   AgentSessionStartupInstructionsTextV1Schema,
 } from '../../runtime/agentSessionStartupInstructionsV1.js';
 
-const PluginVoiceModelPackContributionV2Schema = VoiceModelPackContributionV1Schema
+const PluginVoiceModelPackContributionV2Schema = lazyZodSchema(() => VoiceModelPackContributionV1Schema
   .omit({ id: true })
   .extend({ id: asProtocolZod(PluginContributionLocalIdSchema) })
-  .strict();
+  .strict());
 
-const PluginHookRegistrationFilterV1Schema = z.object({
+const PluginHookRegistrationFilterV1Schema = lazyZodSchema(() => z.object({
   agentId: z.string().trim().min(1).optional(),
   runtimeTargetId: z.string().trim().min(1).optional(),
   sessionId: z.string().trim().min(1).optional(),
@@ -165,19 +167,19 @@ const PluginHookRegistrationFilterV1Schema = z.object({
   cwdPrefix: z.string().trim().min(1).optional(),
   machineId: z.string().trim().min(1).optional(),
   eventNames: z.array(z.string().trim().min(1)).optional(),
-}).strict();
+}).strict());
 
-const PluginAgentAcpStderrMatchRuleV2Schema = z.object({
+const PluginAgentAcpStderrMatchRuleV2Schema = lazyZodSchema(() => z.object({
   includes: z.array(z.string().min(1)).min(1),
   caseSensitive: z.boolean().optional(),
-}).strict();
+}).strict());
 
 const PluginAgentAcpStderrStatusErrorRuleV2Schema =
-  PluginAgentAcpStderrMatchRuleV2Schema.extend({
+  lazyZodSchema(() => PluginAgentAcpStderrMatchRuleV2Schema.extend({
     detail: z.string().min(1),
-  }).strict();
+  }).strict());
 
-const PluginAgentAcpStderrRulesV2Schema = z.object({
+const PluginAgentAcpStderrRulesV2Schema = lazyZodSchema(() => z.object({
   authenticationErrorDetail: z.string().trim().min(1).optional(),
   suppress: z.array(PluginAgentAcpStderrMatchRuleV2Schema)
     .min(1)
@@ -188,8 +190,9 @@ const PluginAgentAcpStderrRulesV2Schema = z.object({
 }).strict().refine(
   (value) => value.authenticationErrorDetail !== undefined || value.suppress !== undefined || value.statusErrors !== undefined,
   'ACP stderr rules must declare at least one rule.',
-);
+));
 
+// Retain concrete identity for the shared permission map in raw draft-7 Manifest JSON.
 const PluginAgentAcpPermissionModeMappingV2Schema = z.object({
   default: z.string().trim().min(1).nullable().optional(),
   'read-only': z.string().trim().min(1).nullable().optional(),
@@ -198,20 +201,20 @@ const PluginAgentAcpPermissionModeMappingV2Schema = z.object({
   plan: z.string().trim().min(1).nullable().optional(),
 }).strict();
 
-const PluginAgentAcpPermissionModeArgvV2Schema = z.object({
+const PluginAgentAcpPermissionModeArgvV2Schema = lazyZodSchema(() => z.object({
   flag: z.string().trim().min(1),
   map: PluginAgentAcpPermissionModeMappingV2Schema,
-}).strict();
+}).strict());
 
-const PluginAgentAcpPlatformValueV2Schema = z.object({
+const PluginAgentAcpPlatformValueV2Schema = lazyZodSchema(() => z.object({
   posix: z.string().trim().min(1),
   win32: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-const PluginAgentAcpPlatformSegmentsV2Schema = z.object({
+const PluginAgentAcpPlatformSegmentsV2Schema = lazyZodSchema(() => z.object({
   posix: z.array(z.string().trim().min(1)).min(1),
   win32: z.array(z.string().trim().min(1)).min(1),
-}).strict();
+}).strict());
 
 /**
  * An Agent whose CLI reads MCP servers only from its own config file cannot
@@ -224,7 +227,7 @@ const PluginAgentAcpPlatformSegmentsV2Schema = z.object({
  * out-of-process Session runner reconstructs its runtime from the attested
  * manifest alone and never loads plugin code.
  */
-const PluginAgentAcpNativeSessionMcpConfigV2Schema = z.object({
+const PluginAgentAcpNativeSessionMcpConfigV2Schema = lazyZodSchema(() => z.object({
   /** Environment variable naming the provider's config root. */
   configRootEnvKey: PluginAgentAcpPlatformValueV2Schema,
   /** Config root relative to the user's home directory when that variable is unset. */
@@ -245,18 +248,18 @@ const PluginAgentAcpNativeSessionMcpConfigV2Schema = z.object({
    * replacing a Happier tool server.
    */
   projectShadowPaths: z.array(z.string().trim().min(1)).min(1).optional(),
-}).strict();
+}).strict());
 export type PluginAgentAcpNativeSessionMcpConfigV2 =
   z.infer<typeof PluginAgentAcpNativeSessionMcpConfigV2Schema>;
 
-const PluginAgentAcpModelSuffixOptionValueV2Schema = z.object({
+const PluginAgentAcpModelSuffixOptionValueV2Schema = lazyZodSchema(() => z.object({
   value: z.string().trim().min(1),
   name: z.string().trim().min(1),
   /** Words a provider model name may use for this value, when they differ from `name`. */
   modelNameWords: z.array(z.string().trim().min(1)).min(1).optional(),
-}).strict();
+}).strict());
 
-const PluginAgentAcpModelTrailingOptionValueV2Schema = z.object({
+const PluginAgentAcpModelTrailingOptionValueV2Schema = lazyZodSchema(() => z.object({
   /** Provider-native id segment appended after the primary suffix option value. */
   segment: z.string().trim().min(1),
   /** Stable option value reported to Happier clients. */
@@ -264,9 +267,9 @@ const PluginAgentAcpModelTrailingOptionValueV2Schema = z.object({
   name: z.string().trim().min(1),
   /** Words a provider model name may use for this value, when they differ from `name`. */
   modelNameWords: z.array(z.string().trim().min(1)).min(1).optional(),
-}).strict();
+}).strict());
 
-const PluginAgentAcpModelTrailingOptionV2Schema = z.object({
+const PluginAgentAcpModelTrailingOptionV2Schema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
   /** Option value represented by the absence of a trailing provider id segment. */
@@ -292,7 +295,7 @@ const PluginAgentAcpModelTrailingOptionV2Schema = z.object({
       message: 'The default trailing option value must differ from segment-backed values.',
     });
   }
-});
+}));
 
 /**
  * Providers that advertise one model per option value encode that value in the
@@ -300,6 +303,7 @@ const PluginAgentAcpModelTrailingOptionV2Schema = z.object({
  * host present one model plus a canonical option instead of a combinatorial
  * model list, and to expand a selection back to the advertised id.
  */
+// Keep concrete identity for the public Manifest's shared JSON Schema references.
 const PluginAgentAcpModelSuffixOptionV2Schema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
@@ -341,7 +345,7 @@ export type PluginAgentAcpModelSuffixOptionV2 =
  * Data-only behavior the host ACP composer can apply without invoking plugin
  * code. Dynamic ACP behavior remains a custom Agent runtime responsibility.
  */
-export const PluginAgentAcpDefinitionV2Schema = z.object({
+export const PluginAgentAcpDefinitionV2Schema = lazyZodSchema(() => z.object({
   auth: z.object({
     methodId: z.string().trim().min(1).max(256),
   }).strict().optional(),
@@ -373,25 +377,25 @@ export const PluginAgentAcpDefinitionV2Schema = z.object({
     path: ['mcp'],
     message: 'Native session MCP config delivery requires the `drop` input policy.',
   },
-);
+));
 export type PluginAgentAcpDefinitionV2 = z.infer<typeof PluginAgentAcpDefinitionV2Schema>;
 
-export const PluginAgentRuntimeAcpV2Schema = z.object({
+export const PluginAgentRuntimeAcpV2Schema = lazyZodSchema(() => z.object({
   kind: z.literal('acp'),
   transport: PluginAgentAcpTransportSchema,
   definition: PluginAgentAcpDefinitionV2Schema.optional(),
-}).strict();
+}).strict());
 export type PluginAgentRuntimeAcpV2 = z.infer<typeof PluginAgentRuntimeAcpV2Schema>;
 
-export const PluginAgentRuntimeCustomV2Schema = z.object({
+export const PluginAgentRuntimeCustomV2Schema = lazyZodSchema(() => z.object({
   kind: z.literal('custom'),
-}).strict();
+}).strict());
 export type PluginAgentRuntimeCustomV2 = z.infer<typeof PluginAgentRuntimeCustomV2Schema>;
 
-export const PluginAgentRuntimeV2Schema = z.discriminatedUnion('kind', [
+export const PluginAgentRuntimeV2Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginAgentRuntimeAcpV2Schema,
   PluginAgentRuntimeCustomV2Schema,
-]);
+]));
 export type PluginAgentRuntimeV2 = z.infer<typeof PluginAgentRuntimeV2Schema>;
 
 // The Agent Session capability vocabulary is owned by the focused contribution
@@ -402,16 +406,16 @@ export {
   type PluginAgentSessionCapabilitiesV2,
 };
 
-export const PluginAgentExecutionRunCapabilitiesV2Schema = z.object({
+export const PluginAgentExecutionRunCapabilitiesV2Schema = lazyZodSchema(() => z.object({
   open: z.array(z.enum(['create', 'resume', 'fork'])).min(1).refine((values) => new Set(values).size === values.length, 'Entries must be unique.'), checkpoint: z.boolean(), stop: z.boolean(),
-}).strict();
+}).strict());
 export type PluginAgentExecutionRunCapabilitiesV2 = z.infer<typeof PluginAgentExecutionRunCapabilitiesV2Schema>;
 
-export const PluginAgentCapabilitySurfaceV2Schema = z.enum(['terminal', 'externalSessions']);
+export const PluginAgentCapabilitySurfaceV2Schema = lazyZodSchema(() => z.enum(['terminal', 'externalSessions']));
 export type PluginAgentCapabilitySurfaceV2 = z.infer<typeof PluginAgentCapabilitySurfaceV2Schema>;
 
-export const PluginAgentCapabilitySurfacesV2Schema = z.array(PluginAgentCapabilitySurfaceV2Schema)
-  .refine((values) => new Set(values).size === values.length, 'Entries must be unique.');
+export const PluginAgentCapabilitySurfacesV2Schema = lazyZodSchema(() => z.array(PluginAgentCapabilitySurfaceV2Schema)
+  .refine((values) => new Set(values).size === values.length, 'Entries must be unique.'));
 export type PluginAgentCapabilitySurfacesV2 = z.infer<typeof PluginAgentCapabilitySurfacesV2Schema>;
 
 /**
@@ -419,22 +423,22 @@ export type PluginAgentCapabilitySurfacesV2 = z.infer<typeof PluginAgentCapabili
  * tools. Absence deliberately means no delivery: the host must not infer a
  * channel from an Agent id, runtime kind, or the presence of tool declarations.
  */
-export const PluginAgentToolsDeliveryV2Schema = z.enum([
+export const PluginAgentToolsDeliveryV2Schema = lazyZodSchema(() => z.enum([
   'native_mcp',
   'native_extension',
   'shell_bridge',
-]);
+]));
 export type PluginAgentToolsDeliveryV2 = z.infer<typeof PluginAgentToolsDeliveryV2Schema>;
 
-export const PluginAgentToolsCapabilityV2Schema = z.object({
+export const PluginAgentToolsCapabilityV2Schema = lazyZodSchema(() => z.object({
   delivery: PluginAgentToolsDeliveryV2Schema,
-}).strict();
+}).strict());
 export type PluginAgentToolsCapabilityV2 = z.infer<typeof PluginAgentToolsCapabilityV2Schema>;
 
 /** Prompted structured JSON consumed by the host's strict output normalizers. */
-export const PluginAgentStructuredOutputCapabilityV2Schema = z.object({
+export const PluginAgentStructuredOutputCapabilityV2Schema = lazyZodSchema(() => z.object({
   formats: z.tuple([z.literal('json')]),
-}).strict();
+}).strict());
 export type PluginAgentStructuredOutputCapabilityV2 = z.infer<typeof PluginAgentStructuredOutputCapabilityV2Schema>;
 
 const PluginAgentCapabilitiesV2Shape = {
@@ -450,7 +454,7 @@ const PluginAgentCapabilitiesV2Shape = {
  * by manifest parsing and the daemon projection. Consumers never reconstruct
  * this shape from Agent presentation metadata.
  */
-export const PluginAgentCapabilitiesV2Schema = z.object(PluginAgentCapabilitiesV2Shape).strict()
+export const PluginAgentCapabilitiesV2Schema = lazyZodSchema(() => z.object(PluginAgentCapabilitiesV2Shape).strict()
   .refine(
     (value) => (
       value.surfaces !== undefined
@@ -459,30 +463,30 @@ export const PluginAgentCapabilitiesV2Schema = z.object(PluginAgentCapabilitiesV
       || value.tools !== undefined
     ),
     'At least one Agent capability declaration is required.',
-  );
+  ));
 export type PluginAgentCapabilitiesV2 = z.infer<typeof PluginAgentCapabilitiesV2Schema>;
 
-export const PluginAgentVendorResumeSupportV2Schema = z.enum(['supported', 'unsupported', 'experimental']);
+export const PluginAgentVendorResumeSupportV2Schema = lazyZodSchema(() => z.enum(['supported', 'unsupported', 'experimental']));
 export type PluginAgentVendorResumeSupportV2 = z.infer<typeof PluginAgentVendorResumeSupportV2Schema>;
 
 export const AGENT_CODING_PROMPT_BLOCK_V1_MAX_UTF8_BYTES = 2_048;
 
-const PluginAgentCodingPromptBehaviorBlockV1Schema = z.object({
+const PluginAgentCodingPromptBehaviorBlockV1Schema = lazyZodSchema(() => z.object({
   id: AgentSessionStartupInstructionsIdV1Schema,
   text: AgentSessionStartupInstructionsTextV1Schema.refine(
     (value) => new TextEncoder().encode(value).byteLength <= AGENT_CODING_PROMPT_BLOCK_V1_MAX_UTF8_BYTES,
     'Coding prompt block exceeds the UTF-8 byte limit',
   ),
   when: z.enum(['disableTodos']).optional(),
-}).strict();
+}).strict());
 
-const PluginAgentCodingPromptBehaviorV1Schema = z.object({
+const PluginAgentCodingPromptBehaviorV1Schema = lazyZodSchema(() => z.object({
   blocks: z.array(PluginAgentCodingPromptBehaviorBlockV1Schema).min(1),
-}).strict();
+}).strict());
 
-const PluginAgentResumeChecklistV1Schema = z.object({
+const PluginAgentResumeChecklistV1Schema = lazyZodSchema(() => z.object({
   includeLoginStatus: z.literal(true),
-}).strict();
+}).strict());
 
 /**
  * The client UI-behavior declaration an Agent contributes: the data-only
@@ -499,12 +503,12 @@ const PluginAgentResumeChecklistV1Schema = z.object({
  * malformed declaration where it is authored instead of letting it reach that
  * interpreter and silently no-op.
  */
-export const PluginAgentUiBehaviorContributionV2Schema = z.object({
+export const PluginAgentUiBehaviorContributionV2Schema = lazyZodSchema(() => z.object({
   behavior: AgentUiBehaviorDeclarationV1Schema.optional(),
   session: AgentUiSessionDeclarationV1Schema.optional(),
   message: AgentUiMessageDeclarationV1Schema.optional(),
   components: AgentUiComponentsDeclarationV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginAgentUiBehaviorContributionV2 = z.infer<typeof PluginAgentUiBehaviorContributionV2Schema>;
 export { AgentUiProjectedDeclarationV1Schema, type AgentUiProjectedDeclarationV1 } from './agentUiGrammar.js';
 
@@ -516,7 +520,7 @@ export { AgentUiProjectedDeclarationV1Schema, type AgentUiProjectedDeclarationV1
  * projects this block through the single Agent catalog-entry hook owner, so a
  * contributed Agent and a bundled one reach the same catalog contract.
  */
-export const PluginAgentCatalogV2Schema = z.object({
+export const PluginAgentCatalogV2Schema = lazyZodSchema(() => z.object({
   /**
    * Native (vendor-owned) Session resume. Absent means the host infers the level
    * from the declared `capabilities.sessions.open` list, which cannot express
@@ -548,7 +552,7 @@ export const PluginAgentCatalogV2Schema = z.object({
     || value.resumeChecklist !== undefined
   ),
   'At least one Agent catalog declaration is required.',
-);
+));
 export type PluginAgentCatalogV2 = z.infer<typeof PluginAgentCatalogV2Schema>;
 
 const PluginAgentDisplayV2Shape = {
@@ -594,19 +598,20 @@ const PluginAgentExecutionPrimaryShape = {
     structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
   }).strict(),
 };
-const PluginAgentPrimaryContributionV2Schema = z.union([
+const PluginAgentPrimaryContributionV2Schema = lazyZodSchema(() => z.union([
   z.object({ ...PluginAgentDisplayV2Shape, runtime: PluginAgentRuntimeAcpV2Schema, ...PluginAgentSessionPrimaryShape }).strict(),
   z.object({ ...PluginAgentDisplayV2Shape, runtime: PluginAgentRuntimeCustomV2Schema, ...PluginAgentSessionPrimaryShape }).strict(),
   z.object({ ...PluginAgentDisplayV2Shape, runtime: PluginAgentRuntimeCustomV2Schema, ...PluginAgentExecutionPrimaryShape }).strict(),
-]);
-const PluginAgentExternalSessionsAuxiliaryV2Schema = z.object({
+]));
+const PluginAgentExternalSessionsAuxiliaryV2Schema = lazyZodSchema(() => z.object({
   ...PluginAgentDisplayV2Shape,
   capabilities: z.object({
     surfaces: PluginAgentCapabilitySurfacesV2Schema
       .refine((values) => values.includes('externalSessions'), 'An auxiliary-only Agent must declare the externalSessions surface.'),
   }).strict(),
-}).strict();
+}).strict());
 
+// Keep concrete identity for the public Manifest's shared JSON Schema references.
 export const PluginAgentContributionV2Schema = z.union([
   PluginAgentPrimaryContributionV2Schema,
   PluginAgentExternalSessionsAuxiliaryV2Schema,
@@ -639,10 +644,10 @@ export const PluginAgentContributionV2Schema = z.union([
 export type PluginAgentContributionV2 = z.input<typeof PluginAgentContributionV2Schema>;
 export type ParsedPluginAgentContributionV2 = z.output<typeof PluginAgentContributionV2Schema>;
 
-export const PluginCommandVisibilityV2Schema = z.enum(['default', 'advanced']);
+export const PluginCommandVisibilityV2Schema = lazyZodSchema(() => z.enum(['default', 'advanced']));
 export type PluginCommandVisibilityV2 = z.infer<typeof PluginCommandVisibilityV2Schema>;
 
-export const PluginCommandContributionV2Schema = z.object({
+export const PluginCommandContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: z.union([z.string().trim().min(1), z.object({ key: z.string().trim().min(1), fallback: z.string().trim().min(1) }).strict()]),
   description: z.union([z.string().trim().min(1), z.object({ key: z.string().trim().min(1), fallback: z.string().trim().min(1) }).strict()]).optional(),
@@ -653,7 +658,7 @@ export const PluginCommandContributionV2Schema = z.object({
   tmux: z.enum(['inherit', 'required', 'forbidden']).optional(),
   availability: PluginActionAvailabilityV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginCommandContributionV2 = z.infer<typeof PluginCommandContributionV2Schema>;
 
 /**
@@ -676,7 +681,7 @@ export type PluginCommandContributionV2 = z.infer<typeof PluginCommandContributi
  * They are three separate vocabularies over three separate domains and are
  * deliberately never unified.
  */
-export const PluginResourceKindV2Schema = z.enum(['prompt', 'skill', 'template', 'asset', 'config']);
+export const PluginResourceKindV2Schema = lazyZodSchema(() => z.enum(['prompt', 'skill', 'template', 'asset', 'config']));
 export type PluginResourceKind = z.infer<typeof PluginResourceKindV2Schema>;
 export type PluginResourceKindV2 = PluginResourceKind;
 
@@ -694,7 +699,7 @@ export type PluginResourceKindV2 = PluginResourceKind;
  * The discriminant is named `source` rather than `kind` because `kind` already
  * means the content category above.
  */
-export const PluginResourceSourceV2Schema = z.enum(['packaged', 'dynamic']);
+export const PluginResourceSourceV2Schema = lazyZodSchema(() => z.enum(['packaged', 'dynamic']));
 export type PluginResourceSourceV2 = z.infer<typeof PluginResourceSourceV2Schema>;
 
 /**
@@ -702,7 +707,7 @@ export type PluginResourceSourceV2 = z.infer<typeof PluginResourceSourceV2Schema
  * part of the immutable declaration: consumers cannot infer it from a caller
  * or add a second resource identity at runtime.
  */
-export const PluginDynamicResourceScopeV1Schema = z.enum(['global', 'session', 'surface']);
+export const PluginDynamicResourceScopeV1Schema = lazyZodSchema(() => z.enum(['global', 'session', 'surface']));
 export type PluginDynamicResourceScopeV1 = z.infer<typeof PluginDynamicResourceScopeV1Schema>;
 
 /**
@@ -710,7 +715,7 @@ export type PluginDynamicResourceScopeV1 = z.infer<typeof PluginDynamicResourceS
  * producer. It is deliberately not a generic caller metadata bag: the closed
  * union makes an absent/wrong context fail through the Resource owner.
  */
-export const PluginResourceContextV1Schema = z.discriminatedUnion('kind', [
+export const PluginResourceContextV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('global') }).strict(),
   z.object({
     kind: z.literal('session'),
@@ -721,7 +726,7 @@ export const PluginResourceContextV1Schema = z.discriminatedUnion('kind', [
     mountInstanceKey: PluginUiInstanceKeyV1Schema,
     launchInput: PluginUiLaunchInputV1Schema,
   }).strict(),
-]);
+]));
 export type PluginResourceContextV1 = z.infer<typeof PluginResourceContextV1Schema>;
 
 /**
@@ -729,7 +734,7 @@ export type PluginResourceContextV1 = z.infer<typeof PluginResourceContextV1Sche
  * manifest — none of which names a source — keeps parsing unchanged. Absent
  * means packaged.
  */
-export const PluginPackagedResourceContributionV2Schema = z.object({
+export const PluginPackagedResourceContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   source: z.literal('packaged').optional(),
   kind: PluginResourceKindV2Schema,
@@ -737,13 +742,13 @@ export const PluginPackagedResourceContributionV2Schema = z.object({
   digest: z.string().trim().min(1).optional(),
   contentType: z.string().trim().min(1),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginPackagedResourceContributionV2 =
   z.infer<typeof PluginPackagedResourceContributionV2Schema>;
 
 export const MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2 = 16 * 1024 * 1024;
 
-export const PluginDynamicResourceContributionV2Schema = z.object({
+export const PluginDynamicResourceContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   source: z.literal('dynamic'),
   kind: PluginResourceKindV2Schema,
@@ -756,7 +761,7 @@ export const PluginDynamicResourceContributionV2Schema = z.object({
     .optional(),
   maxBytes: z.number().int().positive().max(MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2).optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginDynamicResourceContributionV2 =
   z.infer<typeof PluginDynamicResourceContributionV2Schema>;
 
@@ -765,10 +770,10 @@ export type PluginDynamicResourceContributionV2 =
  * qualified identity, one read authority, one lifecycle — with conditional
  * runtime producer registration for the dynamic arm only.
  */
-export const PluginResourceContributionV2Schema = z.union([
+export const PluginResourceContributionV2Schema = lazyZodSchema(() => z.union([
   PluginDynamicResourceContributionV2Schema,
   PluginPackagedResourceContributionV2Schema,
-]);
+]));
 export type PluginResourceContributionV2 = z.infer<typeof PluginResourceContributionV2Schema>;
 
 /**
@@ -784,7 +789,7 @@ export function isDynamicPluginResourceContributionV2(
 
 export { PluginHookScopeV1Schema, type PluginHookScopeV1 };
 
-export const PluginHookContributionV2Schema = z.object({
+export const PluginHookContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   on: PluginHookIdV1Schema,
   hookApiVersion: z.literal(1).default(1),
@@ -799,13 +804,13 @@ export const PluginHookContributionV2Schema = z.object({
     .optional(),
   compatibility: z.record(z.string(), PluginJsonValueV2Schema).optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginHookContributionV2 = z.infer<typeof PluginHookContributionV2Schema>;
 
-export const BackgroundServiceContributionSchema = z.object({
+export const BackgroundServiceContributionSchema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema.optional(),
-}).strict();
+}).strict());
 export type BackgroundServiceContribution = z.infer<typeof BackgroundServiceContributionSchema>;
 
 export {
@@ -875,11 +880,11 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'targetedPluginContributions', schema: PluginTargetedContributionV1Schema }),
 ] as const;
 
-const PluginContributesV2BaseSchema = buildPluginContributionFamilySchemaV2(
+const PluginContributesV2BaseSchema = lazyZodSchema(() => buildPluginContributionFamilySchemaV2(
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
-);
+));
 
-const PluginContributesV2SchemaWithoutDefault = PluginContributesV2BaseSchema.extend({
+const PluginContributesV2SchemaWithoutDefault = lazyZodSchema(() => PluginContributesV2BaseSchema.extend({
   mcp: PluginMcpContributesV1Schema,
   ui: PluginUiContributionsV2Schema,
 }).superRefine((value, ctx) => {
@@ -915,11 +920,11 @@ const PluginContributesV2SchemaWithoutDefault = PluginContributesV2BaseSchema.ex
   });
   validatePluginSearchProviderContributionsV1(value, ctx);
   validateTargetedContributionEnvelopeBoundsV1(value, ctx);
-});
+}));
 
-export const PluginContributesV2Schema = PluginContributesV2SchemaWithoutDefault.default(
+export const PluginContributesV2Schema = lazyZodSchema(() => PluginContributesV2SchemaWithoutDefault.default(
   PluginContributesV2SchemaWithoutDefault.parse({}),
-);
+));
 export type PluginContributesV2 = z.infer<typeof PluginContributesV2Schema>;
 
 export {

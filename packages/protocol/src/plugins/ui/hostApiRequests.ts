@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -88,7 +89,7 @@ export type {
   PluginUiSubPathV1,
 } from './semanticCommands.js';
 
-export const PluginUiHostApiErrorCodeV1Schema = z.enum([
+export const PluginUiHostApiErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'unavailable',
   'denied',
   'invalid_payload',
@@ -97,19 +98,19 @@ export const PluginUiHostApiErrorCodeV1Schema = z.enum([
   'expired_resource',
   'timeout',
   'internal_error',
-]);
+]));
 
 /**
  * Generic first-terminal result for a mount whose host placement explicitly
  * requested ephemeral input. It is never persisted and carries no authority.
  */
-export const PluginUiEphemeralInputSettlementV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiEphemeralInputSettlementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('completed'),
     input: PluginUiJsonValueV1Schema,
   }).strict(),
   z.object({ kind: z.literal('cancelled') }).strict(),
-]);
+]));
 export type PluginUiEphemeralInputSettlementV1 = z.infer<
   typeof PluginUiEphemeralInputSettlementV1Schema
 >;
@@ -120,11 +121,11 @@ export type PluginUiHostApiErrorCodeV1 =
  * A typed mounted-host failure. This is distinct from an Action result: plugin
  * Action JSON is allowed to carry a `code` member with the same spelling.
  */
-export const PluginUiHostApiErrorPayloadV1Schema = z.object({
+export const PluginUiHostApiErrorPayloadV1Schema = lazyZodSchema(() => z.object({
   code: PluginUiHostApiErrorCodeV1Schema,
   message: z.string().trim().min(1).optional(),
   diagnostics: z.array(z.string().trim().min(1)).default([]),
-}).strict();
+}).strict());
 export type PluginUiHostApiErrorPayloadV1 =
   z.infer<typeof PluginUiHostApiErrorPayloadV1Schema>;
 
@@ -133,22 +134,22 @@ export type PluginUiHostApiErrorPayloadV1 =
  * enrichment. The mounted host owns identity binding and opaque command-handle
  * allocation; the author can only send closed semantic data or clear it.
  */
-export const PluginUiPublishCurrentUiContextRequestV1Schema = z.object({
+export const PluginUiPublishCurrentUiContextRequestV1Schema = lazyZodSchema(() => z.object({
   enrichment: PluginUiContextEnrichmentV1Schema.nullable(),
-}).strict();
+}).strict());
 export type PluginUiPublishCurrentUiContextRequestV1 =
   z.infer<typeof PluginUiPublishCurrentUiContextRequestV1Schema>;
 
-const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
+const ComposerRefV1ZodSchema = lazyZodSchema(() => asProtocolZod(ComposerRefV1Schema));
 
 /** `activeComposer` has no request payload; an absent focused composer is null. */
-export const PluginUiActiveComposerResultV1Schema = ComposerRefV1ZodSchema.nullable();
+export const PluginUiActiveComposerResultV1Schema = lazyZodSchema(() => ComposerRefV1ZodSchema.nullable());
 export type PluginUiActiveComposerResultV1 =
   z.infer<typeof PluginUiActiveComposerResultV1Schema>;
 
-export const PluginUiReadComposerRequestV1Schema = z.object({
+export const PluginUiReadComposerRequestV1Schema = lazyZodSchema(() => z.object({
   ref: ComposerRefV1ZodSchema,
-}).strict();
+}).strict());
 export type PluginUiReadComposerRequestV1 =
   z.infer<typeof PluginUiReadComposerRequestV1Schema>;
 export const PluginUiReadComposerResultV1Schema = ComposerReadResultV1Schema;
@@ -163,10 +164,10 @@ export const PluginUiWatchComposerEventV1Schema = ComposerSnapshotV1Schema;
 export type PluginUiWatchComposerEventV1 =
   z.infer<typeof PluginUiWatchComposerEventV1Schema>;
 
-export const PluginUiApplyComposerRequestV1Schema = z.object({
+export const PluginUiApplyComposerRequestV1Schema = lazyZodSchema(() => z.object({
   ref: ComposerRefV1ZodSchema,
   transaction: ComposerTransactionV1Schema,
-}).strict();
+}).strict());
 export type PluginUiApplyComposerRequestV1 =
   z.infer<typeof PluginUiApplyComposerRequestV1Schema>;
 export const PluginUiApplyComposerResultV1Schema = ComposerTransactionResultV1Schema;
@@ -180,29 +181,29 @@ export const PluginUiFocusComposerResultV1Schema = ComposerFocusResultV1Schema;
 export type PluginUiFocusComposerResultV1 =
   z.infer<typeof PluginUiFocusComposerResultV1Schema>;
 
-export const PluginUiSetComposerDecorationsRequestV1Schema = z.object({
+export const PluginUiSetComposerDecorationsRequestV1Schema = lazyZodSchema(() => z.object({
   ref: ComposerRefV1ZodSchema,
   key: z.string().trim().min(1),
   decorations: ComposerDecorationSetV1Schema.nullable(),
-}).strict();
+}).strict());
 export type PluginUiSetComposerDecorationsRequestV1 =
   z.infer<typeof PluginUiSetComposerDecorationsRequestV1Schema>;
 export const PluginUiSetComposerDecorationsResultV1Schema = ComposerDecorationResultV1Schema;
 export type PluginUiSetComposerDecorationsResultV1 =
   z.infer<typeof PluginUiSetComposerDecorationsResultV1Schema>;
 
-export const PluginUiAcquireComposerInputLockRequestV1Schema = z.object({
+export const PluginUiAcquireComposerInputLockRequestV1Schema = lazyZodSchema(() => z.object({
   ref: ComposerRefV1ZodSchema,
   request: ComposerInputLockRequestV1Schema,
-}).strict();
+}).strict());
 export type PluginUiAcquireComposerInputLockRequestV1 =
   z.infer<typeof PluginUiAcquireComposerInputLockRequestV1Schema>;
 
 /** Selection is host-bound to the exact Composer and mounted contribution. */
-export const PluginUiPickComposerMediaRequestV1Schema = z.object({
+export const PluginUiPickComposerMediaRequestV1Schema = lazyZodSchema(() => z.object({
   ref: ComposerRefV1ZodSchema,
   request: ComposerContentPickMediaRequestV1Schema,
-}).strict();
+}).strict());
 export type PluginUiPickComposerMediaRequestV1 =
   z.infer<typeof PluginUiPickComposerMediaRequestV1Schema>;
 export const PluginUiPickComposerMediaResultV1Schema = ComposerContentHandleV1Schema;
@@ -210,10 +211,10 @@ export type PluginUiPickComposerMediaResultV1 =
   z.infer<typeof PluginUiPickComposerMediaResultV1Schema>;
 
 /** Inspection reads bounded bytes through the incumbent transfer carrier, never a path or transfer session. */
-export const PluginUiInspectComposerContentRequestV1Schema = z.object({
+export const PluginUiInspectComposerContentRequestV1Schema = lazyZodSchema(() => z.object({
   handle: ComposerContentHandleV1Schema,
   request: ComposerContentInspectRequestV1Schema,
-}).strict();
+}).strict());
 export type PluginUiInspectComposerContentRequestV1 =
   z.infer<typeof PluginUiInspectComposerContentRequestV1Schema>;
 export const PluginUiInspectComposerContentResultV1Schema = ComposerContentInspectWireResultV1Schema;
@@ -221,9 +222,9 @@ export type PluginUiInspectComposerContentResultV1 =
   z.infer<typeof PluginUiInspectComposerContentResultV1Schema>;
 
 /** Release is idempotent at the transfer-owned stage owner; callers carry only the opaque claim. */
-export const PluginUiReleaseComposerContentRequestV1Schema = z.object({
+export const PluginUiReleaseComposerContentRequestV1Schema = lazyZodSchema(() => z.object({
   handle: ComposerContentHandleV1Schema,
-}).strict();
+}).strict());
 export type PluginUiReleaseComposerContentRequestV1 =
   z.infer<typeof PluginUiReleaseComposerContentRequestV1Schema>;
 
@@ -232,7 +233,7 @@ export type PluginUiReleaseComposerContentRequestV1 =
  * The mounted host maps it through the same decision owner the Session UI's
  * footer uses; it is not a second permission authority.
  */
-export const PluginUiSessionPermissionAnswerV1Schema = z.enum(['allowOnce', 'allowForSession', 'deny']);
+export const PluginUiSessionPermissionAnswerV1Schema = lazyZodSchema(() => z.enum(['allowOnce', 'allowForSession', 'deny']));
 export type PluginUiSessionPermissionAnswerV1 =
   z.infer<typeof PluginUiSessionPermissionAnswerV1Schema>;
 
@@ -241,14 +242,14 @@ export type PluginUiSessionPermissionAnswerV1 =
  * to run, when it asked, and which answers this viewer may give (empty when the
  * viewer may not approve for this Session).
  */
-export const PluginUiSessionPendingPermissionV1Schema = z.object({
+export const PluginUiSessionPendingPermissionV1Schema = lazyZodSchema(() => z.object({
   requestId: z.string().trim().min(1),
   toolName: z.string().trim().min(1),
   summary: z.string(),
   command: z.string().min(1).optional(),
   createdAtMs: z.number().int().nonnegative().optional(),
   answers: z.array(PluginUiSessionPermissionAnswerV1Schema),
-}).strict();
+}).strict());
 export type PluginUiSessionPendingPermissionV1 =
   z.infer<typeof PluginUiSessionPendingPermissionV1Schema>;
 
@@ -258,7 +259,7 @@ export type PluginUiSessionPendingPermissionV1 =
  * awareness projection's own fields. Work presentation comes from the host's
  * shared Work owner, including report-aware settlement. Both objects are closed.
  */
-export const PluginUiSessionStateV1Schema = z.object({
+export const PluginUiSessionStateV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   // Exact mounted Account scope, not the client's currently focused Home.
   serverId: z.string().trim().min(1).optional(),
@@ -273,15 +274,15 @@ export const PluginUiSessionStateV1Schema = z.object({
   }).strict(),
   workspace: SessionAwarenessWorkspaceV1Schema.optional(),
   pendingPermissions: z.array(PluginUiSessionPendingPermissionV1Schema),
-}).strict();
+}).strict());
 export type PluginUiSessionStateV1 = z.infer<typeof PluginUiSessionStateV1Schema>;
 
-export const PluginUiReadSessionRequestV1Schema = z.object({
+export const PluginUiReadSessionRequestV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type PluginUiReadSessionRequestV1 = z.infer<typeof PluginUiReadSessionRequestV1Schema>;
 /** `null` is a Session this Account's client cannot reach, never an error. */
-export const PluginUiReadSessionResultV1Schema = PluginUiSessionStateV1Schema.nullable();
+export const PluginUiReadSessionResultV1Schema = lazyZodSchema(() => PluginUiSessionStateV1Schema.nullable());
 export type PluginUiReadSessionResultV1 = z.infer<typeof PluginUiReadSessionResultV1Schema>;
 
 /**
@@ -292,21 +293,21 @@ export type PluginUiReadSessionResultV1 = z.infer<typeof PluginUiReadSessionResu
 export const PluginUiWatchSessionRequestV1Schema = PluginUiReadSessionRequestV1Schema;
 export type PluginUiWatchSessionRequestV1 = z.infer<typeof PluginUiWatchSessionRequestV1Schema>;
 
-export const PluginUiRespondToSessionPermissionRequestV1Schema = z.object({
+export const PluginUiRespondToSessionPermissionRequestV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   requestId: z.string().trim().min(1),
   answer: PluginUiSessionPermissionAnswerV1Schema,
-}).strict();
+}).strict());
 export type PluginUiRespondToSessionPermissionRequestV1 =
   z.infer<typeof PluginUiRespondToSessionPermissionRequestV1Schema>;
 
-export const PluginUiRespondToSessionPermissionResultV1Schema = z.discriminatedUnion('status', [
+export const PluginUiRespondToSessionPermissionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('answered') }).strict(),
   z.object({
     status: z.literal('refused'),
     reason: z.enum(['sessionUnavailable', 'requestNotPending', 'answerUnavailable']),
   }).strict(),
-]);
+]));
 export type PluginUiRespondToSessionPermissionResultV1 =
   z.infer<typeof PluginUiRespondToSessionPermissionResultV1Schema>;
 
@@ -316,23 +317,23 @@ export type PluginUiRespondToSessionPermissionResultV1 =
  * wire error envelope, mounted UI host, and SDK fixture all decode the exact
  * same author payload.
  */
-const PluginUiHostApiDiagnosticContributionRefV1Schema = z.object({
+const PluginUiHostApiDiagnosticContributionRefV1Schema = lazyZodSchema(() => z.object({
   pluginId: z.string().trim().min(1),
   localId: z.string().trim().min(1),
-}).strict();
-export const PluginUiHostApiDiagnosticRemediationV1Schema = z.discriminatedUnion('kind', [
+}).strict());
+export const PluginUiHostApiDiagnosticRemediationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('retry') }).strict(),
   z.object({ kind: z.literal('openSettings'), path: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('selectAccount'), service: PluginUiHostApiDiagnosticContributionRefV1Schema }).strict(),
   z.object({ kind: z.literal('installDependency'), dependencyId: z.string().trim().min(1) }).strict(),
   z.object({ kind: z.literal('openUrl'), url: z.string().trim().min(1) }).strict(),
-]);
+]));
 export type PluginUiHostApiDiagnosticRemediationV1 =
   z.infer<typeof PluginUiHostApiDiagnosticRemediationV1Schema>;
 
 /** A plugin diagnostic must remain bounded before a mounted host logs it. */
 export const PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1 = 8 * 1024;
-export const PluginUiHostApiDiagnosticV1Schema = z.object({
+export const PluginUiHostApiDiagnosticV1Schema = lazyZodSchema(() => z.object({
   code: z.string().trim().min(1),
   severity: z.enum(['info', 'warning', 'error']),
   message: z.string().optional(),
@@ -352,20 +353,20 @@ export const PluginUiHostApiDiagnosticV1Schema = z.object({
       message: `Plugin UI diagnostic exceeds the ${PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1}-byte UTF-8 limit.`,
     });
   }
-});
+}));
 export type PluginUiHostApiDiagnosticV1 =
   z.infer<typeof PluginUiHostApiDiagnosticV1Schema>;
 
 /** The public utility-effect payloads remain strict even though their effects are host-owned. */
-export const PluginUiHostApiWriteClipboardRequestV1Schema = z.object({
+export const PluginUiHostApiWriteClipboardRequestV1Schema = lazyZodSchema(() => z.object({
   value: z.string(),
-}).strict();
+}).strict());
 export type PluginUiHostApiWriteClipboardRequestV1 =
   z.infer<typeof PluginUiHostApiWriteClipboardRequestV1Schema>;
 
-export const PluginUiHostApiOpenExternalLinkRequestV1Schema = z.object({
+export const PluginUiHostApiOpenExternalLinkRequestV1Schema = lazyZodSchema(() => z.object({
   url: z.string(),
-}).strict();
+}).strict());
 export type PluginUiHostApiOpenExternalLinkRequestV1 =
   z.infer<typeof PluginUiHostApiOpenExternalLinkRequestV1Schema>;
 
@@ -393,14 +394,14 @@ export type PluginUiQualifiedActionReferenceV1 = PluginContributionIdentityV1;
  * original string instead of trimming it, so the downstream canonical owners
  * retain their existing exact-id semantics.
  */
-const PluginUiMountedBareActionReferenceV1Schema = z.string().refine(
+const PluginUiMountedBareActionReferenceV1Schema = lazyZodSchema(() => z.string().refine(
   (value) => value.trim().length > 0,
   'Mounted Action references must not be blank.',
-);
-export const PluginUiMountedActionReferenceV1Schema = z.union([
+));
+export const PluginUiMountedActionReferenceV1Schema = lazyZodSchema(() => z.union([
   PluginUiMountedBareActionReferenceV1Schema,
   asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
-]);
+]));
 export type PluginUiMountedActionReferenceV1 =
   z.infer<typeof PluginUiMountedActionReferenceV1Schema>;
 
@@ -433,12 +434,12 @@ export function normalizePluginUiMountedContributedActionReferenceV1(
  * not the declarative selector schema below: a renderer cannot turn a document
  * path into a caller-selected route or an arbitrary JSON channel.
  */
-export const PluginUiOpenSurfaceRequestV1Schema = z.object({
+export const PluginUiOpenSurfaceRequestV1Schema = lazyZodSchema(() => z.object({
   destination: asProtocolZod(PluginUiDestinationReferenceV1Schema),
   input: PluginUiLaunchInputV1Schema.optional(),
   subPath: PluginUiSubPathV1Schema.optional(),
   instanceKey: PluginUiInstanceKeyV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiOpenSurfaceRequestV1 =
   z.infer<typeof PluginUiOpenSurfaceRequestV1Schema>;
 
@@ -450,13 +451,13 @@ export type PluginUiOpenSurfaceRequestV1 =
  * Account focus is valid only beside its exact service because connected
  * account ids are qualified by the producing contribution.
  */
-export const PluginUiOpenConnectedAccountsRequestV1Schema = z.union([
+export const PluginUiOpenConnectedAccountsRequestV1Schema = lazyZodSchema(() => z.union([
   z.object({}).strict(),
   z.object({
     service: asProtocolZod(PluginContributionIdentityV1Schema),
     accountId: asProtocolZod(QualifiedConnectedAccountIdSchema).optional(),
   }).strict(),
-]);
+]));
 export type PluginUiOpenConnectedAccountsRequestV1 =
   z.infer<typeof PluginUiOpenConnectedAccountsRequestV1Schema>;
 
@@ -478,10 +479,10 @@ export type PluginUiOpenConnectedAccountsRequestV1 =
  * already holds and the user always sees the location change that resulted.
  * Absent means this page location has no Back step of its own.
  */
-export const PluginUiReplacePageLocationRequestV1Schema = z.object({
+export const PluginUiReplacePageLocationRequestV1Schema = lazyZodSchema(() => z.object({
   subPath: PluginUiSubPathV1Schema,
   backLocation: PluginUiSubPathV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiReplacePageLocationRequestV1 =
   z.infer<typeof PluginUiReplacePageLocationRequestV1Schema>;
 
@@ -493,17 +494,17 @@ export type PluginUiReplacePageLocationRequestV1 =
  * caller that replaced to `a` and is told `b` has been superseded and should
  * render `b`.
  */
-export const PluginUiReplacePageLocationResultV1Schema = z.object({
+export const PluginUiReplacePageLocationResultV1Schema = lazyZodSchema(() => z.object({
   subPath: PluginUiSubPathV1Schema,
-}).strict();
+}).strict());
 export type PluginUiReplacePageLocationResultV1 =
   z.infer<typeof PluginUiReplacePageLocationResultV1Schema>;
 
 /** Action dispatch is distinct from navigation and has no destination arm. */
-export const PluginUiExecuteActionRequestV1Schema = z.object({
+export const PluginUiExecuteActionRequestV1Schema = lazyZodSchema(() => z.object({
   action: PluginUiMountedActionReferenceV1Schema,
   input: PluginUiLaunchInputV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiExecuteActionRequestV1 =
   z.infer<typeof PluginUiExecuteActionRequestV1Schema>;
 
@@ -523,26 +524,26 @@ export const PluginUiJsonObjectV1Schema = PluginUiLaunchInputV1Schema.refine(
  * to that snapshot; it does not treat the request as caller provenance or an
  * arbitrary Action lookup.
  */
-export const PluginUiSelectActionInputTargetedRequestV1Schema = z.object({
+export const PluginUiSelectActionInputTargetedRequestV1Schema = lazyZodSchema(() => z.object({
     operation: PluginUiTargetedContributionOperationV1Schema,
     draft: PluginUiJsonObjectV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiSelectActionInputTargetedRequestV1 =
   z.infer<typeof PluginUiSelectActionInputTargetedRequestV1Schema>;
 
 /** Exact host-owned no-invoke selection literals. */
-const PluginUiSelectActionInputSessionHostActionV1Schema = z.object({
+const PluginUiSelectActionInputSessionHostActionV1Schema = lazyZodSchema(() => z.object({
   action: z.literal('session.spawn_new'),
   projection: z.literal('serverStartDraft'),
-}).strict();
-const PluginUiSelectActionInputReviewHostActionV1Schema = z.object({
+}).strict());
+const PluginUiSelectActionInputReviewHostActionV1Schema = lazyZodSchema(() => z.object({
   action: z.literal('review.start'),
   projection: z.literal('executionRunLaunch'),
-}).strict();
-export const PluginUiSelectActionInputHostActionV1Schema = z.discriminatedUnion('action', [
+}).strict());
+export const PluginUiSelectActionInputHostActionV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   PluginUiSelectActionInputSessionHostActionV1Schema,
   PluginUiSelectActionInputReviewHostActionV1Schema,
-]);
+]));
 export type PluginUiSelectActionInputHostActionV1 =
   z.infer<typeof PluginUiSelectActionInputHostActionV1Schema>;
 
@@ -567,12 +568,12 @@ export type PluginUiSelectActionInputHostActionV1 =
  * contributor. Staged media content is deliberately not seedable: its handle is
  * bound to an execution target the seed has not chosen yet.
  */
-export const PluginUiNewSessionSeedAttachmentV1Schema = z.object({
+export const PluginUiNewSessionSeedAttachmentV1Schema = lazyZodSchema(() => z.object({
   // The host qualifies this local id from the CALLER, exactly as it does for a
   // live `attachment.add`. A seed never supplies a plugin or host identity.
   attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
   value: ComposerAttachmentAuthorValueV1Schema,
-}).strict();
+}).strict());
 export type PluginUiNewSessionSeedAttachmentV1 =
   z.infer<typeof PluginUiNewSessionSeedAttachmentV1Schema>;
 
@@ -583,7 +584,7 @@ export type PluginUiNewSessionSeedAttachmentV1 =
  * near-identical set of strings: a candidate remains a host-owned placement
  * hint until the real New Session screen accepts one.
  */
-export const PluginUiSessionCheckoutIntentV1Schema = z.enum([
+export const PluginUiSessionCheckoutIntentV1Schema = lazyZodSchema(() => z.enum([
   'none',
   // Requires the exact active selected operation carried by the public
   // `openNewSession` options. The host executes it before any route handoff;
@@ -592,17 +593,17 @@ export const PluginUiSessionCheckoutIntentV1Schema = z.enum([
   'reuseWorkspace',
   'createWorktree',
   'ask',
-]);
+]));
 export type PluginUiSessionCheckoutIntentV1 =
   z.infer<typeof PluginUiSessionCheckoutIntentV1Schema>;
 
 /** One worktree fact carried by the incumbent host-owned placement candidate. */
-export const PluginUiSessionPlacementWorktreeV1Schema = z.object({
+export const PluginUiSessionPlacementWorktreeV1Schema = lazyZodSchema(() => z.object({
   path: z.string().trim().min(1),
   branch: z.string().nullable(),
   isMain: z.boolean(),
   isCurrent: z.boolean(),
-}).strict();
+}).strict());
 export type PluginUiSessionPlacementWorktreeV1 =
   z.infer<typeof PluginUiSessionPlacementWorktreeV1Schema>;
 
@@ -614,7 +615,7 @@ export type PluginUiSessionPlacementWorktreeV1 =
  * candidates; it cannot turn one into an execution target without the reader
  * and New Session owner selecting it.
  */
-export const PluginUiSessionPlacementCandidateV1Schema = z.object({
+export const PluginUiSessionPlacementCandidateV1Schema = lazyZodSchema(() => z.object({
   projectKey: ProjectKeyV1Schema,
   serverId: z.string().trim().min(1),
   machineId: z.string().trim().min(1),
@@ -622,11 +623,11 @@ export const PluginUiSessionPlacementCandidateV1Schema = z.object({
   label: z.string().trim().min(1).optional(),
   reachable: z.boolean(),
   worktrees: z.array(PluginUiSessionPlacementWorktreeV1Schema),
-}).strict();
+}).strict());
 export type PluginUiSessionPlacementCandidateV1 =
   z.infer<typeof PluginUiSessionPlacementCandidateV1Schema>;
 
-export const PluginUiNewSessionPlacementV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiNewSessionPlacementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('exactTarget'),
     serverId: z.string().trim().min(1),
@@ -637,11 +638,11 @@ export const PluginUiNewSessionPlacementV1Schema = z.discriminatedUnion('kind', 
     kind: z.literal('currentTarget'),
     directory: z.string().trim().min(1),
   }).strict(),
-]);
+]));
 export type PluginUiNewSessionPlacementV1 =
   z.infer<typeof PluginUiNewSessionPlacementV1Schema>;
 
-export const PluginUiNewSessionSeedV1Schema = z.object({
+export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.object({
   prompt: z.string().trim().min(1).optional(),
   profileId: z.string().trim().min(1).optional(),
   /**
@@ -677,7 +678,7 @@ export const PluginUiNewSessionSeedV1Schema = z.object({
     .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)
     .readonly()
     .optional(),
-}).strict();
+}).strict());
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
 
 /**
@@ -695,15 +696,15 @@ export type PluginUiOpenNewSessionRequestV1 = z.infer<typeof PluginUiOpenNewSess
  * operation succeeds. The operation's feature protocol remains the owner of
  * every provider-specific result field; New Session reads only this projection.
  */
-export const PluginUiPreparedReviewWorkspaceResultV1Schema = z.object({
+export const PluginUiPreparedReviewWorkspaceResultV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('prepared'),
   repositoryPath: z.string().trim().min(1),
-}).passthrough();
+}).passthrough());
 export type PluginUiPreparedReviewWorkspaceResultV1 = z.infer<
   typeof PluginUiPreparedReviewWorkspaceResultV1Schema
 >;
 
-export const PluginUiSelectActionInputHostRequestV1Schema = z.union([
+export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => z.union([
   z.object({
     hostAction: PluginUiSelectActionInputSessionHostActionV1Schema,
     draft: PluginUiJsonObjectV1Schema.optional(),
@@ -717,7 +718,7 @@ export const PluginUiSelectActionInputHostRequestV1Schema = z.union([
       instructions: ReviewStartInputSchema.shape.instructions,
     }).strict(),
   }).strict(),
-]);
+]));
 export type PluginUiSelectActionInputHostRequestV1 =
   z.infer<typeof PluginUiSelectActionInputHostRequestV1Schema>;
 
@@ -726,63 +727,63 @@ export type PluginUiSelectActionInputHostRequestV1 =
  * its existing contract, while host-owned selections have no Action handle
  * and therefore cannot acquire execution authority.
  */
-export const PluginUiSelectActionInputRequestV1Schema = z.union([
+export const PluginUiSelectActionInputRequestV1Schema = lazyZodSchema(() => z.union([
   PluginUiSelectActionInputTargetedRequestV1Schema,
   PluginUiSelectActionInputHostRequestV1Schema,
-]);
+]));
 export type PluginUiSelectActionInputRequestV1 =
   z.infer<typeof PluginUiSelectActionInputRequestV1Schema>;
 
-const PluginUiSelectActionInputConnectedAccountV1Schema = z.discriminatedUnion('kind', [
+const PluginUiSelectActionInputConnectedAccountV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
   z.object({
     kind: z.literal('selected'),
     fieldPath: z.string().trim().min(1),
     ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   }).strict(),
-]);
+]));
 
-const PluginUiSelectActionInputPresentationV1Schema = z.object({
+const PluginUiSelectActionInputPresentationV1Schema = lazyZodSchema(() => z.object({
   connectedAccountLabel: z.string().trim().min(1).max(512).nullable(),
   machineDisplayName: z.string().trim().min(1).max(512).nullable(),
-}).strict();
+}).strict());
 
-export const PluginUiSelectActionInputTargetedSubmittedV1Schema = z.object({
+export const PluginUiSelectActionInputTargetedSubmittedV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('submitted'),
   action: asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
   input: PluginUiJsonObjectV1Schema,
   selection: asProtocolZod(PluginTargetedContributionSelectionV1Schema),
   connectedAccount: PluginUiSelectActionInputConnectedAccountV1Schema,
   presentation: PluginUiSelectActionInputPresentationV1Schema,
-}).strict();
+}).strict());
 export type PluginUiSelectActionInputTargetedSubmittedV1 =
   z.infer<typeof PluginUiSelectActionInputTargetedSubmittedV1Schema>;
 
 /** Session alone projects this no-invoke settlement. */
-export const PluginUiSelectActionInputServerStartDraftV1Schema = z.object({
+export const PluginUiSelectActionInputServerStartDraftV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('serverStartDraft'),
   draft: SessionServerStartSpawnDraftV1Schema,
-}).strict();
+}).strict());
 export type PluginUiSelectActionInputServerStartDraftV1 =
   z.infer<typeof PluginUiSelectActionInputServerStartDraftV1Schema>;
 
 /** Credential selection only; the host admits the complete review input before settlement. */
-const PluginUiSelectActionInputExecutionRunLaunchV1Schema = z.object({
+const PluginUiSelectActionInputExecutionRunLaunchV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('executionRunLaunch'),
   input: z.object({
     secretReferenceOverlay: ReviewStartInputSchema.shape.secretReferenceOverlay,
     teamCredentialModel: ReviewStartInputSchema.shape.teamCredentialModel,
     teamCredentialSessionBindingConsent: ReviewStartInputSchema.shape.teamCredentialSessionBindingConsent,
   }).strict(),
-}).strict();
+}).strict());
 
 /** Exact no-invoke settlements, targeted submission, or cancellation. */
-export const PluginUiSelectActionInputResultV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiSelectActionInputResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,
   PluginUiSelectActionInputExecutionRunLaunchV1Schema,
   z.object({ kind: z.literal('cancelled') }).strict(),
-]);
+]));
 export type PluginUiSelectActionInputResultV1 =
   z.infer<typeof PluginUiSelectActionInputResultV1Schema>;
 
@@ -792,7 +793,7 @@ export type PluginUiSelectActionInputResultV1 =
  * declarative-document owner's job.
  */
 export const PLUGIN_UI_DECLARATIVE_VALUE_PATH_MAX_UTF8_BYTES_V1 = 1_024;
-export const PluginUiDeclarativeValuePathV1Schema = z.string().trim().min(1).superRefine((value, ctx) => {
+export const PluginUiDeclarativeValuePathV1Schema = lazyZodSchema(() => z.string().trim().min(1).superRefine((value, ctx) => {
   if (!value.startsWith('/')) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -805,33 +806,33 @@ export const PluginUiDeclarativeValuePathV1Schema = z.string().trim().min(1).sup
       message: `Declarative UI value path exceeds the ${PLUGIN_UI_DECLARATIVE_VALUE_PATH_MAX_UTF8_BYTES_V1}-byte UTF-8 limit.`,
     });
   }
-});
+}));
 export type PluginUiDeclarativeValuePathV1 =
   z.infer<typeof PluginUiDeclarativeValuePathV1Schema>;
 
-export const PluginUiDeclarativeOpenSurfaceSelectorV1Schema = z.object({
+export const PluginUiDeclarativeOpenSurfaceSelectorV1Schema = lazyZodSchema(() => z.object({
   destination: asProtocolZod(PluginUiDestinationReferenceV1Schema),
   inputPath: PluginUiDeclarativeValuePathV1Schema.optional(),
   subPathPath: PluginUiDeclarativeValuePathV1Schema.optional(),
   instanceKeyPath: PluginUiDeclarativeValuePathV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiDeclarativeOpenSurfaceSelectorV1 =
   z.infer<typeof PluginUiDeclarativeOpenSurfaceSelectorV1Schema>;
 
-export const PluginUiDeclarativeExecuteActionSelectorV1Schema = z.object({
+export const PluginUiDeclarativeExecuteActionSelectorV1Schema = lazyZodSchema(() => z.object({
   action: asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
   inputPath: PluginUiDeclarativeValuePathV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiDeclarativeExecuteActionSelectorV1 =
   z.infer<typeof PluginUiDeclarativeExecuteActionSelectorV1Schema>;
 
-export const PluginUiHostApiRequestEnvelopeV1Schema = z.object({
+export const PluginUiHostApiRequestEnvelopeV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1),
   requestId: z.string().trim().min(1),
   surface: PluginUiSurfaceContextV1Schema,
   method: PluginUiHostApiRequestMethodV1Schema,
   payload: PluginUiJsonValueV1Schema.optional(),
-}).strict();
+}).strict());
 export type PluginUiHostApiRequestEnvelopeV1 =
   z.infer<typeof PluginUiHostApiRequestEnvelopeV1Schema>;
 
@@ -840,7 +841,7 @@ export type PluginUiHostApiRequestEnvelopeV1 =
  * transports. `kind`, rather than a member of author-controlled JSON, decides
  * whether a request succeeded or failed.
  */
-export const PluginUiHostApiResponseEnvelopeV1Schema = z.discriminatedUnion('kind', [
+export const PluginUiHostApiResponseEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     version: z.literal(1),
     requestId: z.string().trim().min(1),
@@ -865,6 +866,6 @@ export const PluginUiHostApiResponseEnvelopeV1Schema = z.discriminatedUnion('kin
     kind: z.literal('ack'),
     payload: PluginUiJsonValueV1Schema.optional(),
   }).strict(),
-]);
+]));
 export type PluginUiHostApiResponseEnvelopeV1 =
   z.infer<typeof PluginUiHostApiResponseEnvelopeV1Schema>;

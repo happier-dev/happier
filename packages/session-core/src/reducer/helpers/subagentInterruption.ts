@@ -1,4 +1,4 @@
-import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
+import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2/subAgentFamilies';
 
 import type { ToolCall } from "../../messages/messageTypes.js";
 import {

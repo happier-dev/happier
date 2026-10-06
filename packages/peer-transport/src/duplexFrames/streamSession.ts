@@ -1,9 +1,6 @@
 /** Binary stream session: one TCP connection per tunnel, instantiated per substream by the mux. */
-import {
-    PEER_TCP_TUNNEL_ACK_AFTER_BYTES,
-    PEER_TCP_TUNNEL_ACK_AFTER_MS,
-    type PeerTcpTunnelDirectionV1,
-} from '@happier-dev/protocol';
+import { PEER_TCP_TUNNEL_ACK_AFTER_BYTES, PEER_TCP_TUNNEL_ACK_AFTER_MS } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import type { PeerTcpTunnelDirectionV1 } from '@happier-dev/protocol';
 import { isSchedulableTimeoutMs, parsePeerTcpTunnelFrame } from './primitives.js';
 import { createPeerTcpTunnelFrameAccounting } from './flowAccounting.js';
 import type { PeerTcpTunnelFrame, PeerTcpTunnelStreamConnection, PeerTcpTunnelStreamSessionResult, PeerTcpTunnelStreamSessionFailure } from './types.js';

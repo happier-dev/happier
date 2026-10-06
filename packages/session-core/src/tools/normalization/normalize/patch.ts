@@ -1,4 +1,4 @@
-import { normalizePatchInputRecord } from '@happier-dev/protocol/tools/v2';
+import { normalizePatchInputRecord } from '@happier-dev/protocol/tools/v2/patch';
 
 import { hasNonEmptyRecord } from "./_shared.js";
 

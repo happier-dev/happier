@@ -16,11 +16,9 @@ export const ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES = 256 * 1024;
 
 /**
  * The Account-owned persistence ceiling for the SavedSecret collection root.
- * The canonical reader recovers this root to `[]` when the stored value exceeds
- * it, so a writer that ignores the ceiling does not store a larger collection —
- * it stores one that resolves to no secrets at all. The SavedSecret mutation
- * owner advertises this same number so an owner-accepted write always survives
- * the canonical parse.
+ * This budget applies to new writes only. Stored reads preserve predecessor
+ * collections above it so existing records remain available for recovery.
+ * The SavedSecret mutation owner shares this budget with catalog admission.
  */
 export const ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES = 128 * 1024;
 

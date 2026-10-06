@@ -1,9 +1,5 @@
-import {
-  readSessionWorkStateV1FromMetadata,
-  writeSessionWorkStateV1ToMetadata,
-  type SessionMetadata,
-  type SessionWorkStateV1,
-} from '@happier-dev/protocol';
+import { readSessionWorkStateV1FromMetadata, writeSessionWorkStateV1ToMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import type { SessionMetadata, SessionWorkStateV1 } from '@happier-dev/protocol';
 
 import type { SessionStateBinding, SessionStateStoredValue } from '../_types.js';
 

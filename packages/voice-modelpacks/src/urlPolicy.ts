@@ -1,9 +1,6 @@
-import {
-  classifyProviderHostnameSyntax,
-  isLoopbackHostname,
-  normalizeProviderEndpointUrlSyntax,
-  parseProviderIpAddress,
-} from '@happier-dev/protocol';
+import { classifyProviderHostnameSyntax, parseProviderIpAddress } from '@happier-dev/protocol/providers/safety/locality';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 /**
  * Canonical download/manifest URL policy for voice model packs (SD-L5).

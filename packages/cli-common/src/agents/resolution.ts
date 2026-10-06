@@ -13,7 +13,8 @@ import {
   type AgentCliSourcePreference,
 } from '@happier-dev/agents/cli/runtime';
 import * as legacyCustomAcpCompat from '@happier-dev/agents/compat/customAcp';
-import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '../path/expandHomeDirPath.js';
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';

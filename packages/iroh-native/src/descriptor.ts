@@ -1,7 +1,5 @@
-import {
-  parseIrohEndpointDescriptorV1,
-  type IrohEndpointDescriptorV1,
-} from '@happier-dev/protocol';
+import { parseIrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import type { IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
 
 export const MACHINE_ALPN = 'happier/machine/1' as const;
 export const TUNNEL_PREAMBLE = 0x01 as const;

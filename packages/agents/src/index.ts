@@ -8,10 +8,7 @@ export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MO
 export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 export { readReleasedOutputNonTranscriptRecordTypes } from './definitions/releasedOutputTranscriptRecordReader.js';
 
-export {
-  isNonSteerablePromptPayload,
-  parseSpecialCommand,
-} from '@happier-dev/protocol/sessions/messages/special-commands';
+export { isNonSteerablePromptPayload, parseSpecialCommand } from '@happier-dev/protocol/sessions/messages/special-commands';
 
 export {
     AGENT_IDS,

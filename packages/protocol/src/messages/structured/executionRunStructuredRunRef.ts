@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
-import { ExecutionRunRetentionPolicySchema } from '../../execution/runs/index.js';
+import { ExecutionRunRetentionPolicySchema } from '../../execution/runs/runPrimitives.js';
 
 export const ExecutionRunStructuredRunRefSchema = z.object({
   runId: z.string().min(1),

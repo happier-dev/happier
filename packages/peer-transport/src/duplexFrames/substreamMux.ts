@@ -1,9 +1,6 @@
 /** Substream multiplexer over one tunnel carrier. */
-import {
-    decodePeerTcpTunnelBinaryFrameV2,
-    type PeerTcpTunnelDestinationV1,
-    type PeerTcpTunnelSubstreamCapsV2,
-} from '@happier-dev/protocol';
+import { decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import type { PeerTcpTunnelDestinationV1, PeerTcpTunnelSubstreamCapsV2 } from '@happier-dev/protocol';
 import { substreamAbortFrame, isSchedulableTimeoutMs } from './primitives.js';
 import { encodePeerTcpTunnelBinaryFrameForSubstream, decodePeerTcpTunnelBinaryFrameForSubstreamSession, peerTcpTunnelBinaryDecodeFailureReason } from './binaryCodec.js';
 import { createPeerTcpTunnelStreamSession } from './streamSession.js';

@@ -1,7 +1,5 @@
-import {
-  ActionApprovalRequestCreatedResultSchema,
-  type ActionApprovalRequestCreatedResult,
-} from '@happier-dev/protocol/actions';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions';
 
 /** Narrow a raw Action result to the canonical policy-deferral result. */
 export function isHappierActionApprovalRequestCreated(

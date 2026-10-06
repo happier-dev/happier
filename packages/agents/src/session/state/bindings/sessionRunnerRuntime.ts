@@ -1,9 +1,5 @@
-import {
-  SESSION_RUNNER_RUNTIME_METADATA_KEY,
-  SessionRunnerRuntimeStateV1Schema,
-  type SessionMetadata,
-  type SessionRunnerRuntimeStateV1,
-} from '@happier-dev/protocol';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY, SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import type { SessionMetadata, SessionRunnerRuntimeStateV1 } from '@happier-dev/protocol';
 
 import type { SessionStateBinding, SessionStateStoredValue } from '../_types.js';
 

@@ -3,23 +3,9 @@ import {
   INSTALLABLE_KEYS,
   type InstallableKey,
 } from './codexAcp.js';
-import {
-  LOCAL_EMBEDDINGS_INSTALLABLE_DESCRIPTOR,
-  LOCAL_VOICE_RUNTIME_INSTALLABLE_DESCRIPTOR,
-  DIFFTASTIC_INSTALLABLE_DESCRIPTOR,
-  AZ_BINARY_NAME,
-  AZ_CLI_SETUP_URL,
-  AZ_DEP_ID,
-  AZ_INSTALLABLE_DESCRIPTOR,
-  AZ_INSTALLABLE_KEY,
-  GH_BINARY_NAME,
-  GH_DEP_ID,
-  GH_DIST_TAG,
-  GH_GITHUB_REPO,
-  GH_INSTALLABLE_DESCRIPTOR,
-  GH_INSTALLABLE_KEY,
-  GH_RUNTIME_INSTALLABLE_POLICY,
-} from './definitions/index.js';
+import { LOCAL_EMBEDDINGS_INSTALLABLE_DESCRIPTOR, LOCAL_VOICE_RUNTIME_INSTALLABLE_DESCRIPTOR, DIFFTASTIC_INSTALLABLE_DESCRIPTOR } from './definitions/optionalRuntimes.js';
+import { AZ_BINARY_NAME, AZ_CLI_SETUP_URL, AZ_DEP_ID, AZ_INSTALLABLE_DESCRIPTOR, AZ_INSTALLABLE_KEY } from './definitions/az.js';
+import { GH_BINARY_NAME, GH_DEP_ID, GH_DIST_TAG, GH_GITHUB_REPO, GH_INSTALLABLE_DESCRIPTOR, GH_INSTALLABLE_KEY, GH_RUNTIME_INSTALLABLE_POLICY } from './definitions/gh.js';
 import { toInstallableCatalogEntry } from './descriptor.js';
 import {
   resolveInstallablesRegistry,
@@ -87,7 +73,8 @@ export {
   projectInstallableContribution,
   type InstallableProjectionEntry,
 } from './projection.js';
-export * from './definitions/index.js';
+export { LOCAL_EMBEDDINGS_INSTALLABLE_DESCRIPTOR, LOCAL_VOICE_RUNTIME_INSTALLABLE_DESCRIPTOR, DIFFTASTIC_INSTALLABLE_DESCRIPTOR } from './definitions/optionalRuntimes.js';
+export { resolveGitHubCliReleaseAsset, type GitHubCliReleaseAsset, type GitHubCliReleaseRuntime } from './definitions/gh.js';
 
 export const BUILT_IN_INSTALLABLE_CONTRIBUTIONS = Object.freeze([
   {
