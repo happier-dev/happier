@@ -1,17 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ArtifactHeader } from '../domains/artifacts/artifactTypes';
+import type { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes';
 import { ArtifactEncryption } from './artifactEncryption';
 import { frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('ArtifactEncryption', () => {
-  it('preserves historical save and restore provenance inside the encrypted body custody', async () => {
+  it('refuses an excess actor field before encrypting public-share body content', async () => {
+    const encryption = new ArtifactEncryption(new Uint8Array(32).fill(7));
+    // Runtime input deliberately exceeds the TypeScript contract at a storage writer boundary.
+    const body = { body: 'Shared', provenance: { savedBy: { kind: 'person', accountId: 'private-actor' } } } as unknown as ArtifactBody;
+    await expect(encryption.encryptBody(body)).rejects.toThrow();
+  });
+  it('drops unknown stored body metadata without disclosing private attribution', async () => {
     const encryption = new ArtifactEncryption(new Uint8Array(32).fill(7));
     const envelope = { body: 'Earlier content', provenance: {
       savedBy: { kind: 'agent' as const, accountId: 'account', sessionId: 'session' }, restoredFromBodyVersion: 1,
     } };
-    await expect(encryption.decryptBody(await encryption.encryptBody(envelope))).resolves.toEqual(envelope);
+    await expect(encryption.decryptBody(await encryption.encryptHeader(envelope))).resolves.toEqual({ body: 'Earlier content' });
+    await expect(encryption.decryptBody(await encryption.encryptHeader({ provenance: envelope.provenance }))).resolves.toBeNull();
   });
   it('opens arbitrary binary bytes in the canonical V0 AES frame and refuses tampering', async () => {
     const key = new Uint8Array(32).fill(7);

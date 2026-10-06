@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { HappierPortableStyle } from '../portableTypes.js';
+import type { WorkBoardPreviewLayoutV1 } from '@happier-dev/plugin-sdk/ui';
 
 export type HappierArtifactPreview =
   | Readonly<{ kind: 'markdown'; text: string }>
@@ -8,6 +9,7 @@ export type HappierArtifactPreview =
   | Readonly<{ kind: 'image' | 'html'; name: string }>
   | Readonly<{ kind: 'file'; name: string; mime: string; sizeBytes: number }>
   | Readonly<{ kind: 'workflow'; steps: readonly Readonly<{ title: string }>[] }>
+  | Readonly<{ kind: 'board'; layout: WorkBoardPreviewLayoutV1 }>
   | Readonly<{ kind: 'none' }>;
 
 export type HappierArtifactPreviewCardHost = Readonly<{
@@ -19,6 +21,7 @@ export type HappierArtifactPreviewCardProps = Readonly<{
   colors: Readonly<{ primary: string; secondary: string; tertiary: string; paper: string; paperBorder: string }>;
   htmlLabel: string;
   fileDetail?: string;
+  boardLabels?: Readonly<{ layout: string; sources: string; widgetCount: string; widget: string; widthOne: string; widthTwo: string }>;
   host: HappierArtifactPreviewCardHost;
   testID?: string;
 }>;
@@ -71,6 +74,20 @@ export const HappierArtifactPreviewCard = React.memo(function HappierArtifactPre
         {text(String(index + 1), { fontSize: 9.5, lineHeight: 9.5, color: colors.secondary }, 1, 'semiBold')}
       </View>
       {text(step.title, { flexShrink: 1, fontSize: 11, color: colors.secondary })}
+    </View>)}
+  </View>;
+  if (preview.kind === 'board') return <View style={[band, { gap: 6 }]} testID={props.testID}
+    accessible={false} importantForAccessibility="no-hide-descendants">
+    {props.boardLabels ? <>
+      {text(`${props.boardLabels.layout} · ${props.boardLabels.widgetCount}`, { fontSize: 12, color: colors.primary }, 1, 'semiBold')}
+      {text(props.boardLabels.sources, { fontSize: 11, color: colors.secondary }, 2)}
+    </> : null}
+    {preview.layout.widgets.map((widget, index) => <View key={index} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+      <View style={{ width: 16 * widget.width, height: 16, borderRadius: 5, backgroundColor: colors.paper,
+        boxShadow: `0 0 0 1px ${colors.paperBorder}` }} />
+      {text([widget.title ?? props.boardLabels?.widget, widget.width === 2 ? props.boardLabels?.widthTwo : props.boardLabels?.widthOne,
+        preview.layout.mode === 'canvas' && widget.position ? `(${widget.position.x}, ${widget.position.y})` : null].filter(Boolean).join(' · '),
+        { flexShrink: 1, fontSize: 11, color: colors.secondary }, 2)}
     </View>)}
   </View>;
   const caption = { fontSize: 11, color: colors.tertiary };

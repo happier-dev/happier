@@ -19,10 +19,21 @@ import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 
 import { useArtifactActionsClient } from './artifactActionsClient';
-import type { ArtifactBodyV1 } from '@happier-dev/protocol';
+import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 
-type Revision = Readonly<{ bodyVersion: number; body: ArtifactBodyV1 | null; createdAt: number; sizeBytes: number }>;
+type Revision = Readonly<{ bodyVersion: number; body: ArtifactBodyV1 | null; createdAt: number; sizeBytes: number; provenance?: ArtifactRevisionProvenanceV1 }>;
+
+function revisionSubtitle(createdAt: number, provenance?: ArtifactRevisionProvenanceV1): string {
+    const labels = [formatRelativeTimeShort(createdAt, Date.now())];
+    if (provenance) {
+        labels.push(provenance.savedBy.kind === 'agent' ? t('artifacts.browser.history.savedByAgentSession')
+            : t('artifacts.browser.history.savedByUser'));
+        if (provenance.restoredFromBodyVersion !== undefined)
+            labels.push(t('artifacts.browser.history.restoredVersion', { n: provenance.restoredFromBodyVersion }));
+    }
+    return labels.join(' · ');
+}
 
 type HistoryState =
     | Readonly<{ phase: 'loading' }>
@@ -98,6 +109,7 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
     }
 
     const current = artifact?.bodyVersion;
+    const currentProvenance = state.revisions.find(revision => revision.bodyVersion === current)?.provenance ?? artifact?.provenance;
     const earlier = state.revisions.filter((revision) => revision.bodyVersion !== current);
     const chosen = earlier.find((revision) => revision.bodyVersion === selected) ?? null;
     const versionNumber = (revision: Revision) => revision.bodyVersion;
@@ -107,13 +119,13 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
             sideBySide={sideBySide}
             title={t('artifacts.browser.history.versionsLabel')}
             currentTitle={t('artifacts.browser.history.current')}
-            currentSubtitle={artifact ? formatRelativeTimeShort(artifact.updatedAt, Date.now()) : undefined}
+            currentSubtitle={artifact ? revisionSubtitle(artifact.updatedAt, currentProvenance) : undefined}
             currentLabel={t('artifacts.browser.history.now')}
             retentionLabel={earlier.length === 0 ? t('artifacts.browser.history.empty') : t('artifacts.browser.history.keeps', { count: state.retentionCount })}
             revisions={earlier.map(revision => ({
                 bodyVersion: revision.bodyVersion,
                 title: t('artifacts.browser.history.version', { n: versionNumber(revision) }),
-                subtitle: formatRelativeTimeShort(revision.createdAt, Date.now()),
+                subtitle: revisionSubtitle(revision.createdAt, revision.provenance),
                 detail: formatByteSize(revision.sizeBytes),
             }))}
             selectedVersion={selected}

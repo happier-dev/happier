@@ -186,12 +186,15 @@ export async function fetchArtifactStorageUsage(credentials: AuthCredentials,
 /** The key holder may reseal the selected body with new restore attribution; its content stays unchanged. */
 export async function restoreArtifactRevision(credentials: AuthCredentials, input: Readonly<{
     artifactId: string; bodyVersion: number; header: string; body?: string; expectedRevision: ArtifactRevisionV1;
+    provenance?: string | null; provenanceDataEncryptionKey?: string | null;
 }>, opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<ArtifactRevisionV1> {
     opts.signal?.throwIfAborted();
     const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(input.artifactId)}/revisions/${input.bodyVersion}/restore`, {
         method: 'POST', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ header: input.header, expectedHeaderVersion: input.expectedRevision.headerVersion,
-            expectedBodyVersion: input.expectedRevision.bodyVersion, ...(input.body === undefined ? {} : { body: input.body }) }),
+            expectedBodyVersion: input.expectedRevision.bodyVersion, ...(input.body === undefined ? {} : { body: input.body }),
+            ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
+            ...(input.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: input.provenanceDataEncryptionKey }) }),
         ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     opts.signal?.throwIfAborted();
@@ -354,7 +357,8 @@ export async function createArtifact(
         const path = request.blob ? '/v1/artifacts/content/binary' : '/v1/artifacts';
         const response = request.blob?.content
             ? await uploadArtifactContent(credentials, { kind: 'create', artifactId: request.id, blobId: request.blob.blobId,
-                header: request.header, body: request.body, dataEncryptionKey: request.dataEncryptionKey }, request.blob.content, opts)
+                header: request.header, body: request.body, dataEncryptionKey: request.dataEncryptionKey,
+                provenance: request.provenance, provenanceDataEncryptionKey: request.provenanceDataEncryptionKey }, request.blob.content, opts)
             : await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
             method: 'POST',
             ...(opts.signal ? { signal: opts.signal } : {}),
@@ -402,7 +406,8 @@ export async function updateArtifact(
         const response = request.blob?.content && request.body !== undefined && request.expectedBodyVersion !== undefined
             ? await uploadArtifactContent(credentials, { kind: 'update', artifactId, blobId: request.blob.blobId,
                 header: request.header, expectedHeaderVersion: request.expectedHeaderVersion,
-                body: request.body, expectedBodyVersion: request.expectedBodyVersion }, request.blob.content, opts)
+                body: request.body, expectedBodyVersion: request.expectedBodyVersion,
+                provenance: request.provenance, provenanceDataEncryptionKey: request.provenanceDataEncryptionKey }, request.blob.content, opts)
             : await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
             method: 'POST',
             ...(opts.signal ? { signal: opts.signal } : {}),

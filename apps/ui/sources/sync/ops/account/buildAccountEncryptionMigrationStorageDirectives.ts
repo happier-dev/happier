@@ -23,19 +23,20 @@ import {
     type AccountEncryptionMigrateSessionOrganizationDirective,
     type AccountEncryptionMigrateTodosDirective,
     type AccountEncryptionMigrateWorkspaceDirective,
-    WorkspaceTabsV1Schema,
+    WorkspaceTabsV1StoredSchema,
     classifyAccountJsonKvKey,
     type ReviewCommentAccountEncryptionMigrationInventoryResponseV1,
     type SessionOrganizationAccountEncryptionMigrationInventory,
     type AccountEncryptionMigrateAutomationsDirective,
     type AccountEncryptionMigrateAutomationsInventoryResponse,
     type ArtifactAccessRecipientCensusResponseV1,
-    ArtifactBodyEnvelopeV1Schema,
+    ArtifactBodyEnvelopeV1StoredSchema,
     type ArtifactBlobReadResponseV1,
     type ArtifactBlobStoredContentV1,
     ArtifactBlobAccountEncryptionStageV1Schema,
     type ArtifactBlobAccountEncryptionStageV1,
     type ArtifactAccountEncryptionMigrationOwnershipV1,
+    type ArtifactRevisionProvenanceV1,
 } from '@happier-dev/protocol';
 import { decodePackageAssetArchiveBodyV1, openPackageAssetArchiveV1 } from '@happier-dev/protocol/plugins/availability';
 import { decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui';
@@ -52,6 +53,7 @@ import {
     type MachineMetadata,
 } from '@/sync/domains/state/storageTypes';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import {
     decodeTodoStoredContent,
     encodeTodoStoredContent,
@@ -92,7 +94,9 @@ export type AccountEncryptionMigrationArtifactRow = Readonly<{
     body: string;
     bodyVersion: number;
     dataEncryptionKey: string;
-    revisions: readonly Readonly<{ bodyVersion: number; body: string }>[];
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
+    revisions: readonly Readonly<{ bodyVersion: number; body: string; provenance?: string | null }>[];
 }>;
 
 export type AccountEncryptionMigrationSessionRow = Readonly<{
@@ -139,7 +143,7 @@ function requireArtifactBody(
     value: unknown,
     artifactId: string,
 ): ArtifactBody {
-    const parsed = ArtifactBodyEnvelopeV1Schema.safeParse(value);
+    const parsed = ArtifactBodyEnvelopeV1StoredSchema.safeParse(value);
     if (!parsed.success) {
         throw new Error(`Invalid Artifact body (${artifactId})`);
     }
@@ -337,8 +341,9 @@ async function buildWorkspaceDirective(params: Readonly<{
     const items = [];
     for (const row of params.rows) {
         if (classifyAccountJsonKvKey(row.key) !== 'workspace') throw new Error('Invalid Workspace migration key');
-        const value = await decodeAccountStoredJsonContent({ encoded: row.value, expectedMode: params.fromMode, encryption: params.sourceEncryption });
-        if (row.key === 'workspace:tabs:v1' || row.key.startsWith('workspace:handoff-tabs:v1:')) WorkspaceTabsV1Schema.parse(value);
+        const decoded = await decodeAccountStoredJsonContent({ encoded: row.value, expectedMode: params.fromMode, encryption: params.sourceEncryption });
+        const value = row.key === 'workspace:tabs:v1' || row.key.startsWith('workspace:handoff-tabs:v1:')
+            ? WorkspaceTabsV1StoredSchema.parse(decoded) : decoded;
         items.push({ key: row.key, expectedVersion: row.version,
             value: await encodeAccountStoredJsonContent({ mode: params.toMode, value, encryption: params.targetEncryption }),
         });
@@ -353,15 +358,30 @@ async function openArtifactRow(params: Readonly<{
 }>): Promise<Readonly<{
     header: Readonly<Record<string, unknown>>;
     body: ArtifactBody;
-    revisions: readonly Readonly<{ bodyVersion: number; expectedBody: string; body: ArtifactBody }>[];
+    provenance: ArtifactRevisionProvenanceV1 | undefined;
+    revisions: readonly Readonly<{ bodyVersion: number; expectedBody: string; body: ArtifactBody;
+        expectedProvenance: string | null; provenance: ArtifactRevisionProvenanceV1 | undefined }>[];
     encryption: ArtifactEncryption | null;
 }>> {
     if ((params.fromMode === 'plain') !== isPlainArtifactDataKeyMarker(params.row.dataEncryptionKey)) {
         throw new Error(`Artifact content does not match the source Account mode (${params.row.id})`);
     }
+    if (params.fromMode === 'plain' && params.row.provenanceDataEncryptionKey != null) {
+        throw new Error(`Plain Artifact has client private metadata key (${params.row.id})`);
+    }
+    const hasPrivateMetadata = params.row.provenance != null || params.row.revisions.some(revision => revision.provenance != null);
+    const provenanceDataKey = params.fromMode === 'e2ee' && hasPrivateMetadata && params.row.provenanceDataEncryptionKey
+        ? await requireEncryption(params.sourceEncryption, 'encrypted Artifact private metadata')
+            .decryptEncryptionKey(params.row.provenanceDataEncryptionKey)
+        : null;
+    const openProvenance = (bodyVersion: number, provenance?: string | null) => openArtifactPrivateRevisionMetadata({
+        mode: params.fromMode, artifactId: params.row.id, bodyVersion, provenance, dataKey: provenanceDataKey,
+    });
+    const provenance = await openProvenance(params.row.bodyVersion, params.row.provenance);
     if (params.fromMode === 'plain') {
         return {
             encryption: null,
+            provenance,
             header: requireObject(
                 decodePlainArtifactStoredContent(params.row.header),
                 `Artifact header (${params.row.id})`,
@@ -370,11 +390,13 @@ async function openArtifactRow(params: Readonly<{
                 decodePlainArtifactStoredContent(params.row.body),
                 params.row.id,
             ),
-            revisions: params.row.revisions.map(revision => ({
+            revisions: await Promise.all(params.row.revisions.map(async revision => ({
                 bodyVersion: revision.bodyVersion,
                 expectedBody: revision.body,
                 body: requireArtifactBody(decodePlainArtifactStoredContent(revision.body), params.row.id),
-            })),
+                expectedProvenance: revision.provenance ?? null,
+                provenance: await openProvenance(revision.bodyVersion, revision.provenance),
+            }))),
         };
     }
     const encryption = requireEncryption(
@@ -397,9 +419,11 @@ async function openArtifactRow(params: Readonly<{
     const revisions = await Promise.all(params.row.revisions.map(async revision => {
         const body = await artifactEncryption.decryptBody(revision.body);
         if (!body) throw new Error(`Failed to open Artifact revision (${params.row.id}/${revision.bodyVersion})`);
-        return { bodyVersion: revision.bodyVersion, expectedBody: revision.body, body };
+        return { bodyVersion: revision.bodyVersion, expectedBody: revision.body, body,
+            expectedProvenance: revision.provenance ?? null,
+            provenance: await openProvenance(revision.bodyVersion, revision.provenance) };
     }));
-    return { header, body, revisions, encryption: artifactEncryption };
+    return { header, body, provenance, revisions, encryption: artifactEncryption };
 }
 
 async function buildArtifactDirective(params: Readonly<{
@@ -489,15 +513,23 @@ async function buildArtifactDirective(params: Readonly<{
                 expectedHeaderVersion: row.headerVersion,
                 expectedBodyVersion: row.bodyVersion,
                 expectedDataEncryptionKey: row.dataEncryptionKey,
+                expectedProvenance: row.provenance ?? null,
+                expectedProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey ?? null,
+                provenance: opened.provenance === undefined ? null : await sealArtifactPrivateRevisionMetadata({
+                    mode: 'plain', artifactId: row.id, bodyVersion: row.bodyVersion + 1, provenance: opened.provenance }),
+                provenanceDataEncryptionKey: null,
                 recipientKeyEnvelopes: [],
                 blobs: await convertBlobs(null),
                 header: encodePlainArtifactStoredContent(header),
                 body: encodePlainArtifactStoredContent(opened.body),
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                revisions: opened.revisions.map(revision => ({
+                revisions: await Promise.all(opened.revisions.map(async revision => ({
                     bodyVersion: revision.bodyVersion, expectedBody: revision.expectedBody,
                     body: encodePlainArtifactStoredContent(revision.body),
-                })),
+                    expectedProvenance: revision.expectedProvenance,
+                    provenance: revision.provenance === undefined ? null : await sealArtifactPrivateRevisionMetadata({
+                        mode: 'plain', artifactId: row.id, bodyVersion: revision.bodyVersion, provenance: revision.provenance }),
+                }))),
             });
             continue;
         }
@@ -514,6 +546,8 @@ async function buildArtifactDirective(params: Readonly<{
             throw new Error('Artifact migration recipient census changed');
         }
         const dataKey = ArtifactEncryption.generateDataEncryptionKey();
+        const provenanceDataKey = opened.provenance !== undefined || opened.revisions.some(revision => revision.provenance !== undefined)
+            ? ArtifactEncryption.generateDataEncryptionKey() : null;
         const artifactEncryption = new ArtifactEncryption(dataKey);
         items.push({
             artifactId: row.id,
@@ -521,7 +555,13 @@ async function buildArtifactDirective(params: Readonly<{
             expectedHeaderVersion: row.headerVersion,
             expectedBodyVersion: row.bodyVersion,
             expectedDataEncryptionKey: row.dataEncryptionKey,
-            recipientKeyEnvelopes: prepareArtifactRecipientKeyEnvelopesV1({ dataKey,
+            expectedProvenance: row.provenance ?? null,
+            expectedProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey ?? null,
+            provenance: opened.provenance === undefined ? null : await sealArtifactPrivateRevisionMetadata({
+                mode: 'e2ee', artifactId: row.id, bodyVersion: row.bodyVersion + 1, provenance: opened.provenance, dataKey: provenanceDataKey }),
+            provenanceDataEncryptionKey: provenanceDataKey === null ? null : encodeBase64(
+                await targetEncryption.encryptEncryptionKey(provenanceDataKey), 'base64'),
+            recipientKeyEnvelopes: prepareArtifactRecipientKeyEnvelopesV1({ dataKey, provenanceDataKey: provenanceDataKey ?? undefined,
                 recipients: census ? census.recipients.filter(recipient => recipient.recipientAccountId !== census.ownerAccountId) : [],
                 randomBytes: getRandomBytes, replaceExisting: true }),
             header: await artifactEncryption.encryptHeader(header),
@@ -533,6 +573,9 @@ async function buildArtifactDirective(params: Readonly<{
             revisions: await Promise.all(opened.revisions.map(async revision => ({
                 bodyVersion: revision.bodyVersion, expectedBody: revision.expectedBody,
                 body: await artifactEncryption.encryptBody(revision.body),
+                expectedProvenance: revision.expectedProvenance,
+                provenance: revision.provenance === undefined ? null : await sealArtifactPrivateRevisionMetadata({
+                    mode: 'e2ee', artifactId: row.id, bodyVersion: revision.bodyVersion, provenance: revision.provenance, dataKey: provenanceDataKey }),
             }))),
         });
     }

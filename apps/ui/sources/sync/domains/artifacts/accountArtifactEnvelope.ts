@@ -1,5 +1,9 @@
 import {
     ArtifactBodyEnvelopeV1Schema,
+    ArtifactBodyEnvelopeV1StoredSchema,
+    ArtifactPrivateRevisionMetadataV1Schema,
+    ArtifactPrivateRevisionMetadataV1StoredSchema,
+    type ArtifactRevisionProvenanceV1,
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     decodePlainArtifactStoredContent,
     encodePlainArtifactStoredContent,
@@ -21,7 +25,35 @@ export type AccountArtifactStoredEnvelope = Readonly<{
     header: string;
     body: string;
     dataEncryptionKey: string;
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
 }>;
+
+/** Private metadata has its own random key; content/public-link keys never open it. */
+export async function sealArtifactPrivateRevisionMetadata(input: Readonly<{
+    mode: AccountArtifactStorageMode; artifactId: string; bodyVersion: number;
+    provenance: ArtifactRevisionProvenanceV1; dataKey?: Uint8Array | null;
+}>): Promise<string> {
+    const metadata = ArtifactPrivateRevisionMetadataV1Schema.parse({ v: 1, artifactId: input.artifactId,
+        bodyVersion: input.bodyVersion, provenance: input.provenance });
+    if (input.mode === 'plain') return encodePlainArtifactStoredContent(metadata);
+    if (!input.dataKey) throw new Error('Artifact private metadata key is unavailable');
+    return new ArtifactEncryption(input.dataKey).encryptHeader(metadata);
+}
+
+export async function openArtifactPrivateRevisionMetadata(input: Readonly<{
+    mode: AccountArtifactStorageMode; artifactId: string; bodyVersion: number;
+    provenance?: string | null; dataKey?: Uint8Array | null;
+}>): Promise<ArtifactRevisionProvenanceV1 | undefined> {
+    if (input.provenance === null || input.provenance === undefined) return undefined;
+    if (input.mode === 'e2ee' && !input.dataKey) throw new Error('Artifact private metadata key is unavailable');
+    const opened = input.mode === 'plain' ? decodePlainArtifactStoredContent(input.provenance)
+        : await new ArtifactEncryption(input.dataKey!).decryptHeaderRaw(input.provenance);
+    const metadata = ArtifactPrivateRevisionMetadataV1StoredSchema.parse(opened);
+    if (metadata.artifactId !== input.artifactId || metadata.bodyVersion !== input.bodyVersion)
+        throw new Error('Artifact private metadata identity mismatch');
+    return metadata.provenance;
+}
 
 export type AccountArtifactEnvelopeKeySealer = (
     dataKey: Uint8Array,
@@ -41,7 +73,7 @@ function parseArtifactHeader(value: unknown): ArtifactHeader | null {
 
 function parseArtifactBody(value: unknown): ArtifactBody | null {
     if (!isRecord(value)) return null;
-    const body = ArtifactBodyEnvelopeV1Schema.safeParse(value);
+    const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(value);
     return body.success ? body.data : null;
 }
 
@@ -56,10 +88,11 @@ export async function createAccountArtifactStoredEnvelope(input: Readonly<{
     encryptDataEncryptionKey?: AccountArtifactEnvelopeKeySealer;
 }>): Promise<AccountArtifactStoredEnvelope | null> {
     try {
+        const body = ArtifactBodyEnvelopeV1Schema.parse(input.body);
         if (input.mode === 'plain') {
             return Object.freeze({
                 header: encodePlainArtifactStoredContent(input.header),
-                body: encodePlainArtifactStoredContent(input.body),
+                body: encodePlainArtifactStoredContent(body),
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             });
         }
@@ -70,7 +103,7 @@ export async function createAccountArtifactStoredEnvelope(input: Readonly<{
         const artifactEncryption = new ArtifactEncryption(dataKey);
         return Object.freeze({
             header: await artifactEncryption.encryptHeader(input.header),
-            body: await artifactEncryption.encryptBody(input.body),
+            body: await artifactEncryption.encryptBody(body),
             dataEncryptionKey: encodeBase64(encryptedDataKey, 'base64'),
         });
     } catch {

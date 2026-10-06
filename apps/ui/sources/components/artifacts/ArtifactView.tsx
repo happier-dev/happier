@@ -5,7 +5,6 @@ import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
@@ -15,10 +14,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { Modal } from '@/modal';
-import { deleteArtifact } from '@/sync/api/artifacts/apiArtifacts';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
@@ -30,7 +26,7 @@ import {
 } from './artifactBrowserModel';
 import { ARTIFACT_KIND_ICONS, artifactKindLabel } from './artifactKindPresentation';
 import { ArtifactProvenanceLabel } from './ArtifactProvenance';
-import { showArtifactHistorySheet } from './ArtifactHistorySheet';
+import { useArtifactOperations } from './useArtifactOperations';
 import { useArtifactBody } from './useArtifactBody';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 import { ArtifactHtmlBody } from './ArtifactHtmlBody';
@@ -187,33 +183,7 @@ function ArtifactActions(props: Readonly<{ artifact: DecryptedArtifact; presenta
     const router = useRouter();
     const styles = stylesheet;
     const { artifact } = props;
-    const title = artifact.title || t('artifacts.untitled');
-    const kind = classifyArtifactBrowserKind(artifact) ?? 'document';
-    const storedKind = (artifact.rawHeader ?? artifact.header)?.kind;
-    const canEdit = artifact.access === undefined || artifact.access === 'owner' || artifact.access === 'edit' || artifact.access === 'admin';
-    const canManage = artifact.access === undefined || artifact.access === 'owner' || artifact.access === 'admin';
-    const [deleting, setDeleting] = React.useState(false);
-    const remove = React.useCallback(async () => {
-        const confirmed = await Modal.confirm(t('artifacts.deleteConfirm'), t('artifacts.deleteConfirmDescription'), {
-            confirmText: t('artifacts.delete'), destructive: true,
-        });
-        if (!confirmed) return;
-        const credentials = sync.getCredentials();
-        if (!credentials) return;
-        setDeleting(true);
-        try {
-            await deleteArtifact(credentials, artifact.id, {
-                ...(artifact.bodyVersion !== undefined ? { expectedRevision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } } : {}),
-            });
-            storage.getState().deleteArtifact(artifact.id);
-            if (props.onDeleted) props.onDeleted();
-            else router.back();
-        } catch {
-            Modal.alert(t('common.error'), t('artifacts.deleteError'));
-        } finally {
-            setDeleting(false);
-        }
-    }, [artifact.bodyVersion, artifact.headerVersion, artifact.id, props, router]);
+    const { canEdit, canManage, canShare, deleting, remove, history, share } = useArtifactOperations(artifact, props.onDeleted ?? router.back);
     const menu: PageHeaderMenuAction[] = canManage ? [
         { id: 'delete', title: t('artifacts.delete'), destructive: true, loading: deleting, testID: 'artifact:delete', onSelect: remove },
     ] : [];
@@ -237,22 +207,16 @@ function ArtifactActions(props: Readonly<{ artifact: DecryptedArtifact; presenta
                 title={t('artifacts.browser.actions.history')}
                 leading={<Icon name="clock-counter-clockwise" size={14} color={theme.colors.text.secondary} />}
                 textStyle={{ color: theme.colors.text.secondary }}
-                onPress={() => showArtifactHistorySheet({ artifactId: artifact.id, name: title, canRestore: canEdit })}
+                onPress={history}
             />
-            {canManage ? (
+            {canShare ? (
                 <RoundButton
                     testID="artifact:share"
                     size="small"
                     display="secondary"
                     title={t('artifacts.browser.actions.share')}
                     leading={<Icon name="share" size={14} color={theme.colors.text.primary} />}
-                    onPress={() => showDocumentShareSheet({
-                        artifactId: artifact.id,
-                        kind: typeof storedKind === 'string' ? storedKind : null,
-                        name: title,
-                        subtitle: artifactKindLabel(kind),
-                        linkPath: artifactViewRoute(artifact.id),
-                    })}
+                    onPress={share}
                 />
             ) : null}
             {menu.length > 0 ? <PageHeaderMenu testID="artifact:more" actions={menu} /> : null}

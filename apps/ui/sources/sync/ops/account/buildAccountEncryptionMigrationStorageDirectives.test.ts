@@ -18,6 +18,7 @@ import {
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { createPackageAssetArchiveV1, encodePackageAssetArchiveBodyV1 } from '@happier-dev/protocol/plugins/availability';
 import {
@@ -146,13 +147,14 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         }));
     });
 
-    it('round-trips shared and handoff workspace tabs across Account modes with their exact CAS versions', async () => {
+    it('round-trips canonical shared and handoff workspace tabs across Account modes with their exact CAS versions', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const record = { v: 1, tabsById: { tab: { id: 'tab', target: { kind: 'session', params: { sessionId: 'private-session' } }, pinned: true } }, order: ['tab'], pairs: [] };
+        const stored = { ...record, savedBy: 'other-client', tabsById: { tab: { ...record.tabsById.tab, savedBy: 'other-client', target: { ...record.tabsById.tab.target, savedBy: 'other-client' } } } };
         const keys = ['workspace:tabs:v1', 'workspace:handoff-tabs:v1:device:window'];
         const inputs = { ...emptyTransitionInventories, machines: [], todos: [], artifacts: [], sessions: [], sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials };
         const workspace = await Promise.all(keys.map(async (key, index) => ({ key, version: index + 4,
-            value: await encodeAccountStoredJsonContent({ mode: 'plain', value: record, encryption: null }),
+            value: await encodeAccountStoredJsonContent({ mode: 'plain', value: stored, encryption: null }),
         })));
         const encrypted = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs, fromMode: 'plain', toMode: 'e2ee', sourceEncryption: null, targetEncryption: encryption, workspace });
         expect(encrypted).toHaveProperty('workspace.action', 'migrate');
@@ -175,15 +177,20 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         const signature = signAccountContentKeyBindingV1({ accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]), contentPublicKey: contentPublic });
         const oldEnvelope = Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: randomBytes(32), recipientPublicKey: contentPublic, randomBytes })).toString('base64');
         const workflowHeader = { kind: 'workflow-definition.v1', definitionId: artifactId,
-            revision: { headerVersion: 1, bodyVersion: 3 }, metadata: { title: '  Shared  ' },
-            savedBy: { kind: 'person', accountId: 'account-a' } };
-        const retainedProvenance = { savedBy: { kind: 'agent' as const, accountId: 'account-a', sessionId: 'historic-session' }, restoredFromBodyVersion: 1 };
+            revision: { headerVersion: 1, bodyVersion: 3 }, metadata: { title: '  Shared  ' } };
+        const expectedWorkflowHeader = { kind: workflowHeader.kind, definitionId: artifactId, metadata: { title: 'Shared' } };
+        const source = { sessionId: 'source-session', runId: 'source-run', machineId: 'source-machine', path: 'private/workspace.txt', sha: 'a'.repeat(64) };
+        const retainedProvenance = { savedBy: { kind: 'agent' as const, accountId: 'account-a', sessionId: 'historic-session' }, source, restoredFromBodyVersion: 1 };
+        const headProvenance = { savedBy: { kind: 'person' as const, accountId: 'account-a' }, source };
         expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header: workflowHeader,
             revision: workflowHeader.revision })).toBe(true);
         const rows = [{ id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent(workflowHeader),
             body: encodePlainArtifactStoredContent({ body: 'Private content' }), headerVersion: 1, bodyVersion: 3,
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-            revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Retained private content', provenance: retainedProvenance }) }] }];
+            provenance: await sealArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 3, provenance: headProvenance }),
+            provenanceDataEncryptionKey: null,
+            revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Retained private content' }),
+                provenance: await sealArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 1, provenance: retainedProvenance }) }] }];
         const inputs = { ...emptyTransitionInventories, machines: [], todos: [], sessions: [],
             sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials };
         const result = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs,
@@ -197,43 +204,64 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         if (result.artifacts.action !== 'migrate') throw new Error('Missing Artifact directive');
         const item = result.artifacts.items[0]!;
         expect(item.expectedDataEncryptionKey).toBe(ARTIFACT_PLAIN_DATA_KEY_MARKER);
+        expect(item).toMatchObject({ expectedProvenance: rows[0]!.provenance, expectedProvenanceDataEncryptionKey: null });
         expect(item.recipientKeyEnvelopes?.map(row => row.recipientAccountId)).toEqual(['peer']);
         const ownerKey = await targetEncryption.decryptEncryptionKey(item.dataEncryptionKey);
         expect(ownerKey).not.toBeNull();
+        const privateKey = await targetEncryption.decryptEncryptionKey(item.provenanceDataEncryptionKey!);
+        expect(privateKey).not.toBeNull();
+        expect(privateKey).not.toEqual(ownerKey);
+        await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 4,
+            provenance: item.provenance, dataKey: privateKey })).resolves.toEqual(headProvenance);
+        await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 4,
+            provenance: item.provenance, dataKey: ownerKey })).rejects.toThrow();
         const [encryptedHeader] = await new AES256Encryption(ownerKey!).decrypt([new Uint8Array(Buffer.from(item.header, 'base64'))]);
         const targetHeader = WorkflowDefinitionArtifactHeaderV1Schema.parse(encryptedHeader);
-        expect(encryptedHeader).toEqual({ ...workflowHeader, revision: { headerVersion: 2, bodyVersion: 4 } });
+        expect(encryptedHeader).toEqual({ ...expectedWorkflowHeader, revision: { headerVersion: 2, bodyVersion: 4 } });
         expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header: targetHeader,
             revision: { headerVersion: 2, bodyVersion: 4 } })).toBe(true);
         expect(item.revisions).toHaveLength(1);
         expect(item.revisions[0]).toMatchObject({ bodyVersion: 1, expectedBody: rows[0]!.revisions[0]!.body });
         await expect(new ArtifactEncryption(ownerKey!).decryptBody(item.revisions[0]!.body))
-            .resolves.toEqual({ body: 'Retained private content', provenance: retainedProvenance });
+            .resolves.toEqual({ body: 'Retained private content' });
+        expect(item.revisions[0]!.expectedProvenance).toBe(rows[0]!.revisions[0]!.provenance);
+        await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 1,
+            provenance: item.revisions[0]!.provenance, dataKey: privateKey })).resolves.toEqual(retainedProvenance);
         expect(openEncryptedDataKeyEnvelopeV1({ envelope: new Uint8Array(Buffer.from(item.recipientKeyEnvelopes![0]!.encryptedDataKey, 'base64')),
             recipientSecretKeyOrSeed: contentSecret })).toEqual(ownerKey);
+        expect(openEncryptedDataKeyEnvelopeV1({ envelope: new Uint8Array(Buffer.from(item.recipientKeyEnvelopes[0]!.encryptedProvenanceDataKey!, 'base64')),
+            recipientSecretKeyOrSeed: contentSecret })).toEqual(privateKey);
         const plain = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs, fromMode: 'e2ee', toMode: 'plain',
             sourceEncryption: targetEncryption, targetEncryption: null, sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: null,
             artifacts: [{ ...rows[0]!, header: item.header, body: item.body, dataEncryptionKey: item.dataEncryptionKey,
+                provenance: item.provenance, provenanceDataEncryptionKey: item.provenanceDataEncryptionKey,
                 headerVersion: 2, bodyVersion: 4,
-                revisions: item.revisions.map(revision => ({ bodyVersion: revision.bodyVersion, body: revision.body })) }],
+                revisions: item.revisions.map(revision => ({ bodyVersion: revision.bodyVersion, body: revision.body, provenance: revision.provenance })) }],
             readArtifactRecipients: async () => { throw new Error('Plain targets must not discover recipients'); },
         });
         expect(plain.artifacts).toMatchObject({ action: 'migrate', items: [{ dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER }] });
         if (plain.artifacts.action !== 'migrate') throw new Error('Missing plain directive');
         expect(plain.artifacts.items[0]).toMatchObject({
             expectedDataEncryptionKey: item.dataEncryptionKey,
+            expectedProvenance: item.provenance, expectedProvenanceDataEncryptionKey: item.provenanceDataEncryptionKey,
+            provenanceDataEncryptionKey: null,
             recipientKeyEnvelopes: [],
             revisions: [{ bodyVersion: 1, expectedBody: item.revisions[0]!.body,
-                body: encodePlainArtifactStoredContent({ body: 'Retained private content', provenance: retainedProvenance }) }],
+                expectedProvenance: item.revisions[0]!.provenance,
+                body: encodePlainArtifactStoredContent({ body: 'Retained private content' }) }],
         });
+        await expect(openArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 5,
+            provenance: plain.artifacts.items[0]!.provenance })).resolves.toEqual(headProvenance);
+        await expect(openArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 1,
+            provenance: plain.artifacts.items[0]!.revisions[0]!.provenance })).resolves.toEqual(retainedProvenance);
         const plainStoredHeader = decodePlainArtifactStoredContent(plain.artifacts.items[0]!.header);
         const plainHeader = WorkflowDefinitionArtifactHeaderV1Schema.parse(plainStoredHeader);
-        expect(plainStoredHeader).toEqual({ ...workflowHeader, revision: { headerVersion: 3, bodyVersion: 5 } });
+        expect(plainStoredHeader).toEqual({ ...expectedWorkflowHeader, revision: { headerVersion: 3, bodyVersion: 5 } });
         expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header: plainHeader,
             revision: { headerVersion: 3, bodyVersion: 5 } })).toBe(true);
     });
 
-    it('preserves unrecognized Artifact header metadata without repairing malformed workflow headers across Account modes', async () => {
+    it('preserves unknown Artifact kinds and malformed required fields while canonicalizing readable Workflow headers across Account modes', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const artifactId = '11111111-1111-4111-8111-111111111111';
         const inputs = { ...emptyTransitionInventories, machines: [], todos: [], sessions: [],
@@ -242,14 +270,16 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             { kind: 'future-document.v3', v: 2.9, title: null, sessions: 'future-format', customField: { private: true } },
             { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 8, bodyVersion: 9 },
                 metadata: { title: 'Unusable workflow' }, extension: { preserve: true } },
-            // The current UI Action producer injects this presentation-only
-            // field. Raw storage conversion must not repair its strict shape.
+            // Raw storage conversion must not repair an unsupported domain shape.
             { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 3 },
                 metadata: { title: 'UI-produced workflow' }, title: null },
+            { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 3 },
+                metadata: { title: 'Development-intermediate workflow' }, savedBy: { kind: 'person', accountId: 'account-a' } },
         ];
-        for (const header of headers) {
+        for (const [index, header] of headers.entries()) {
+            const readable = index >= 2;
             expect(workflowDefinitionArtifactSharingAdapterV1.canShare({ artifactId, header,
-                revision: { headerVersion: 1, bodyVersion: 3 } })).toBe(false);
+                revision: { headerVersion: 1, bodyVersion: 3 } })).toBe(readable);
             const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent(header), headerVersion: 1,
                 body: encodePlainArtifactStoredContent({ body: 'Private content' }), bodyVersion: 3,
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, revisions: [] };
@@ -263,7 +293,10 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             const dataKey = await encryption.decryptEncryptionKey(item.dataEncryptionKey);
             if (!dataKey) throw new Error('Missing replacement key');
             const [storedHeader] = await new AES256Encryption(dataKey).decrypt([new Uint8Array(Buffer.from(item.header, 'base64'))]);
-            expect(storedHeader).toEqual(header);
+            const canonicalHeader = readable ? { kind: 'workflow-definition.v1', definitionId: artifactId,
+                revision: { headerVersion: 2, bodyVersion: 4 }, metadata: header.metadata } : header;
+            expect(storedHeader).toEqual(canonicalHeader);
+            expect(WorkflowDefinitionArtifactHeaderV1Schema.safeParse(storedHeader).success).toBe(readable);
             const plain = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs,
                 fromMode: 'e2ee', toMode: 'plain', sourceEncryption: encryption, targetEncryption: null,
                 sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: null,
@@ -271,8 +304,35 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
                     headerVersion: 2, bodyVersion: 4 }],
             });
             if (plain.artifacts.action !== 'migrate') throw new Error('Missing plain Artifact directive');
-            expect(decodePlainArtifactStoredContent(plain.artifacts.items[0]!.header)).toEqual(header);
+            expect(decodePlainArtifactStoredContent(plain.artifacts.items[0]!.header)).toEqual(readable
+                ? { ...canonicalHeader, revision: { headerVersion: 3, bodyVersion: 5 } } : header);
+            expect(WorkflowDefinitionArtifactHeaderV1Schema.safeParse(
+                decodePlainArtifactStoredContent(plain.artifacts.items[0]!.header)).success).toBe(readable);
         }
+    });
+
+    it('preserves private history when the head has no attribution and refuses wrong revision identity', async () => {
+        const targetEncryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        const provenance = { savedBy: { kind: 'agent' as const, accountId: 'account-a', sessionId: 'history-only' } };
+        const stored = await sealArtifactPrivateRevisionMetadata({ mode: 'plain', artifactId, bodyVersion: 1, provenance });
+        const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, header: encodePlainArtifactStoredContent({ title: 'History' }),
+            body: encodePlainArtifactStoredContent({ body: 'Current' }), headerVersion: 1, bodyVersion: 3,
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: 'Historic' }), provenance: stored }] };
+        const inputs = { ...emptyTransitionInventories, machines: [], todos: [], sessions: [],
+            sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials,
+            fromMode: 'plain' as const, toMode: 'e2ee' as const, sourceEncryption: null, targetEncryption };
+        const result = await buildAccountEncryptionMigrationStorageDirectives({ ...inputs, artifacts: [row] });
+        if (result.artifacts.action !== 'migrate') throw new Error('Missing directive');
+        const item = result.artifacts.items[0]!;
+        expect(item.provenance).toBeNull();
+        const key = await targetEncryption.decryptEncryptionKey(item.provenanceDataEncryptionKey!);
+        expect(key).not.toBeNull();
+        await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 1,
+            provenance: item.revisions[0]!.provenance, dataKey: key })).resolves.toEqual(provenance);
+        await expect(buildAccountEncryptionMigrationStorageDirectives({ ...inputs,
+            artifacts: [{ ...row, revisions: [{ ...row.revisions[0]!, bodyVersion: 2 }] }] })).rejects.toThrow('identity mismatch');
     });
 
     it('rejects an Artifact key-marker disagreement with the persisted source Account mode before transforming retained history', async () => {

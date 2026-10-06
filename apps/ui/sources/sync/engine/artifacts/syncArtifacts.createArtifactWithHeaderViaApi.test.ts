@@ -7,8 +7,35 @@ import { ArtifactBodyV1Schema, decodePlainArtifactStoredContent, type ArtifactBl
 import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { encodeBase64 } from '@/encryption/base64';
+import { openArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 
 describe('createArtifactWithHeaderViaApi', () => {
+  it('publishes content without actor disclosure to a recipient holding the public-share content key', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+    const artifactDataKeys: ArtifactDataKeyCache = new Map();
+    let saved: ArtifactCreateRequest | undefined;
+    const request = async (path: string, init?: RequestInit) => {
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 0 });
+      saved = JSON.parse(String(init?.body)) as ArtifactCreateRequest;
+      return Response.json({ ...saved, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'e2ee',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 0, updatedAt: 0 });
+    };
+    const { createArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    const id = await createArtifactWithHeaderViaApi({ credentials: { token: 't' }, header: { title: 'Published' }, body: 'Shared text',
+      savedBy: { kind: 'agent', accountId: 'owner', sessionId: 'private-session' }, encryption, artifactDataKeys, request, addArtifact: () => {} });
+    if (!saved) throw new Error('Missing write');
+    // Public links wrap this exact content key; exercise the real codec a recipient can use.
+    const publicCodec = new ArtifactEncryption(artifactDataKeys.get(id)!.dataKey);
+    expect(await publicCodec.decryptBody(saved.body)).toEqual({ body: 'Shared text' });
+    expect(saved.provenanceDataEncryptionKey).toBeTruthy();
+    const privateKey = await encryption.decryptEncryptionKey(saved.provenanceDataEncryptionKey!);
+    expect(privateKey).not.toEqual(artifactDataKeys.get(id)!.dataKey);
+    await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId: id, bodyVersion: 1,
+      provenance: saved.provenance, dataKey: privateKey })).resolves.toEqual({ savedBy: {
+        kind: 'agent', accountId: 'owner', sessionId: 'private-session' } });
+    await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId: id, bodyVersion: 1,
+      provenance: saved.provenance, dataKey: artifactDataKeys.get(id)!.dataKey })).rejects.toThrow();
+  });
   it('projects Workflow preview labels from generic write content rather than caller-supplied labels', async () => {
     const artifactId = '11111111-1111-4111-8111-111111111111';
     const body = JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1,

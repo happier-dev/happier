@@ -1,6 +1,6 @@
 import { TokenStorage, subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
-import { ArtifactAccessRecipientCensusResponseV1Schema, isArtifactHtmlHeaderV1, loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection, type ArtifactCallerAccessV1, type ArtifactAccessActionTransportV1, type ArtifactActionInputV1, type ArtifactSavedByV1 } from '@happier-dev/protocol';
+import { ArtifactAccessRecipientCensusResponseV1Schema, isArtifactHtmlHeaderV1, loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection, type ArtifactCallerAccessV1, type ArtifactAccessActionTransportV1, type ArtifactActionInputV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol';
 import type { ArtifactPublicLinkKeyholdingResourceV1, WorkflowDefinitionArtifactOperations } from '@happier-dev/protocol/actions';
 import type { getActionSpec } from '@happier-dev/protocol';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
@@ -46,7 +46,7 @@ function readableRawArtifactHeader(artifact: DecryptedArtifact | null): Readonly
 }
 
 const artifactAccessProjectionSchema = ArtifactAccessRecipientCensusResponseV1Schema.pick({ ownerAccountId: true, access: true });
-type ArtifactCreateOperation = Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>;
+type ArtifactCreateOperation = Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; signal?: AbortSignal }>;
 type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 }>;
 type ActionEffectClass = ReturnType<typeof getActionSpec>['sideEffectClass'];
 const isEffectResult = (effectClass: ActionEffectClass) => effectClass === 'write' || effectClass === 'external' || effectClass === 'danger';
@@ -262,7 +262,8 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                     // their readable header for the owning document's typed result.
                     const header = opened?.isDecrypted && opened.rawHeader ? opened.rawHeader : {};
                     items.push({ artifactId: artifact.id, header,
-                        ...(options.includeBody && opened?.isDecrypted ? { body: opened.body, bodyVersion: opened.bodyVersion } : {}),
+                        ...(options.includeBody && opened?.isDecrypted ? { body: opened.body, bodyVersion: opened.bodyVersion,
+                            provenance: opened.provenance } : {}),
                         headerVersion: artifact.headerVersion, seq: artifact.seq, createdAt: artifact.createdAt, updatedAt: artifact.updatedAt,
                         ownerAccountId: artifact.ownerAccountId, access: artifact.access,
                     });
@@ -294,11 +295,11 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 throw error;
             }
         };
-        const createArtifactDocument = async ({ artifactId, header, body, savedBy, signal: operationSignal }: ArtifactCreateOperation) => {
+        const createArtifactDocument = async ({ artifactId, header, body, savedBy, source, signal: operationSignal }: ArtifactCreateOperation) => {
             assertCurrent();
             const publication: { artifact?: DecryptedArtifact } = {};
             await createArtifactWithHeaderViaApi({ ...await artifactParams(), artifactId, signal: operationSignal ?? signal,
-                header, body, savedBy: savedBy ?? { kind: 'person', accountId },
+                header, body, source, savedBy: savedBy ?? { kind: 'person', accountId },
                 addArtifact: (artifact) => {
                     publication.artifact = artifact;
                     if (canPublish()) storage.getState().addArtifact(artifact);
@@ -340,6 +341,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 const header = readableRawArtifactHeader(artifact);
                 if (artifact.bodyVersion === undefined || (artifact.body !== null && typeof artifact.body !== 'string')) throw artifactContentUnavailable();
                 return { artifactId: artifact.id, header, body: artifact.body,
+                    provenance: artifact.provenance,
                     ...requireArtifactAccessProjection(artifact),
                     revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
             },

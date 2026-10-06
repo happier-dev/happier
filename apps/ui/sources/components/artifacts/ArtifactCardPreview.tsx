@@ -7,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
+import { describeBoardSources } from '@/components/boards/model/boardSourcePresentation';
 import { ARTIFACT_KIND_ICONS } from './artifactKindPresentation';
 import type { ArtifactBrowserKind, ArtifactPreview } from './artifactBrowserModel';
 
@@ -21,6 +22,9 @@ export const ArtifactCardPreview = React.memo(function ArtifactCardPreview(props
         colors={{ ...theme.colors.text, paper: theme.colors.surface.base, paperBorder: theme.colors.border.default }}
         htmlLabel={t('artifacts.browser.kindOne.document')}
         fileDetail={props.preview.kind === 'file' ? `${props.preview.mime} · ${formatByteSize(props.preview.sizeBytes)}` : undefined}
+        boardLabels={props.preview.kind === 'board' ? { layout: t(`boards.header.${props.preview.layout.mode === 'canvas' ? 'canvas' : 'byStatus'}`),
+            sources: describeBoardSources(props.preview.layout.source), widgetCount: t('sessionBoard.sidebar.widgetCount', { count: props.preview.layout.widgets.length }),
+            widget: t('boards.widgets.kind'), widthOne: t('boards.widgets.widthOne'), widthTwo: t('boards.widgets.widthTwo') } : undefined}
         host={{
             renderText: ({ text, style, numberOfLines, typography }) => <Text numberOfLines={numberOfLines}
                 useDefaultTypography={typography !== 'mono'}

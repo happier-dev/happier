@@ -1,6 +1,7 @@
-import { deriveArtifactExcerptV1, getArtifactUseTargetV1, isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
+import { deriveArtifactExcerptV1, getArtifactUseTargetV1, isArtifactHtmlHeaderV1, type ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol';
 import { WorkflowDefinitionArtifactBodyV1Schema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
+import { buildWorkBoardPreviewLayoutV1, WorkBoardPreviewLayoutV1Schema, readWorkBoardArtifactV1 } from '@happier-dev/protocol';
 import type { HappierArtifactPreview } from '@happier-dev/plugin-ui/presentation';
 
 import { readBoardArtifactRoute } from '@/components/boards/boardsRoutes';
@@ -78,30 +79,15 @@ export function opensInArtifactView(artifact: Pick<DecryptedArtifact, 'id' | 'he
     return resolveArtifactOpenRoute(artifact) === artifactViewRoute(artifact.id);
 }
 
-/** Provenance a producer recorded in the header (ART-A1 `source`). Content, never caller authority. */
-export type ArtifactProvenance = Readonly<{
-    sessionId: string;
-    runId?: string;
-    machineId: string;
-    path: string;
-    sha?: string;
-}>;
+/** Opened private source metadata, never public preview content or caller authority. */
+export type ArtifactProvenance = Readonly<ArtifactWorkspaceSourceV1>;
 
 function nonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
-export function readArtifactProvenance(artifact: Pick<DecryptedArtifact, 'header'>): ArtifactProvenance | null {
-    const source = artifact.header?.source;
-    if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
-    const record = source as Record<string, unknown>;
-    const sessionId = nonEmptyString(record.sessionId);
-    const machineId = nonEmptyString(record.machineId);
-    const path = nonEmptyString(record.path);
-    if (sessionId === null || machineId === null || path === null) return null;
-    const runId = nonEmptyString(record.runId);
-    const sha = nonEmptyString(record.sha);
-    return { sessionId, machineId, path, ...(runId ? { runId } : {}), ...(sha ? { sha } : {}) };
+export function readArtifactProvenance(artifact: Pick<DecryptedArtifact, 'provenance'>): ArtifactProvenance | null {
+    return artifact.provenance?.source ?? null;
 }
 
 /** What a card previews: the body when it is loaded, else the header's excerpt; never a request. */
@@ -120,7 +106,7 @@ function extensionOf(name: string | null): string | null {
 }
 
 /** The artifact's content language for a code document (from its source path or title), else `null`. */
-export function readArtifactCodeLanguage(artifact: Pick<DecryptedArtifact, 'header' | 'title'>): string | null {
+export function readArtifactCodeLanguage(artifact: Pick<DecryptedArtifact, 'header' | 'title' | 'provenance'>): string | null {
     const mime = nonEmptyString(artifact.header?.mime);
     if (mime === 'text/markdown') return null;
     const ext = extensionOf(readArtifactProvenance(artifact)?.path ?? null) ?? extensionOf(artifact.title);
@@ -128,8 +114,18 @@ export function readArtifactCodeLanguage(artifact: Pick<DecryptedArtifact, 'head
     return null;
 }
 
-export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'header' | 'rawHeader' | 'title' | 'body'>): ArtifactPreview {
+export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader' | 'title' | 'body' | 'provenance'>): ArtifactPreview {
     const header = artifact.rawHeader ?? artifact.header;
+    if (header?.kind === 'work-board.v1' && header.v === 1) {
+        if (artifact.body !== undefined) {
+            try {
+                const board = readWorkBoardArtifactV1({ artifactId: artifact.id, header, body: artifact.body });
+                return board ? { kind: 'board', layout: buildWorkBoardPreviewLayoutV1(board) } : { kind: 'none' };
+            } catch { return { kind: 'none' }; }
+        }
+        const parsed = WorkBoardPreviewLayoutV1Schema.safeParse(header.previewLayout);
+        return parsed.success ? { kind: 'board', layout: parsed.data } : { kind: 'none' };
+    }
     if (header?.kind === 'workflow-definition.v1') {
         let labels: readonly string[] | undefined;
         if (typeof artifact.body === 'string') {

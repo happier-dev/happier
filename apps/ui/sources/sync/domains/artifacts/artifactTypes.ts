@@ -16,6 +16,8 @@ export interface Artifact {
     body?: string;  // Base64 encoded encrypted JSON { "body": string | null } - only in full fetch
     bodyVersion?: number;  // Only in full fetch
     dataEncryptionKey: string;  // Base64 encoded encryption key (encrypted with user key)
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
     seq: number;
     createdAt: number;
     updatedAt: number;
@@ -118,6 +120,8 @@ export interface ArtifactCreateRequest {
     header: string;  // Base64 encoded encrypted header
     body: string;  // Base64 encoded encrypted body
     dataEncryptionKey: string;  // Base64 encoded encryption key (encrypted with user key)
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
     blob?: ArtifactBlobWriteV1;
 }
 
@@ -125,6 +129,8 @@ export interface ArtifactCreateRequest {
  * Request to update an existing artifact
  */
 export interface ArtifactUpdateRequest {
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
     /** Explicit null deliberately clears an existing binary head; omission is an ordinary write. */
     blob?: ArtifactBlobWriteV1 | null;
     header?: string;  // Base64 encoded encrypted header

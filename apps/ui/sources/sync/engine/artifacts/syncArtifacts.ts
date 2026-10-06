@@ -32,10 +32,11 @@ import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     ArtifactBodyV1Schema,
-    ArtifactBodyEnvelopeV1Schema,
+    ArtifactBodyEnvelopeV1StoredSchema,
     ArtifactSavedByV1Schema,
     type ArtifactBodyEnvelopeV1,
     type ArtifactSavedByV1,
+    type ArtifactWorkspaceSourceV1,
     ArtifactBlobReferenceV1Schema,
     artifactKindRequiresTextBodyV1,
     type ArtifactBlobReferenceV1,
@@ -44,6 +45,7 @@ import {
     encodePlainArtifactStoredContent,
     isPlainArtifactDataKeyMarker,
     runArtifactRecipientKeyPreparationV1,
+    prepareArtifactRecipientKeyEnvelopesV1,
     withArtifactExcerptV1,
     prepareArtifactHeaderForRevisionV1,
     prepareArtifactHeaderForBodyV1,
@@ -53,6 +55,8 @@ import {
     buildArtifactHtmlPreviewUrlV1,
 } from '@happier-dev/protocol';
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
+import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
+import type { ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
 
 function prepareArtifactBody(input: ArtifactBodyInput): ArtifactBodyV1 | null {
     if (input !== null && typeof input === 'object' && 'bytes' in input) return ArtifactBlobReferenceV1Schema.parse({
@@ -105,6 +109,8 @@ type ArtifactContentProjection = Omit<Artifact, 'ownerAccountId' | 'access' | 'e
 export type ArtifactDataKeyCacheEntry = Readonly<{
     envelope: string;
     dataKey: Uint8Array;
+    provenanceEnvelope?: string | null;
+    provenanceDataKey?: Uint8Array;
 }>;
 
 export type ArtifactDataKeyCache = Map<string, ArtifactDataKeyCacheEntry>;
@@ -175,6 +181,8 @@ async function resolveArtifactDataKeys(params: {
             resolved.set(artifactId, null);
             continue;
         }
+        // A different content envelope replaces its custody; private metadata is
+        // recovered from the current authenticated row rather than a losing create.
         artifactDataKeys.set(artifactId, { envelope: pendingEnvelopes[index]!, dataKey });
         resolved.set(artifactId, dataKey);
     }
@@ -219,18 +227,110 @@ function decodePlainArtifactBody(value: string): ArtifactBodyEnvelopeV1 {
     if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
         throw new Error('Invalid plaintext artifact body');
     }
-    return ArtifactBodyEnvelopeV1Schema.parse(decoded);
+    return ArtifactBodyEnvelopeV1StoredSchema.parse(decoded);
 }
 
-function artifactBodyEnvelope(body: ArtifactBodyV1 | null, credentials: AuthCredentials, savedBy?: ArtifactSavedByV1,
-    restoredFromBodyVersion?: number): ArtifactBodyEnvelopeV1 {
+function artifactRevisionProvenance(credentials: AuthCredentials, savedBy?: ArtifactSavedByV1,
+    restoredFromBodyVersion?: number, source?: ArtifactWorkspaceSourceV1): ArtifactRevisionProvenanceV1 | undefined {
     let actor = savedBy;
     if (!actor) {
         try { actor = ArtifactSavedByV1Schema.parse({ kind: 'person', accountId: parseToken(credentials.token) }); }
         catch { /* No attributable Account without an authenticated token subject. */ }
     }
-    return ArtifactBodyEnvelopeV1Schema.parse({ body, ...(actor ? { provenance: { savedBy: actor,
-        ...(restoredFromBodyVersion === undefined ? {} : { restoredFromBodyVersion }) } } : {}) });
+    return actor ? { savedBy: actor, ...(source ? { source } : {}), ...(restoredFromBodyVersion === undefined ? {} : { restoredFromBodyVersion }) } : undefined;
+}
+
+async function resolveArtifactProvenanceDataKey(params: Readonly<{
+    artifact: Pick<Artifact, 'id' | 'provenanceDataEncryptionKey'>;
+    encryption: Encryption | null; artifactDataKeys: ArtifactDataKeyCache;
+}>): Promise<Uint8Array | null> {
+    const envelope = params.artifact.provenanceDataEncryptionKey;
+    const cached = params.artifactDataKeys.get(params.artifact.id);
+    if (!envelope) return null;
+    if (cached?.provenanceEnvelope === envelope && cached.provenanceDataKey) return cached.provenanceDataKey;
+    const dataKey = params.encryption ? await params.encryption.decryptEncryptionKey(envelope) : null;
+    if (cached) params.artifactDataKeys.set(params.artifact.id, { ...cached, provenanceEnvelope: envelope,
+        provenanceDataKey: dataKey ?? undefined });
+    return dataKey;
+}
+
+async function openArtifactProvenance(params: Readonly<{
+    artifact: Pick<Artifact, 'id' | 'provenance' | 'provenanceDataEncryptionKey' | 'bodyVersion'>;
+    mode: 'plain' | 'e2ee'; encryption: Encryption | null; artifactDataKeys: ArtifactDataKeyCache;
+}>) {
+    const dataKey = params.mode === 'e2ee' ? await resolveArtifactProvenanceDataKey(params) : null;
+    if (params.artifact.provenance == null) return undefined;
+    if (params.artifact.bodyVersion === undefined) throw new Error('Artifact private metadata revision is unavailable');
+    return openArtifactPrivateRevisionMetadata({ mode: params.mode, artifactId: params.artifact.id,
+        bodyVersion: params.artifact.bodyVersion, provenance: params.artifact.provenance, dataKey });
+}
+
+type ArtifactProvenanceWrite = Readonly<{
+    write: Pick<ArtifactUpdateRequest, 'provenance' | 'provenanceDataEncryptionKey'>;
+    candidate?: Readonly<{ provenanceEnvelope: string; provenanceDataKey: Uint8Array }>;
+    initializedOwnerEnvelope?: string;
+}>;
+
+async function prepareArtifactProvenanceWrite(params: Readonly<{
+    artifactId: string; bodyVersion: number; mode: 'plain' | 'e2ee'; provenance?: ArtifactRevisionProvenanceV1;
+    encryption: Encryption | null; artifactDataKeys: ArtifactDataKeyCache;
+    credentials: AuthCredentials; request?: ArtifactApiOptions['request']; signal?: AbortSignal;
+    existingArtifact?: Pick<DecryptedArtifact, 'access' | 'ownerAccountId'>;
+}>): Promise<ArtifactProvenanceWrite> {
+    if (!params.provenance) return { write: {} };
+    if (params.mode === 'plain') return { write: { provenance: await sealArtifactPrivateRevisionMetadata({ ...params,
+        provenance: params.provenance }), provenanceDataEncryptionKey: null } };
+    const cached = params.artifactDataKeys.get(params.artifactId);
+    if (!cached) throw new Error('Artifact content key is unavailable');
+    if (cached.provenanceEnvelope && !cached.provenanceDataKey)
+        throw new Error('Artifact private metadata key is unavailable');
+    const initializeKey = !cached.provenanceEnvelope;
+    const dataKey = cached.provenanceDataKey ?? ArtifactEncryption.generateDataEncryptionKey();
+    const envelope = cached.provenanceEnvelope ?? encodeBase64(await requireArtifactEncryption(params.encryption).encryptEncryptionKey(dataKey), 'base64');
+    let ownerEnvelope = envelope;
+    const grantInitialization = initializeKey && params.existingArtifact !== undefined && params.existingArtifact.access !== 'owner';
+    if (grantInitialization) {
+        const census = await createArtifactAccessApi(params.credentials, { request: params.request }).readRecipients(params.artifactId, params.signal);
+        if (census.artifactId !== params.artifactId || census.callerDataEncryptionKey !== cached.envelope
+            || census.provenanceDataEncryptionKey)
+            throw Object.assign(new Error('Artifact data key changed'), { code: 'artifact_data_key_changed' });
+        const owner = prepareArtifactRecipientKeyEnvelopesV1({ dataKey: cached.dataKey, provenanceDataKey: dataKey,
+            recipients: census.recipients.filter(recipient => recipient.recipientAccountId === census.ownerAccountId),
+            randomBytes: getRandomBytes, replaceExisting: true })[0];
+        if (!owner?.encryptedProvenanceDataKey)
+            throw Object.assign(new Error('Artifact owner key is unavailable'), { code: 'artifact_content_unavailable' });
+        ownerEnvelope = owner.encryptedProvenanceDataKey;
+    }
+    return { write: { provenance: await sealArtifactPrivateRevisionMetadata({ ...params, provenance: params.provenance, dataKey }),
+        ...(initializeKey ? { provenanceDataEncryptionKey: ownerEnvelope } : {}) },
+        candidate: { provenanceEnvelope: envelope, provenanceDataKey: dataKey },
+        ...(initializeKey && params.existingArtifact !== undefined ? { initializedOwnerEnvelope: ownerEnvelope } : {}) };
+}
+
+async function acknowledgeArtifactProvenanceWrite(params: Readonly<{
+    artifactId: string; credentials: AuthCredentials; request?: ArtifactApiOptions['request']; signal?: AbortSignal;
+    artifactDataKeys: ArtifactDataKeyCache;
+}>, prepared: Awaited<ReturnType<typeof prepareArtifactProvenanceWrite>>) {
+    if (!prepared.candidate) return;
+    const cached = params.artifactDataKeys.get(params.artifactId);
+    if (!cached) throw new Error('Artifact content key is unavailable');
+    let envelope = prepared.candidate.provenanceEnvelope;
+    if (prepared.initializedOwnerEnvelope) {
+        const api = createArtifactAccessApi(params.credentials, { request: params.request });
+        const census = await api.readRecipients(params.artifactId, params.signal);
+        if (census.artifactId !== params.artifactId || census.callerDataEncryptionKey !== cached.envelope
+            || census.provenanceDataEncryptionKey !== prepared.initializedOwnerEnvelope || !census.dataEncryptionKey)
+            throw Object.assign(new Error('Artifact data key changed'), { code: 'artifact_data_key_changed' });
+        const recipients = prepareArtifactRecipientKeyEnvelopesV1({ dataKey: cached.dataKey,
+            provenanceDataKey: prepared.candidate.provenanceDataKey,
+            recipients: census.recipients.filter(recipient => recipient.recipientAccountId !== census.ownerAccountId), randomBytes: getRandomBytes });
+        if (recipients.length) await api.commitKeyEnvelopes({ artifactId: params.artifactId,
+            expectedDataEncryptionKey: census.dataEncryptionKey, expectedProvenanceDataEncryptionKey: prepared.initializedOwnerEnvelope,
+            recipientKeyEnvelopes: recipients }, params.signal);
+        const caller = recipients.find(recipient => recipient.recipientAccountId === parseToken(params.credentials.token));
+        envelope = caller?.encryptedProvenanceDataKey ?? envelope;
+    }
+    params.artifactDataKeys.set(params.artifactId, { ...cached, ...prepared.candidate, provenanceEnvelope: envelope });
 }
 
 function normalizeArtifactHeaderForDecryptedArtifact(header: Readonly<Record<string, unknown>>): ArtifactHeader {
@@ -309,13 +409,14 @@ export async function decryptArtifactListItems(params: {
             if (opened?.isDecrypted) return opened;
         }
         // A bad body must not erase its readable identity or the other list rows.
-        return await buildDecryptedArtifactListItem({ artifact, encryption: params.encryption, dataKey });
+        return await buildDecryptedArtifactListItem({ artifact, encryption: params.encryption, artifactDataKeys: params.artifactDataKeys, dataKey });
     }));
 }
 
 async function buildDecryptedArtifactListItem(params: {
     artifact: Artifact;
     encryption: Encryption | null;
+    artifactDataKeys: ArtifactDataKeyCache;
     dataKey: Uint8Array | null;
 }): Promise<DecryptedArtifact | null> {
     const { artifact, encryption, dataKey } = params;
@@ -332,6 +433,7 @@ async function buildDecryptedArtifactListItem(params: {
                 sessions: header.sessions,
                 draft: header.draft,
                 body: undefined,
+                provenance: await openArtifactProvenance({ ...params, mode: 'plain' }),
                 headerVersion: artifact.headerVersion,
                 bodyVersion: artifact.bodyVersion,
                 seq: artifact.seq,
@@ -387,6 +489,7 @@ async function buildDecryptedArtifactListItem(params: {
             sessions: header.sessions,
             draft: header.draft,
             body: undefined, // Body not loaded in list
+            provenance: await openArtifactProvenance({ ...params, mode: 'e2ee' }),
             headerVersion: artifact.headerVersion,
             bodyVersion: artifact.bodyVersion,
             seq: artifact.seq,
@@ -428,7 +531,7 @@ export async function decryptArtifactWithBody(params: {
                 sessions: header.sessions,
                 draft: header.draft,
                 body: body?.body ?? null,
-                provenance: body?.provenance,
+                provenance: await openArtifactProvenance({ ...params, mode: 'plain' }),
                 headerVersion: artifact.headerVersion,
                 bodyVersion: artifact.bodyVersion,
                 seq: artifact.seq,
@@ -487,7 +590,7 @@ export async function decryptArtifactWithBody(params: {
             sessions: header.sessions,
             draft: header.draft,
             body: body?.body ?? null,
-            provenance: body?.provenance,
+            provenance: await openArtifactProvenance({ ...params, mode: 'e2ee' }),
             rawHeader,
             headerVersion: artifact.headerVersion,
             bodyVersion: artifact.bodyVersion,
@@ -545,6 +648,7 @@ export async function fetchAndApplyArtifactsList(params: {
             let decrypted = await buildDecryptedArtifactListItem({
                 artifact,
                 encryption,
+                artifactDataKeys,
                 dataKey: dataKeysByArtifactId.get(artifact.id) ?? null,
             });
             if (!shouldContinue()) return;
@@ -609,6 +713,7 @@ export async function fetchArtifactWithBodyFromApi(params: {
             }
             const accessApi = createArtifactAccessApi(credentials, { request: params.request });
             await runArtifactRecipientKeyPreparationV1({ artifactId, dataKey: key.dataKey,
+                provenanceDataKey: key.provenanceDataKey, openedProvenanceDataEncryptionKey: key.provenanceEnvelope,
                 openedDataEncryptionKey: key.envelope, randomBytes: getRandomBytes, signal: params.signal,
                 readCensus: () => accessApi.readRecipients(artifactId, params.signal),
                 commit: (input) => accessApi.commitKeyEnvelopes(input, params.signal),
@@ -678,12 +783,15 @@ async function openRetainedArtifactBodies(params: ArtifactRevisionReadParams, ar
     if (artifact.encryptionMode === 'e2ee' && !key)
         throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
     const codec = key ? new ArtifactEncryption(key) : null;
+    const provenanceDataKey = artifact.encryptionMode === 'e2ee' ? await resolveArtifactProvenanceDataKey({ ...params, artifact }) : null;
     const revisions = await Promise.all(inventory.revisions.map(async (revision) => {
         try {
             const opened = artifact.encryptionMode === 'plain'
                 ? decodePlainArtifactBody(revision.body) : await codec!.decryptBody(revision.body);
             if (!opened) throw new Error('Invalid retained body');
-            return { ...revision, ...opened };
+            return { ...revision, ...opened, provenance: await openArtifactPrivateRevisionMetadata({
+                mode: artifact.encryptionMode, artifactId: artifact.id, bodyVersion: revision.bodyVersion,
+                provenance: revision.provenance, dataKey: provenanceDataKey }) };
         } catch {
             throw Object.assign(new Error('Artifact revision content is unavailable'), { code: 'content_unavailable' });
         }
@@ -721,11 +829,15 @@ export async function restoreArtifactBodyRevisionViaApi(params: ArtifactRevision
         throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
     const header = artifact.encryptionMode === 'plain' ? encodePlainArtifactStoredContent(rawHeader)
         : await new ArtifactEncryption(key!).encryptHeader(rawHeader);
-    const envelope = artifactBodyEnvelope(selected.body, params.credentials, params.savedBy, params.bodyVersion);
+    const envelope = { body: selected.body };
     const body = artifact.encryptionMode === 'plain' ? encodePlainArtifactStoredContent(envelope)
         : await new ArtifactEncryption(key!).encryptBody(envelope);
+    const privateMetadata = await prepareArtifactProvenanceWrite({ ...params, mode: artifact.encryptionMode,
+        existingArtifact: current, bodyVersion: params.expectedRevision.bodyVersion + 1,
+        provenance: artifactRevisionProvenance(params.credentials, params.savedBy, params.bodyVersion, selected.provenance?.source) });
     const revision = await restoreArtifactRevision(params.credentials, { artifactId: artifact.id,
-        bodyVersion: params.bodyVersion, expectedRevision: params.expectedRevision, header, body }, params);
+        bodyVersion: params.bodyVersion, expectedRevision: params.expectedRevision, header, body, ...privateMetadata.write }, params);
+    await acknowledgeArtifactProvenanceWrite(params, privateMetadata);
     const restored = await fetchArtifactWithBodyFromApi(params);
     params.signal?.throwIfAborted();
     if (!restored?.isDecrypted) throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
@@ -772,6 +884,7 @@ export async function createArtifactWithHeaderViaApi(params: {
     header: Readonly<Record<string, unknown>>;
     body: ArtifactBodyInput;
     savedBy?: ArtifactSavedByV1;
+    source?: ArtifactWorkspaceSourceV1;
     encryption: Encryption | null;
     artifactDataKeys: ArtifactDataKeyCache;
     addArtifact: (artifact: DecryptedArtifact) => void;
@@ -789,7 +902,8 @@ export async function createArtifactWithHeaderViaApi(params: {
     requireArtifactBodyKind(header, body);
     await requireArtifactHtmlWriteContent(params);
     const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(header, body), body);
-    const envelope = artifactBodyEnvelope(body, credentials, params.savedBy);
+    const envelope = { body };
+    const provenance = artifactRevisionProvenance(credentials, params.savedBy, undefined, params.source);
 
     try {
         // Generate unique artifact ID
@@ -830,11 +944,13 @@ export async function createArtifactWithHeaderViaApi(params: {
         }
 
         // Create the request
+        const privateMetadata = await prepareArtifactProvenanceWrite({ ...params, artifactId, bodyVersion: 1, mode: accountMode, provenance });
         const request: ArtifactCreateRequest = {
             id: artifactId,
             header: storedHeader,
             body: storedBody,
             dataEncryptionKey: storedDataEncryptionKey,
+            ...privateMetadata.write,
         };
         if (params.body !== null && typeof params.body === 'object' && 'bytes' in params.body && typeof body === 'object' && body !== null) {
             request.blob = { blobId: body.blobId, content: await sealArtifactBinaryContent(params.body.bytes, accountMode, artifactEncryption) };
@@ -843,6 +959,9 @@ export async function createArtifactWithHeaderViaApi(params: {
         // Send to server
         params.signal?.throwIfAborted();
         const artifact = await createArtifactApi(credentials, request, { request: params.request, signal: params.signal });
+        if (artifact.dataEncryptionKey === request.dataEncryptionKey
+            && artifact.provenanceDataEncryptionKey === request.provenanceDataEncryptionKey)
+            await acknowledgeArtifactProvenanceWrite({ ...params, artifactId }, privateMetadata);
 
         // Exact-id create can return a pre-existing row after a same-id race. Its
         // content and key are authoritative, not the plaintext we attempted to save.
@@ -865,7 +984,7 @@ export async function createArtifactWithHeaderViaApi(params: {
             sessions: normalizedHeader.sessions,
             draft: normalizedHeader.draft,
             body,
-            provenance: envelope.provenance,
+            provenance,
             headerVersion: artifact.headerVersion,
             bodyVersion: artifact.bodyVersion,
             seq: artifact.seq,
@@ -970,7 +1089,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
     const body = prepareArtifactBody(params.body);
     requireArtifactBodyKind(header, body);
     const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(header, body), body);
-    const envelope = artifactBodyEnvelope(body, credentials, params.savedBy);
+    const envelope = { body };
 
     // Get current artifact from storage
     const currentArtifact = getArtifact(artifactId);
@@ -980,6 +1099,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
     if (currentArtifact.isDecrypted === false) {
         throw new Error(`Artifact ${artifactId} is locked`);
     }
+    const provenance = artifactRevisionProvenance(credentials, params.savedBy, undefined, currentArtifact.provenance?.source);
 
     // Get the data encryption key from memory for encrypted artifacts only.
     let dataEncryptionKey = artifactDataKeys.get(artifactId)?.dataKey;
@@ -1030,6 +1150,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
 
     // Prepare update request
     const updateRequest: ArtifactUpdateRequest = {};
+    let privateMetadata: Awaited<ReturnType<typeof prepareArtifactProvenanceWrite>> | undefined;
 
     const normalizedHeader = normalizeArtifactHeaderForDecryptedArtifact(rawHeader);
     // A complete caller-supplied replacement is authoritative even when an old
@@ -1049,10 +1170,18 @@ export async function updateArtifactWithHeaderViaApi(params: {
         ? stableStringifyJsonValue(body) !== stableStringifyJsonValue(currentArtifact.body)
         : body !== currentArtifact.body;
     if (params.expectedRevision || bodyChanged) {
+        // Recover the private custody before a write; legacy rows initialize it in this same CAS.
+        if (provenance && storageMode === 'e2ee' && !artifactDataKeys.get(artifactId)?.provenanceDataKey) {
+            const stored = await fetchArtifactApi(credentials, artifactId, { request: params.request, signal: params.signal });
+            await resolveArtifactProvenanceDataKey({ ...params, artifact: stored });
+        }
         updateRequest.body = storageMode === 'plain'
             ? encodePlainArtifactStoredContent(envelope)
             : await artifactEncryption!.encryptBody(envelope);
         updateRequest.expectedBodyVersion = bodyVersion;
+        privateMetadata = await prepareArtifactProvenanceWrite({ ...params, mode: storageMode,
+            existingArtifact: currentArtifact, bodyVersion: bodyVersion! + 1, provenance });
+        Object.assign(updateRequest, privateMetadata.write);
         if (body !== null && typeof body === 'object') {
             updateRequest.blob = { blobId: body.blobId,
                 ...(params.body !== null && typeof params.body === 'object' && 'bytes' in params.body
@@ -1079,6 +1208,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
         }
         throw new Error('Failed to update artifact');
     }
+    if (privateMetadata) await acknowledgeArtifactProvenanceWrite(params, privateMetadata);
 
     // Update local storage
     const updatedArtifact: DecryptedArtifact = {
@@ -1089,7 +1219,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
         sessions: normalizedHeader.sessions,
         draft: normalizedHeader.draft,
         body,
-        provenance: updateRequest.body === undefined ? currentArtifact.provenance : envelope.provenance,
+        provenance: updateRequest.body === undefined ? currentArtifact.provenance : provenance,
         headerVersion: response.headerVersion !== undefined ? response.headerVersion : headerVersion,
         bodyVersion: response.bodyVersion !== undefined ? response.bodyVersion : bodyVersion,
         updatedAt: Date.now(),
@@ -1104,6 +1234,8 @@ export async function updateArtifactWithHeaderViaApi(params: {
 export async function decryptSocketNewArtifactUpdate(params: {
     artifactId: string;
     dataEncryptionKey: string;
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
     header: string;
     headerVersion: number;
     body?: string | null;
@@ -1145,7 +1277,8 @@ export async function decryptSocketNewArtifactUpdate(params: {
                 sessions: decryptedHeader.sessions,
                 draft: decryptedHeader.draft,
                 body: decryptedBody,
-                provenance: openedBody?.provenance,
+                provenance: await openArtifactProvenance({ ...params, mode: 'plain', artifact: {
+                    id: artifactId, bodyVersion, provenance: params.provenance, provenanceDataEncryptionKey: params.provenanceDataEncryptionKey } }),
                 headerVersion,
                 bodyVersion,
                 seq,
@@ -1220,7 +1353,6 @@ export async function decryptSocketNewArtifactUpdate(params: {
 
         // Decrypt body if provided
         let decryptedBody: ArtifactBodyV1 | null | undefined = undefined;
-        let provenance: ArtifactBodyEnvelopeV1['provenance'];
         if (body && bodyVersion !== undefined) {
             const decrypted = await artifactEncryption.decryptBody(body);
             if (!decrypted) {
@@ -1230,7 +1362,6 @@ export async function decryptSocketNewArtifactUpdate(params: {
                 });
             }
             decryptedBody = decrypted.body;
-            provenance = decrypted.provenance;
             requireArtifactBodyKind(rawHeader!, decryptedBody);
         }
 
@@ -1242,7 +1373,8 @@ export async function decryptSocketNewArtifactUpdate(params: {
             sessions: decryptedHeader.sessions,
             draft: decryptedHeader.draft,
             body: decryptedBody,
-            provenance,
+            provenance: await openArtifactProvenance({ ...params, mode: 'e2ee', artifact: {
+                id: artifactId, bodyVersion, provenance: params.provenance, provenanceDataEncryptionKey: params.provenanceDataEncryptionKey } }),
             headerVersion,
             bodyVersion,
             seq,
@@ -1264,6 +1396,8 @@ export async function applySocketArtifactUpdate(params: {
     existingArtifact: DecryptedArtifact;
     createdAt: number;
     dataEncryptionKey: Uint8Array | null;
+    provenanceDataKey?: Uint8Array | null;
+    provenance?: string | null;
     header?: { version: number; value: string } | null;
     body?: { version: number; value: string } | null;
 }): Promise<DecryptedArtifact> {
@@ -1349,7 +1483,12 @@ export async function applySocketArtifactUpdate(params: {
             : await artifactEncryption!.decryptBody(body.value);
         if (!decryptedBody) return lockedUpdate('decryption_failed');
         updatedArtifact.body = decryptedBody.body;
-        updatedArtifact.provenance = decryptedBody.provenance;
+        if (params.provenance != null) {
+            try {
+                updatedArtifact.provenance = await openArtifactPrivateRevisionMetadata({ mode: existingArtifact.storageMode ?? 'e2ee',
+                    artifactId: existingArtifact.id, bodyVersion: body.version, provenance: params.provenance, dataKey: params.provenanceDataKey });
+            } catch { return lockedUpdate('decryption_failed'); }
+        }
         updatedArtifact.bodyVersion = body.version;
     }
 
@@ -1365,6 +1504,8 @@ export async function applySocketArtifactUpdate(params: {
 export async function handleNewArtifactSocketUpdate(params: {
     artifactId: string;
     dataEncryptionKey: string;
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
     header: string;
     headerVersion: number;
     body?: string | null;
@@ -1395,6 +1536,7 @@ export async function handleNewArtifactSocketUpdate(params: {
 
     try {
         const decrypted = await decryptSocketNewArtifactUpdate({
+            provenance: params.provenance, provenanceDataEncryptionKey: params.provenanceDataEncryptionKey,
             artifactId,
             dataEncryptionKey,
             header,
@@ -1421,6 +1563,9 @@ export async function handleNewArtifactSocketUpdate(params: {
 export async function handleUpdateArtifactSocketUpdate(params: {
     artifactId: string;
     createdAt: number;
+    provenance?: string | null;
+    provenanceDataEncryptionKey?: string | null;
+    encryption?: Encryption | null;
     header?: { version: number; value: string } | null;
     body?: { version: number; value: string } | null;
     artifactDataKeys: ArtifactDataKeyCache;
@@ -1461,6 +1606,11 @@ export async function handleUpdateArtifactSocketUpdate(params: {
         }
 
         const updatedArtifact = await applySocketArtifactUpdate({
+            provenance: params.provenance,
+            provenanceDataKey: params.provenance == null ? null : await resolveArtifactProvenanceDataKey({
+                artifact: { id: artifactId, provenanceDataEncryptionKey: params.provenanceDataEncryptionKey
+                    ?? artifactDataKeys.get(artifactId)?.provenanceEnvelope },
+                encryption: params.encryption ?? null, artifactDataKeys }),
             existingArtifact,
             createdAt,
             dataEncryptionKey,
