@@ -53,6 +53,7 @@ function keyChallengeV2Capabilities(serverIdentityId: string) {
 }
 
 afterEach(() => {
+    vi.useRealTimers();
     runtimeFetchMock.mockReset();
     activeSnapshotMock.mockReset();
     activeSnapshotMock.mockReturnValue({
@@ -65,6 +66,101 @@ afterEach(() => {
 });
 
 describe('explicit endpoint authentication foundations', () => {
+    it.each([true, false])('waits for a slow identity-pinned endpoint before issuing a challenge (require v2: %s)', async (requireKeyChallengeV2) => {
+        const { authGetTokenAtEndpoint } = await import('./getToken');
+        vi.useFakeTimers();
+        const paths: string[] = [];
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            paths.push(new URL(url).pathname);
+            if (url.endsWith('/v1/features')) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+                return jsonResponse({ features: {}, capabilities: keyChallengeV2Capabilities('srv_slow_home') });
+            }
+            if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
+                challengeId: 'slow-challenge', nonce: 'nonce',
+                issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                audience: { origin: 'https://slow.example.test', serverIdentityId: 'srv_slow_home' },
+            });
+            if (url.endsWith('/v1/auth')) return jsonResponse({ token: 'slow-home-token' });
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        let settled = false;
+        const result = authGetTokenAtEndpoint({
+            endpointUrl: 'https://slow.example.test', serverIdentityId: 'srv_slow_home',
+            secret: new Uint8Array(32).fill(7), requireKeyChallengeV2,
+        }).then((credentials) => { settled = true; return credentials; }, (error: unknown) => {
+            settled = true;
+            return error;
+        });
+        await vi.advanceTimersByTimeAsync(800);
+        expect(settled).toBe(false);
+        expect(paths).toEqual(['/v1/features']);
+        await vi.advanceTimersByTimeAsync(700);
+        await expect(result).resolves.toEqual({ token: 'slow-home-token' });
+        expect(paths).toEqual(['/v1/features', '/v1/auth/challenge', '/v1/auth']);
+    });
+
+    it('waits for slow features when focused key login requires an Account-bound challenge', async () => {
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const profile = upsertServerProfile({ serverUrl: 'https://focused.example.test', name: 'Focused' });
+        activeSnapshotMock.mockReturnValue({
+            serverId: profile.id, serverUrl: profile.serverUrl, generation: 1, kind: 'custom',
+        });
+        const { authGetToken } = await import('./getToken');
+        vi.useFakeTimers();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/v1/features')) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+                return jsonResponse({ features: {}, capabilities: keyChallengeV2Capabilities('srv_slow_focused') });
+            }
+            if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
+                challengeId: 'focused-challenge', nonce: 'nonce',
+                issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                audience: { origin: 'https://focused.example.test', serverIdentityId: 'srv_slow_focused' },
+            });
+            if (url.endsWith('/v1/auth')) return jsonResponse({ token: 'focused-token' });
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        let settled = false;
+        const result = authGetToken(new Uint8Array(32).fill(7), { expectedAccountId: 'expected-account' })
+            .then((token) => { settled = true; return token; }, (error: unknown) => { settled = true; return error; });
+        await vi.advanceTimersByTimeAsync(800);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(700);
+        await expect(result).resolves.toBe('focused-token');
+    });
+
+    it('lets unbound focused login use its released fallback at 800 ms without aborting discovery', async () => {
+        const { authGetToken } = await import('./getToken');
+        vi.useFakeTimers();
+        let featureSignal: AbortSignal | null | undefined;
+        let featureReturned = false;
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith('/v1/features')) {
+                featureSignal = init?.signal;
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+                featureReturned = true;
+                return jsonResponse({ features: {}, capabilities: {} });
+            }
+            if (url.endsWith('/v1/auth')) {
+                expect(JSON.parse(String(init?.body))).toHaveProperty('challenge');
+                return jsonResponse({ token: 'fallback-token' });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        const result = authGetToken(new Uint8Array(32).fill(7));
+        await vi.advanceTimersByTimeAsync(800);
+        await expect(result).resolves.toBe('fallback-token');
+        expect(featureReturned).toBe(false);
+        expect(featureSignal).toBeDefined();
+        expect(featureSignal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(700);
+        expect(featureReturned).toBe(true);
+    });
+
     it('repairs retained 0.2 secret credentials during focused Account currentness without a restore action', async () => {
         const token = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
         const credentials = { token, secret: encodeBase64(new Uint8Array(32).fill(7)) };
@@ -482,7 +578,7 @@ describe('explicit endpoint authentication foundations', () => {
         expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
-    it('keeps explicit require-v2 authentication fail closed when feature discovery is unavailable', async () => {
+    it.each([true, false])('keeps identity-pinned authentication fail closed when feature discovery is unavailable (require v2: %s)', async (requireKeyChallengeV2) => {
         runtimeFetchMock.mockRejectedValue(new Error('feature endpoint unavailable'));
 
         const { authGetTokenAtEndpoint } = await import('./getToken');
@@ -491,7 +587,7 @@ describe('explicit endpoint authentication foundations', () => {
             canonicalServerUrl: 'https://home-b.example.test',
             serverIdentityId: 'srv_home_b',
             secret: new Uint8Array(32).fill(7),
-            requireKeyChallengeV2: true,
+            requireKeyChallengeV2,
         })).rejects.toMatchObject({
             name: 'HappyError',
             canTryAgain: true,

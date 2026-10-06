@@ -1420,6 +1420,7 @@ describe('serverFeaturesClient', () => {
     });
 
     it('lets a short endpoint-probe waiter expire without aborting the shared request', async () => {
+        useFrozenServerFeaturesClock();
         let requestSignal: AbortSignal | undefined;
         let resolveRequest!: (response: Response) => void;
         featuresFetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
@@ -1438,11 +1439,12 @@ describe('serverFeaturesClient', () => {
         });
         const patient = probeServerFeaturesAtUrl({
             endpointUrl: 'https://home.example.test',
-            timeoutMs: 2_000,
         });
 
-        await vi.waitFor(() => expect(requestSignal).toBeDefined());
+        await vi.advanceTimersByTimeAsync(10);
+        expect(requestSignal).toBeDefined();
         await expect(impatient).resolves.toEqual({ status: 'error', reason: 'timeout' });
+        await vi.advanceTimersByTimeAsync(1_490);
         expect(requestSignal?.aborted).toBe(false);
         resolveRequest(createResponse(200, {
             features: {},
@@ -1453,6 +1455,53 @@ describe('serverFeaturesClient', () => {
             serverIdentityId: 'srv_expected_home',
         });
         expect(featuresFetchMock).toHaveBeenCalledOnce();
+    });
+
+    it('lets a cancelled endpoint waiter leave the shared observation available to another caller', async () => {
+        useFrozenServerFeaturesClock();
+        let requestSignal: AbortSignal | null | undefined;
+        featuresFetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+            requestSignal = init?.signal;
+            await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+            return createResponse(200, createValidFeaturesPayload());
+        });
+        const { probeServerFeaturesAtUrl, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        const controller = new AbortController();
+        const cancelled = probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test', signal: controller.signal });
+        const patient = probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test' });
+        await vi.advanceTimersByTimeAsync(100);
+        controller.abort();
+        await expect(cancelled).resolves.toEqual({ status: 'error', reason: 'network' });
+        expect(requestSignal).toBeDefined();
+        expect(requestSignal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1_400);
+        await expect(patient).resolves.toMatchObject({ status: 'ready' });
+        expect(featuresFetchMock).toHaveBeenCalledOnce();
+    });
+
+    it('ends an endpoint probe at its shared attempt timeout when no response arrives', async () => {
+        useFrozenServerFeaturesClock();
+        let requestSignal: AbortSignal | null | undefined;
+        featuresFetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+            requestSignal = init?.signal;
+            return await new Promise<Response>((_resolve, reject) => {
+                requestSignal?.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })), { once: true });
+            });
+        });
+        const { probeServerFeaturesAtUrl, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        let settled = false;
+        const result = probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test' }).then((snapshot) => {
+            settled = true;
+            return snapshot;
+        });
+        await vi.advanceTimersByTimeAsync(59_999);
+        expect(settled).toBe(false);
+        expect(requestSignal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(result).resolves.toEqual({ status: 'error', reason: 'timeout' });
+        expect(requestSignal?.aborted).toBe(true);
     });
 
     it('probes an explicit ingress-less Home through its semantic carrier', async () => {
