@@ -509,6 +509,10 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   return lines.join('\n');
 }
 
+function predecessorMessageMetaDefaultsConstName(agentId: string): string {
+  return `BUNDLED_${agentId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_PREDECESSOR_MESSAGE_META_DEFAULTS`;
+}
+
 export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBehaviorDescriptorSource[]): string {
   const lines: string[] = [];
   lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
@@ -554,13 +558,21 @@ export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBeha
   lines.push('        Readonly<Record<string, string | number | boolean | null | readonly string[]>>;');
   lines.push('}>;');
   lines.push('');
+  // Defaults are the plugin's whole settings default projection; the protocol
+  // writer reads only its own keys. Bind them to a constant (as the plugin's
+  // wrapper does) so later plugin settings never trip excess-property checks.
+  for (const source of sources) {
+    if (!source.predecessorMessageMetaWriter) continue;
+    lines.push(`const ${predecessorMessageMetaDefaultsConstName(source.agentId)} = Object.freeze(${renderJsonLiteral(source.predecessorMessageMetaWriter.defaults)});`);
+    lines.push('');
+  }
   lines.push('export const BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS: Readonly<');
   lines.push('    Partial<Record<CanonicalAgentId, BundledAgentPredecessorMessageMetaWriter>>');
   lines.push('> = Object.freeze({');
   for (const source of sources) {
     if (!source.predecessorMessageMetaWriter) continue;
     lines.push(`    ${source.agentId}: {`);
-    lines.push(`        buildPredecessorMessageMeta: (settings) => ${source.predecessorMessageMetaWriter.importName}(settings, ${renderJsonLiteral(source.predecessorMessageMetaWriter.defaults)}),`);
+    lines.push(`        buildPredecessorMessageMeta: (settings) => ${source.predecessorMessageMetaWriter.importName}(settings, ${predecessorMessageMetaDefaultsConstName(source.agentId)}),`);
     lines.push('    },');
   }
   lines.push('});');

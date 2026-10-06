@@ -185,6 +185,7 @@
             },
             "sources": [
               {
+                "contentSearch": false,
                 "instances": [
                   {
                     "constants": {},
@@ -252,6 +253,8 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [
@@ -267,6 +270,7 @@
         "scope": "agent"
       }
     ],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],

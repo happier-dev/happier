@@ -52,6 +52,16 @@ export function readGeneratorAuthoringSourceFingerprint(cliDir) {
     .map((path) => [path, readWorkspaceBuildFileDigest(resolve(cliDir, path))]));
 }
 
+export function readGeneratorCliPreparationFingerprint(cliDir) {
+  // CLI runtime edits do not affect plugin authoring. Keep its exact existing
+  // import closure and compiler/package configuration, not the entire host.
+  return JSON.stringify([
+    readGeneratorAuthoringSourceFingerprint(cliDir),
+    ...readWorkspaceBuildInputs(cliDir).filter((path) => path === 'package.json' || /^tsconfig.*\.json$/.test(path))
+      .map((path) => [path, readWorkspaceBuildFileDigest(resolve(cliDir, path))]),
+  ]);
+}
+
 export function resolveBundledPluginGeneratorInputPaths({ repoDir }) {
   const cliDir = join(repoDir, 'apps', 'cli');
   const generatorInput = 'scripts/build-owned/generateBundledPluginEntries.ts';

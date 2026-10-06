@@ -14,9 +14,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -256,6 +259,20 @@
             "fallback": "Audio for transcription is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.",
             "key": "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt"
           },
+          "privacyFacts": {
+            "audioDestination": {
+              "fallback": "Your configured endpoint",
+              "key": "settingsVoice.pages.privacy.yourEndpoint"
+            },
+            "processor": {
+              "fallback": "Your endpoint operator",
+              "key": "settingsVoice.pages.privacy.endpointOperator"
+            },
+            "retention": {
+              "fallback": "Follows your endpoint operator’s policy.",
+              "key": "settingsVoice.pages.privacy.endpointPolicy"
+            }
+          },
           "readiness": [
             {
               "kind": "setting_nonempty",
@@ -427,6 +444,20 @@
           "privacyDisclosure": {
             "fallback": "Reply text for speech synthesis is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.",
             "key": "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts"
+          },
+          "privacyFacts": {
+            "audioDestination": {
+              "fallback": "No microphone audio; reply text only.",
+              "key": "settingsVoice.pages.privacy.noMicrophoneAudio"
+            },
+            "processor": {
+              "fallback": "Your endpoint operator",
+              "key": "settingsVoice.pages.privacy.endpointOperator"
+            },
+            "retention": {
+              "fallback": "Follows your endpoint operator’s policy.",
+              "key": "settingsVoice.pages.privacy.endpointPolicy"
+            }
           },
           "readiness": [
             {

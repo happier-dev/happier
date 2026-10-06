@@ -33177,7 +33177,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Comment on this GitHub issue"
       },
@@ -40523,7 +40526,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Close this issue"
       },
@@ -43098,7 +43104,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Reopen this issue"
       },
@@ -44953,7 +44962,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Assign people to this issue"
       },
@@ -46808,7 +46820,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Unassign people from this issue"
       },
@@ -48661,7 +48676,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Add labels to this issue"
       },
@@ -50509,7 +50527,10 @@
           "global"
         ],
         "surfaces": [
-          "ui"
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
         ],
         "title": "Remove a label from this issue"
       },
@@ -55656,6 +55677,8 @@
       }
     ],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [
       {
         "automation": {
@@ -57186,6 +57209,7 @@
     ],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -57698,6 +57722,14 @@
             "plugins.github.ui.timelineLabel": "Events GitHub recorded for this entry",
             "plugins.github.ui.timelineUnavailable": "The timeline is unavailable",
             "plugins.github.ui.unknownAuthor": "Unknown author",
+            "plugins.triage.detailStory.activity": "Activity",
+            "plugins.triage.detailStory.ask": "The ask",
+            "plugins.triage.detailStory.changed": "What changed",
+            "plugins.triage.detailStory.detail": "Source detail",
+            "plugins.triage.detailStory.failed": "{count} failed",
+            "plugins.triage.detailStory.passed": "Passed",
+            "plugins.triage.detailStory.report": "The report",
+            "plugins.triage.detailStory.running": "Running",
             "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
@@ -58081,6 +58113,14 @@
             "plugins.github.ui.timelineLabel": "События, зарегистрированные GitHub для этой записи",
             "plugins.github.ui.timelineUnavailable": "Линейка времени недоступна",
             "plugins.github.ui.unknownAuthor": "Неизвестный автор",
+            "plugins.triage.detailStory.activity": "Активность",
+            "plugins.triage.detailStory.ask": "Запрос",
+            "plugins.triage.detailStory.changed": "Что изменилось",
+            "plugins.triage.detailStory.detail": "Подробности источника",
+            "plugins.triage.detailStory.failed": "Ошибок: {count}",
+            "plugins.triage.detailStory.passed": "Успешно",
+            "plugins.triage.detailStory.report": "Отчёт",
+            "plugins.triage.detailStory.running": "Выполняется",
             "plugins.triage.sourceSettings.configuration.added": "Добавлено в «{product}».",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Уже в «{product}».",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Вы настроили максимальное количество источников, которое вмещает «{product}». Удалите источник, которым больше не пользуетесь.",
@@ -58464,6 +58504,14 @@
             "plugins.github.ui.timelineLabel": "Zdarzenia GitHub zarejestrowane dla tej pozycji",
             "plugins.github.ui.timelineUnavailable": "Historia nie jest dostępna",
             "plugins.github.ui.unknownAuthor": "Nieznany autor",
+            "plugins.triage.detailStory.activity": "Aktywność",
+            "plugins.triage.detailStory.ask": "Prośba",
+            "plugins.triage.detailStory.changed": "Co się zmieniło",
+            "plugins.triage.detailStory.detail": "Szczegóły źródła",
+            "plugins.triage.detailStory.failed": "Niepowodzenia: {count}",
+            "plugins.triage.detailStory.passed": "Powodzenie",
+            "plugins.triage.detailStory.report": "Zgłoszenie",
+            "plugins.triage.detailStory.running": "W toku",
             "plugins.triage.sourceSettings.configuration.added": "Dodano do {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Już w {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Skonfigurowano już tyle źródeł, ile może pomieścić {product}. Usuń źródło, którego już nie używasz.",
@@ -58847,6 +58895,14 @@
             "plugins.github.ui.timelineLabel": "Eventos de GitHub registrados para esta entrada",
             "plugins.github.ui.timelineUnavailable": "El timeline no está disponible",
             "plugins.github.ui.unknownAuthor": "Autor desconocido",
+            "plugins.triage.detailStory.activity": "Actividad",
+            "plugins.triage.detailStory.ask": "La solicitud",
+            "plugins.triage.detailStory.changed": "Qué cambió",
+            "plugins.triage.detailStory.detail": "Detalle de la fuente",
+            "plugins.triage.detailStory.failed": "{count} fallidos",
+            "plugins.triage.detailStory.passed": "Correcto",
+            "plugins.triage.detailStory.report": "El informe",
+            "plugins.triage.detailStory.running": "En curso",
             "plugins.triage.sourceSettings.configuration.added": "Añadido a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Ya está en {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Has configurado tantas fuentes como {product} admite. Quita una que ya no uses.",
@@ -59230,6 +59286,14 @@
             "plugins.github.ui.timelineLabel": "Événements GitHub enregistrés pour cette entrée",
             "plugins.github.ui.timelineUnavailable": "La chronologie n'est pas disponible",
             "plugins.github.ui.unknownAuthor": "Auteur inconnu",
+            "plugins.triage.detailStory.activity": "Activité",
+            "plugins.triage.detailStory.ask": "La demande",
+            "plugins.triage.detailStory.changed": "Ce qui a changé",
+            "plugins.triage.detailStory.detail": "Détails de la source",
+            "plugins.triage.detailStory.failed": "{count} en échec",
+            "plugins.triage.detailStory.passed": "Réussi",
+            "plugins.triage.detailStory.report": "Le signalement",
+            "plugins.triage.detailStory.running": "En cours",
             "plugins.triage.sourceSettings.configuration.added": "Ajouté à {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Déjà dans {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Vous avez configuré autant de sources que {product} peut en contenir. Retirez-en une que vous n’utilisez plus.",
@@ -59613,6 +59677,14 @@
             "plugins.github.ui.timelineLabel": "Eventi registrati da GitHub per questo elemento",
             "plugins.github.ui.timelineUnavailable": "Il timeline non è disponibile",
             "plugins.github.ui.unknownAuthor": "Autore sconosciuto",
+            "plugins.triage.detailStory.activity": "Attività",
+            "plugins.triage.detailStory.ask": "La richiesta",
+            "plugins.triage.detailStory.changed": "Cosa è cambiato",
+            "plugins.triage.detailStory.detail": "Dettaglio della fonte",
+            "plugins.triage.detailStory.failed": "{count} non riusciti",
+            "plugins.triage.detailStory.passed": "Riuscito",
+            "plugins.triage.detailStory.report": "La segnalazione",
+            "plugins.triage.detailStory.running": "In corso",
             "plugins.triage.sourceSettings.configuration.added": "Aggiunto a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Già in {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Hai configurato il numero massimo di fonti che {product} può contenere. Rimuovine una che non usi più.",
@@ -59996,6 +60068,14 @@
             "plugins.github.ui.timelineLabel": "Eventos registrados pelo GitHub para esta entrada",
             "plugins.github.ui.timelineUnavailable": "A linha do tempo não está disponível",
             "plugins.github.ui.unknownAuthor": "Autor desconhecido",
+            "plugins.triage.detailStory.activity": "Atividade",
+            "plugins.triage.detailStory.ask": "O pedido",
+            "plugins.triage.detailStory.changed": "O que mudou",
+            "plugins.triage.detailStory.detail": "Detalhes da fonte",
+            "plugins.triage.detailStory.failed": "{count} falharam",
+            "plugins.triage.detailStory.passed": "Concluído",
+            "plugins.triage.detailStory.report": "O relatório",
+            "plugins.triage.detailStory.running": "Em andamento",
             "plugins.triage.sourceSettings.configuration.added": "Adicionado a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Já em {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Configurou tantas fontes quantas {product} permite. Remova uma que já não utiliza.",
@@ -60379,6 +60459,14 @@
             "plugins.github.ui.timelineLabel": "Els esdeveniments que GitHub ha registrat per aquesta entrada",
             "plugins.github.ui.timelineUnavailable": "La línia de temps no està disponible",
             "plugins.github.ui.unknownAuthor": "Autor desconegut",
+            "plugins.triage.detailStory.activity": "Activitat",
+            "plugins.triage.detailStory.ask": "La petició",
+            "plugins.triage.detailStory.changed": "Què ha canviat",
+            "plugins.triage.detailStory.detail": "Detall de la font",
+            "plugins.triage.detailStory.failed": "{count} han fallat",
+            "plugins.triage.detailStory.passed": "Correcte",
+            "plugins.triage.detailStory.report": "L’informe",
+            "plugins.triage.detailStory.running": "En curs",
             "plugins.triage.sourceSettings.configuration.added": "S’ha afegit a {product}.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Ja és a {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Has configurat tantes fonts com {product} pot contenir. Treu-ne una que ja no utilitzis.",
@@ -60762,6 +60850,14 @@
             "plugins.github.ui.timelineLabel": "GitHub 记录的此条目事件",
             "plugins.github.ui.timelineUnavailable": "时间线不可用",
             "plugins.github.ui.unknownAuthor": "未知作者",
+            "plugins.triage.detailStory.activity": "活动",
+            "plugins.triage.detailStory.ask": "请求",
+            "plugins.triage.detailStory.changed": "变更内容",
+            "plugins.triage.detailStory.detail": "来源详情",
+            "plugins.triage.detailStory.failed": "{count} 项失败",
+            "plugins.triage.detailStory.passed": "通过",
+            "plugins.triage.detailStory.report": "报告",
+            "plugins.triage.detailStory.running": "进行中",
             "plugins.triage.sourceSettings.configuration.added": "已添加到 {product}。",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "已在 {product} 中。",
             "plugins.triage.sourceSettings.configuration.atMaximum": "{product} 可容纳的来源已全部配置。请移除一个不再使用的来源。",
@@ -61145,6 +61241,14 @@
             "plugins.github.ui.timelineLabel": "GitHub 鈕記的這個項目事件",
             "plugins.github.ui.timelineUnavailable": "時間軸無法取得",
             "plugins.github.ui.unknownAuthor": "未知作者",
+            "plugins.triage.detailStory.activity": "活動",
+            "plugins.triage.detailStory.ask": "請求",
+            "plugins.triage.detailStory.changed": "變更內容",
+            "plugins.triage.detailStory.detail": "來源詳細資料",
+            "plugins.triage.detailStory.failed": "{count} 項失敗",
+            "plugins.triage.detailStory.passed": "通過",
+            "plugins.triage.detailStory.report": "報告",
+            "plugins.triage.detailStory.running": "進行中",
             "plugins.triage.sourceSettings.configuration.added": "已新增至 {product}。",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "已在 {product} 中。",
             "plugins.triage.sourceSettings.configuration.atMaximum": "{product} 可容納的來源已全部設定。請移除一個不再使用的來源。",
@@ -61528,6 +61632,14 @@
             "plugins.github.ui.timelineLabel": "このエントリで GitHub が記録したイベント",
             "plugins.github.ui.timelineUnavailable": "タイムラインが利用できません",
             "plugins.github.ui.unknownAuthor": "不明な作成者",
+            "plugins.triage.detailStory.activity": "アクティビティ",
+            "plugins.triage.detailStory.ask": "依頼",
+            "plugins.triage.detailStory.changed": "変更内容",
+            "plugins.triage.detailStory.detail": "ソースの詳細",
+            "plugins.triage.detailStory.failed": "{count} 件失敗",
+            "plugins.triage.detailStory.passed": "成功",
+            "plugins.triage.detailStory.report": "報告",
+            "plugins.triage.detailStory.running": "実行中",
             "plugins.triage.sourceSettings.configuration.added": "{product} に追加しました。",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "すでに {product} に追加されています。",
             "plugins.triage.sourceSettings.configuration.atMaximum": "{product} に設定できるソース数の上限に達しています。使用しなくなったソースを1つ削除してください。",
@@ -61911,6 +62023,14 @@
             "plugins.github.ui.timelineLabel": "Von GitHub für diesen Eintrag aufgezeichnete Ereignisse",
             "plugins.github.ui.timelineUnavailable": "Die Chronik ist nicht verfügbar",
             "plugins.github.ui.unknownAuthor": "Unbekannter Autor",
+            "plugins.triage.detailStory.activity": "Aktivität",
+            "plugins.triage.detailStory.ask": "Die Anfrage",
+            "plugins.triage.detailStory.changed": "Was sich geändert hat",
+            "plugins.triage.detailStory.detail": "Quelldetails",
+            "plugins.triage.detailStory.failed": "{count} fehlgeschlagen",
+            "plugins.triage.detailStory.passed": "Bestanden",
+            "plugins.triage.detailStory.report": "Der Bericht",
+            "plugins.triage.detailStory.running": "Läuft",
             "plugins.triage.sourceSettings.configuration.added": "Zu {product} hinzugefügt.",
             "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Bereits in {product}.",
             "plugins.triage.sourceSettings.configuration.atMaximum": "Du hast so viele Quellen konfiguriert, wie {product} aufnehmen kann. Entferne eine nicht mehr benötigte Quelle.",

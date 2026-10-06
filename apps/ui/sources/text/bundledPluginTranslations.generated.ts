@@ -1925,7 +1925,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -2179,6 +2193,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -2187,11 +2202,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -2235,6 +2250,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -2315,6 +2331,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -2398,6 +2415,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -4431,7 +4450,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -4685,6 +4718,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -4693,11 +4727,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -4741,6 +4775,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -4821,6 +4856,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -4904,6 +4940,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -6937,7 +6975,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -7191,6 +7243,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -7199,11 +7252,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -7247,6 +7300,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -7327,6 +7381,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -7410,6 +7465,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -9443,7 +9500,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -9697,6 +9768,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -9705,11 +9777,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -9753,6 +9825,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -9833,6 +9906,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -9916,6 +9990,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -11949,7 +12025,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -12203,6 +12293,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -12211,11 +12302,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -12259,6 +12350,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -12339,6 +12431,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -12422,6 +12515,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -14455,7 +14550,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -14709,6 +14818,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -14717,11 +14827,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -14765,6 +14875,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -14845,6 +14956,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -14928,6 +15040,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -16961,7 +17075,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -17215,6 +17343,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -17223,11 +17352,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -17271,6 +17400,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -17351,6 +17481,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -17434,6 +17565,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -19467,7 +19600,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -19721,6 +19868,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -19729,11 +19877,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -19777,6 +19925,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -19857,6 +20006,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -19940,6 +20090,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -21973,7 +22125,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -22227,6 +22393,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -22235,11 +22402,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -22283,6 +22450,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -22363,6 +22531,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -22446,6 +22615,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -24479,7 +24650,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -24733,6 +24918,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -24741,11 +24927,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -24789,6 +24975,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -24869,6 +25056,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -24952,6 +25140,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -26985,7 +27175,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -27239,6 +27443,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -27247,11 +27452,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -27295,6 +27500,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -27375,6 +27581,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -27458,6 +27665,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -29491,7 +29700,21 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.action.listEntries.title': string;
         'plugins.triage.column.all': string;
         'plugins.triage.composer.entriesCount': string;
+        'plugins.triage.currentContext.board': string;
+        'plugins.triage.currentContext.clearSelection': string;
+        'plugins.triage.currentContext.closeDetail': string;
+        'plugins.triage.currentContext.list': string;
         'plugins.triage.currentContext.openEntry': string;
+        'plugins.triage.currentContext.refresh': string;
+        'plugins.triage.currentContext.selectTab': string;
+        'plugins.triage.detailStory.activity': string;
+        'plugins.triage.detailStory.ask': string;
+        'plugins.triage.detailStory.changed': string;
+        'plugins.triage.detailStory.detail': string;
+        'plugins.triage.detailStory.failed': string;
+        'plugins.triage.detailStory.passed': string;
+        'plugins.triage.detailStory.report': string;
+        'plugins.triage.detailStory.running': string;
         'plugins.triage.picker.attach': string;
         'plugins.triage.picker.attached': string;
         'plugins.triage.picker.attachEntryLabel': string;
@@ -29745,6 +29968,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.agent.offline': string;
         'plugins.triage.surface.detail.agent.permission': string;
         'plugins.triage.surface.detail.agent.ready': string;
+        'plugins.triage.surface.detail.agent.seeAll': string;
         'plugins.triage.surface.detail.agent.working': string;
         'plugins.triage.surface.detail.connection': string;
         'plugins.triage.surface.detail.connectionUnhealthy': string;
@@ -29753,11 +29977,11 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.fixPr.closed': string;
         'plugins.triage.surface.detail.fixPr.conflict': string;
         'plugins.triage.surface.detail.fixPr.failed': string;
-        'plugins.triage.surface.detail.fixPr.full': string;
         'plugins.triage.surface.detail.fixPr.incomplete': string;
         'plugins.triage.surface.detail.fixPr.link': string;
         'plugins.triage.surface.detail.fixPr.merged': string;
         'plugins.triage.surface.detail.fixPr.open': string;
+        'plugins.triage.surface.detail.fixPr.readFailed': string;
         'plugins.triage.surface.detail.fixPr.title': string;
         'plugins.triage.surface.detail.fixPr.unlink': string;
         'plugins.triage.surface.detail.lastKnown': string;
@@ -29801,6 +30025,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.detail.tabs': string;
         'plugins.triage.surface.detail.type': string;
         'plugins.triage.surface.detail.via': string;
+        'plugins.triage.surface.drop.linkSession': string;
         'plugins.triage.surface.empty.healthy.description': string;
         'plugins.triage.surface.empty.healthy.title': string;
         'plugins.triage.surface.empty.incomplete.description': string;
@@ -29881,6 +30106,7 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.order.newest': string;
         'plugins.triage.surface.order.oldest': string;
         'plugins.triage.surface.order.smart': string;
+        'plugins.triage.surface.organizeList': string;
         'plugins.triage.surface.peek.open': string;
         'plugins.triage.surface.peek.pin': string;
         'plugins.triage.surface.pin.conflict': string;
@@ -29964,6 +30190,8 @@ type BundledPluginTranslations = Readonly<{
         'plugins.triage.surface.session.starting': string;
         'plugins.triage.surface.session.workspaceRefused': string;
         'plugins.triage.surface.session.workspaceUnavailable': string;
+        'plugins.triage.surface.sessionActivity.reading': string;
+        'plugins.triage.surface.sessionActivity.unavailable': string;
         'plugins.triage.surface.smartPolicy': string;
         'plugins.triage.surface.smartPolicy.activityFirst': string;
         'plugins.triage.surface.smartPolicy.attentionFirst': string;
@@ -31765,7 +31993,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog ha registrat més activitat de la que aquesta llista ha pogut llegir, així que s’atura aquí.",
     "plugins.posthog.ui.activityUnavailable": "L'activitat no està disponible",
     "plugins.posthog.ui.addSelectedOccurrence": "Afegeix l’ocurrència seleccionada al missatge",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Les variables locals capturades poden contenir credencials, testimonis, dades personals i cossos de sol·licitud. Només romanen en aquesta pestanya de la pila i es descarten en sortir-ne.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Les variables locals capturades poden contenir credencials, testimonis, dades personals i cossos de sol·licitud.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Voleu mostrar variables capturades sensibles?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Aquests valors només són visibles en aquesta pestanya de la pila i es descarten en sortir-ne.",
     "plugins.posthog.ui.codeVariables.loading": "S’estan llegint les variables capturades",
@@ -32000,7 +32228,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Llegir la finestra actual de la llista",
     "plugins.triage.column.all": "Totes les entrades",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Canvia al tauler",
+    "plugins.triage.currentContext.clearSelection": "Esborra la selecció múltiple",
+    "plugins.triage.currentContext.closeDetail": "Tanca els detalls",
+    "plugins.triage.currentContext.list": "Canvia a la llista",
     "plugins.triage.currentContext.openEntry": "Obre {title}",
+    "plugins.triage.currentContext.refresh": "Actualitza PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Selecciona la pestanya {tab}",
+    "plugins.triage.detailStory.activity": "Activitat",
+    "plugins.triage.detailStory.ask": "La petició",
+    "plugins.triage.detailStory.changed": "Què ha canviat",
+    "plugins.triage.detailStory.detail": "Detall de la font",
+    "plugins.triage.detailStory.failed": "{count} han fallat",
+    "plugins.triage.detailStory.passed": "Correcte",
+    "plugins.triage.detailStory.report": "L’informe",
+    "plugins.triage.detailStory.running": "En curs",
     "plugins.triage.picker.attach": "Adjunta",
     "plugins.triage.picker.attached": "Adjunt",
     "plugins.triage.picker.attachEntryLabel": "Adjunta «{title}»",
@@ -32254,6 +32496,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Fora de línia",
     "plugins.triage.surface.detail.agent.permission": "Necessita el teu permís",
     "plugins.triage.surface.detail.agent.ready": "Llesta",
+    "plugins.triage.surface.detail.agent.seeAll": "Mostra-ho tot",
     "plugins.triage.surface.detail.agent.working": "Treballant",
     "plugins.triage.surface.detail.connection": "Connexió",
     "plugins.triage.surface.detail.connectionUnhealthy": "No s'ha pogut llegir aquesta connexió al pas anterior.",
@@ -32262,11 +32505,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Tancada sense fusionar",
     "plugins.triage.surface.detail.fixPr.conflict": "Aquest vincle s’ha canviat en un altre lloc. Es mostra l’estat actual.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier no pot accedir al teu compte ara mateix, així que el vincle no s’ha canviat.",
-    "plugins.triage.surface.detail.fixPr.full": "Aquesta entrada ja té tantes pull requests de correcció com pot contenir. Desvincula’n una primer.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Algunes sessions vinculades no s’han revisat per trobar pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Vincula la PR de correcció",
     "plugins.triage.surface.detail.fixPr.merged": "Fusionada",
     "plugins.triage.surface.detail.fixPr.open": "Oberta",
+    "plugins.triage.surface.detail.fixPr.readFailed": "No s’han pogut llegir els vincles amb pull requests de correcció.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de correcció",
     "plugins.triage.surface.detail.fixPr.unlink": "Desvincula",
     "plugins.triage.surface.detail.lastKnown": "Aquestes són les darreres dades que aquesta pàgina tenia d’aquesta entrada i poden estar desactualitzades.",
@@ -32310,6 +32553,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Detall de l'entrada",
     "plugins.triage.surface.detail.type": "Tipus",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Vincula la sessió",
     "plugins.triage.surface.empty.healthy.description": "Tots els recursos configurats han resposta, i cap d'ells no té una entrada per a tu ara mateix.",
     "plugins.triage.surface.empty.healthy.title": "No necessites res més",
     "plugins.triage.surface.empty.incomplete.description": "Alguns recursos no havien acabat la seva recorreguda, així que pot haver entrades que encara falten. Refresca per continuar llegint.",
@@ -32390,6 +32634,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Més recents",
     "plugins.triage.surface.order.oldest": "Més antics",
     "plugins.triage.surface.order.smart": "Intel·ligent",
+    "plugins.triage.surface.organizeList": "Organitza la llista",
     "plugins.triage.surface.peek.open": "Obre",
     "plugins.triage.surface.peek.pin": "Fixa",
     "plugins.triage.surface.pin.conflict": "Aquest fixat ha estat canviat en un altre lloc. Mostrant l'estat actual.",
@@ -32473,6 +32718,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Iniciant una sessió per a aquesta entrada…",
     "plugins.triage.surface.session.workspaceRefused": "No s’ha pogut preparar un espai de revisió per a aquesta entrada, així que no s’ha creat res.",
     "plugins.triage.surface.session.workspaceUnavailable": "Ara mateix no s’ha pogut preparar l’espai de revisió. No s’ha creat res.",
+    "plugins.triage.surface.sessionActivity.reading": "Llegint l’activitat de les sessions vinculades…",
+    "plugins.triage.surface.sessionActivity.unavailable": "No s’ha pogut llegir part de l’activitat de les sessions vinculades.",
     "plugins.triage.surface.smartPolicy": "Ordre intel·ligent",
     "plugins.triage.surface.smartPolicy.activityFirst": "Primer l’activitat més recent",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Primer allò que et necessita",
@@ -34271,7 +34518,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog hat mehr Aktivität aufgezeichnet, als diese Liste lesen konnte. Die Liste endet daher hier.",
     "plugins.posthog.ui.activityUnavailable": "Aktivität ist nicht verfügbar",
     "plugins.posthog.ui.addSelectedOccurrence": "Ausgewähltes Vorkommen zur Nachricht hinzufügen",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Erfasste lokale Variablen können Anmeldedaten, Token, personenbezogene Daten und Anfrageinhalte enthalten. Sie verbleiben in diesem Stacktrace-Bereich und werden verworfen, wenn Sie ihn verlassen.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Erfasste lokale Variablen können Anmeldedaten, Token, personenbezogene Daten und Anfrageinhalte enthalten.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Sensible erfasste Variablen anzeigen?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Diese Werte sind nur in diesem Stacktrace-Bereich sichtbar und werden verworfen, wenn Sie ihn verlassen.",
     "plugins.posthog.ui.codeVariables.loading": "Erfasste Variablen werden angezeigt",
@@ -34506,7 +34753,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Aktuelles Listenfenster lesen",
     "plugins.triage.column.all": "Alle Einträge",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Zur Board-Ansicht wechseln",
+    "plugins.triage.currentContext.clearSelection": "Mehrfachauswahl aufheben",
+    "plugins.triage.currentContext.closeDetail": "Details schließen",
+    "plugins.triage.currentContext.list": "Zur Listenansicht wechseln",
     "plugins.triage.currentContext.openEntry": "{title} öffnen",
+    "plugins.triage.currentContext.refresh": "PRs & Issues aktualisieren",
+    "plugins.triage.currentContext.selectTab": "Tab {tab} auswählen",
+    "plugins.triage.detailStory.activity": "Aktivität",
+    "plugins.triage.detailStory.ask": "Die Anfrage",
+    "plugins.triage.detailStory.changed": "Was sich geändert hat",
+    "plugins.triage.detailStory.detail": "Quelldetails",
+    "plugins.triage.detailStory.failed": "{count} fehlgeschlagen",
+    "plugins.triage.detailStory.passed": "Bestanden",
+    "plugins.triage.detailStory.report": "Der Bericht",
+    "plugins.triage.detailStory.running": "Läuft",
     "plugins.triage.picker.attach": "Anhängen",
     "plugins.triage.picker.attached": "Angehängt",
     "plugins.triage.picker.attachEntryLabel": "{title} anhängen",
@@ -34760,6 +35021,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Braucht deine Erlaubnis",
     "plugins.triage.surface.detail.agent.ready": "Bereit",
+    "plugins.triage.surface.detail.agent.seeAll": "Alle anzeigen",
     "plugins.triage.surface.detail.agent.working": "Arbeitet",
     "plugins.triage.surface.detail.connection": "Verbindung",
     "plugins.triage.surface.detail.connectionUnhealthy": "Diese Verbindung konnte beim letzten Durchlauf nicht gelesen werden.",
@@ -34768,11 +35030,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Ohne Merge geschlossen",
     "plugins.triage.surface.detail.fixPr.conflict": "Diese Verknüpfung wurde an anderer Stelle geändert. Der aktuelle Stand wird angezeigt.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier kann dein Konto gerade nicht erreichen, daher wurde die Verknüpfung nicht geändert.",
-    "plugins.triage.surface.detail.fixPr.full": "Dieser Eintrag hat bereits so viele Fix-Pull-Requests, wie er aufnehmen kann. Löse zuerst eine Verknüpfung.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Einige verknüpfte Sitzungen wurden nicht auf Pull Requests geprüft.",
     "plugins.triage.surface.detail.fixPr.link": "Fix-PR verknüpfen",
     "plugins.triage.surface.detail.fixPr.merged": "Gemergt",
     "plugins.triage.surface.detail.fixPr.open": "Offen",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Die Fix-Pull-Request-Verknüpfungen konnten nicht gelesen werden.",
     "plugins.triage.surface.detail.fixPr.title": "Fix-Pull-Request",
     "plugins.triage.surface.detail.fixPr.unlink": "Verknüpfung lösen",
     "plugins.triage.surface.detail.lastKnown": "Dies sind die letzten Angaben, die diese Seite zu diesem Eintrag gespeichert hat. Sie könnten veraltet sein.",
@@ -34816,6 +35078,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Eintragsdetails",
     "plugins.triage.surface.detail.type": "Typ",
     "plugins.triage.surface.detail.via": "über {name}",
+    "plugins.triage.surface.drop.linkSession": "Session verknüpfen",
     "plugins.triage.surface.empty.healthy.description": "Alle konfigurierten Quellen haben geantwortet und keine hat gerade einen Eintrag für dich.",
     "plugins.triage.surface.empty.healthy.title": "Nichts erfordert deine Aufmerksamkeit",
     "plugins.triage.surface.empty.incomplete.description": "Einige Quellen hatten ihren Durchlauf noch nicht abgeschlossen, daher fehlen möglicherweise noch Einträge. Aktualisiere die Liste, um weiterzulesen.",
@@ -34896,6 +35159,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Neueste zuerst",
     "plugins.triage.surface.order.oldest": "Älteste zuerst",
     "plugins.triage.surface.order.smart": "Intelligent",
+    "plugins.triage.surface.organizeList": "Liste organisieren",
     "plugins.triage.surface.peek.open": "Öffnen",
     "plugins.triage.surface.peek.pin": "Anheften",
     "plugins.triage.surface.pin.conflict": "Diese Anheftung wurde an anderer Stelle geändert. Der aktuelle Stand wird angezeigt.",
@@ -34979,6 +35243,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Eine Session für diesen Eintrag wird gestartet…",
     "plugins.triage.surface.session.workspaceRefused": "Für diesen Eintrag konnte kein Review-Arbeitsbereich vorbereitet werden. Es wurde nichts erstellt.",
     "plugins.triage.surface.session.workspaceUnavailable": "Der Review-Arbeitsbereich konnte gerade nicht vorbereitet werden. Es wurde nichts erstellt.",
+    "plugins.triage.surface.sessionActivity.reading": "Aktivität verknüpfter Sitzungen wird gelesen…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Ein Teil der Aktivität verknüpfter Sitzungen konnte nicht gelesen werden.",
     "plugins.triage.surface.smartPolicy": "Intelligente Sortierung",
     "plugins.triage.surface.smartPolicy.activityFirst": "Neueste Aktivität zuerst",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Was dich benötigt, zuerst",
@@ -36777,7 +37043,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog recorded more activity than this list could read, so it stops here.",
     "plugins.posthog.ui.activityUnavailable": "Activity is unavailable",
     "plugins.posthog.ui.addSelectedOccurrence": "Add selected occurrence to message",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Captured local variables can contain credentials, tokens, personal data, and request bodies. They stay in this Stack trace panel and are discarded when you leave it.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Captured local variables can contain credentials, tokens, personal data, and request bodies.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Reveal sensitive captured variables?",
     "plugins.posthog.ui.codeVariables.discardNotice": "These values are visible only in this Stack trace panel and are discarded when you leave it.",
     "plugins.posthog.ui.codeVariables.loading": "Revealing captured variables",
@@ -37012,7 +37278,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Read the current list window",
     "plugins.triage.column.all": "All entries",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Switch to Board",
+    "plugins.triage.currentContext.clearSelection": "Clear bulk selection",
+    "plugins.triage.currentContext.closeDetail": "Close detail",
+    "plugins.triage.currentContext.list": "Switch to List",
     "plugins.triage.currentContext.openEntry": "Open {title}",
+    "plugins.triage.currentContext.refresh": "Refresh PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Select {tab} tab",
+    "plugins.triage.detailStory.activity": "Activity",
+    "plugins.triage.detailStory.ask": "The ask",
+    "plugins.triage.detailStory.changed": "What changed",
+    "plugins.triage.detailStory.detail": "Source detail",
+    "plugins.triage.detailStory.failed": "{count} failed",
+    "plugins.triage.detailStory.passed": "Passed",
+    "plugins.triage.detailStory.report": "The report",
+    "plugins.triage.detailStory.running": "Running",
     "plugins.triage.picker.attach": "Attach",
     "plugins.triage.picker.attached": "Attached",
     "plugins.triage.picker.attachEntryLabel": "Attach {title}",
@@ -37266,6 +37546,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Needs your permission",
     "plugins.triage.surface.detail.agent.ready": "Ready",
+    "plugins.triage.surface.detail.agent.seeAll": "See all",
     "plugins.triage.surface.detail.agent.working": "Working",
     "plugins.triage.surface.detail.connection": "Connection",
     "plugins.triage.surface.detail.connectionUnhealthy": "This connection could not be read in the last pass.",
@@ -37274,11 +37555,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Closed without merging",
     "plugins.triage.surface.detail.fixPr.conflict": "That link was changed somewhere else. Showing the current state.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier cannot reach your account right now, so the link was not changed.",
-    "plugins.triage.surface.detail.fixPr.full": "This entry already has as many fix pull requests as it can hold. Unlink one first.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Some linked sessions were not checked for pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Link fix PR",
     "plugins.triage.surface.detail.fixPr.merged": "Merged",
     "plugins.triage.surface.detail.fixPr.open": "Open",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Fix pull request links could not be read.",
     "plugins.triage.surface.detail.fixPr.title": "Fix pull request",
     "plugins.triage.surface.detail.fixPr.unlink": "Unlink",
     "plugins.triage.surface.detail.lastKnown": "These are the last facts this page held for this entry, and they may be out of date.",
@@ -37322,6 +37603,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Entry detail",
     "plugins.triage.surface.detail.type": "Type",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Link Session",
     "plugins.triage.surface.empty.healthy.description": "Every configured source answered, and none of them has an entry for you right now.",
     "plugins.triage.surface.empty.healthy.title": "Nothing needs you",
     "plugins.triage.surface.empty.incomplete.description": "Some sources had not finished their walk, so entries may still be missing. Refresh to keep reading.",
@@ -37402,6 +37684,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Newest",
     "plugins.triage.surface.order.oldest": "Oldest",
     "plugins.triage.surface.order.smart": "Smart",
+    "plugins.triage.surface.organizeList": "Organize list",
     "plugins.triage.surface.peek.open": "Open",
     "plugins.triage.surface.peek.pin": "Pin",
     "plugins.triage.surface.pin.conflict": "That pin was changed somewhere else. Showing the current state.",
@@ -37485,6 +37768,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Starting a session for this entry…",
     "plugins.triage.surface.session.workspaceRefused": "A review workspace could not be prepared for this entry, so nothing was created.",
     "plugins.triage.surface.session.workspaceUnavailable": "The review workspace could not be prepared just now. Nothing was created.",
+    "plugins.triage.surface.sessionActivity.reading": "Reading linked Session activity…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Some linked Session activity could not be read.",
     "plugins.triage.surface.smartPolicy": "Smart order",
     "plugins.triage.surface.smartPolicy.activityFirst": "Most recent activity first",
     "plugins.triage.surface.smartPolicy.attentionFirst": "What needs you first",
@@ -39283,7 +39568,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog registró más actividad de la que esta lista pudo leer, así que se detiene aquí.",
     "plugins.posthog.ui.activityUnavailable": "La actividad no está disponible",
     "plugins.posthog.ui.addSelectedOccurrence": "Añadir el caso seleccionado al mensaje",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Las variables locales capturadas pueden contener credenciales, tokens, datos personales y cuerpos de solicitudes. Solo permanecen en esta pestaña de la pila y se descartan al salir.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Las variables locales capturadas pueden contener credenciales, tokens, datos personales y cuerpos de solicitudes.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "¿Mostrar variables capturadas sensibles?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Estos valores solo son visibles en esta pestaña de la pila y se descartan al salir.",
     "plugins.posthog.ui.codeVariables.loading": "Leyendo variables capturadas",
@@ -39518,7 +39803,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Leer la ventana actual de la lista",
     "plugins.triage.column.all": "Todas las entradas",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Cambiar al tablero",
+    "plugins.triage.currentContext.clearSelection": "Borrar la selección múltiple",
+    "plugins.triage.currentContext.closeDetail": "Cerrar detalles",
+    "plugins.triage.currentContext.list": "Cambiar a la lista",
     "plugins.triage.currentContext.openEntry": "Abrir {title}",
+    "plugins.triage.currentContext.refresh": "Actualizar PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Seleccionar la pestaña {tab}",
+    "plugins.triage.detailStory.activity": "Actividad",
+    "plugins.triage.detailStory.ask": "La solicitud",
+    "plugins.triage.detailStory.changed": "Qué cambió",
+    "plugins.triage.detailStory.detail": "Detalle de la fuente",
+    "plugins.triage.detailStory.failed": "{count} fallidos",
+    "plugins.triage.detailStory.passed": "Correcto",
+    "plugins.triage.detailStory.report": "El informe",
+    "plugins.triage.detailStory.running": "En curso",
     "plugins.triage.picker.attach": "Adjuntar",
     "plugins.triage.picker.attached": "Adjunto",
     "plugins.triage.picker.attachEntryLabel": "Adjuntar «{title}»",
@@ -39772,6 +40071,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Sin conexión",
     "plugins.triage.surface.detail.agent.permission": "Necesita tu permiso",
     "plugins.triage.surface.detail.agent.ready": "Lista",
+    "plugins.triage.surface.detail.agent.seeAll": "Ver todos",
     "plugins.triage.surface.detail.agent.working": "Trabajando",
     "plugins.triage.surface.detail.connection": "Conexión",
     "plugins.triage.surface.detail.connectionUnhealthy": "No se pudo leer esta conexión en la última pasada.",
@@ -39780,11 +40080,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Cerrado sin fusionar",
     "plugins.triage.surface.detail.fixPr.conflict": "Ese vínculo se cambió en otro lugar. Se muestra el estado actual.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier no puede acceder a tu cuenta ahora mismo, así que el vínculo no se ha cambiado.",
-    "plugins.triage.surface.detail.fixPr.full": "Esta entrada ya tiene tantos pull requests de corrección como admite. Desvincula uno primero.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Algunas sesiones vinculadas no se revisaron en busca de pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Vincular PR de corrección",
     "plugins.triage.surface.detail.fixPr.merged": "Fusionado",
     "plugins.triage.surface.detail.fixPr.open": "Abierto",
+    "plugins.triage.surface.detail.fixPr.readFailed": "No se pudieron leer los vínculos con pull requests de corrección.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de corrección",
     "plugins.triage.surface.detail.fixPr.unlink": "Desvincular",
     "plugins.triage.surface.detail.lastKnown": "Estos son los últimos datos que esta página tenía de esta entrada y pueden estar desactualizados.",
@@ -39828,6 +40128,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Detalle de la entrada",
     "plugins.triage.surface.detail.type": "Tipo",
     "plugins.triage.surface.detail.via": "vía {name}",
+    "plugins.triage.surface.drop.linkSession": "Vincular sesión",
     "plugins.triage.surface.empty.healthy.description": "Cada fuente configurada respondió y ninguno de ellos tiene una entrada para ti en este momento.",
     "plugins.triage.surface.empty.healthy.title": "Nada te necesita",
     "plugins.triage.surface.empty.incomplete.description": "Algunas fuentes no habían terminado su camino, por lo que puede que aún faltan entradas. Recarga para seguir leyendo.",
@@ -39908,6 +40209,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Más recientes",
     "plugins.triage.surface.order.oldest": "Más antiguos",
     "plugins.triage.surface.order.smart": "Inteligente",
+    "plugins.triage.surface.organizeList": "Organizar lista",
     "plugins.triage.surface.peek.open": "Abrir",
     "plugins.triage.surface.peek.pin": "Fijar",
     "plugins.triage.surface.pin.conflict": "Ese fijador cambió en otro lugar. Mostrando el estado actual.",
@@ -39991,6 +40293,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Iniciando una sesión para esta entrada…",
     "plugins.triage.surface.session.workspaceRefused": "No se pudo preparar un espacio de revisión para esta entrada, así que no se creó nada.",
     "plugins.triage.surface.session.workspaceUnavailable": "El espacio de revisión no se pudo preparar ahora mismo. No se creó nada.",
+    "plugins.triage.surface.sessionActivity.reading": "Leyendo la actividad de las sesiones vinculadas…",
+    "plugins.triage.surface.sessionActivity.unavailable": "No se pudo leer parte de la actividad de las sesiones vinculadas.",
     "plugins.triage.surface.smartPolicy": "Orden inteligente",
     "plugins.triage.surface.smartPolicy.activityFirst": "Primero la actividad más reciente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Primero lo que te necesita",
@@ -41789,7 +42093,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog a enregistré plus d’activité que cette liste n’a pu en lire ; elle s’arrête donc ici.",
     "plugins.posthog.ui.activityUnavailable": "Les activités ne sont pas disponibles",
     "plugins.posthog.ui.addSelectedOccurrence": "Ajouter l’occurrence sélectionnée au message",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Les variables locales capturées peuvent contenir des identifiants, des jetons, des données personnelles et des corps de requête. Elles restent dans cet onglet de pile et sont supprimées lorsque vous le quittez.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Les variables locales capturées peuvent contenir des identifiants, des jetons, des données personnelles et des corps de requête.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Afficher les variables capturées sensibles ?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Ces valeurs ne sont visibles que dans cet onglet de pile et sont supprimées lorsque vous le quittez.",
     "plugins.posthog.ui.codeVariables.loading": "Lecture des variables capturées",
@@ -42024,7 +42328,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Lire la fenêtre actuelle de la liste",
     "plugins.triage.column.all": "Toutes les entrées",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Passer au tableau",
+    "plugins.triage.currentContext.clearSelection": "Effacer la sélection multiple",
+    "plugins.triage.currentContext.closeDetail": "Fermer les détails",
+    "plugins.triage.currentContext.list": "Passer à la liste",
     "plugins.triage.currentContext.openEntry": "Ouvrir {title}",
+    "plugins.triage.currentContext.refresh": "Actualiser PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Sélectionner l’onglet {tab}",
+    "plugins.triage.detailStory.activity": "Activité",
+    "plugins.triage.detailStory.ask": "La demande",
+    "plugins.triage.detailStory.changed": "Ce qui a changé",
+    "plugins.triage.detailStory.detail": "Détails de la source",
+    "plugins.triage.detailStory.failed": "{count} en échec",
+    "plugins.triage.detailStory.passed": "Réussi",
+    "plugins.triage.detailStory.report": "Le signalement",
+    "plugins.triage.detailStory.running": "En cours",
     "plugins.triage.picker.attach": "Joindre",
     "plugins.triage.picker.attached": "Joint",
     "plugins.triage.picker.attachEntryLabel": "Joindre « {title} »",
@@ -42278,6 +42596,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Hors ligne",
     "plugins.triage.surface.detail.agent.permission": "A besoin de ton autorisation",
     "plugins.triage.surface.detail.agent.ready": "Prêt",
+    "plugins.triage.surface.detail.agent.seeAll": "Tout voir",
     "plugins.triage.surface.detail.agent.working": "En cours",
     "plugins.triage.surface.detail.connection": "Connexion",
     "plugins.triage.surface.detail.connectionUnhealthy": "Cette connexion n'a pas pu être lue lors du dernier passage.",
@@ -42286,11 +42605,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Fermée sans fusion",
     "plugins.triage.surface.detail.fixPr.conflict": "Ce lien a été modifié ailleurs. L’état actuel est affiché.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier ne peut pas joindre votre compte pour le moment, le lien n’a donc pas été modifié.",
-    "plugins.triage.surface.detail.fixPr.full": "Cette entrée a déjà autant de pull requests de correction qu’elle peut en contenir. Déliez-en une d’abord.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Certaines sessions liées n’ont pas été vérifiées pour des pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Lier la PR de correction",
     "plugins.triage.surface.detail.fixPr.merged": "Fusionnée",
     "plugins.triage.surface.detail.fixPr.open": "Ouverte",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Les liens vers les pull requests de correction n’ont pas pu être lus.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de correction",
     "plugins.triage.surface.detail.fixPr.unlink": "Délier",
     "plugins.triage.surface.detail.lastKnown": "Voici les derniers éléments que cette page conservait pour cette entrée ; ils peuvent être obsolètes.",
@@ -42334,6 +42653,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Détail de l'entrée",
     "plugins.triage.surface.detail.type": "Type",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Lier la session",
     "plugins.triage.surface.empty.healthy.description": "Toutes les sources configurées ont répondu, et aucune n'a une entrée pour vous à ce moment.",
     "plugins.triage.surface.empty.healthy.title": "Rien ne vous concerne",
     "plugins.triage.surface.empty.incomplete.description": "Certaines sources n'ont pas terminé leur parcours, donc des entrées pourraient encore être manquantes. Rafraîchissez pour continuer à lire.",
@@ -42414,6 +42734,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Plus récents",
     "plugins.triage.surface.order.oldest": "Plus anciens",
     "plugins.triage.surface.order.smart": "Intelligent",
+    "plugins.triage.surface.organizeList": "Organiser la liste",
     "plugins.triage.surface.peek.open": "Ouvrir",
     "plugins.triage.surface.peek.pin": "Épingler",
     "plugins.triage.surface.pin.conflict": "Ce pin a été changé ailleurs. Affichage de l'état actuel.",
@@ -42497,6 +42818,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Démarrage d’une session pour cette entrée…",
     "plugins.triage.surface.session.workspaceRefused": "Aucun espace de relecture n’a pu être préparé pour cette entrée, rien n’a donc été créé.",
     "plugins.triage.surface.session.workspaceUnavailable": "L’espace de relecture n’a pas pu être préparé pour le moment. Rien n’a été créé.",
+    "plugins.triage.surface.sessionActivity.reading": "Lecture de l’activité des sessions liées…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Une partie de l’activité des sessions liées n’a pas pu être lue.",
     "plugins.triage.surface.smartPolicy": "Tri intelligent",
     "plugins.triage.surface.smartPolicy.activityFirst": "D’abord l’activité la plus récente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "D’abord ce qui vous attend",
@@ -44295,7 +44618,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog ha registrato più attività di quanta questo elenco sia riuscito a leggere, quindi si ferma qui.",
     "plugins.posthog.ui.activityUnavailable": "L'attività non è disponibile",
     "plugins.posthog.ui.addSelectedOccurrence": "Aggiungi l’occorrenza selezionata al messaggio",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Le variabili locali acquisite possono contenere credenziali, token, dati personali e corpi delle richieste. Restano solo in questa scheda dello stack e vengono eliminate quando la lasci.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Le variabili locali acquisite possono contenere credenziali, token, dati personali e corpi delle richieste.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Mostrare le variabili acquisite sensibili?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Questi valori sono visibili solo in questa scheda dello stack e vengono eliminati quando la lasci.",
     "plugins.posthog.ui.codeVariables.loading": "Lettura delle variabili acquisite",
@@ -44530,7 +44853,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Leggere la finestra corrente dell’elenco",
     "plugins.triage.column.all": "Tutte le voci",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Passa alla bacheca",
+    "plugins.triage.currentContext.clearSelection": "Cancella la selezione multipla",
+    "plugins.triage.currentContext.closeDetail": "Chiudi dettagli",
+    "plugins.triage.currentContext.list": "Passa all’elenco",
     "plugins.triage.currentContext.openEntry": "Apri {title}",
+    "plugins.triage.currentContext.refresh": "Aggiorna PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Seleziona la scheda {tab}",
+    "plugins.triage.detailStory.activity": "Attività",
+    "plugins.triage.detailStory.ask": "La richiesta",
+    "plugins.triage.detailStory.changed": "Cosa è cambiato",
+    "plugins.triage.detailStory.detail": "Dettaglio della fonte",
+    "plugins.triage.detailStory.failed": "{count} non riusciti",
+    "plugins.triage.detailStory.passed": "Riuscito",
+    "plugins.triage.detailStory.report": "La segnalazione",
+    "plugins.triage.detailStory.running": "In corso",
     "plugins.triage.picker.attach": "Allega",
     "plugins.triage.picker.attached": "Allegato",
     "plugins.triage.picker.attachEntryLabel": "Allega “{title}”",
@@ -44784,6 +45121,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Serve il tuo permesso",
     "plugins.triage.surface.detail.agent.ready": "Pronta",
+    "plugins.triage.surface.detail.agent.seeAll": "Vedi tutti",
     "plugins.triage.surface.detail.agent.working": "Al lavoro",
     "plugins.triage.surface.detail.connection": "Connessione",
     "plugins.triage.surface.detail.connectionUnhealthy": "Non è stato possibile leggere questa connessione nell'ultima passata.",
@@ -44792,11 +45130,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Chiusa senza unione",
     "plugins.triage.surface.detail.fixPr.conflict": "Questo collegamento è stato modificato altrove. Viene mostrato lo stato attuale.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier non riesce a raggiungere il tuo account in questo momento, quindi il collegamento non è stato modificato.",
-    "plugins.triage.surface.detail.fixPr.full": "Questa voce ha già il numero massimo di pull request di correzione. Scollegane una prima.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Alcune sessioni collegate non sono state controllate per le pull request.",
     "plugins.triage.surface.detail.fixPr.link": "Collega PR di correzione",
     "plugins.triage.surface.detail.fixPr.merged": "Unita",
     "plugins.triage.surface.detail.fixPr.open": "Aperta",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Non è stato possibile leggere i collegamenti ai pull request di correzione.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request di correzione",
     "plugins.triage.surface.detail.fixPr.unlink": "Scollega",
     "plugins.triage.surface.detail.lastKnown": "Questi sono gli ultimi dati che questa pagina aveva per questa voce e potrebbero non essere aggiornati.",
@@ -44840,6 +45178,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Dettaglio della voce",
     "plugins.triage.surface.detail.type": "Tipo",
     "plugins.triage.surface.detail.via": "tramite {name}",
+    "plugins.triage.surface.drop.linkSession": "Collega sessione",
     "plugins.triage.surface.empty.healthy.description": "Ogni fonte configurata ha risposto, e nessuna di loro ha un'entrata per te ora.",
     "plugins.triage.surface.empty.healthy.title": "Niente ti sta richiedendo",
     "plugins.triage.surface.empty.incomplete.description": "Alcune fonti non sono state ancora completate, quindi le voci potrebbero essere mancanti. Aggiorna per continuare a leggere.",
@@ -44920,6 +45259,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Più recenti",
     "plugins.triage.surface.order.oldest": "Più vecchi",
     "plugins.triage.surface.order.smart": "Intelligente",
+    "plugins.triage.surface.organizeList": "Organizza elenco",
     "plugins.triage.surface.peek.open": "Apri",
     "plugins.triage.surface.peek.pin": "Fissa",
     "plugins.triage.surface.pin.conflict": "Quel segnalino è stato modificato altrove. Mostrando lo stato corrente.",
@@ -45003,6 +45343,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Avvio di una sessione per questa voce…",
     "plugins.triage.surface.session.workspaceRefused": "Non è stato possibile preparare uno spazio di revisione per questa voce, quindi non è stato creato nulla.",
     "plugins.triage.surface.session.workspaceUnavailable": "Al momento non è stato possibile preparare lo spazio di revisione. Non è stato creato nulla.",
+    "plugins.triage.surface.sessionActivity.reading": "Lettura dell’attività delle sessioni collegate…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Non è stato possibile leggere parte dell’attività delle sessioni collegate.",
     "plugins.triage.surface.smartPolicy": "Ordine intelligente",
     "plugins.triage.surface.smartPolicy.activityFirst": "Prima l’attività più recente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Prima ciò che ha bisogno di te",
@@ -46801,7 +47143,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog に記録された活動はこの一覧が読み取れた分より多いため、ここで終わります。",
     "plugins.posthog.ui.activityUnavailable": "活動が利用できません",
     "plugins.posthog.ui.addSelectedOccurrence": "選択した発生をメッセージに追加",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "取得したローカル変数には、認証情報、トークン、個人データ、リクエスト本文が含まれる場合があります。このスタックトレースタブ内だけに保持され、タブを離れると破棄されます。",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "取得したローカル変数には、認証情報、トークン、個人データ、リクエスト本文が含まれる場合があります。",
     "plugins.posthog.ui.codeVariables.confirmTitle": "機密性の高い取得変数を表示しますか？",
     "plugins.posthog.ui.codeVariables.discardNotice": "これらの値はこのスタックトレースタブ内だけに表示され、タブを離れると破棄されます。",
     "plugins.posthog.ui.codeVariables.loading": "取得した変数を読み込み中",
@@ -47036,7 +47378,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "現在の一覧ウィンドウを読み取る",
     "plugins.triage.column.all": "すべてのエントリ",
     "plugins.triage.composer.entriesCount": "{count} 件の PRs & Issues",
+    "plugins.triage.currentContext.board": "ボードに切り替える",
+    "plugins.triage.currentContext.clearSelection": "複数選択を解除する",
+    "plugins.triage.currentContext.closeDetail": "詳細を閉じる",
+    "plugins.triage.currentContext.list": "リストに切り替える",
     "plugins.triage.currentContext.openEntry": "{title}を開く",
+    "plugins.triage.currentContext.refresh": "PRs & Issues を更新する",
+    "plugins.triage.currentContext.selectTab": "{tab} タブを選択する",
+    "plugins.triage.detailStory.activity": "アクティビティ",
+    "plugins.triage.detailStory.ask": "依頼",
+    "plugins.triage.detailStory.changed": "変更内容",
+    "plugins.triage.detailStory.detail": "ソースの詳細",
+    "plugins.triage.detailStory.failed": "{count} 件失敗",
+    "plugins.triage.detailStory.passed": "成功",
+    "plugins.triage.detailStory.report": "報告",
+    "plugins.triage.detailStory.running": "実行中",
     "plugins.triage.picker.attach": "添付",
     "plugins.triage.picker.attached": "添付済み",
     "plugins.triage.picker.attachEntryLabel": "「{title}」を添付",
@@ -47290,6 +47646,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "オフライン",
     "plugins.triage.surface.detail.agent.permission": "許可が必要です",
     "plugins.triage.surface.detail.agent.ready": "準備完了",
+    "plugins.triage.surface.detail.agent.seeAll": "すべて表示",
     "plugins.triage.surface.detail.agent.working": "作業中",
     "plugins.triage.surface.detail.connection": "接続",
     "plugins.triage.surface.detail.connectionUnhealthy": "最後のパスでこの接続を読み取れませんでした。",
@@ -47298,11 +47655,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "マージせずにクローズ",
     "plugins.triage.surface.detail.fixPr.conflict": "このリンクは別の場所で変更されました。現在の状態を表示しています。",
     "plugins.triage.surface.detail.fixPr.failed": "Happier は現在アカウントに接続できないため、リンクは変更されていません。",
-    "plugins.triage.surface.detail.fixPr.full": "このエントリーの修正プルリクエストは上限に達しています。先にひとつリンク解除してください。",
     "plugins.triage.surface.detail.fixPr.incomplete": "一部のリンク済みセッションはプルリクエストを確認していません。",
     "plugins.triage.surface.detail.fixPr.link": "修正 PR をリンク",
     "plugins.triage.surface.detail.fixPr.merged": "マージ済み",
     "plugins.triage.surface.detail.fixPr.open": "オープン",
+    "plugins.triage.surface.detail.fixPr.readFailed": "修正プルリクエストのリンクを読み取れませんでした。",
     "plugins.triage.surface.detail.fixPr.title": "修正プルリクエスト",
     "plugins.triage.surface.detail.fixPr.unlink": "リンク解除",
     "plugins.triage.surface.detail.lastKnown": "この項目についてこのページが最後に保持していた情報です。最新でない可能性があります。",
@@ -47346,6 +47703,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "エントリの詳細",
     "plugins.triage.surface.detail.type": "種類",
     "plugins.triage.surface.detail.via": "{name} 経由",
+    "plugins.triage.surface.drop.linkSession": "セッションをリンク",
     "plugins.triage.surface.empty.healthy.description": "すべての設定されたソースが応答し、あなたには今、何のエントリもありません。",
     "plugins.triage.surface.empty.healthy.title": "何も必要はありません",
     "plugins.triage.surface.empty.incomplete.description": "一部のソースが未完了のままなので、エントリがまだ欠けています。更新して読み取りを続けることができます。",
@@ -47426,6 +47784,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "新しい順",
     "plugins.triage.surface.order.oldest": "古い順",
     "plugins.triage.surface.order.smart": "スマート",
+    "plugins.triage.surface.organizeList": "リストを整理",
     "plugins.triage.surface.peek.open": "開く",
     "plugins.triage.surface.peek.pin": "ピン留め",
     "plugins.triage.surface.pin.conflict": "その固定は他の場所で変更されました。現在の状態を表示しています。",
@@ -47509,6 +47868,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "この項目のセッションを開始しています…",
     "plugins.triage.surface.session.workspaceRefused": "この項目のレビュー用ワークスペースを準備できなかったため、何も作成されていません。",
     "plugins.triage.surface.session.workspaceUnavailable": "現在レビュー用ワークスペースを準備できませんでした。何も作成されていません。",
+    "plugins.triage.surface.sessionActivity.reading": "リンクされたセッションの動作を読み込み中…",
+    "plugins.triage.surface.sessionActivity.unavailable": "リンクされたセッションの動作の一部を読み込めませんでした。",
     "plugins.triage.surface.smartPolicy": "スマートな並び順",
     "plugins.triage.surface.smartPolicy.activityFirst": "直近の更新を先に",
     "plugins.triage.surface.smartPolicy.attentionFirst": "あなた待ちを先に",
@@ -49307,7 +49668,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog zarejestrował więcej aktywności, niż ta lista zdołała odczytać, więc kończy się w tym miejscu.",
     "plugins.posthog.ui.activityUnavailable": "Aktywność nie jest dostępna",
     "plugins.posthog.ui.addSelectedOccurrence": "Dodaj wybrane wystąpienie do wiadomości",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Przechwycone zmienne lokalne mogą zawierać dane logowania, tokeny, dane osobowe i treści żądań. Pozostają tylko na tej karcie stosu i są usuwane po jej opuszczeniu.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Przechwycone zmienne lokalne mogą zawierać dane logowania, tokeny, dane osobowe i treści żądań.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Pokazać poufne przechwycone zmienne?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Te wartości są widoczne tylko na tej karcie stosu i są usuwane po jej opuszczeniu.",
     "plugins.posthog.ui.codeVariables.loading": "Odczytywanie przechwyconych zmiennych",
@@ -49542,7 +49903,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Odczytaj bieżące okno listy",
     "plugins.triage.column.all": "Wszystkie wpisy",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Przełącz na tablicę",
+    "plugins.triage.currentContext.clearSelection": "Wyczyść wybór wielu elementów",
+    "plugins.triage.currentContext.closeDetail": "Zamknij szczegóły",
+    "plugins.triage.currentContext.list": "Przełącz na listę",
     "plugins.triage.currentContext.openEntry": "Otwórz {title}",
+    "plugins.triage.currentContext.refresh": "Odśwież PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Wybierz kartę {tab}",
+    "plugins.triage.detailStory.activity": "Aktywność",
+    "plugins.triage.detailStory.ask": "Prośba",
+    "plugins.triage.detailStory.changed": "Co się zmieniło",
+    "plugins.triage.detailStory.detail": "Szczegóły źródła",
+    "plugins.triage.detailStory.failed": "Niepowodzenia: {count}",
+    "plugins.triage.detailStory.passed": "Powodzenie",
+    "plugins.triage.detailStory.report": "Zgłoszenie",
+    "plugins.triage.detailStory.running": "W toku",
     "plugins.triage.picker.attach": "Dołącz",
     "plugins.triage.picker.attached": "Dołączono",
     "plugins.triage.picker.attachEntryLabel": "Dołącz „{title}”",
@@ -49796,6 +50171,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Potrzebuje twojej zgody",
     "plugins.triage.surface.detail.agent.ready": "Gotowe",
+    "plugins.triage.surface.detail.agent.seeAll": "Zobacz wszystkie",
     "plugins.triage.surface.detail.agent.working": "Pracuje",
     "plugins.triage.surface.detail.connection": "Połączenie",
     "plugins.triage.surface.detail.connectionUnhealthy": "Nie udało się odczytać tego połączenia w ostatnim przebiegu.",
@@ -49804,11 +50180,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Zamknięty bez scalenia",
     "plugins.triage.surface.detail.fixPr.conflict": "To powiązanie zostało zmienione w innym miejscu. Wyświetlany jest bieżący stan.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier nie może teraz połączyć się z Twoim kontem, więc powiązanie nie zostało zmienione.",
-    "plugins.triage.surface.detail.fixPr.full": "Ten wpis ma już maksymalną liczbę pull requestów z poprawką. Najpierw odłącz jeden.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Niektóre powiązane sesje nie zostały sprawdzone pod kątem pull requestów.",
     "plugins.triage.surface.detail.fixPr.link": "Połącz PR z poprawką",
     "plugins.triage.surface.detail.fixPr.merged": "Scalony",
     "plugins.triage.surface.detail.fixPr.open": "Otwarty",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Nie udało się odczytać powiązań z pull requestami z poprawką.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request z poprawką",
     "plugins.triage.surface.detail.fixPr.unlink": "Odłącz",
     "plugins.triage.surface.detail.lastKnown": "To ostatnie informacje, jakie ta strona przechowywała o tym wpisie — mogą być nieaktualne.",
@@ -49852,6 +50228,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Szczegóły wpisu",
     "plugins.triage.surface.detail.type": "Typ",
     "plugins.triage.surface.detail.via": "przez {name}",
+    "plugins.triage.surface.drop.linkSession": "Powiąż sesję",
     "plugins.triage.surface.empty.healthy.description": "Wszystkie skonfigurowane źródła odpowiedziały, a żadne z nich nie ma wpisu dla Ciebie w tej chwili.",
     "plugins.triage.surface.empty.healthy.title": "Nic cię nie wymaga",
     "plugins.triage.surface.empty.incomplete.description": "Niektóre źródła nie skończyły się, więc wpisy mogą jeszcze brakować. Odśwież, aby kontynuować czytanie.",
@@ -49932,6 +50309,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Najnowsze",
     "plugins.triage.surface.order.oldest": "Najstarsze",
     "plugins.triage.surface.order.smart": "Inteligentna",
+    "plugins.triage.surface.organizeList": "Uporządkuj listę",
     "plugins.triage.surface.peek.open": "Otwórz",
     "plugins.triage.surface.peek.pin": "Przypnij",
     "plugins.triage.surface.pin.conflict": "To przypięcie zostało zmienione gdzieś innych. Pokazuję obecny stan.",
@@ -50015,6 +50393,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Uruchamianie sesji dla tego wpisu…",
     "plugins.triage.surface.session.workspaceRefused": "Nie udało się przygotować obszaru roboczego przeglądu dla tego wpisu, więc nic nie zostało utworzone.",
     "plugins.triage.surface.session.workspaceUnavailable": "Nie udało się teraz przygotować obszaru roboczego przeglądu. Nic nie zostało utworzone.",
+    "plugins.triage.surface.sessionActivity.reading": "Odczytywanie aktywności powiązanych sesji…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Nie udało się odczytać części aktywności powiązanych sesji.",
     "plugins.triage.surface.smartPolicy": "Kolejność inteligentna",
     "plugins.triage.surface.smartPolicy.activityFirst": "Najpierw najnowsza aktywność",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Najpierw to, co potrzebuje ciebie",
@@ -51813,7 +52193,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "O PostHog registou mais atividade do que esta lista conseguiu ler, por isso termina aqui.",
     "plugins.posthog.ui.activityUnavailable": "A atividade não está disponível",
     "plugins.posthog.ui.addSelectedOccurrence": "Adicionar a ocorrência selecionada à mensagem",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "As variáveis locais capturadas podem conter credenciais, tokens, dados pessoais e corpos de pedidos. Permanecem apenas neste separador da pilha e são descartadas ao sair.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "As variáveis locais capturadas podem conter credenciais, tokens, dados pessoais e corpos de pedidos.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Mostrar variáveis capturadas sensíveis?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Estes valores só ficam visíveis neste separador da pilha e são descartados ao sair.",
     "plugins.posthog.ui.codeVariables.loading": "A ler variáveis capturadas",
@@ -52048,7 +52428,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Ler a janela atual da lista",
     "plugins.triage.column.all": "Todas as entradas",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Mudar para o quadro",
+    "plugins.triage.currentContext.clearSelection": "Limpar a seleção múltipla",
+    "plugins.triage.currentContext.closeDetail": "Fechar detalhes",
+    "plugins.triage.currentContext.list": "Mudar para a lista",
     "plugins.triage.currentContext.openEntry": "Abrir {title}",
+    "plugins.triage.currentContext.refresh": "Atualizar PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Selecionar a aba {tab}",
+    "plugins.triage.detailStory.activity": "Atividade",
+    "plugins.triage.detailStory.ask": "O pedido",
+    "plugins.triage.detailStory.changed": "O que mudou",
+    "plugins.triage.detailStory.detail": "Detalhes da fonte",
+    "plugins.triage.detailStory.failed": "{count} falharam",
+    "plugins.triage.detailStory.passed": "Concluído",
+    "plugins.triage.detailStory.report": "O relatório",
+    "plugins.triage.detailStory.running": "Em andamento",
     "plugins.triage.picker.attach": "Anexar",
     "plugins.triage.picker.attached": "Anexado",
     "plugins.triage.picker.attachEntryLabel": "Anexar “{title}”",
@@ -52302,6 +52696,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Precisa da sua permissão",
     "plugins.triage.surface.detail.agent.ready": "Pronta",
+    "plugins.triage.surface.detail.agent.seeAll": "Ver todos",
     "plugins.triage.surface.detail.agent.working": "Trabalhando",
     "plugins.triage.surface.detail.connection": "Conexão",
     "plugins.triage.surface.detail.connectionUnhealthy": "Não foi possível ler esta conexão na última passagem.",
@@ -52310,11 +52705,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Fechado sem mesclar",
     "plugins.triage.surface.detail.fixPr.conflict": "Esse vínculo foi alterado em outro lugar. Mostrando o estado atual.",
     "plugins.triage.surface.detail.fixPr.failed": "O Happier não consegue acessar sua conta agora, então o vínculo não foi alterado.",
-    "plugins.triage.surface.detail.fixPr.full": "Esta entrada já tem o máximo de pull requests de correção. Desvincule um primeiro.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Algumas sessões vinculadas não foram verificadas em busca de pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Vincular PR de correção",
     "plugins.triage.surface.detail.fixPr.merged": "Mesclado",
     "plugins.triage.surface.detail.fixPr.open": "Aberto",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Não foi possível ler os vínculos com pull requests de correção.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de correção",
     "plugins.triage.surface.detail.fixPr.unlink": "Desvincular",
     "plugins.triage.surface.detail.lastKnown": "Estes são os últimos dados que esta página tinha para esta entrada e podem estar desatualizados.",
@@ -52358,6 +52753,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Detalhe da entrada",
     "plugins.triage.surface.detail.type": "Tipo",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Vincular sessão",
     "plugins.triage.surface.empty.healthy.description": "Todas as fontes configuradas responderam, e nenhuma delas tem uma entrada para você no momento.",
     "plugins.triage.surface.empty.healthy.title": "Nada precisa de você",
     "plugins.triage.surface.empty.incomplete.description": "Alguns fontes não terminaram seu caminhada, então entradas podem ainda estar faltando. Atualize para continuar lendo.",
@@ -52438,6 +52834,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Mais recentes",
     "plugins.triage.surface.order.oldest": "Mais antigos",
     "plugins.triage.surface.order.smart": "Inteligente",
+    "plugins.triage.surface.organizeList": "Organizar lista",
     "plugins.triage.surface.peek.open": "Abrir",
     "plugins.triage.surface.peek.pin": "Fixar",
     "plugins.triage.surface.pin.conflict": "Esse marcador foi alterado em outro lugar. Exibindo o estado atual.",
@@ -52521,6 +52918,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "A iniciar uma sessão para esta entrada…",
     "plugins.triage.surface.session.workspaceRefused": "Não foi possível preparar um espaço de revisão para esta entrada, por isso nada foi criado.",
     "plugins.triage.surface.session.workspaceUnavailable": "Não foi possível preparar o espaço de revisão neste momento. Nada foi criado.",
+    "plugins.triage.surface.sessionActivity.reading": "Lendo a atividade das sessões vinculadas…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Não foi possível ler parte da atividade das sessões vinculadas.",
     "plugins.triage.surface.smartPolicy": "Ordem inteligente",
     "plugins.triage.surface.smartPolicy.activityFirst": "Primeiro a atividade mais recente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Primeiro o que precisa de você",
@@ -54319,7 +54718,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "В PostHog записано больше активности, чем удалось прочитать в этом списке, поэтому он обрывается здесь.",
     "plugins.posthog.ui.activityUnavailable": "Активность недоступна",
     "plugins.posthog.ui.addSelectedOccurrence": "Добавить выбранный случай в сообщение",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "Захваченные локальные переменные могут содержать учётные данные, токены, персональные данные и тела запросов. Они остаются только на этой вкладке трассировки стека и удаляются при выходе.",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "Захваченные локальные переменные могут содержать учётные данные, токены, персональные данные и тела запросов.",
     "plugins.posthog.ui.codeVariables.confirmTitle": "Показать конфиденциальные захваченные переменные?",
     "plugins.posthog.ui.codeVariables.discardNotice": "Эти значения видны только на этой вкладке трассировки стека и удаляются при выходе.",
     "plugins.posthog.ui.codeVariables.loading": "Загрузка захваченных переменных",
@@ -54554,7 +54953,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "Прочитать текущее окно списка",
     "plugins.triage.column.all": "Все записи",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Переключиться на доску",
+    "plugins.triage.currentContext.clearSelection": "Снять множественное выделение",
+    "plugins.triage.currentContext.closeDetail": "Закрыть сведения",
+    "plugins.triage.currentContext.list": "Переключиться на список",
     "plugins.triage.currentContext.openEntry": "Открыть {title}",
+    "plugins.triage.currentContext.refresh": "Обновить PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Выбрать вкладку {tab}",
+    "plugins.triage.detailStory.activity": "Активность",
+    "plugins.triage.detailStory.ask": "Запрос",
+    "plugins.triage.detailStory.changed": "Что изменилось",
+    "plugins.triage.detailStory.detail": "Подробности источника",
+    "plugins.triage.detailStory.failed": "Ошибок: {count}",
+    "plugins.triage.detailStory.passed": "Успешно",
+    "plugins.triage.detailStory.report": "Отчёт",
+    "plugins.triage.detailStory.running": "Выполняется",
     "plugins.triage.picker.attach": "Прикрепить",
     "plugins.triage.picker.attached": "Прикреплено",
     "plugins.triage.picker.attachEntryLabel": "Прикрепить «{title}»",
@@ -54808,6 +55221,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "Не в сети",
     "plugins.triage.surface.detail.agent.permission": "Нужно ваше разрешение",
     "plugins.triage.surface.detail.agent.ready": "Готово",
+    "plugins.triage.surface.detail.agent.seeAll": "Показать все",
     "plugins.triage.surface.detail.agent.working": "Работает",
     "plugins.triage.surface.detail.connection": "Подключение",
     "plugins.triage.surface.detail.connectionUnhealthy": "Это подключение не удалось прочитать в последнем проходе.",
@@ -54816,11 +55230,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "Закрыт без слияния",
     "plugins.triage.surface.detail.fixPr.conflict": "Эта связь была изменена в другом месте. Отображается текущее состояние.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier сейчас не может связаться с вашим аккаунтом, поэтому связь не изменена.",
-    "plugins.triage.surface.detail.fixPr.full": "У этой записи уже максимальное число исправляющих pull request. Сначала отвяжите один.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Некоторые связанные сессии не были проверены на pull request.",
     "plugins.triage.surface.detail.fixPr.link": "Связать исправляющий PR",
     "plugins.triage.surface.detail.fixPr.merged": "Слит",
     "plugins.triage.surface.detail.fixPr.open": "Открыт",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Не удалось прочитать связи с исправляющими pull request.",
     "plugins.triage.surface.detail.fixPr.title": "Исправляющий pull request",
     "plugins.triage.surface.detail.fixPr.unlink": "Отвязать",
     "plugins.triage.surface.detail.lastKnown": "Это последние сведения, которые эта страница хранила об этой записи; они могут быть устаревшими.",
@@ -54864,6 +55278,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "Сведения о записи",
     "plugins.triage.surface.detail.type": "Тип",
     "plugins.triage.surface.detail.via": "через {name}",
+    "plugins.triage.surface.drop.linkSession": "Связать с сессией",
     "plugins.triage.surface.empty.healthy.description": "Каждый настроенный источник ответил, и ни один из них не имеет записи для вас в данный момент.",
     "plugins.triage.surface.empty.healthy.title": "Ничего вам не нужно",
     "plugins.triage.surface.empty.incomplete.description": "Некоторые источники еще не завершили свою работу, поэтому записи могут быть отсутствовать. Обновите, чтобы продолжить чтение.",
@@ -54944,6 +55359,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "Сначала новые",
     "plugins.triage.surface.order.oldest": "Сначала старые",
     "plugins.triage.surface.order.smart": "Умный",
+    "plugins.triage.surface.organizeList": "Упорядочить список",
     "plugins.triage.surface.peek.open": "Открыть",
     "plugins.triage.surface.peek.pin": "Закрепить",
     "plugins.triage.surface.pin.conflict": "Этот закрепленный элемент был изменен в другом месте. Отображается текущее состояние.",
@@ -55027,6 +55443,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "Запуск сессии для этой записи…",
     "plugins.triage.surface.session.workspaceRefused": "Для этой записи не удалось подготовить рабочую область для проверки, поэтому ничего не создано.",
     "plugins.triage.surface.session.workspaceUnavailable": "Сейчас не удалось подготовить рабочую область для проверки. Ничего не создано.",
+    "plugins.triage.surface.sessionActivity.reading": "Чтение активности связанных сессий…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Не удалось прочитать часть активности связанных сессий.",
     "plugins.triage.surface.smartPolicy": "Умный порядок",
     "plugins.triage.surface.smartPolicy.activityFirst": "Сначала самое свежее",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Сначала то, что требует вас",
@@ -56825,7 +57243,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog 记录的活动多于此列表所能读取的数量，因此列表到此为止。",
     "plugins.posthog.ui.activityUnavailable": "活动不可用",
     "plugins.posthog.ui.addSelectedOccurrence": "将所选事件添加到消息",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "捕获的局部变量可能包含凭据、令牌、个人数据和请求正文。它们只保留在此堆栈跟踪标签页中，离开时即被丢弃。",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "捕获的局部变量可能包含凭据、令牌、个人数据和请求正文。",
     "plugins.posthog.ui.codeVariables.confirmTitle": "显示敏感的捕获变量？",
     "plugins.posthog.ui.codeVariables.discardNotice": "这些值仅在此堆栈跟踪标签页中可见，离开时即被丢弃。",
     "plugins.posthog.ui.codeVariables.loading": "正在读取捕获的变量",
@@ -57060,7 +57478,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "读取当前列表窗口",
     "plugins.triage.column.all": "全部条目",
     "plugins.triage.composer.entriesCount": "{count} 个 PRs & Issues",
+    "plugins.triage.currentContext.board": "切换到看板",
+    "plugins.triage.currentContext.clearSelection": "清除多选",
+    "plugins.triage.currentContext.closeDetail": "关闭详情",
+    "plugins.triage.currentContext.list": "切换到列表",
     "plugins.triage.currentContext.openEntry": "打开{title}",
+    "plugins.triage.currentContext.refresh": "刷新 PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "选择 {tab} 标签页",
+    "plugins.triage.detailStory.activity": "活动",
+    "plugins.triage.detailStory.ask": "请求",
+    "plugins.triage.detailStory.changed": "变更内容",
+    "plugins.triage.detailStory.detail": "来源详情",
+    "plugins.triage.detailStory.failed": "{count} 项失败",
+    "plugins.triage.detailStory.passed": "通过",
+    "plugins.triage.detailStory.report": "报告",
+    "plugins.triage.detailStory.running": "进行中",
     "plugins.triage.picker.attach": "附加",
     "plugins.triage.picker.attached": "已附加",
     "plugins.triage.picker.attachEntryLabel": "附加“{title}”",
@@ -57314,6 +57746,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "离线",
     "plugins.triage.surface.detail.agent.permission": "需要你的许可",
     "plugins.triage.surface.detail.agent.ready": "就绪",
+    "plugins.triage.surface.detail.agent.seeAll": "查看全部",
     "plugins.triage.surface.detail.agent.working": "工作中",
     "plugins.triage.surface.detail.connection": "连接",
     "plugins.triage.surface.detail.connectionUnhealthy": "上一次读取时无法读取此连接。",
@@ -57322,11 +57755,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "未合并即关闭",
     "plugins.triage.surface.detail.fixPr.conflict": "该关联已在其他地方更改。正在显示当前状态。",
     "plugins.triage.surface.detail.fixPr.failed": "Happier 目前无法访问你的账户，因此关联未更改。",
-    "plugins.triage.surface.detail.fixPr.full": "此条目的修复拉取请求已达上限。请先取消关联一个。",
     "plugins.triage.surface.detail.fixPr.incomplete": "部分已关联会话未检查拉取请求。",
     "plugins.triage.surface.detail.fixPr.link": "关联修复 PR",
     "plugins.triage.surface.detail.fixPr.merged": "已合并",
     "plugins.triage.surface.detail.fixPr.open": "打开",
+    "plugins.triage.surface.detail.fixPr.readFailed": "无法读取修复拉取请求的关联。",
     "plugins.triage.surface.detail.fixPr.title": "修复拉取请求",
     "plugins.triage.surface.detail.fixPr.unlink": "取消关联",
     "plugins.triage.surface.detail.lastKnown": "这些是本页面为该条目保留的最后信息，可能已过时。",
@@ -57370,6 +57803,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "条目详情",
     "plugins.triage.surface.detail.type": "类型",
     "plugins.triage.surface.detail.via": "通过 {name}",
+    "plugins.triage.surface.drop.linkSession": "关联会话",
     "plugins.triage.surface.empty.healthy.description": "所有配置的来源都已回答，目前没有您的条目。",
     "plugins.triage.surface.empty.healthy.title": "无需您处理",
     "plugins.triage.surface.empty.incomplete.description": "某些来源尚未完成，因此可能仍缺少条目。刷新以继续阅读。",
@@ -57450,6 +57884,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "最新优先",
     "plugins.triage.surface.order.oldest": "最旧优先",
     "plugins.triage.surface.order.smart": "智能",
+    "plugins.triage.surface.organizeList": "整理列表",
     "plugins.triage.surface.peek.open": "打开",
     "plugins.triage.surface.peek.pin": "置顶",
     "plugins.triage.surface.pin.conflict": "该标记在其他地方已更改。显示当前状态。",
@@ -57533,6 +57968,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "正在为该条目启动会话…",
     "plugins.triage.surface.session.workspaceRefused": "无法为该条目准备评审工作区，因此未创建任何内容。",
     "plugins.triage.surface.session.workspaceUnavailable": "目前无法准备评审工作区。未创建任何内容。",
+    "plugins.triage.surface.sessionActivity.reading": "正在读取关联会话的活动…",
+    "plugins.triage.surface.sessionActivity.unavailable": "无法读取部分关联会话的活动。",
     "plugins.triage.surface.smartPolicy": "智能排序",
     "plugins.triage.surface.smartPolicy.activityFirst": "最近活动优先",
     "plugins.triage.surface.smartPolicy.attentionFirst": "需要你的优先",
@@ -59331,7 +59768,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.posthog.ui.activityStoppedShort": "PostHog 記錄的活動多於此清單所能讀取的數量，因此清單到此為止。",
     "plugins.posthog.ui.activityUnavailable": "活動不可用",
     "plugins.posthog.ui.addSelectedOccurrence": "將所選事件加入訊息",
-    "plugins.posthog.ui.codeVariables.confirmDescription": "擷取的區域變數可能包含憑證、權杖、個人資料和請求本文。它們只保留在此堆疊追蹤分頁中，離開時即會捨棄。",
+    "plugins.posthog.ui.codeVariables.confirmDescription": "擷取的區域變數可能包含憑證、權杖、個人資料和請求本文。",
     "plugins.posthog.ui.codeVariables.confirmTitle": "顯示敏感的擷取變數？",
     "plugins.posthog.ui.codeVariables.discardNotice": "這些值僅在此堆疊追蹤分頁中可見，離開時即會捨棄。",
     "plugins.posthog.ui.codeVariables.loading": "正在讀取擷取的變數",
@@ -59566,7 +60003,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.action.listEntries.title": "讀取目前的清單視窗",
     "plugins.triage.column.all": "全部項目",
     "plugins.triage.composer.entriesCount": "{count} 個 PRs & Issues",
+    "plugins.triage.currentContext.board": "切換至看板",
+    "plugins.triage.currentContext.clearSelection": "清除多選",
+    "plugins.triage.currentContext.closeDetail": "關閉詳細資訊",
+    "plugins.triage.currentContext.list": "切換至清單",
     "plugins.triage.currentContext.openEntry": "開啟{title}",
+    "plugins.triage.currentContext.refresh": "重新整理 PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "選取 {tab} 分頁",
+    "plugins.triage.detailStory.activity": "活動",
+    "plugins.triage.detailStory.ask": "請求",
+    "plugins.triage.detailStory.changed": "變更內容",
+    "plugins.triage.detailStory.detail": "來源詳細資料",
+    "plugins.triage.detailStory.failed": "{count} 項失敗",
+    "plugins.triage.detailStory.passed": "通過",
+    "plugins.triage.detailStory.report": "報告",
+    "plugins.triage.detailStory.running": "進行中",
     "plugins.triage.picker.attach": "附加",
     "plugins.triage.picker.attached": "已附加",
     "plugins.triage.picker.attachEntryLabel": "附加「{title}」",
@@ -59820,6 +60271,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.agent.offline": "離線",
     "plugins.triage.surface.detail.agent.permission": "需要你的許可",
     "plugins.triage.surface.detail.agent.ready": "就緒",
+    "plugins.triage.surface.detail.agent.seeAll": "查看全部",
     "plugins.triage.surface.detail.agent.working": "工作中",
     "plugins.triage.surface.detail.connection": "連接",
     "plugins.triage.surface.detail.connectionUnhealthy": "上一次讀取時無法讀取此連線。",
@@ -59828,11 +60280,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.fixPr.closed": "未合併即關閉",
     "plugins.triage.surface.detail.fixPr.conflict": "此關聯已在其他地方變更。正在顯示目前狀態。",
     "plugins.triage.surface.detail.fixPr.failed": "Happier 目前無法存取你的帳戶，因此關聯未變更。",
-    "plugins.triage.surface.detail.fixPr.full": "此項目的修復拉取請求已達上限。請先取消關聯一個。",
     "plugins.triage.surface.detail.fixPr.incomplete": "部分已關聯工作階段未檢查拉取請求。",
     "plugins.triage.surface.detail.fixPr.link": "關聯修復 PR",
     "plugins.triage.surface.detail.fixPr.merged": "已合併",
     "plugins.triage.surface.detail.fixPr.open": "開啟",
+    "plugins.triage.surface.detail.fixPr.readFailed": "無法讀取修復拉取請求的關聯。",
     "plugins.triage.surface.detail.fixPr.title": "修復拉取請求",
     "plugins.triage.surface.detail.fixPr.unlink": "取消關聯",
     "plugins.triage.surface.detail.lastKnown": "這些是本頁面為該項目保留的最後資訊，可能已過時。",
@@ -59876,6 +60328,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.detail.tabs": "項目詳情",
     "plugins.triage.surface.detail.type": "類型",
     "plugins.triage.surface.detail.via": "透過 {name}",
+    "plugins.triage.surface.drop.linkSession": "連結工作階段",
     "plugins.triage.surface.empty.healthy.description": "每個設定的來源都已回答，且目前沒有任何項目適合您。",
     "plugins.triage.surface.empty.healthy.title": "不需要您",
     "plugins.triage.surface.empty.incomplete.description": "某些來源尚未完成其走訪，因此可能仍有多個項目缺失。重新整理以繼續閱讀。",
@@ -59956,6 +60409,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.order.newest": "最新優先",
     "plugins.triage.surface.order.oldest": "最舊優先",
     "plugins.triage.surface.order.smart": "智慧",
+    "plugins.triage.surface.organizeList": "整理清單",
     "plugins.triage.surface.peek.open": "開啟",
     "plugins.triage.surface.peek.pin": "釘選",
     "plugins.triage.surface.pin.conflict": "該固定標記已在其他地方更動。顯示當前狀態。",
@@ -60039,6 +60493,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.fre
     "plugins.triage.surface.session.starting": "正在為此項目啟動工作階段…",
     "plugins.triage.surface.session.workspaceRefused": "無法為此項目準備審查工作區，因此未建立任何內容。",
     "plugins.triage.surface.session.workspaceUnavailable": "目前無法準備審查工作區。未建立任何內容。",
+    "plugins.triage.surface.sessionActivity.reading": "正在讀取關聯工作階段的活動…",
+    "plugins.triage.surface.sessionActivity.unavailable": "無法讀取部分關聯工作階段的活動。",
     "plugins.triage.surface.smartPolicy": "智慧排序",
     "plugins.triage.surface.smartPolicy.activityFirst": "最近活動優先",
     "plugins.triage.surface.smartPolicy.attentionFirst": "需要你的優先",

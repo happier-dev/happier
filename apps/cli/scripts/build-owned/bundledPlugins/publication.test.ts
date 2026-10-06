@@ -12,6 +12,44 @@ import { withGeneratorSingleFlight, withPreparedGeneratorPublication } from './p
 import { ensureWorkspacePackagesBuiltByName, readWorkspacePackageInputFingerprint } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 describe('bundled generator single-flight', () => {
+  it('reuses an intact completed publication before preparation, invalidating changed inputs or outputs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-publication-incremental-'));
+    let input = 'first';
+    let preparationInput = 'first';
+    const output = join(root, 'output');
+    let preparations = 0;
+    const decisions: string[] = [];
+    const publish = () => withGeneratorSingleFlight({
+      reportReuseDecision: (reason) => decisions.push(reason),
+      readFingerprint: () => input,
+      readPreparationFingerprint: () => preparationInput,
+      readCurrentness: () => existsSync(output) ? readFileSync(output, 'utf8') : 'missing',
+      stampPath: join(root, 'readiness.json'), lockOptions: { lockPath: join(root, 'publication.lock') },
+      prepare: async () => { preparations++; },
+      run: async (lease) => { lease.assertOwned(); writeFileSync(output, input); },
+    });
+    try {
+      await publish();
+      await publish();
+      expect(preparations).toBe(1);
+      input = 'changed';
+      await publish();
+      expect(preparations).toBe(2);
+      expect(readFileSync(output, 'utf8')).toBe('changed');
+      rmSync(output);
+      await publish();
+      expect(preparations).toBe(3);
+      writeFileSync(output, 'damaged');
+      await publish();
+      expect(preparations).toBe(4);
+      expect(readFileSync(output, 'utf8')).toBe('changed');
+      preparationInput = 'changed';
+      await publish();
+      expect(preparations).toBe(5);
+      expect(decisions).toEqual(['missing-publication', 'reused', 'publication-inputs-changed',
+        'outputs-changed', 'outputs-changed', 'preparation-inputs-changed']);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it('publishes the prepared input fingerprint without repeating preparation after outputs advance', async () => {
     const root = mkdtempSync(join(tmpdir(), 'bundled-single-flight-prepared-inputs-'));
     const dependency = join(root, 'dependency');
